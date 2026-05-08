@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-08, the current released state is `v1.8.28`. The stable installer, release-native asset publication, PyPI metadata refresh path, and managed-native `tg upgrade` refresh path are all released and publicly dogfooded. The active follow-up branch is hardening native-front-door CLI parity for advertised public flags exposed by the Python sidecar.
+As of 2026-05-08, the current released state is `v1.8.29`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, and native-front-door CLI parity fixes are released and publicly dogfooded. Current follow-up work should focus on agent context capsules/token economy, AST parity roadmap, GPU/classify maturity, and keeping docs synchronized with release proof.
 
-- Release commit: `6c8a065 chore(release): v1.8.28 [skip ci]`
+- Release commit: `648a740 chore(release): v1.8.29 [skip ci]`
 - Recent fix commits:
+  - `7742258 fix: harden native front-door CLI parity`
   - `4dcc6d7 fix: refresh managed native front door after upgrade`
   - `8420cab fix: harden stable installer and upgrade resolution`
   - `6f82d14 fix: publish GitHub release native assets from main CI`
@@ -37,17 +38,16 @@ As of 2026-05-08, the current released state is `v1.8.28`. The stable installer,
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25541354485`: passed through semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25541353932`: passed
-- Release-commit CodeQL run `25541905895`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.28` resolves from PyPI
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.28>
-- GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.28 --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5` passed
-- Public upgrade dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` from the new sidecar scheduled the Windows native front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, and WSL now resolve `tg 1.8.28`; `tg doctor --json` reports `rust_binary_version_status = matches`.
+- Main CI run `25557263658`: passed through semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25557263900`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.29` resolves from PyPI
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.29>
+- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.8.29`
+- Public upgrade dogfood: `tg upgrade` from `v1.8.28` installed sidecar `tensor-grep==1.8.29`, scheduled the Windows native front-door retry helper while the running `tg.exe` was locked, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.29`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolve `tg 1.8.29`; `tg doctor --json` reports `rust_binary_version_status = matches` and `search_acceleration_backend = standalone-native-tg`.
 - Session handoff: `docs/SESSION_HANDOFF.md`
-- Current follow-up work is tracked in `docs/SESSION_HANDOFF.md`: keep release-native assets verified, preserve the managed installer fallback when assets are absent, keep sidecar and native front-door versions aligned after `tg upgrade`, and ensure the native front door accepts or intentionally sidecar-routes advertised `search`, `run`, and `classify` flags.
+- Current follow-up work is tracked in `docs/SESSION_HANDOFF.md`: keep release-native assets verified, preserve the managed installer fallback when assets are absent, keep sidecar and native front-door versions aligned after `tg upgrade`, and design opt-in agent context capsule/token-economy surfaces without changing raw search contracts.
 
-The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, explicit broad generated-root scan refusal unless callers bound the search or opt in, and managed native front-door refresh after `tg upgrade`.
+The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, explicit broad generated-root scan refusal unless callers bound the search or opt in, managed native front-door refresh after `tg upgrade`, native-front-door parity for `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`, classify fallback before expensive provider/model setup when unavailable, and GPU benchmark no-match correctness handling.
 
 Known current weak spots:
 
