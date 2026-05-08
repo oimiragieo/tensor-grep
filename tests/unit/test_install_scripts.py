@@ -167,6 +167,9 @@ def test_install_ps1_should_create_cmd_shims_without_child_command_percent_star_
     assert "$cmdArgvBridgeContent" in content
     assert "TG_CMD_SHIM_ARGC" in content
     assert "TG_CMD_SHIM_ARG_%TG_CMD_SHIM_ARGC%=%~1" in content
+    assert "subprocess.run([native_tg] + argv, check=False)" in content
+    assert "raise SystemExit(completed.returncode)" in content
+    assert "os.execv" not in content
     assert 'runpy.run_module("tensor_grep", run_name="__main__")' in content
     assert "%*" not in content
     assert " -m tensor_grep %*" not in content

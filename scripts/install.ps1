@@ -421,6 +421,7 @@ exit `$LASTEXITCODE
     $cmdArgvBridgeContent = @'
 import os
 import runpy
+import subprocess
 import sys
 
 try:
@@ -437,7 +438,8 @@ os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 native_tg = os.environ.get("TG_NATIVE_TG_BINARY")
 if native_tg and os.path.isfile(native_tg):
-    os.execv(native_tg, [native_tg] + argv)
+    completed = subprocess.run([native_tg] + argv, check=False)
+    raise SystemExit(completed.returncode)
 sys.argv = ["tensor-grep"] + argv
 runpy.run_module("tensor_grep", run_name="__main__")
 '@

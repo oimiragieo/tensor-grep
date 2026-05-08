@@ -66,6 +66,7 @@ What `v1.8.29` closed:
 
 Active post-`v1.8.29` follow-up:
 
+- harden the public Windows `.cmd` launcher so quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` stay one argv item instead of producing a shorter false-positive search plus bogus paths
 - design `tg agent` / Actionable Context Capsule as an opt-in agent workflow, not a replacement for raw search output
 - the capsule target is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when warranted
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response

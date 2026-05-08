@@ -596,6 +596,21 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
     assert "Agent Token Economy Mode" in continuation
 
 
+def test_agent_docs_should_lock_windows_cmd_quoted_pattern_probe() -> None:
+    agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
+    handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
+
+    for doc in (agents, readme, skill, contracts, handoff):
+        assert "quoted multi-word" in doc
+        assert "false-positive" in doc
+
+    for doc in (agents, skill, handoff):
+        assert "public-windows-launcher-quoted-patterns" in doc
+
+
 def test_ast_info_public_docs_should_describe_json_languages_payload() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
