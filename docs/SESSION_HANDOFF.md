@@ -21,7 +21,7 @@ Last updated: 2026-05-08
 
 ## Current Post-v1.8.29 Scope
 
-Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The active follow-up branch is docs-only handoff cleanup for `v1.8.29`.
+Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The latest docs/product merge is PR #66 `docs: define agent context capsule roadmap` at `f311469`; main CI run `25561521904` and CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing because the change was docs-only.
 
 The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
