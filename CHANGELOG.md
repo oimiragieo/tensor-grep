@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.26 (2026-05-08)
+
+### Bug Fixes
+
+- Publish GitHub release native assets from main CI
+  ([`6f82d14`](https://github.com/oimiragieo/tensor-grep/commit/6f82d14ac815622ad2f7455cab00c2d918fc1361))
+
+Move release-native GitHub asset publication into main CI after semantic-release and gate PyPI
+  behind verified GitHub release assets.
+
+
 ## v1.8.25 (2026-05-08)
 
 ### Documentation
