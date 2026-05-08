@@ -64,6 +64,8 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "skip yanked PyPI releases" in contracts
     assert "refresh the managed release-native front door" in contracts
     assert "Windows native-front-door retry helper" in contracts
+    assert "current `v1.8.28` release line" in contracts
+    assert "managed native-upgrade contract" in contracts
 
 
 def test_handoff_docs_should_record_current_v1828_release_state_and_fast_gate() -> None:
@@ -98,6 +100,8 @@ def test_handoff_docs_should_record_current_v1828_release_state_and_fast_gate() 
     assert "native front door" in handoff
     assert "rust_binary_version_status = matches" in handoff
     assert "scheduled the Windows native-front-door retry helper" in handoff
+    assert "agent_readiness_post_v1828.json" in handoff
+    assert "already at the latest PyPI version (1.8.28)" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff

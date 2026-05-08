@@ -17,7 +17,8 @@ Current release facts:
 - Main CI run `25541354485` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25541353932` and `25541905895` passed
 - PyPI latest and pinned public install both resolve `tensor-grep==1.8.28`
 - GitHub release assets for `v1.8.28` verified with the `native-frontdoor` profile
-- Public upgrade dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` from the new sidecar scheduled the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, and WSL resolve `tg 1.8.28`; `tg doctor --json` reports `rust_binary_version_status = matches`.
+- Public upgrade dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` from the new sidecar scheduled the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. A current `v1.8.28` install reports `tensor-grep is already at the latest PyPI version (1.8.28).` Profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolve `tg 1.8.28`; `tg doctor --json` reports `rust_binary_version_status = matches`.
+- Post-release fast gate: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1828.json` passed all 13 checks.
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 

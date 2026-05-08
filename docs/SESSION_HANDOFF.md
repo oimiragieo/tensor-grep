@@ -12,12 +12,12 @@ Last updated: 2026-05-08
 - Main CodeQL run `25541353932`: passed
 - Release-commit CodeQL run `25541905895`: passed
 - PyPI latest and pinned install: `tensor-grep==1.8.28` resolves from PyPI
-- GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.28 --expected-profile native-frontdoor --wait-seconds 1 --poll-interval-seconds 1` passed
+- GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.28 --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5` passed
 - Closed installer/update gap: `v1.8.28` clears stale package metadata, requests the exact current non-yanked PyPI version when known, verifies post-upgrade imports, checks native installer exit codes, stages managed-environment plus front-door replacement, refreshes the managed release-native front door after sidecar upgrades, and schedules a Windows retry helper when the running native `tg.exe` is still locked.
-- Public shell dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` scheduled the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, and WSL all report `tg 1.8.28`. `tg doctor --json` reports `version = 1.8.28`, `rust_binary_version = tg 1.8.28`, and `rust_binary_version_status = matches`.
-- Public doctor dogfood: from outside the repo on `v1.8.24`, `tg doctor --json` reported `version = 1.8.24`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
-- Public generated-root guard dogfood: `tg search --files . --hidden` refused generated/cache/dependency roots with exit code `2`; normal scoped hidden search still succeeded.
-- Repo-dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.24`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`.
+- Public shell dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` scheduled the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. A current `v1.8.28` install reports `tensor-grep is already at the latest PyPI version (1.8.28).` `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, Git Bash, and WSL all report `tg 1.8.28`.
+- Public doctor dogfood: `tg doctor --json` reports `version = 1.8.28`, `rust_binary_version = tg 1.8.28`, `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`.
+- Fast agent-readiness dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1828.json` passed all 13 checks, including public version probes, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
+- Repo-dev dogfood: `uv run tg doctor --json --no-lsp` passed in the `v1.8.28` readiness gate; stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
 ## Current Post-v1.8.28 Scope
 
@@ -130,6 +130,10 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Main CI run `25541354485`: passed through `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
 - Main CodeQL run `25541353932`: passed.
 - Release-commit CodeQL run `25541905895`: passed.
+- PR #62 local branch checks: `uv run ruff check .`, `uv run ruff format --check --preview .`, and `uv run mypy src/tensor_grep` passed.
+- PR #62 targeted tests: `uv run pytest tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py tests/unit/test_agent_readiness_script.py -q`: `276 passed in 16.75s`.
+- PR #62 full suite: `uv run pytest -q`: `1886 passed, 50 skipped in 231.31s`.
+- Post-release fast gate: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1828.json`: all 13 checks passed.
 - GitHub release asset verifier passed for `v1.8.28` with the `native-frontdoor` profile.
 - Public upgrade dogfood verified `tg upgrade` from `v1.8.27` to sidecar `tensor-grep==1.8.28`, the scheduled Windows native-front-door retry helper, and final profiled PowerShell / `cmd` / `pwsh -NoProfile` / WSL resolution to `tg 1.8.28`.
 - PyPI reports `tensor-grep 1.8.28` as latest and pinned `tensor-grep==1.8.28` resolves from PyPI JSON.
