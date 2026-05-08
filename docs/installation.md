@@ -58,14 +58,14 @@ tg search "ERROR" app.log
 
 ## Option 3: Pre-compiled Binaries (Direct Download)
 
-We publish release-validated binaries for Windows, Linux, and macOS via GitHub Releases.
+The semantic-release path publishes release-validated CPU front-door binaries for Windows, Linux,
+and macOS via GitHub Releases. NVIDIA/GPU binaries are not part of the current main-CI native
+front-door asset profile.
 
 1. Go to the [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases) page.
 2. Download the binary for your platform:
    - `tg-windows-amd64-cpu.exe`
-   - `tg-windows-amd64-nvidia.exe`
    - `tg-linux-amd64-cpu`
-   - `tg-linux-amd64-nvidia`
    - `tg-macos-amd64-cpu`
 3. Add it to your system PATH.
 4. Verify the binary against `CHECKSUMS.txt` before rollout.
@@ -97,7 +97,7 @@ The repository includes package-manager manifests:
 
 Before cutting a tag release:
 1. Keep `pyproject.toml`, `rust_core/Cargo.toml`, and `npm/package.json` versions aligned.
-2. Ensure manifest URLs point to release artifact names produced by `.github/workflows/release.yml`.
+2. Ensure manifest URLs point to release artifact names produced by main CI's `publish-github-release-assets` job.
 3. Run:
 
 ```bash
@@ -142,19 +142,20 @@ tg --version
 
 CI coverage:
 - `ci.yml` includes `package-manager-readiness` on Linux + Windows.
-- `release.yml` also validates Homebrew and Winget manifests before building release artifacts.
+- `ci.yml` builds release-native CPU front-door assets from the semantic-release tag and uploads them to the GitHub release before PyPI publish is allowed.
 - On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`.
 - CI/release package-manager jobs also run `scripts/prepare_package_manager_release.py --check` to ensure manifests are ready for tap/winget-pkgs publication.
-- Tag release workflow (`release.yml`) also builds `artifacts/package-manager-bundle`, verifies `BUNDLE_CHECKSUMS.txt`, and runs `scripts/smoke_test_package_manager_bundle.py` before publishing release assets.
+- `publish-github-release-assets` builds `artifacts/package-manager-bundle`, verifies `BUNDLE_CHECKSUMS.txt`, and runs `scripts/smoke_test_package_manager_bundle.py` before publishing release assets.
 
 Release automation notes:
-- Tag pushes (`v*`) run `release.yml` and require `validate-release-assets` and `validate-package-managers` before binaries are built.
+- The normal release path is main CI after semantic-release. Tags created by the default `GITHUB_TOKEN` do not trigger a separate tag-push workflow run, so `release.yml` is a manual/backfill path rather than the authoritative asset publisher.
 - `scripts/validate_release_assets.py` verifies cross-file version/URL consistency across PyPI, npm, Homebrew, and Winget release assets.
 - CI and release workflows install `uv` before Windows Winget fallback checks to keep validation deterministic on runner images without `winget validate`.
 - Main CI (`ci.yml`) validates built PyPI artifacts before publish with `scripts/validate_pypi_artifacts.py`.
 - Main CI also runs `scripts/smoke_test_pypi_artifacts.py` to install from local `dist/` artifacts in an isolated virtual environment before publish.
+- `publish-pypi` depends on `publish-github-release-assets` so PyPI cannot publish before installer-critical GitHub release assets are verified.
 - `publish-pypi` verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
-- `publish-success-gate` in main CI always verifies PyPI latest parity for the semantic-release version, even when publish is skipped.
+- `publish-success-gate` in main CI always verifies GitHub release native assets and PyPI latest parity for the semantic-release version, even when PyPI publish is skipped.
 - `release.yml` verifies npm registry latest parity (`--check-npm`) after `npm publish` before release success gate completion.
 
 ### Repeatable Release Checklist

@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-07, the current released state is `v1.8.24`.
+As of 2026-05-08, the current released state is `v1.8.25`, but the active follow-up branch is fixing the GitHub release asset publication contract before the release-native installer path can be trusted.
 
-- Release commit: `1518a24 chore(release): v1.8.24 [skip ci]`
+- Release commit: `29fab52 chore(release): v1.8.25 [skip ci]`
 - Recent fix commits:
+  - `7b38bbb perf: use native front door for managed installs`
   - `ef0c114 fix: harden v1.8.23 dogfood regressions`
   - `19e515d fix: add generated-root scan guardrails`
   - `8a061ee fix: improve agent context trust and rg parity`
@@ -33,15 +34,15 @@ As of 2026-05-07, the current released state is `v1.8.24`.
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25527718815`: passed through `publish-pypi` and `publish-success-gate`
-- Main CodeQL run `25527718311`: passed
-- Release-commit CodeQL run `25528154549`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.24` resolves from PyPI
-- Public installer dogfood: the managed install was upgraded from `1.8.23` to `1.8.24`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.24`; public `tg doctor --json` reported `version = 1.8.24`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = rust-core-extension`.
-- Repo dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.24`, skipped stale in-tree standalone binaries as `stale-skipped`, left `native_tg_binary` unset, and kept `search_acceleration_backend = rust-core-extension`.
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.24>
+- Main CI run `25533577553`: passed through semantic-release, PyPI wheel/sdist validation, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25533576978`: passed
+- Release-commit CodeQL run `25533967134`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.25` resolves from PyPI
+- Public version dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness.json` passed PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL public version probes resolving `tensor-grep 1.8.25`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.25>
+- Important release gap: the `v1.8.25` GitHub release exists but has no uploaded release assets because the tag-only `release.yml` workflow did not run from the semantic-release `GITHUB_TOKEN` tag. This branch moves installer-critical native asset upload/verification into main CI after semantic-release and before PyPI publish.
 - Session handoff: `docs/SESSION_HANDOFF.md`
-- Active post-`v1.8.24` branch work is tracked in `docs/SESSION_HANDOFF.md`: managed stable installs should prefer the matching release-native CPU front door, keep Python as sidecar/fallback, preserve `--format rg --sort path` deterministic rg passthrough, and record `rtk`-style token-output lessons as a future opt-in agent-bounded output profile.
+- Active post-`v1.8.25` branch work is tracked in `docs/SESSION_HANDOFF.md`: publish release-native CPU front-door assets from main CI, keep PyPI gated behind GitHub release asset verification, and preserve the managed installer fallback when assets are absent.
 
 The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, and explicit broad generated-root scan refusal unless callers bound the search or opt in.
 
@@ -59,7 +60,7 @@ Known current weak spots:
 - Normal PowerShell should invoke `tg` or `tg.ps1`. Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; quote the argument for `cmd.exe` or use the PowerShell shim.
 - Implicit native-binary resolution must ignore stale in-tree binaries such as `rust_core/target/debug/tg.exe` and `rust_core/target/release/tg.exe`. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
 - Raw unsorted output ordering is semantic parity, not golden stdout parity. Use `--sort path` when deterministic path ordering matters and `--format rg` when automation needs exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are rg parity regression surfaces in the validated compatibility set.
-- Stable managed install scripts are part of the public launcher contract. When release-native assets exist, the public front door should launch the matching native `tg` binary first and set `TG_SIDECAR_PYTHON` / `TG_NATIVE_TG_BINARY`; Python remains the sidecar or fallback, not the normal exact-text first hop.
+- Stable managed install scripts are part of the public launcher contract. When release-native assets exist, the public front door should launch the matching native `tg` binary first and set `TG_SIDECAR_PYTHON` / `TG_NATIVE_TG_BINARY`; Python remains the sidecar or fallback, not the normal exact-text first hop. A release that updates installer URLs is incomplete until GitHub release assets are uploaded and verified, not merely PyPI-published.
 - Token-efficiency work must be opt-in and contract-aware. Lessons from `rtk` point toward a bounded agent output profile with hard caps, grouped excerpts, truncation, and omission counts; do not change raw `--format rg`, `--json`, or `--ndjson` semantics to save tokens.
 
 ## Operating Rules
@@ -246,8 +247,8 @@ Preferred approach:
 4. push only the accepted change
 5. open a PR with the correct conventional title and wait for PR CI/CodeQL to pass
 6. if the change is release-bearing and intended to ship now, squash-merge the PR to `main`
-7. wait for main CI and semantic-release complete successfully, plus CodeQL, PyPI/package artifact validation, `publish-pypi`, and `publish-success-gate`
-8. verify the GitHub release, PyPI latest version, and any affected public installer/update path. PyPI/public installer availability is verified before final release status is reported
+7. wait for main CI and semantic-release complete successfully, plus CodeQL, `publish-github-release-assets`, PyPI/package artifact validation, `publish-pypi`, and `publish-success-gate`
+8. verify the GitHub release assets, PyPI latest version, and any affected public installer/update path. PyPI/public installer availability is verified before final release status is reported
 9. after semantic-release completes, `git fetch origin main --tags` and fast-forward local `main` to the release commit before reporting the final version state
 
 Do not report a release-bearing fix as complete after only a branch push, open PR, or green PR checks. The final report must name the PR, merge commit, main CI run, CodeQL run, released tag/version, PyPI/package publish status, and any local/public installer dogfood result.

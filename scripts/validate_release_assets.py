@@ -141,11 +141,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         errors.append("CI workflow must build PyPI artifacts from semantic-release tag ref")
 
     if (
-        "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]"
+        "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts, publish-github-release-assets]"
         not in ci_workflow
     ):
         errors.append(
-            "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
+            "publish-pypi must depend on validate-pypi-artifacts and publish-github-release-assets before uploading to PyPI"
         )
 
     uv_bootstrap_count = ci_workflow.count("uses: astral-sh/setup-uv@v8.0.0") + ci_workflow.count(
@@ -162,20 +162,22 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "CI workflow must pass --pypi-poll-interval-seconds to release parity validation"
         )
 
-    if "needs: [release, publish-pypi]" not in ci_workflow:
-        errors.append("CI workflow publish-success-gate must depend on release + publish-pypi")
+    if "needs: [release, publish-pypi, publish-github-release-assets]" not in ci_workflow:
+        errors.append(
+            "CI workflow publish-success-gate must depend on release + publish-pypi + publish-github-release-assets"
+        )
 
     if "if: always()" not in ci_workflow:
         errors.append("CI workflow publish-success-gate must run with if: always()")
 
-    if "if: needs.release.outputs.release_version == ''" not in ci_workflow:
+    if "if: needs.release.outputs.released != 'true'" not in ci_workflow:
         errors.append(
-            "CI workflow publish-success-gate must explicitly handle empty release_version output"
+            "CI workflow publish-success-gate must explicitly handle semantic-release no-release output"
         )
 
-    if "if: needs.release.outputs.release_version != ''" not in ci_workflow:
+    if "if: needs.release.outputs.released == 'true'" not in ci_workflow:
         errors.append(
-            "CI workflow publish-success-gate must guard checkout/parity steps behind non-empty release_version"
+            "CI workflow publish-success-gate must guard checkout/parity steps behind semantic-release `released == 'true'`"
         )
 
     try:
@@ -223,6 +225,58 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     needs_list = []
                 if "benchmark-regression" not in needs_list:
                     errors.append("CI workflow release job must depend on benchmark-regression")
+                release_outputs = release_job.get("outputs", {})
+                if not isinstance(release_outputs, dict):
+                    release_outputs = {}
+                if release_outputs.get("released") != "${{ steps.publish_check.outputs.released }}":
+                    errors.append(
+                        "CI workflow release job must expose semantic-release `released` output"
+                    )
+                if release_outputs.get("release_version") != (
+                    "${{ steps.publish_check.outputs.release_version }}"
+                ):
+                    errors.append(
+                        "CI workflow release job must expose the semantic-release version only "
+                        "through the publish_check step"
+                    )
+                release_steps = release_job.get("steps", [])
+                release_step_by_name: dict[str, dict[str, object]] = {}
+                if isinstance(release_steps, list):
+                    for step in release_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        if isinstance(name, str):
+                            release_step_by_name[name] = step
+                publish_check_step = release_step_by_name.get("Determine PyPI Publish Need")
+                if publish_check_step is None:
+                    errors.append(
+                        "CI workflow release job must include step `Determine PyPI Publish Need`"
+                    )
+                else:
+                    publish_check_env = publish_check_step.get("env", {})
+                    if not isinstance(publish_check_env, dict):
+                        publish_check_env = {}
+                    if publish_check_env.get("SEMANTIC_RELEASED") != (
+                        "${{ steps.release.outputs.released }}"
+                    ):
+                        errors.append(
+                            "CI workflow Determine PyPI Publish Need step must read "
+                            "`steps.release.outputs.released`"
+                        )
+                    publish_check_run = str(publish_check_step.get("run", ""))
+                    for required in (
+                        "SEMANTIC_RELEASED",
+                        "released = os.environ.get",
+                        "if released:",
+                        'version = ""',
+                        'f.write(f"released=',
+                    ):
+                        if required not in publish_check_run:
+                            errors.append(
+                                "CI workflow Determine PyPI Publish Need step must keep "
+                                f"release outputs empty unless semantic-release published: `{required}`"
+                            )
 
             gpu_job = jobs.get("test-gpu-linux")
             if isinstance(gpu_job, dict):
@@ -469,6 +523,18 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
 
             publish_pypi_job = jobs.get("publish-pypi")
             if isinstance(publish_pypi_job, dict):
+                publish_needs = publish_pypi_job.get("needs", [])
+                if isinstance(publish_needs, str):
+                    publish_needs_list = [publish_needs]
+                elif isinstance(publish_needs, list):
+                    publish_needs_list = [str(item) for item in publish_needs]
+                else:
+                    publish_needs_list = []
+                if "publish-github-release-assets" not in publish_needs_list:
+                    errors.append(
+                        "CI workflow publish-pypi job must depend on publish-github-release-assets "
+                        "so PyPI cannot publish before GitHub release assets are verified"
+                    )
                 publish_steps = publish_pypi_job.get("steps", [])
                 publish_run_by_name: dict[str, str] = {}
                 publish_step_names: set[str] = set()
@@ -503,6 +569,296 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             errors.append(
                                 "CI workflow publish-pypi "
                                 f"`{parity_step}` step must include `{required_flag}`"
+                            )
+
+            native_assets_job = jobs.get("build-release-native-assets")
+            if not isinstance(native_assets_job, dict):
+                errors.append(
+                    "CI workflow must define build-release-native-assets job for semantic-release GitHub assets"
+                )
+            else:
+                native_needs = native_assets_job.get("needs", [])
+                native_needs_list = (
+                    [native_needs]
+                    if isinstance(native_needs, str)
+                    else [str(item) for item in native_needs]
+                    if isinstance(native_needs, list)
+                    else []
+                )
+                if "release" not in native_needs_list:
+                    errors.append(
+                        "CI workflow build-release-native-assets job must depend on release"
+                    )
+                if str(native_assets_job.get("if", "")) != (
+                    "needs.release.outputs.released == 'true'"
+                ):
+                    errors.append(
+                        "CI workflow build-release-native-assets job must run only when "
+                        "semantic-release reports `released == 'true'`"
+                    )
+                strategy = native_assets_job.get("strategy", {})
+                matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
+                matrix_os = matrix.get("os", []) if isinstance(matrix, dict) else []
+                matrix_os_list = (
+                    [str(matrix_os)]
+                    if isinstance(matrix_os, str)
+                    else [str(item) for item in matrix_os]
+                    if isinstance(matrix_os, list)
+                    else []
+                )
+                if "macos-15-intel" not in matrix_os_list:
+                    errors.append(
+                        "CI workflow build-release-native-assets matrix must use an Intel "
+                        "macOS runner label (`macos-15-intel`) for `tg-macos-amd64-cpu`"
+                    )
+                native_steps = native_assets_job.get("steps", [])
+                native_run_by_name: dict[str, str] = {}
+                native_step_by_name: dict[str, dict[str, object]] = {}
+                if isinstance(native_steps, list):
+                    for step in native_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        if isinstance(name, str):
+                            native_step_by_name[name] = step
+                        run = step.get("run")
+                        if isinstance(name, str) and isinstance(run, str):
+                            native_run_by_name[name] = run
+                checkout_steps = (
+                    [
+                        step
+                        for step in native_steps
+                        if isinstance(step, dict) and step.get("uses") == "actions/checkout@v6"
+                    ]
+                    if isinstance(native_steps, list)
+                    else []
+                )
+                if not checkout_steps:
+                    errors.append(
+                        "CI workflow build-release-native-assets job must checkout the semantic-release tag"
+                    )
+                else:
+                    with_block = checkout_steps[0].get("with", {})
+                    if not isinstance(with_block, dict):
+                        with_block = {}
+                    if with_block.get("ref") != "v${{ needs.release.outputs.release_version }}":
+                        errors.append(
+                            "CI workflow build-release-native-assets checkout must use "
+                            "`ref: v${{ needs.release.outputs.release_version }}`"
+                        )
+                build_run = native_run_by_name.get("Build native release front door")
+                if build_run is None:
+                    errors.append(
+                        "CI workflow build-release-native-assets job must include "
+                        "step `Build native release front door`"
+                    )
+                elif "cargo build --release --no-default-features" not in build_run:
+                    errors.append(
+                        "CI workflow build-release-native-assets "
+                        "`Build native release front door` step must invoke "
+                        "`cargo build --release --no-default-features`"
+                    )
+                package_run = native_run_by_name.get("Package native release front door")
+                if package_run is None:
+                    errors.append(
+                        "CI workflow build-release-native-assets job must include "
+                        "step `Package native release front door`"
+                    )
+                else:
+                    for expected_asset in (
+                        "tg-linux-amd64-cpu",
+                        "tg-macos-amd64-cpu",
+                        "tg-windows-amd64-cpu.exe",
+                    ):
+                        if expected_asset not in package_run:
+                            errors.append(
+                                "CI workflow build-release-native-assets "
+                                f"`Package native release front door` step must package `{expected_asset}`"
+                            )
+                upload_step = native_step_by_name.get("Upload native release front door")
+                if upload_step is None:
+                    errors.append(
+                        "CI workflow build-release-native-assets job must include "
+                        "step `Upload native release front door`"
+                    )
+                elif upload_step.get("uses") != "actions/upload-artifact@v7":
+                    errors.append(
+                        "CI workflow build-release-native-assets "
+                        "`Upload native release front door` step must use `actions/upload-artifact@v7`"
+                    )
+                joined_native_runs = "\n".join(native_run_by_name.values())
+                if (
+                    "scripts/build_binaries.py" in joined_native_runs
+                    or "nuitka" in joined_native_runs.lower()
+                ):
+                    errors.append(
+                        "CI workflow build-release-native-assets must use Rust native front doors, not the old Nuitka builder"
+                    )
+
+            github_assets_job = jobs.get("publish-github-release-assets")
+            if not isinstance(github_assets_job, dict):
+                errors.append(
+                    "CI workflow must define publish-github-release-assets job for semantic-release GitHub assets"
+                )
+            else:
+                if str(github_assets_job.get("if", "")) != (
+                    "needs.release.outputs.released == 'true'"
+                ):
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must run only when "
+                        "semantic-release reports `released == 'true'`"
+                    )
+                github_needs = github_assets_job.get("needs", [])
+                github_needs_list = (
+                    [github_needs]
+                    if isinstance(github_needs, str)
+                    else [str(item) for item in github_needs]
+                    if isinstance(github_needs, list)
+                    else []
+                )
+                for required_need in ("release", "build-release-native-assets"):
+                    if required_need not in github_needs_list:
+                        errors.append(
+                            "CI workflow publish-github-release-assets job must depend on "
+                            f"{required_need}"
+                        )
+                permissions = github_assets_job.get("permissions", {})
+                if not isinstance(permissions, dict) or permissions.get("contents") != "write":
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must request `contents: write`"
+                    )
+                github_steps = github_assets_job.get("steps", [])
+                github_run_by_name: dict[str, str] = {}
+                github_step_by_name: dict[str, dict[str, object]] = {}
+                if isinstance(github_steps, list):
+                    for step in github_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        if isinstance(name, str):
+                            github_step_by_name[name] = step
+                        run = step.get("run")
+                        if isinstance(name, str) and isinstance(run, str):
+                            github_run_by_name[name] = run
+                checkout_steps = (
+                    [
+                        step
+                        for step in github_steps
+                        if isinstance(step, dict) and step.get("uses") == "actions/checkout@v6"
+                    ]
+                    if isinstance(github_steps, list)
+                    else []
+                )
+                if checkout_steps:
+                    with_block = checkout_steps[0].get("with", {})
+                    if not isinstance(with_block, dict):
+                        with_block = {}
+                    if with_block.get("ref") != "v${{ needs.release.outputs.release_version }}":
+                        errors.append(
+                            "CI workflow publish-github-release-assets checkout must use "
+                            "`ref: v${{ needs.release.outputs.release_version }}`"
+                        )
+                else:
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must checkout the semantic-release tag"
+                    )
+                download_step = github_step_by_name.get("Download native release front doors")
+                if download_step is None:
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must include "
+                        "step `Download native release front doors`"
+                    )
+                elif download_step.get("uses") != "actions/download-artifact@v8":
+                    errors.append(
+                        "CI workflow publish-github-release-assets "
+                        "`Download native release front doors` step must use `actions/download-artifact@v8`"
+                    )
+                else:
+                    with_block = download_step.get("with", {})
+                    if (
+                        not isinstance(with_block, dict)
+                        or with_block.get("pattern") != "release-native-*"
+                    ):
+                        errors.append(
+                            "CI workflow publish-github-release-assets "
+                            "`Download native release front doors` step must download `release-native-*` artifacts"
+                        )
+                validate_native_run = github_run_by_name.get(
+                    "Validate native release asset matrix and generate checksums"
+                )
+                if validate_native_run is None:
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must include "
+                        "step `Validate native release asset matrix and generate checksums`"
+                    )
+                else:
+                    for required in (
+                        "scripts/validate_release_binary_artifacts.py",
+                        "--expected-profile native-frontdoor",
+                        "--checksums-out artifacts/CHECKSUMS.txt",
+                    ):
+                        if required not in validate_native_run:
+                            errors.append(
+                                "CI workflow publish-github-release-assets "
+                                "`Validate native release asset matrix and generate checksums` "
+                                f"step must include `{required}`"
+                            )
+                upload_step = github_step_by_name.get("Upload GitHub release native assets")
+                if upload_step is None:
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must include "
+                        "step `Upload GitHub release native assets`"
+                    )
+                elif upload_step.get("uses") != "softprops/action-gh-release@v2":
+                    errors.append(
+                        "CI workflow publish-github-release-assets "
+                        "`Upload GitHub release native assets` step must use `softprops/action-gh-release@v2`"
+                    )
+                else:
+                    with_block = upload_step.get("with", {})
+                    if not isinstance(with_block, dict):
+                        with_block = {}
+                    if (
+                        with_block.get("tag_name")
+                        != "v${{ needs.release.outputs.release_version }}"
+                    ):
+                        errors.append(
+                            "CI workflow publish-github-release-assets "
+                            "`Upload GitHub release native assets` step must upload to "
+                            "`v${{ needs.release.outputs.release_version }}`"
+                        )
+                    files = str(with_block.get("files", ""))
+                    for required_file in (
+                        "artifacts/native/**/tg-*",
+                        "artifacts/CHECKSUMS.txt",
+                        "artifacts/package-manager-bundle/homebrew-tap/Formula/tensor-grep.rb",
+                        "artifacts/package-manager-bundle/PUBLISH_INSTRUCTIONS.md",
+                        "artifacts/package-manager-bundle/BUNDLE_CHECKSUMS.txt",
+                    ):
+                        if required_file not in files:
+                            errors.append(
+                                "CI workflow publish-github-release-assets "
+                                "`Upload GitHub release native assets` step must upload "
+                                f"`{required_file}`"
+                            )
+                verify_run = github_run_by_name.get("Verify GitHub release native asset coverage")
+                if verify_run is None:
+                    errors.append(
+                        "CI workflow publish-github-release-assets job must include "
+                        "step `Verify GitHub release native asset coverage`"
+                    )
+                else:
+                    for required in (
+                        "scripts/verify_github_release_assets.py",
+                        "--expected-profile native-frontdoor",
+                        "--wait-seconds",
+                        "--poll-interval-seconds",
+                    ):
+                        if required not in verify_run:
+                            errors.append(
+                                "CI workflow publish-github-release-assets "
+                                "`Verify GitHub release native asset coverage` "
+                                f"step must include `{required}`"
                             )
 
             validate_pypi_job = jobs.get("validate-pypi-artifacts")
@@ -623,6 +979,35 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         errors.append(
                             "CI workflow publish-success-gate `Download all distributions` step must run only when `publish_pypi == 'true'`"
                         )
+                asset_result_step = (
+                    "Confirm GitHub release asset job result when publishing is required"
+                )
+                if asset_result_step not in gate_step_names:
+                    errors.append(
+                        "CI workflow publish-success-gate job must include step "
+                        f"`{asset_result_step}`"
+                    )
+                asset_verify_step = (
+                    "Verify GitHub release native assets for semantic-release version"
+                )
+                if asset_verify_step not in gate_step_names:
+                    errors.append(
+                        "CI workflow publish-success-gate job must include step "
+                        f"`{asset_verify_step}`"
+                    )
+                asset_verify_run = gate_run_by_name.get(asset_verify_step)
+                if asset_verify_run is not None:
+                    for required in (
+                        "scripts/verify_github_release_assets.py",
+                        "--expected-profile native-frontdoor",
+                        "--wait-seconds",
+                        "--poll-interval-seconds",
+                    ):
+                        if required not in asset_verify_run:
+                            errors.append(
+                                "CI workflow publish-success-gate "
+                                f"`{asset_verify_step}` step must include `{required}`"
+                            )
 
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")

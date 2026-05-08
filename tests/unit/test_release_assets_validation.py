@@ -852,8 +852,8 @@ def test_should_require_ci_terminal_publish_success_gate():
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any("publish-success-gate" in err for err in errors)
-    assert any("empty release_version output" in err for err in errors)
-    assert any("non-empty release_version" in err for err in errors)
+    assert any("semantic-release no-release output" in err for err in errors)
+    assert any("released == 'true'" in err for err in errors)
 
 
 def test_should_require_release_job_to_depend_on_benchmark_regression_gate():
@@ -1474,6 +1474,199 @@ def test_should_require_publish_success_gate_dist_branch_and_download_guard():
         "publish-success-gate `Download all distributions` step must run only when `publish_pypi == 'true'`"
         in err
         for err in errors
+    )
+
+
+def test_should_require_ci_semantic_release_github_asset_jobs():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace("  build-release-native-assets:", "  old-assets:", 1)
+    ci_workflow = ci_workflow.replace("  publish-github-release-assets:", "  old-upload:", 1)
+
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert (
+        "CI workflow must define build-release-native-assets job for semantic-release GitHub assets"
+        in joined_errors
+    )
+    assert (
+        "CI workflow must define publish-github-release-assets job for semantic-release GitHub assets"
+        in joined_errors
+    )
+
+
+def test_should_require_ci_release_native_assets_to_use_rust_frontdoor_not_nuitka():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [benchmark-regression]
+      build-release-native-assets:
+        needs: release
+        if: needs.release.outputs.release_version != ''
+        steps:
+          - uses: actions/checkout@v6
+            with:
+              ref: v${{ needs.release.outputs.release_version }}
+          - name: Build native release front door
+            run: uv run python scripts/build_binaries.py
+          - name: Package native release front door
+            run: |
+              echo tg-linux-amd64-cpu
+              echo tg-macos-amd64-cpu
+              echo tg-windows-amd64-cpu.exe
+          - name: Upload native release front door
+            uses: actions/upload-artifact@v7
+      publish-github-release-assets:
+        needs: [release, build-release-native-assets]
+        permissions:
+          contents: write
+        steps:
+          - uses: actions/checkout@v6
+            with:
+              ref: v${{ needs.release.outputs.release_version }}
+          - name: Download native release front doors
+            uses: actions/download-artifact@v8
+            with:
+              pattern: release-native-*
+          - name: Validate native release asset matrix and generate checksums
+            run: uv run python scripts/validate_release_binary_artifacts.py --expected-profile native-frontdoor --checksums-out artifacts/CHECKSUMS.txt
+          - name: Upload GitHub release native assets
+            uses: softprops/action-gh-release@v2
+            with:
+              tag_name: v${{ needs.release.outputs.release_version }}
+              files: |
+                artifacts/native/**/tg-*
+                artifacts/CHECKSUMS.txt
+                artifacts/package-manager-bundle/homebrew-tap/Formula/tensor-grep.rb
+                artifacts/package-manager-bundle/PUBLISH_INSTRUCTIONS.md
+                artifacts/package-manager-bundle/BUNDLE_CHECKSUMS.txt
+          - name: Verify GitHub release native asset coverage
+            run: uv run python scripts/verify_github_release_assets.py --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5
+      publish-pypi:
+        needs: [release, publish-github-release-assets]
+      publish-success-gate:
+        if: always()
+        needs: [release, publish-pypi, publish-github-release-assets]
+        steps:
+          - name: Download all distributions
+            if: needs.release.outputs.release_version != '' && needs.release.outputs.publish_pypi == 'true'
+          - name: Confirm GitHub release asset job result when publishing is required
+            run: echo ok
+          - name: Verify GitHub release native assets for semantic-release version
+            run: uv run python scripts/verify_github_release_assets.py --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5
+          - name: Verify PyPI parity for semantic-release version (always)
+            run: uv run python scripts/validate_release_version_parity.py --expected-version 1 --expected-tag v1 --check-pypi --pypi-wait-seconds 180 --pypi-poll-interval-seconds 10 --dist-dir dist
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert (
+        "CI workflow build-release-native-assets must use Rust native front doors, not the old Nuitka builder"
+        in joined_errors
+    )
+    assert (
+        "CI workflow build-release-native-assets `Build native release front door` step must invoke `cargo build --release --no-default-features`"
+        in joined_errors
+    )
+
+
+def test_should_require_ci_release_assets_to_gate_on_semantic_release_released_output():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace(
+        "      released: ${{ steps.publish_check.outputs.released }}\n",
+        "",
+        1,
+    )
+    ci_workflow = ci_workflow.replace(
+        "          SEMANTIC_RELEASED: ${{ steps.release.outputs.released }}\n",
+        "",
+        1,
+    )
+    ci_workflow = ci_workflow.replace(
+        "    if: needs.release.outputs.released == 'true'",
+        "    if: needs.release.outputs.release_version != ''",
+        2,
+    )
+
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert "CI workflow release job must expose semantic-release `released` output" in joined_errors
+    assert (
+        "CI workflow Determine PyPI Publish Need step must read `steps.release.outputs.released`"
+        in joined_errors
+    )
+    assert (
+        "CI workflow build-release-native-assets job must run only when semantic-release reports `released == 'true'`"
+        in joined_errors
+    )
+    assert (
+        "CI workflow publish-github-release-assets job must run only when semantic-release reports `released == 'true'`"
+        in joined_errors
+    )
+
+
+def test_should_require_ci_macos_native_frontdoor_to_use_intel_runner_label():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace("macos-15-intel", "macos-latest", 1)
+
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "CI workflow build-release-native-assets matrix must use an Intel macOS runner label" in err
+        for err in errors
+    )
+
+
+def test_should_require_pypi_publish_to_wait_for_github_release_assets():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [benchmark-regression]
+      publish-pypi:
+        needs: [release, build-wheels-pypi]
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert (
+        "CI workflow publish-pypi job must depend on publish-github-release-assets so PyPI cannot publish before GitHub release assets are verified"
+        in joined_errors
     )
 
 

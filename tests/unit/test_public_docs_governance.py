@@ -51,9 +51,12 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "JavaScript package-manager commands require `package.json` evidence" in contracts
     assert "omit commands entirely when no runner evidence exists" in contracts
     assert "stale-skipped" in contracts
+    assert "Future token-efficiency profiles must be opt-in" in contracts
+    assert "omission counts" in contracts
+    assert "refetch commands" in contracts
 
 
-def test_handoff_docs_should_record_current_v1824_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v1825_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -63,7 +66,7 @@ def test_handoff_docs_should_record_current_v1824_release_state_and_fast_gate() 
     }
 
     for content in docs.values():
-        assert "v1.8.24" in content
+        assert "v1.8.25" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -72,14 +75,16 @@ def test_handoff_docs_should_record_current_v1824_release_state_and_fast_gate() 
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "1518a24 chore(release): v1.8.24 [skip ci]" in content
-        assert "ef0c114 fix: harden v1.8.23 dogfood regressions" in content
+        assert "29fab52 chore(release): v1.8.25 [skip ci]" in content
+        assert "7b38bbb perf: use native front door for managed installs" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25527718815" in handoff
-    assert "25527718311" in handoff
-    assert "25528154549" in handoff
-    assert "tensor-grep==1.8.24" in handoff
+    assert "25533577553" in handoff
+    assert "25533576978" in handoff
+    assert "25533967134" in handoff
+    assert "tensor-grep==1.8.25" in handoff
+    assert "GitHub release has no uploaded release assets" in handoff
+    assert "publish-github-release-assets" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff
@@ -96,9 +101,11 @@ def test_handoff_docs_should_record_current_v1824_release_state_and_fast_gate() 
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme
-    assert "d5245f6 docs: update v1.8.24 handoff and skill guidance" in readme
-    assert "25529282908" in readme
-    assert "25529282683" in readme
+    assert "7b38bbb perf: use native front door for managed installs" in readme
+    assert "29fab52 chore(release): v1.8.25 [skip ci]" in readme
+    assert "25533577553" in readme
+    assert "25533576978" in readme
+    assert "GitHub release asset verification is the active follow-up" in readme
     assert "not a full ast-grep replacement" in readme
     assert "GPU and `classify` remain opt-in/experimental" in readme
     assert "Directly invoking `tg.cmd`" in readme

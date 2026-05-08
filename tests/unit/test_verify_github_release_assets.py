@@ -50,6 +50,63 @@ def test_validate_release_assets_payload_should_pass_for_complete_asset_matrix()
     assert errors == []
 
 
+def test_validate_release_assets_payload_should_pass_for_native_frontdoor_asset_matrix():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tg-macos-amd64-cpu", "size": 100, "digest": f"sha256:{'b' * 64}"},
+            {"name": "tg-windows-amd64-cpu.exe", "size": 100, "digest": f"sha256:{'c' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'b' * 64}  tg-macos-amd64-cpu",
+        f"{'c' * 64}  tg-windows-amd64-cpu.exe",
+    ])
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=[
+            "tg-linux-amd64-cpu",
+            "tg-macos-amd64-cpu",
+            "tg-windows-amd64-cpu.exe",
+            "CHECKSUMS.txt",
+        ],
+    )
+    assert errors == []
+
+
+def test_verify_release_assets_with_retries_should_retry_transient_request_errors(monkeypatch):
+    module = _load_module()
+    calls = 0
+    sleeps: list[float] = []
+
+    def fake_verify_release_assets(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("transient release asset propagation")
+        return []
+
+    monkeypatch.setattr(module, "verify_release_assets", fake_verify_release_assets)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    errors = module.verify_release_assets_with_retries(
+        repo="oimiragieo/tensor-grep",
+        tag="v1.2.3",
+        token=None,
+        expected_profile="native-frontdoor",
+        wait_seconds=10,
+        poll_interval_seconds=0.01,
+    )
+
+    assert errors == []
+    assert calls == 2
+    assert sleeps == [0.1]
+
+
 def test_validate_release_assets_payload_should_fail_on_missing_asset_or_checksum():
     module = _load_module()
     release_data = {
@@ -341,6 +398,55 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
         ],
     )
     assert any("Checksum mismatch for PUBLISH_INSTRUCTIONS.md" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_map_nested_bundle_paths_to_flat_assets():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'a' * 64}"},
+            {"name": "oimiragieo.tensor-grep.yaml", "size": 10, "digest": f"sha256:{'b' * 64}"},
+            {"name": "PUBLISH_INSTRUCTIONS.md", "size": 10, "digest": f"sha256:{'c' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+            {"name": "BUNDLE_CHECKSUMS.txt"},
+        ]
+    }
+    bundle_checksums_content = "\n".join([
+        f"{'a' * 64}  homebrew-tap/Formula/tensor-grep.rb",
+        (
+            f"{'b' * 64}  "
+            "winget-pkgs/manifests/o/oimiragieo/tensor-grep/1.8.26/"
+            "oimiragieo.tensor-grep.yaml"
+        ),
+        f"{'c' * 64}  PUBLISH_INSTRUCTIONS.md",
+    ])
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content="",
+        bundle_checksums_content=bundle_checksums_content,
+        expected_assets=[
+            "tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml",
+            "PUBLISH_INSTRUCTIONS.md",
+            "CHECKSUMS.txt",
+            "BUNDLE_CHECKSUMS.txt",
+        ],
+        checksum_required_assets=["CHECKSUMS.txt"],
+        bundle_checksum_required_assets=[
+            "tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml",
+            "PUBLISH_INSTRUCTIONS.md",
+            "BUNDLE_CHECKSUMS.txt",
+        ],
+        bundle_checksum_asset_paths={
+            "tensor-grep.rb": "homebrew-tap/Formula/tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml": (
+                "winget-pkgs/manifests/o/oimiragieo/tensor-grep/1.8.26/oimiragieo.tensor-grep.yaml"
+            ),
+            "PUBLISH_INSTRUCTIONS.md": "PUBLISH_INSTRUCTIONS.md",
+        },
+    )
+    assert errors == []
 
 
 def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksum_entry():

@@ -577,8 +577,10 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:
+      released: ${{ steps.publish_check.outputs.released }}
       publish_pypi: ${{ steps.publish_check.outputs.publish_pypi }}
       release_version: ${{ steps.publish_check.outputs.release_version }}
+      release_tag: ${{ steps.publish_check.outputs.release_tag }}
     permissions:
       contents: write
       id-token: write
@@ -595,31 +597,52 @@ jobs:
 
       - name: Determine PyPI Publish Need
         id: publish_check
+        env:
+          SEMANTIC_RELEASED: ${{ steps.release.outputs.released }}
+          SEMANTIC_RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SEMANTIC_RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           python - << 'PY'
           import json
+          import os
           import urllib.request
           import tomllib
           from pathlib import Path
 
-          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          publish = "true"
-          try:
-              with urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json", timeout=10) as resp:
-                  data = json.load(resp)
-                  releases = data.get("releases", {})
-                  if version in releases:
-                      publish = "false"
-          except Exception:
-              # On transient network or PyPI API issues, prefer a safe publish attempt.
+          released = os.environ.get("SEMANTIC_RELEASED", "").lower() == "true"
+          version = os.environ.get("SEMANTIC_RELEASE_VERSION", "").strip()
+          tag = os.environ.get("SEMANTIC_RELEASE_TAG", "").strip()
+          publish = "false"
+          if released:
+              if not version:
+                  version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+              if not tag:
+                  tag = f"v{version}"
               publish = "true"
+              try:
+                  with urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json", timeout=10) as resp:
+                      data = json.load(resp)
+                      releases = data.get("releases", {})
+                      if version in releases:
+                          publish = "false"
+              except Exception:
+                  # On transient network or PyPI API issues, prefer a safe publish attempt
+                  # after semantic-release has actually produced a new version.
+                  publish = "true"
+          else:
+              version = ""
+              tag = ""
 
-          out = Path(__import__("os").environ["GITHUB_OUTPUT"])
+          out = Path(os.environ["GITHUB_OUTPUT"])
           with out.open("a", encoding="utf-8") as f:
+              f.write(f"released={'true' if released else 'false'}\n")
               f.write(f"publish_pypi={publish}\n")
               f.write(f"release_version={version}\n")
-          print(f"release_version={version}")
+              f.write(f"release_tag={tag}\n")
+          print(f"released={released}")
           print(f"publish_pypi={publish}")
+          print(f"release_version={version}")
+          print(f"release_tag={tag}")
           PY
 
   build-wheels-pypi:
@@ -699,9 +722,149 @@ jobs:
             --version "${{ needs.release.outputs.release_version }}" \
             --work-dir .tmp
 
+  build-release-native-assets:
+    name: build-release-native-assets (${{ matrix.os }})
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python for PyO3 Linker
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Create venv for PyO3
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "$GITHUB_WORKSPACE\\.venv\\Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Build native release front door
+        working-directory: rust_core
+        run: cargo build --release --no-default-features
+
+      - name: Package native release front door
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-native
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            src="rust_core/target/release/tg.exe"
+            dest="dist-native/tg-windows-amd64-cpu.exe"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            src="rust_core/target/release/tg"
+            dest="dist-native/tg-linux-amd64-cpu"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            src="rust_core/target/release/tg"
+            dest="dist-native/tg-macos-amd64-cpu"
+          else
+            echo "Unsupported runner OS: $RUNNER_OS"
+            exit 1
+          fi
+          cp "$src" "$dest"
+          chmod +x "$dest" || true
+          "$src" --version | tee version.txt
+          grep -Fx "tg ${RELEASE_VERSION}" version.txt
+          "$src" --help >/dev/null
+
+      - name: Upload native release front door
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-native-${{ matrix.os }}
+          path: dist-native/
+
+  publish-github-release-assets:
+    name: publish-github-release-assets
+    needs: [release, build-release-native-assets]
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Download native release front doors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-native-*
+          path: artifacts/native
+
+      - name: Validate native release asset matrix and generate checksums
+        run: |
+          uv run python scripts/validate_release_binary_artifacts.py \
+            --artifacts-dir artifacts/native \
+            --checksums-out artifacts/CHECKSUMS.txt \
+            --expected-profile native-frontdoor
+
+      - name: Build package-manager publish bundle
+        run: |
+          uv run python scripts/prepare_package_manager_release.py \
+            --output-dir artifacts/package-manager-bundle
+
+      - name: Verify package-manager bundle checksums
+        run: |
+          uv run python scripts/verify_package_manager_bundle_checksums.py \
+            --bundle-dir artifacts/package-manager-bundle
+
+      - name: Smoke-test package-manager bundle contracts
+        run: |
+          uv run python scripts/smoke_test_package_manager_bundle.py \
+            --bundle-dir artifacts/package-manager-bundle \
+            --expected-version "${{ needs.release.outputs.release_version }}"
+
+      - name: Upload GitHub release native assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.release.outputs.release_version }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/native/**/tg-*
+            artifacts/CHECKSUMS.txt
+            artifacts/package-manager-bundle/homebrew-tap/Formula/tensor-grep.rb
+            artifacts/package-manager-bundle/winget-pkgs/manifests/o/oimiragieo/tensor-grep/${{ needs.release.outputs.release_version }}/oimiragieo.tensor-grep.yaml
+            artifacts/package-manager-bundle/PUBLISH_INSTRUCTIONS.md
+            artifacts/package-manager-bundle/BUNDLE_CHECKSUMS.txt
+
+      - name: Verify GitHub release native asset coverage
+        run: |
+          uv run python scripts/verify_github_release_assets.py \
+            --repo "${{ github.repository }}" \
+            --tag "v${{ needs.release.outputs.release_version }}" \
+            --token "${{ secrets.GITHUB_TOKEN }}" \
+            --expected-profile native-frontdoor \
+            --wait-seconds 120 \
+            --poll-interval-seconds 5
+
   publish-pypi:
     name: publish-pypi
-    needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
+    needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts, publish-github-release-assets]
     if: needs.release.outputs.publish_pypi == 'true'
     runs-on: ubuntu-latest
     environment:
@@ -738,24 +901,24 @@ jobs:
 
   publish-success-gate:
     name: publish-success-gate
-    needs: [release, publish-pypi]
+    needs: [release, publish-pypi, publish-github-release-assets]
     if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Skip publish parity gate when semantic-release produced no version
-        if: needs.release.outputs.release_version == ''
+        if: needs.release.outputs.released != 'true'
         run: |
-          echo "No semantic-release version for this commit; skipping publish parity gate."
+          echo "No semantic-release release for this commit; skipping publish parity gate."
 
       - uses: actions/checkout@v6
-        if: needs.release.outputs.release_version != ''
+        if: needs.release.outputs.released == 'true'
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
       - name: Download all distributions
-        if: needs.release.outputs.release_version != '' && needs.release.outputs.publish_pypi == 'true'
+        if: needs.release.outputs.released == 'true' && needs.release.outputs.publish_pypi == 'true'
         uses: actions/download-artifact@v8
         with:
           pattern: pypi-*
@@ -763,7 +926,7 @@ jobs:
           merge-multiple: true
 
       - name: Confirm publish job result when publishing is required
-        if: needs.release.outputs.release_version != ''
+        if: needs.release.outputs.released == 'true'
         run: |
           if [ "${{ needs.release.result }}" != "success" ]; then
             echo "release job did not succeed."
@@ -779,8 +942,28 @@ jobs:
           fi
           echo "publish-pypi job succeeded."
 
+      - name: Confirm GitHub release asset job result when publishing is required
+        if: needs.release.outputs.released == 'true'
+        run: |
+          if [ "${{ needs.publish-github-release-assets.result }}" != "success" ]; then
+            echo "publish-github-release-assets job did not succeed."
+            exit 1
+          fi
+          echo "publish-github-release-assets job succeeded."
+
+      - name: Verify GitHub release native assets for semantic-release version
+        if: needs.release.outputs.released == 'true'
+        run: |
+          python scripts/verify_github_release_assets.py \
+            --repo "${{ github.repository }}" \
+            --tag "v${{ needs.release.outputs.release_version }}" \
+            --token "${{ secrets.GITHUB_TOKEN }}" \
+            --expected-profile native-frontdoor \
+            --wait-seconds 120 \
+            --poll-interval-seconds 5
+
       - name: Verify PyPI parity for semantic-release version (always)
-        if: needs.release.outputs.release_version != ''
+        if: needs.release.outputs.released == 'true'
         run: |
           PARITY_ARGS=(
             --expected-version "${{ needs.release.outputs.release_version }}"

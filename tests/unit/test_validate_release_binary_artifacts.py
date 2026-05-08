@@ -31,6 +31,16 @@ def test_should_validate_expected_release_binary_matrix(tmp_path: Path):
     assert errors == []
 
 
+def test_should_validate_native_frontdoor_release_binary_profile(tmp_path: Path):
+    module = _load_module()
+    _touch(tmp_path / "release-native-ubuntu-latest" / "tg-linux-amd64-cpu")
+    _touch(tmp_path / "release-native-macos-15-intel" / "tg-macos-amd64-cpu")
+    _touch(tmp_path / "release-native-windows-latest" / "tg-windows-amd64-cpu.exe")
+
+    errors = module.validate_artifacts(tmp_path, expected_profile="native-frontdoor")
+    assert errors == []
+
+
 def test_should_fail_when_binary_is_missing(tmp_path: Path):
     module = _load_module()
     _touch(tmp_path / "binary-Linux-cpu" / "tg-linux-amd64-cpu")
