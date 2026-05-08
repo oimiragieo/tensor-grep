@@ -49,6 +49,18 @@ function Write-BashFile {
     Write-AsciiFile -Path $Path -Value $lfValue
 }
 
+function Invoke-CheckedNativeCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][scriptblock]$Command
+    )
+
+    & $Command | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Install-NativeFrontdoorBinary {
     param(
         [Parameter(Mandatory = $true)][string]$frontdoorDir,
@@ -76,6 +88,7 @@ function Install-NativeFrontdoorBinary {
         Write-Host "      Native tg front door installed: $nativeFrontdoorPath"
     } catch {
         Remove-Item -LiteralPath $nativeTempPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $nativeFrontdoorPath -Force -ErrorAction SilentlyContinue
         Write-Warning (
             "Native tg front-door download failed; falling back to Python wrapper. " +
             "Expected asset: $nativeDownloadUrl. Error: $_"
@@ -194,6 +207,59 @@ function Remove-StalePathLauncher {
     }
 }
 
+function Clear-TensorGrepUvCache {
+    param(
+        [Parameter(Mandatory = $true)][string]$uvPath,
+        [Parameter(Mandatory = $true)][string]$installChannel
+    )
+
+    if ($installChannel -ne "stable") {
+        return
+    }
+    Write-Host "      Clearing cached tensor-grep package metadata for stable install..."
+    try {
+        & $uvPath cache clean tensor-grep | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Unable to clear cached tensor-grep package metadata; continuing with fresh install attempt. Exit code: $LASTEXITCODE"
+        }
+    } catch {
+        Write-Warning "Unable to clear cached tensor-grep package metadata; continuing with fresh install attempt. Error: $_"
+    }
+}
+
+function Restore-PreviousManagedInstall {
+    param(
+        [Parameter(Mandatory = $true)][string]$installDir,
+        [Parameter(Mandatory = $true)][string]$backupInstallDir
+    )
+
+    if (!(Test-Path -LiteralPath $backupInstallDir)) {
+        return
+    }
+    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+    Move-Item -LiteralPath $backupInstallDir -Destination $installDir -Force
+}
+
+function Commit-StagedManagedInstall {
+    param(
+        [Parameter(Mandatory = $true)][string]$installDir,
+        [Parameter(Mandatory = $true)][string]$stagingInstallDir,
+        [Parameter(Mandatory = $true)][string]$backupInstallDir
+    )
+
+    Remove-Item -LiteralPath $backupInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $installDir) {
+        Move-Item -LiteralPath $installDir -Destination $backupInstallDir
+    }
+    try {
+        Move-Item -LiteralPath $stagingInstallDir -Destination $installDir
+        Remove-Item -LiteralPath $backupInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {
+        Restore-PreviousManagedInstall -installDir $installDir -backupInstallDir $backupInstallDir
+        throw
+    }
+}
+
 Write-Host "=========================================================="
 Write-Host "           TENSOR-GREP WINDOWS INSTALLER                  "
 Write-Host "=========================================================="
@@ -232,14 +298,17 @@ try {
 
     # 3. Create Isolated Environment
     $installDir = "$env:USERPROFILE\.tensor-grep"
-    if (Test-Path $installDir) {
-        Remove-Item -Recurse -Force $installDir
-    }
-    New-Item -ItemType Directory -Path $installDir | Out-Null
+    $stagingInstallDir = "$installDir.installing"
+    $backupInstallDir = "$installDir.previous"
+    Remove-Item -LiteralPath $stagingInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $stagingInstallDir | Out-Null
 
     Write-Host "[3/4] Building isolated Python 3.12 environment..."
-    Set-Location $installDir
-    & $uvPath venv --python 3.12 .venv
+    Clear-TensorGrepUvCache -uvPath $uvPath -installChannel $installChannel
+    Set-Location $stagingInstallDir
+    Invoke-CheckedNativeCommand -Description "Create managed Python environment" -Command {
+        & $uvPath venv --python 3.12 .venv
+    }
 
     # 4. Install PyTorch bindings and the tool
     Write-Host "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA)..."
@@ -257,7 +326,9 @@ try {
 
     if ($hardwareFlag -ne "cpu") {
         # Install PyTorch with specific index first to ensure correct wheel resolution
-        & $uvPath pip install torch torchvision torchaudio $indexArg $indexUrl --python "$installDir\.venv\Scripts\python.exe"
+        Invoke-CheckedNativeCommand -Description "Install PyTorch bindings" -Command {
+            & $uvPath pip install torch torchvision torchaudio $indexArg $indexUrl --python "$stagingInstallDir\.venv\Scripts\python.exe"
+        }
         $pkgRequirement = if ($installChannel -eq "main") {
             "tensor-grep[gpu-win,nlp,ast] @ $pkgSpec"
         } elseif ($requestedVersion) {
@@ -265,7 +336,9 @@ try {
         } else {
             "tensor-grep[gpu-win,nlp,ast]"
         }
-        & $uvPath pip install $pkgRequirement --python "$installDir\.venv\Scripts\python.exe"
+        Invoke-CheckedNativeCommand -Description "Install tensor-grep package" -Command {
+            & $uvPath pip install $pkgRequirement --python "$stagingInstallDir\.venv\Scripts\python.exe"
+        }
     } else {
         $pkgRequirement = if ($installChannel -eq "main") {
             "tensor-grep[ast,nlp] @ $pkgSpec"
@@ -274,20 +347,31 @@ try {
         } else {
             "tensor-grep[ast,nlp]"
         }
-        & $uvPath pip install $pkgRequirement --python "$installDir\.venv\Scripts\python.exe"
+        Invoke-CheckedNativeCommand -Description "Install tensor-grep package" -Command {
+            & $uvPath pip install $pkgRequirement --python "$stagingInstallDir\.venv\Scripts\python.exe"
+        }
     }
 
     # Ensure AST runtime grammars are present explicitly across environments.
-    & $uvPath pip install tree-sitter tree-sitter-python tree-sitter-javascript --python "$installDir\.venv\Scripts\python.exe"
-
-    # 5. Install front-door wrapper and PATH shims for profile-independent command resolution.
-    $frontdoorDir = Join-Path $installDir "bin"
-    if (!(Test-Path $frontdoorDir)) {
-        New-Item -ItemType Directory -Path (Join-Path $installDir "bin") -Force | Out-Null
+    Invoke-CheckedNativeCommand -Description "Install AST runtime grammars" -Command {
+        & $uvPath pip install tree-sitter tree-sitter-python tree-sitter-javascript --python "$stagingInstallDir\.venv\Scripts\python.exe"
     }
-    $installedVersion = (& "$installDir\.venv\Scripts\python.exe" -c "import importlib.metadata; print(importlib.metadata.version('tensor-grep'))").Trim()
-    $nativeFrontdoorPath = Install-NativeFrontdoorBinary `
-        -frontdoorDir $frontdoorDir `
+
+    # 5. Prepare the front-door wrapper inside the staged install before replacing
+    # the existing managed directory. A failed native download or interrupted shim
+    # write must not leave public shims pointing at a half-built install.
+    $frontdoorDir = Join-Path $installDir "bin"
+    $stagingFrontdoorDir = Join-Path $stagingInstallDir "bin"
+    if (!(Test-Path $stagingFrontdoorDir)) {
+        New-Item -ItemType Directory -Path $stagingFrontdoorDir -Force | Out-Null
+    }
+    $installedVersion = (& "$stagingInstallDir\.venv\Scripts\python.exe" -c "import importlib.metadata; print(importlib.metadata.version('tensor-grep'))").Trim()
+    if ($LASTEXITCODE -ne 0 -or !$installedVersion) {
+        throw "Read installed tensor-grep version failed with exit code $LASTEXITCODE"
+    }
+    $nativeFrontdoorPath = Join-Path $frontdoorDir "tg.exe"
+    $stagingNativeFrontdoorPath = Install-NativeFrontdoorBinary `
+        -frontdoorDir $stagingFrontdoorDir `
         -installedVersion $installedVersion `
         -installChannel $installChannel
     $frontdoorCmdPath = Join-Path $frontdoorDir "tg.cmd"
@@ -298,6 +382,13 @@ try {
     $wslInstallDir = Convert-ToWslPath $installDir
     $msysFrontdoorPath = Convert-ToMsysPath $frontdoorBashPath
     $wslFrontdoorPath = Convert-ToWslPath $frontdoorBashPath
+    $stagingFrontdoorCmdPath = Join-Path $stagingFrontdoorDir "tg.cmd"
+    $stagingFrontdoorPs1Path = Join-Path $stagingFrontdoorDir "tg.ps1"
+    $stagingFrontdoorBashPath = Join-Path $stagingFrontdoorDir "tg"
+    $stagingFrontdoorArgBridgePath = Join-Path $stagingFrontdoorDir "tg-cmd-bridge.py"
+    if ((Test-Path -LiteralPath $stagingNativeFrontdoorPath) -and ($stagingNativeFrontdoorPath -ne (Join-Path $stagingFrontdoorDir "tg.exe"))) {
+        Move-Item -LiteralPath $stagingNativeFrontdoorPath -Destination (Join-Path $stagingFrontdoorDir "tg.exe") -Force
+    }
     $frontdoorCmdContent = (
         "@echo off`r`n" +
         "setlocal`r`n" +
@@ -368,10 +459,17 @@ if [ -f "`$TG_NATIVE" ]; then
 fi
 exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
 "@
-    Write-AsciiFile -Path $frontdoorCmdPath -Value $frontdoorCmdContent
-    Write-AsciiFile -Path $frontdoorArgBridgePath -Value $cmdArgvBridgeContent
-    Write-AsciiFile -Path $frontdoorPs1Path -Value $frontdoorPs1Content
-    Write-BashFile -Path $frontdoorBashPath -Value $frontdoorBashContent
+    Write-AsciiFile -Path $stagingFrontdoorCmdPath -Value $frontdoorCmdContent
+    Write-AsciiFile -Path $stagingFrontdoorArgBridgePath -Value $cmdArgvBridgeContent
+    Write-AsciiFile -Path $stagingFrontdoorPs1Path -Value $frontdoorPs1Content
+    Write-BashFile -Path $stagingFrontdoorBashPath -Value $frontdoorBashContent
+
+    Set-Location -Path $env:USERPROFILE
+    Commit-StagedManagedInstall `
+        -installDir $installDir `
+        -stagingInstallDir $stagingInstallDir `
+        -backupInstallDir $backupInstallDir
+    Set-Location $installDir
 
     Write-Host "      Installing managed external LSP providers..."
     try {
@@ -526,6 +624,9 @@ exec "`$TG_FRONTDOOR" "`$@"
     Write-Host "=========================================================="
 }
 finally {
+    if ($stagingInstallDir -and (Test-Path -LiteralPath $stagingInstallDir)) {
+        Remove-Item -LiteralPath $stagingInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if (Test-Path -Path $originalPath) {
         Set-Location -Path $originalPath
         Write-Host "Returned to original directory: $originalPath"

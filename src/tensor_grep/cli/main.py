@@ -1,4 +1,5 @@
 import dataclasses
+import html
 import json
 import os
 import re
@@ -175,6 +176,141 @@ def _cli_package_version() -> str:
         return version("tensor-grep")
     except Exception:
         return _read_project_version_fallback()
+
+
+_PYPI_JSON_URL = "https://pypi.org/pypi/tensor-grep/json"
+_PYPI_SIMPLE_URL = "https://pypi.org/simple/tensor-grep/"
+_PYPI_SIMPLE_VERSION_RE = re.compile(
+    r"tensor[-_]?grep-([0-9]+(?:\.[0-9]+)*(?:(?:a|b|rc|dev|post)[0-9]+)?)",
+    re.IGNORECASE,
+)
+_PYPI_SIMPLE_ANCHOR_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _version_sort_key(version: str) -> tuple[tuple[int, int | str], ...]:
+    parts = re.findall(r"\d+|[A-Za-z]+", version)
+    key: list[tuple[int, int | str]] = []
+    for part in parts:
+        if part.isdigit():
+            key.append((0, int(part)))
+        else:
+            key.append((1, part.lower()))
+    return tuple(key)
+
+
+def _is_version_newer(candidate: str, current: str) -> bool:
+    return _version_sort_key(candidate) > _version_sort_key(current)
+
+
+def _highest_tensor_grep_version(versions: list[str]) -> str | None:
+    normalized = sorted({version.strip() for version in versions if version.strip()})
+    if not normalized:
+        return None
+    stable_versions = [
+        version for version in normalized if re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", version)
+    ]
+    return max(stable_versions or normalized, key=_version_sort_key)
+
+
+def _candidate_versions_from_pypi_json(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    candidates: list[str] = []
+    releases = payload.get("releases")
+    if isinstance(releases, dict):
+        for version, release_files in releases.items():
+            if not isinstance(version, str):
+                continue
+            if isinstance(release_files, list):
+                if not release_files:
+                    continue
+                if all(
+                    isinstance(file_payload, dict) and file_payload.get("yanked") is True
+                    for file_payload in release_files
+                ):
+                    continue
+            candidates.append(version)
+
+    info = payload.get("info")
+    info_version = info.get("version") if isinstance(info, dict) else None
+    if isinstance(info_version, str) and info_version not in candidates:
+        release_files = releases.get(info_version) if isinstance(releases, dict) else None
+        if not isinstance(release_files, list) or any(
+            not (isinstance(file_payload, dict) and file_payload.get("yanked") is True)
+            for file_payload in release_files
+        ):
+            candidates.append(info_version)
+    return candidates
+
+
+def _candidate_versions_from_pypi_simple_index(simple_index: str) -> list[str]:
+    candidates: list[str] = []
+    for match in _PYPI_SIMPLE_ANCHOR_RE.finditer(simple_index):
+        attrs = match.group("attrs")
+        if re.search(r"(?:^|\s)data-yanked(?:\s|=|$)", attrs, re.IGNORECASE):
+            continue
+        body = re.sub(r"<[^>]+>", "", match.group("body"))
+        candidates.extend(_PYPI_SIMPLE_VERSION_RE.findall(html.unescape(body)))
+    return candidates
+
+
+def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | None:
+    """Best-effort latest-version probe that avoids trusting one stale PyPI cache surface."""
+    import urllib.request
+
+    candidates: list[str] = []
+    headers = {
+        "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "User-Agent": f"tensor-grep/{_cli_package_version()}",
+    }
+
+    try:
+        request = urllib.request.Request(_PYPI_JSON_URL, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        candidates.extend(_candidate_versions_from_pypi_json(payload))
+    except Exception:
+        pass
+
+    try:
+        request = urllib.request.Request(_PYPI_SIMPLE_URL, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            simple_index = response.read().decode("utf-8", errors="replace")
+        candidates.extend(_candidate_versions_from_pypi_simple_index(simple_index))
+    except Exception:
+        pass
+
+    return _highest_tensor_grep_version(candidates)
+
+
+def _verify_target_python_tensor_grep_version(python_executable: str) -> str:
+    probe_code = (
+        "import importlib.metadata as m; import tensor_grep; print(m.version('tensor-grep'))"
+    )
+    try:
+        result = subprocess.run(
+            [python_executable, "-c", probe_code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"post-upgrade verification failed: {exc}") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        combined = stderr or stdout or str(exc)
+        raise RuntimeError(f"post-upgrade verification failed: {combined}") from exc
+
+    version = (result.stdout or "").strip().splitlines()
+    if not version:
+        raise RuntimeError("post-upgrade verification failed: no tensor-grep version reported")
+    return version[-1].strip()
 
 
 def _version_detail_lines() -> tuple[str, ...]:
@@ -5184,16 +5320,31 @@ def doctor(
 def upgrade() -> None:
     """Upgrade tensor-grep to the latest version published on PyPI."""
     import importlib.metadata
-    import subprocess
-    import sys
 
-    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
-
-    def _upgrade_attempts() -> list[tuple[str, list[str]]]:
+    def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
+        pip_cmd = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--no-cache-dir",
+            package_spec,
+        ]
         return [
             (
                 "uv",
-                ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "tensor-grep"],
+                [
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--upgrade",
+                    "--refresh-package",
+                    "tensor-grep",
+                    package_spec,
+                ],
             ),
             ("pip", pip_cmd),
         ]
@@ -5221,7 +5372,7 @@ def upgrade() -> None:
                             text=True,
                             check=True,
                         )
-                        result = subprocess.run(pip_cmd, capture_output=True, text=True, check=True)
+                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                         return result, "pip+ensurepip"
                     except FileNotFoundError as ee:
                         errors.append(f"ensurepip: {ee}")
@@ -5239,7 +5390,10 @@ def upgrade() -> None:
             or "being used by another process" in lowered
         )
 
-    def _schedule_windows_self_upgrade(attempts: list[tuple[str, list[str]]]) -> Path:
+    def _schedule_windows_self_upgrade(
+        attempts: list[tuple[str, list[str]]],
+        expected_version: str,
+    ) -> Path:
         import textwrap
 
         helper_code = textwrap.dedent(
@@ -5253,6 +5407,7 @@ def upgrade() -> None:
             parent_pid = int(sys.argv[1])
             log_path = Path(sys.argv[2])
             attempts = json.loads(sys.argv[3])
+            expected_version = sys.argv[4]
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
             for _ in range(300):
@@ -5326,9 +5481,51 @@ def upgrade() -> None:
                                 )
                 return False, "", "; ".join(errors)
 
+            def _verify_installed_version(expected_version: str) -> tuple[bool, str]:
+                probe_code = (
+                    "import importlib.metadata as m; "
+                    "import tensor_grep; "
+                    "print(m.version('tensor-grep'))"
+                )
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-c", probe_code],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except FileNotFoundError as exc:
+                    return False, f"post-upgrade verification failed: {exc}"
+                except subprocess.CalledProcessError as exc:
+                    stderr = (exc.stderr or "").strip()
+                    stdout = (exc.stdout or "").strip()
+                    combined = stderr or stdout or str(exc)
+                    return False, f"post-upgrade verification failed: {combined}"
+                version = (result.stdout or "").strip().splitlines()
+                if not version:
+                    return False, "post-upgrade verification failed: no tensor-grep version reported"
+                installed_version = version[-1].strip()
+                if expected_version and installed_version != expected_version:
+                    return (
+                        False,
+                        "post-upgrade verification failed: expected tensor-grep "
+                        + expected_version
+                        + " but target Python reports "
+                        + installed_version,
+                    )
+                return True, installed_version
+
             ok, method, payload = _run_attempts()
             if ok:
+                verified, version = _verify_installed_version(expected_version)
+                if not verified:
+                    log_path.write_text(
+                        "Scheduled tensor-grep upgrade failed.\\n" + version,
+                        encoding="utf-8",
+                    )
+                    raise SystemExit(1)
                 text = "Scheduled tensor-grep upgrade completed via " + method + "."
+                text += "\\nVerified tensor-grep " + version + "."
                 if payload:
                     text += "\\n" + payload
                 log_path.write_text(text, encoding="utf-8")
@@ -5354,6 +5551,7 @@ def upgrade() -> None:
                 str(os.getpid()),
                 str(log_path),
                 json.dumps(attempts),
+                expected_version,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -5372,17 +5570,54 @@ def upgrade() -> None:
     typer.echo("Upgrading tensor-grep to the latest version...")
 
     try:
-        attempts = _upgrade_attempts()
         previous_version = _installed_version()
+        latest_version = _latest_pypi_tensor_grep_version()
+        exact_latest_requested = False
+        if latest_version is not None and (
+            previous_version is None
+            or latest_version == previous_version
+            or _is_version_newer(latest_version, previous_version)
+        ):
+            package_spec = f"tensor-grep=={latest_version}"
+            exact_latest_requested = True
+        else:
+            package_spec = "tensor-grep"
+        attempts = _upgrade_attempts(package_spec)
         result, method = _run_upgrade(attempts)
-        current_version = _installed_version()
+        current_version = _verify_target_python_tensor_grep_version(sys.executable)
+        if (
+            exact_latest_requested
+            and latest_version is not None
+            and current_version != latest_version
+        ):
+            raise RuntimeError(
+                "post-upgrade verification failed: expected tensor-grep "
+                f"{latest_version} from PyPI but target Python reports {current_version}"
+            )
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
-        if current_version is not None and current_version == previous_version:
+        if (
+            latest_version is not None
+            and current_version == previous_version
+            and current_version == latest_version
+        ):
             typer.echo(f"tensor-grep is already at the latest PyPI version ({current_version}).")
-        elif "Requirement already satisfied" in output:
-            typer.echo("tensor-grep is already up to date!")
+        elif current_version == previous_version:
+            if latest_version is None:
+                typer.echo(
+                    "tensor-grep install completed, but the latest PyPI version could not be "
+                    f"verified; installed version is {current_version}."
+                )
+            elif _is_version_newer(current_version, latest_version):
+                typer.echo(
+                    f"tensor-grep {current_version} is installed; PyPI metadata reported "
+                    f"{latest_version}, so no downgrade was attempted."
+                )
+            elif "Requirement already satisfied" in output:
+                typer.echo(f"tensor-grep is already installed ({current_version}).")
+            else:
+                typer.echo(f"tensor-grep remains installed at {current_version}.")
         else:
             typer.echo(f"Successfully upgraded tensor-grep via {method}!")
             if output:
@@ -5390,7 +5625,22 @@ def upgrade() -> None:
 
     except RuntimeError as e:
         if _looks_like_windows_self_update_lock(str(e)):
-            log_path = _schedule_windows_self_upgrade(_upgrade_attempts())
+            previous_version = _installed_version()
+            latest_version = _latest_pypi_tensor_grep_version()
+            expected_version = ""
+            if latest_version is not None and (
+                previous_version is None
+                or latest_version == previous_version
+                or _is_version_newer(latest_version, previous_version)
+            ):
+                package_spec = f"tensor-grep=={latest_version}"
+                expected_version = latest_version
+            else:
+                package_spec = "tensor-grep"
+            log_path = _schedule_windows_self_upgrade(
+                _upgrade_attempts(package_spec),
+                expected_version,
+            )
             typer.echo(
                 "Windows is still using tg.exe, so the upgrade was scheduled in the background."
             )

@@ -4,36 +4,35 @@ Last updated: 2026-05-08
 
 ## Current Release State
 
-- Latest released version: `v1.8.25`
-- Latest release commit: `29fab52 chore(release): v1.8.25 [skip ci]`
-- Latest fix commit: `7b38bbb perf: use native front door for managed installs`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.25>
-- Main CI run `25533577553`: passed through semantic-release, PyPI artifact validation, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25533576978`: passed
-- Release-commit CodeQL run `25533967134`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.25`
-- PyPI latest and pinned install: `tensor-grep==1.8.25` resolves from PyPI
-- Important release gap: the `v1.8.25` GitHub release has no uploaded release assets, so release-native managed installs still fall back to Python. Root cause: semantic-release created the tag/release with `GITHUB_TOKEN`, which does not trigger the tag-only `release.yml` workflow.
-- Active fix: move installer-critical GitHub release asset build/upload/verification into main CI after semantic-release, and make `publish-pypi` wait for `publish-github-release-assets`.
-- Public shell dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness.json` passed public version probes for PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolving `tensor-grep 1.8.25`. Last full public behavior dogfood was `v1.8.24`; normal PowerShell, `cmd.exe`, Git Bash, and WSL regex alternation worked; `tg --version` prints one line by default, `tg --version --verbose` prints feature details, and help starts with `Usage: tg`.
+- Latest released version: `v1.8.26`
+- Latest release commit: `ce2c1a5 chore(release): v1.8.26 [skip ci]`
+- Latest fix commit: `6f82d14 fix: publish GitHub release native assets from main CI`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.26>
+- Main CI run `25535886184`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25535886001`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.26` resolves from PyPI
+- GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.26 --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5` passed
+- Closed release gap: `v1.8.26` has uploaded and verified release-native CPU assets plus package-manager bundle assets because main CI now publishes assets after semantic-release and before PyPI.
+- Active fix: stable installers and `tg upgrade` must clear stale package metadata, request the exact current non-yanked PyPI version when known, verify post-upgrade imports, check native installer exit codes, and stage managed-environment plus front-door replacement so resolver or wrapper failures cannot break an existing shim.
+- Public shell dogfood: local patched Windows installer pinned to `1.8.26` installed the native front door and `tg --version`, `cmd /c tg --version`, and `pwsh -NoProfile -Command "tg --version"` all returned `tg 1.8.26`. Direct public `tg upgrade` from the older managed install reproduced the stale-metadata/corrupt-sidecar failure and is the active branch target.
 - Public doctor dogfood: from outside the repo on `v1.8.24`, `tg doctor --json` reported `version = 1.8.24`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
 - Public generated-root guard dogfood: `tg search --files . --hidden` refused generated/cache/dependency roots with exit code `2`; normal scoped hidden search still succeeded.
 - Repo-dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.24`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`.
 
-## Active Post-v1.8.25 PR Scope
+## Active Post-v1.8.26 PR Scope
 
-Current branch: `fix/semantic-release-github-assets`.
+Current branch: `fix/windows-installer-pypi-cache`.
 
-This branch targets the `v1.8.25` release asset follow-up:
+This branch targets the immediate `v1.8.26` installer and updater dogfood follow-up:
 
-- main CI builds release-native CPU front doors (`tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`) from the semantic-release tag only when the action reports `released == 'true'`
-- the macOS amd64 asset is built on `macos-15-intel`, not `macos-latest`, so the filename matches the runner architecture
-- main CI uploads those assets, `CHECKSUMS.txt`, and package-manager bundle files to the GitHub release created by semantic-release
-- `scripts/verify_github_release_assets.py` verifies the native-front-door asset profile and nested package-manager bundle checksum paths
-- `scripts/verify_github_release_assets.py` retries both validation failures and transient GitHub API/download failures so post-upload eventual consistency does not fail immediately
-- `publish-pypi` depends on `publish-github-release-assets` so a future release cannot publish to PyPI before GitHub release assets are verified
-- `publish-success-gate` re-checks GitHub release native assets before declaring the release complete
-- non-release main pushes keep `release_version` empty so asset jobs cannot mutate an older GitHub release
+- `tg upgrade` queries PyPI JSON plus the Simple API before resolving, skips yanked releases, pins `tensor-grep==X.Y.Z` when the index reports the same-or-newer latest version, uses `uv --refresh-package tensor-grep`, and falls back to pip with `--no-cache-dir`.
+- `tg upgrade` verifies the target Python can import `tensor_grep` and reports the installed distribution version before printing success or "already latest"; the scheduled Windows self-upgrade helper runs the same expected-version verification before writing a success log, so a corrupted sidecar can no longer be reported as a successful latest install.
+- Windows and Unix installers clear cached `tensor-grep` package metadata for stable installs before asking `uv` to resolve `tensor-grep`
+- Windows PowerShell installer native commands check `$LASTEXITCODE` before the staged swap instead of relying on `$ErrorActionPreference` to catch native failures.
+- Windows and Unix installers build the new managed environment and front-door files under a staging directory and only replace the existing install after package installation and front-door generation succeed
+- failed staged installs keep the previous managed directory in place, preserving existing profile/shim targets
+- Windows dogfood reproduced the stale `uv` cache failure, confirmed `uv cache clean tensor-grep` fixes the resolver view, then confirmed the patched installer installs `1.8.26` and cleans the staging directory
+- Expected patch release from this installer/update branch after PR CI and squash-merge: `v1.8.27`
 
 Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
@@ -56,7 +55,7 @@ Do not report final version state before the GitHub release assets, PyPI/package
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.8.24 Fixed
+## What v1.8.12-v1.8.26 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -91,6 +90,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Plain path-list output uses one trailing LF and preserves `-0/--null` path-list behavior.
 - Count plus `-0/--null` parsing is covered.
 - `tg ast-info --json` exposes AST language identifiers for agents without scraping text help.
+- The `v1.8.26` release moved release-native CPU asset build/upload/verification into main CI after semantic-release, so GitHub release assets are present before PyPI publish and public installers can use the matching native front door.
 
 ## Verified Before Release Closeout
 
@@ -101,6 +101,8 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PR #46 `fix: improve agent context trust and rg parity`: merged and released as `v1.8.22`
 - PR #54 `fix: add generated-root scan guardrails`: merged and released as `v1.8.23`
 - PR #56 `fix: harden v1.8.23 dogfood regressions`: merged and released as `v1.8.24`
+- PR #59 `perf: use native front door for managed installs`: merged and released as `v1.8.25`
+- PR #60 `fix: publish GitHub release native assets from main CI`: merged and released as `v1.8.26`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
 - `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed
@@ -119,13 +121,14 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Main CI run `25527718815`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
 - Main CodeQL run `25527718311`: passed
 - Release-commit CodeQL run `25528154549`: passed
-- PyPI reports `tensor-grep 1.8.24` as latest and pinned `tensor-grep==1.8.24` resolves from PyPI JSON.
-- Public `v1.8.24` update dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, script-friendly one-line version output, public `Usage: tg` help, and public doctor PATH-version parity.
+- Main CI run `25535886184`: passed through `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- GitHub release asset verifier passed for `v1.8.26` with the `native-frontdoor` profile.
+- PyPI reports `tensor-grep 1.8.26` as latest and pinned `tensor-grep==1.8.26` resolves from PyPI JSON.
 
 ## What Works Well Now
 
 - Scoped text search, JSON, NDJSON, multi-root search, globs, `--column`, `--vimgrep`, `--path-separator`, `--type-list`, and invalid-regex diagnostics are stable enough for agent workflows.
-- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.24` install on this host.
+- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolved through the public Windows install by `v1.8.25`; installer/update changes must re-run those probes before release closeout.
 - `tg --version` is script-friendly by default; use `tg --version --verbose` for feature/SIMD/Arrow diagnostics.
 - Stable managed installs should prefer the release-native front door when the matching GitHub asset exists; Python remains the sidecar/fallback instead of the first hop for normal shell `tg`.
 - Public help starts with `Usage: tg`, including `python -m tensor_grep --help` and installed command help paths.
@@ -147,7 +150,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - `validation_commands` can still be heuristic when stack evidence is partial. Treat targeted commands as hints, not proof of full coverage; require `validation_plan[].detection`, do not trust npm/package-manager hints without `package.json` evidence, and omit commands entirely when no runner evidence exists.
 - Local `uv run tg doctor --json` can find stale in-tree standalone binaries at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current dev-path safety should ignore them for implicit native delegation, report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
 - Explicitly opted-in broad `tg search --files ...` over generated artifact trees can still be expensive. The managed launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
-- Public script-install cold-path performance is an active follow-up. The branch should prove whether the release-native front door materially improves public managed installs before any docs or README speed row changes.
+- Public installer/update reliability is the active follow-up. Stable installs and `tg upgrade` must not trust stale package metadata, must verify the target Python can still import `tensor_grep`, must check native installer exit codes, and must not remove a working managed install before the replacement environment and front-door files succeed.
 - Root-scale unsorted `--files-with-matches`, `--count`, and `--force-cpu` can still differ from raw `rg` in output ordering even when the file set and counts match. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting before claiming golden stdout parity; sorted files-with-matches, files-without-match, and replacement output are now regression-covered parity edges on the active branch.
 - Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; use normal PowerShell `tg` / `tg.ps1` or quote the metacharacter argument for `cmd.exe`.
 - Always verify command resolution with `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, `where.exe tg`, `Get-Command tg -All`, and WSL `wsl bash -lc 'command -v tg; tg --version'` after installer changes. A stale `Python*\Scripts\tg.exe` returning an older tensor-grep version is a release blocker.
@@ -169,7 +172,7 @@ git log -3 --oneline
 uv run tg --version
 uv run tg doctor --json
 python -m pip index versions tensor-grep --index-url https://pypi.org/simple --no-cache-dir
-gh release view v1.8.24 --json tagName,publishedAt,url
+gh release view v1.8.26 --json tagName,publishedAt,url
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg --version
 cmd /c tg --version

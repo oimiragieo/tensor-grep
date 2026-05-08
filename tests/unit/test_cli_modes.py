@@ -17,6 +17,9 @@ from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.main import (
+    _candidate_versions_from_pypi_json,
+    _candidate_versions_from_pypi_simple_index,
+    _highest_tensor_grep_version,
     _safe_stdout_line,
     _select_ast_backend_for_pattern,
     _should_refuse_unbounded_generated_scan,
@@ -4107,12 +4110,20 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
     versions = iter(["0.31.0", "0.32.0"])
 
+    monkeypatch.setattr("sys.executable", "python")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
     monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -4122,25 +4133,84 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
 
 
-def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_change(monkeypatch):
+def test_upgrade_pins_exact_latest_pypi_version_when_local_metadata_is_stale(monkeypatch):
     calls: list[list[str]] = []
 
     def _fake_run(cmd, capture_output=True, text=True, check=True):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
-    versions = iter(["0.32.0", "0.32.0"])
-
-    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
+    assert any("tensor-grep==0.33.0" in cmd for cmd in calls)
+    assert calls[0][-1] == "tensor-grep==0.33.0"
+    assert "Successfully upgraded tensor-grep via uv!" in result.stdout
+
+
+def test_upgrade_latest_version_candidates_skip_yanked_pypi_releases():
+    payload = {
+        "info": {"version": "0.34.0"},
+        "releases": {
+            "0.32.0": [{"yanked": False}],
+            "0.33.0": [{"yanked": False}],
+            "0.34.0": [{"yanked": True}],
+        },
+    }
+    simple_index = """
+    <a href="tensor_grep-0.33.0-py3-none-any.whl">tensor_grep-0.33.0-py3-none-any.whl</a>
+    <a href="tensor_grep-0.34.0-py3-none-any.whl" data-yanked="bad release">tensor_grep-0.34.0-py3-none-any.whl</a>
+    """
+
+    candidates = [
+        *_candidate_versions_from_pypi_json(payload),
+        *_candidate_versions_from_pypi_simple_index(simple_index),
+    ]
+
+    assert _highest_tensor_grep_version(candidates) == "0.33.0"
+
+
+def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_latest(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
+        raise AssertionError("pip fallback should not be used when uv succeeds")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "uv"
+    assert any("tensor-grep==0.32.0" in cmd for cmd in calls)
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
 
 
@@ -4161,6 +4231,8 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
                     returncode=1, cmd=cmd, stderr="No module named pip"
                 )
             return subprocess.CompletedProcess(cmd, 0, stdout="Successfully installed", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr("sys.executable", "python")
@@ -4168,6 +4240,11 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
 
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
     monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -4176,6 +4253,40 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
     assert pip_attempts["count"] == 2
     assert "Successfully upgraded tensor-grep via pip+ensurepip!" in result.stdout
+
+
+def test_upgrade_fails_when_post_upgrade_python_cannot_import_tensor_grep(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr="No module named tensor_grep",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 1
+    assert any("tensor-grep==0.33.0" in cmd for cmd in calls)
+    assert "post-upgrade verification failed" in result.output
+    assert "No module named tensor_grep" in result.output
+    assert "already at the latest PyPI version" not in result.output
 
 
 def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatch):
@@ -4195,6 +4306,11 @@ def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatc
 
     monkeypatch.setattr("sys.executable", "python")
     monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -4242,8 +4358,14 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -4254,6 +4376,12 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     assert popen_calls
     assert popen_calls[0][0] == "python"
     assert popen_calls[0][1] == "-c"
+    helper_code = popen_calls[0][2]
+    assert "def _verify_installed_version" in helper_code
+    assert "import tensor_grep" in helper_code
+    assert "post-upgrade verification failed" in helper_code
+    assert "tensor-grep==0.32.0" in popen_calls[0][5]
+    assert popen_calls[0][6] == "0.32.0"
     assert "Windows is still using tg.exe" in result.output
     assert "Wait a few seconds, then run `tg --version` again." in result.output
     assert "Upgrade log:" in result.output
@@ -4326,8 +4454,14 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])

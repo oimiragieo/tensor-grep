@@ -4,18 +4,18 @@
 
 ## 2026-05-08 Current Handoff
 
-The current released state is `v1.8.25`, but the active follow-up branch is fixing GitHub release asset publication before the release-native installer path should be trusted as complete. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.26`. GitHub release asset publication is now part of main CI, and the active follow-up branch is hardening stable installers plus `tg upgrade` against stale package metadata, missing post-upgrade imports, and failed managed-environment replacement. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `29fab52 chore(release): v1.8.25 [skip ci]`
-- Latest merged fix commit: `7b38bbb perf: use native front door for managed installs`
-- Main CI run `25533577553`: passed through semantic-release, PyPI artifact validation, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25533576978`: passed
-- Release-commit CodeQL run `25533967134`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.25`
-- PyPI latest and pinned public install: `tensor-grep==1.8.25` resolves from PyPI.
-- GitHub release asset gap: the `v1.8.25` GitHub release has no uploaded assets because the tag-only `release.yml` workflow did not run from the semantic-release `GITHUB_TOKEN` tag. Active work moves release-native CPU asset upload/verification into main CI after semantic-release and before PyPI publish.
+- Release commit: `ce2c1a5 chore(release): v1.8.26 [skip ci]`
+- Latest merged fix commit: `6f82d14 fix: publish GitHub release native assets from main CI`
+- Main CI run `25535886184`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25535886001`: passed
+- PyPI latest and pinned public install: `tensor-grep==1.8.26` resolves from PyPI.
+- GitHub release asset verification: `v1.8.26` release assets passed the `native-frontdoor` verifier profile.
+- Active installer/update follow-up: stable installers and `tg upgrade` must clear stale package metadata, pin the current non-yanked PyPI version when known, verify post-upgrade imports, check native installer exit codes, and stage managed-environment plus front-door replacement before swapping `~/.tensor-grep`.
+- Expected patch release from the active installer/update branch: `v1.8.27`.
 
 Current product read:
 
@@ -28,7 +28,7 @@ Current product read:
 - Windows/WSL installer shims are materially cleaner. Direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv; use normal PowerShell `tg` / `tg.ps1` for regex metacharacters.
 - Dev-path native safety should ignore stale in-tree standalone binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly; `uv run tg doctor --json` should report skipped stale candidates instead of letting searches validate through old native code.
 - Raw unsorted root output is semantic parity. Use `--sort path --format rg` for automation that needs deterministic ripgrep-style stdout.
-- Active release follow-up: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback, but that installer path is incomplete until GitHub release assets are uploaded and verified by main CI. Do not change benchmark docs from release-asset work.
+- Active release follow-up: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening must clear stale package metadata, verify post-upgrade imports, check native installer exit codes, and stage replacement installs plus front-door files so transient failures do not break existing shims. Do not change benchmark docs from installer work.
 - Token-output follow-up from `rtk-ai/rtk`: add a future opt-in agent-bounded output profile with grouped excerpts, hard caps, truncation, and omission counts. Do not mutate raw `--format rg`, `--json`, or `--ndjson` to save tokens.
 
 Current next work:
