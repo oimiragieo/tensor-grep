@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.8.32 (2026-05-08)
+
+### Bug Fixes
+
+- Expose launcher route observability
+  ([`ab2635a`](https://github.com/oimiragieo/tensor-grep/commit/ab2635a31ddcf6ce0ef3e2acd2aad3a635fee567))
+
+Expose current-process and fresh-shell launcher route diagnostics in doctor output, record benchmark
+  launcher command kind, and keep GPU/classify docs honest after the 1.8.31 dogfood.
+
+### Documentation
+
+- Update v1.8.31 release handoff
+  ([`c3464fb`](https://github.com/oimiragieo/tensor-grep/commit/c3464fbc81c589354a7a4510ec6b9da3231c3163))
+
+Sync current handoff docs, README, repo skill, and docs governance tests to the released v1.8.31
+  state.
+
+
 ## v1.8.31 (2026-05-08)
 
 ### Bug Fixes
