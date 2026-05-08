@@ -75,6 +75,8 @@ Context and edit-planning contracts:
 - Repo-map and context-ranking defaults exclude generated/cache/dependency directories, binary files, logs, and hidden non-code files from normal code context.
 - Future token-efficiency profiles must be opt-in and recoverable. Do not mutate raw `--format rg`, `--json`, or `--ndjson` contracts to save tokens; add explicit agent profiles with hard budgets, grouped excerpts, omission counts, and refetch commands.
 - Compact output should cap breadth before cutting semantic payload. Selected functions must preserve matched lines and executable body slices, and omissions should be reported in metadata or clearly non-code delimiters instead of comment-shaped placeholders inside source blocks.
+- Future `tg agent` or Actionable Context Capsule output must be a separate agent contract, not a changed search contract. A capsule should include primary file/function, route rationale, bounded source snippets with line maps, related call sites, validation evidence with provenance, risk, edit order, checkpoint or rollback metadata, omission counts, confidence, follow-up read commands, and an "ask user before editing" recommendation when uncertainty or risk is high.
+- Capsule and search-intent routing evidence should label claims as `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, or `stale/uncertain`. If these signals disagree, confidence should be downgraded and the contradiction should be explicit instead of hidden behind a single ranked file.
 
 Known current limitations:
 - Explicitly opted-in broad generated-root walks can still be expensive. The Python path-list output path and managed Windows launchers force UTF-8, but scope file-list commands to the smallest useful root whenever possible.

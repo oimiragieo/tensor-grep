@@ -68,7 +68,9 @@ Known current weak spots:
 - `classify` should be quiet and deterministic when its provider stack is unavailable. It should fall back before tokenizer/model loading if Triton is not live or the model is not ready.
 - GPU benchmark correctness must treat no-match as a real comparator outcome. `rg` exit code `1` with empty output is valid when `tg` also returns no matches.
 - Token-efficiency work must be opt-in and contract-aware. Lessons from `rtk` point toward a bounded agent output profile with hard caps, grouped excerpts, truncation, and omission counts; do not change raw `--format rg`, `--json`, or `--ndjson` semantics to save tokens.
-- The product wedge is not "faster grep." It is an agentic code-intelligence runtime: given a task, identify what matters, explain why, emit bounded context, suggest validation, preserve rollback, and report confidence. A future `tg agent` or agent context capsule command should be contract-tested around that workflow.
+- The product wedge is not "faster grep." It is an agentic code-intelligence runtime: given a task, identify what matters, explain why, emit bounded context, suggest validation, preserve rollback, and report confidence. A future `tg agent` / Actionable Context Capsule command should be contract-tested around that workflow.
+- The Actionable Context Capsule target should include the primary file/function, route rationale, bounded source snippets with line maps, related call sites, detected validation commands, risk level, suggested edit order, checkpoint or rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when uncertainty or risk is high.
+- Future search-intent routing should label evidence honestly as `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, or `stale/uncertain`. The router can combine text search, AST, symbol graph, imports, tests, and docs, but it must report the route instead of hiding backend choice.
 
 ## Operating Rules
 

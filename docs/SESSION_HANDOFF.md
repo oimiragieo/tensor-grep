@@ -32,6 +32,8 @@ The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.
 - GPU benchmark correctness accepts `rg` exit code `1` as a valid no-match comparator result when `tg` also returns zero matches.
 - This is contract correctness for the public native front door, not a new speed claim.
 
+Next product-surface follow-up: design `tg agent` / Actionable Context Capsule as an opt-in agent workflow. The capsule target should include primary file/function, route rationale, bounded source snippets with line maps, related call sites, validation evidence, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when uncertainty or risk is high. It should improve token economy without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
+
 Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
 - `python benchmarks/run_benchmarks.py --binary rust_core/target/release/tg.exe --launcher-mode explicit_binary --output artifacts/bench_run_benchmarks_native_frontdoor_pr.json`: parity passed on all 10 rows
