@@ -41,7 +41,7 @@ These documents define the operating and governance surface for teams running `t
 
 ## Current Release State
 
-Latest stable PyPI release: [`v1.8.28`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.28).
+Latest stable PyPI release: [`v1.8.29`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.29).
 
 Current positioning:
 
@@ -52,38 +52,39 @@ Current positioning:
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - The next product wedge is an agent context capsule: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, and confidence. That should be an explicit agent profile or command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 
-What `v1.8.28` closed:
+What `v1.8.29` closed:
 
 - stable managed install scripts now prefer the matching release-native CPU `tg` front door when the GitHub release asset exists, while keeping the managed Python environment as the sidecar/fallback for Python-backed commands
-- main CI builds, uploads, and verifies release-native CPU assets before PyPI publish, so `v1.8.28` includes `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, and package-manager bundle assets on the GitHub release
+- main CI builds, uploads, and verifies release-native CPU assets before PyPI publish, so `v1.8.29` includes `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, and package-manager bundle assets on the GitHub release
 - stable installers clear stale `tensor-grep` package metadata, request the exact current non-yanked PyPI version when known, check native installer exit codes, and stage the managed environment plus front-door files before replacing `~/.tensor-grep`
 - `tg upgrade` skips yanked PyPI releases, refreshes stale package metadata, verifies that the target Python can still import `tensor_grep`, refreshes the managed release-native front door to the verified sidecar version, and schedules a Windows retry helper when the running native `tg.exe` is still locked
 - the Rust front door treats `--format rg` as a no-op for ripgrep-compatible text output and preserves `--sort path` passthrough for deterministic automation
+- the Rust front door accepts or intentionally routes the advertised public shapes `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`
+- `classify` falls back before expensive tokenizer/model setup when its provider stack is unavailable, and the GPU benchmark harness treats no-match as a valid comparator outcome
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.8.28` follow-up:
+Active post-`v1.8.29` follow-up:
 
-- public dogfood showed the native front door is finally competitive for core cold search and AST startup, but it exposed parser gaps where the native command rejected Python-advertised flags
-- this branch hardens native CLI parity for `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`
-- `classify` must fall back before expensive tokenization when Triton is unavailable, and the GPU correctness benchmark must treat `rg` exit code `1` as a valid no-match comparator result
-- this is contract correctness for the native front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
+- build the agent context capsule/token-economy profile as an opt-in agent workflow with hard budgets, line maps, omission counts, validation evidence, checkpoint/rollback metadata, and confidence
+- keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
+- this release is contract correctness for the native front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 
 Managed native-upgrade dogfood:
 
-- `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the newly installed sidecar then scheduled the Windows retry helper and refreshed the managed native front door from `tg 1.8.27` to `tg 1.8.28`
-- `tg doctor --json` now reports `version = 1.8.28`, `rust_binary_version = tg 1.8.28`, and `rust_binary_version_status = matches`
-- profiled PowerShell, `cmd`, `pwsh -NoProfile`, and WSL all resolve `tg 1.8.28` after the scheduled refresh completes
+- `tg upgrade` from `v1.8.28` installed sidecar `tensor-grep==1.8.29`; the newly installed sidecar then scheduled the Windows retry helper and refreshed the managed native front door from `tg 1.8.28` to `tg 1.8.29`
+- `tg doctor --json` now reports `version = 1.8.29`, `rust_binary_version = tg 1.8.29`, and `rust_binary_version_status = matches`
+- profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL all resolve `tg 1.8.29` after the scheduled refresh completes
 - this is installer correctness and release-readiness work; benchmark docs should not claim a cold-search speed win from it
 
 Release proof:
 
-- PR #62 merged and released from `4dcc6d7 fix: refresh managed native front door after upgrade`
-- release commit `6c8a065 chore(release): v1.8.28 [skip ci]`
-- main CI run `25541354485` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- main CodeQL run `25541353932` passed; release-commit CodeQL run `25541905895` passed
-- GitHub release asset verifier passed for `v1.8.28` with the `native-frontdoor` profile
-- PyPI reports `tensor-grep 1.8.28`; `tensor-grep==1.8.28` resolves from PyPI
+- PR #64 merged and released from `7742258 fix: harden native front-door CLI parity`
+- release commit `648a740 chore(release): v1.8.29 [skip ci]`
+- main CI run `25557263658` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL run `25557263900` passed
+- GitHub release assets for `v1.8.29` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI reports `tensor-grep 1.8.29`; `tensor-grep==1.8.29` resolves from PyPI
 
 ## Stable Windows Test Confirmation
 
@@ -111,7 +112,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.8.28` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.8.29` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -132,7 +133,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.28` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
+- `v1.8.29` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

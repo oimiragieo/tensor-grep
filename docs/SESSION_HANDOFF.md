@@ -4,38 +4,33 @@ Last updated: 2026-05-08
 
 ## Current Release State
 
-- Latest released version: `v1.8.28`
-- Latest release commit: `6c8a065 chore(release): v1.8.28 [skip ci]`
-- Latest fix commit: `4dcc6d7 fix: refresh managed native front door after upgrade`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.28>
-- Main CI run `25541354485`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25541353932`: passed
-- Release-commit CodeQL run `25541905895`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.28` resolves from PyPI
-- GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.28 --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5` passed
-- Closed installer/update gap: `v1.8.28` clears stale package metadata, requests the exact current non-yanked PyPI version when known, verifies post-upgrade imports, checks native installer exit codes, stages managed-environment plus front-door replacement, refreshes the managed release-native front door after sidecar upgrades, and schedules a Windows retry helper when the running native `tg.exe` is still locked.
-- Public shell dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` scheduled the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. A current `v1.8.28` install reports `tensor-grep is already at the latest PyPI version (1.8.28).` `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, Git Bash, and WSL all report `tg 1.8.28`.
-- Public doctor dogfood: `tg doctor --json` reports `version = 1.8.28`, `rust_binary_version = tg 1.8.28`, `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`.
-- Fast agent-readiness dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1828.json` passed all 13 checks, including public version probes, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
-- Repo-dev dogfood: `uv run tg doctor --json --no-lsp` passed in the `v1.8.28` readiness gate; stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
+- Latest released version: `v1.8.29`
+- Latest release commit: `648a740 chore(release): v1.8.29 [skip ci]`
+- Latest fix commit: `7742258 fix: harden native front-door CLI parity`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.29>
+- Main CI run `25557263658`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25557263900`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.29` resolves from PyPI
+- GitHub release assets: `v1.8.29` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Closed native-front-door CLI parity gap: `v1.8.29` accepts or intentionally sidecar-routes `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`; `classify` falls back before expensive provider/model setup when unavailable; and the GPU benchmark harness treats no-match as a valid comparator outcome.
+- Public shell dogfood: `tg upgrade` from `v1.8.28` installed sidecar `tensor-grep==1.8.29`; the next native-front-door refresh scheduled the Windows retry helper while the running `tg.exe` was locked, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.29`. `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, Git Bash, and WSL all report `tg 1.8.29`.
+- Public doctor dogfood: `tg doctor --json` reports `version = 1.8.29`, `rust_binary_version = tg 1.8.29`, `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`.
+- Public native CLI dogfood: installed `tg 1.8.29` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Fast agent-readiness dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1829.json` passed all 13 checks, including public version probes, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
+- Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.8.28 Scope
+## Current Post-v1.8.29 Scope
 
-Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The active follow-up branch is `fix/native-frontdoor-cli-parity`.
+Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The active follow-up branch is docs-only handoff cleanup for `v1.8.29`.
 
-The immediate `v1.8.27` native-front-door updater dogfood follow-up shipped in `v1.8.28`:
+The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
-- `tg upgrade` derives the managed install root from `TG_SIDECAR_PYTHON` or `sys.executable`, checks `~/.tensor-grep/bin/tg(.exe)`, and refreshes it from the matching GitHub release-native asset when the sidecar version is newer.
-- The downloaded native front door is smoke-tested with `--version` before replacement and the installed destination is version-checked after replacement.
-- On Windows file-lock failures, `tg upgrade` schedules a detached retry helper that waits for the parent process to exit, downloads the matching asset, retries replacement, and writes a log under `~/.tensor-grep/logs`.
-- Existing `v1.8.27` behavior means the first upgrade from `v1.8.27` to `v1.8.28` can update only the sidecar; once `v1.8.28` is installed, a subsequent `tg upgrade` or stable installer run refreshes the native front door, and future upgrades keep sidecar/native versions aligned in one command.
-
-Public `v1.8.28` dogfood exposed the next native-front-door contract gap:
-
-- The public native front door is now fast enough to be the normal shell path, but it rejected several Python-advertised flags: `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
-- The accepted fix direction is parser and routing parity, not a new speed claim. The native front door should execute these requests directly, forward them to ripgrep, or intentionally route them to the Python sidecar while preserving the public behavior and generated-root guardrails.
-- `classify` must fall back before expensive tokenization when Triton is unavailable so an agent call does not hang on provider/model setup.
-- The GPU benchmark correctness harness should treat `rg` exit code `1` as a valid no-match comparator result; a zero-match fixture is not a GPU correctness failure when `tg` also returns zero matches.
+- Native `search` forwards `--multiline` / `-U`, `--null`, and `--files` shapes instead of rejecting Python-advertised flags.
+- Native `run` preserves the short `-r` alias for `--rewrite`.
+- Native `classify` accepts `--format json` and sidecar-routes the command instead of timing out in a native parser dead end.
+- `classify` now uses a deterministic fallback before tokenizer/model loading when the provider stack is unavailable.
+- GPU benchmark correctness accepts `rg` exit code `1` as a valid no-match comparator result when `tg` also returns zero matches.
+- This is contract correctness for the public native front door, not a new speed claim.
 
 Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
@@ -58,7 +53,7 @@ Do not report final version state before the GitHub release assets, PyPI/package
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.8.28 Fixed
+## What v1.8.12-v1.8.29 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -96,7 +91,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - The `v1.8.26` release moved release-native CPU asset build/upload/verification into main CI after semantic-release, so GitHub release assets are present before PyPI publish and public installers can use the matching native front door.
 - The `v1.8.27` release hardened stable installers and sidecar upgrade resolution against stale package metadata, yanked releases, missing post-upgrade imports, unchecked native installer failures, and broken staged replacement.
 - The `v1.8.28` release refreshes the managed release-native front door after sidecar upgrades, including the Windows retry-helper path for locked `tg.exe` replacement.
-- The active post-`v1.8.28` branch hardens public-native CLI parity for advertised search/run/classify flags and fixes the GPU no-match correctness benchmark harness.
+- The `v1.8.29` release hardens public-native CLI parity for advertised search/run/classify flags and fixes the GPU no-match correctness benchmark harness.
 
 ## Verified Before Release Closeout
 
@@ -111,6 +106,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PR #60 `fix: publish GitHub release native assets from main CI`: merged and released as `v1.8.26`
 - PR #61 `fix: harden stable installer and upgrade resolution`: merged and released as `v1.8.27`
 - PR #62 `fix: refresh managed native front door after upgrade`: merged and released as `v1.8.28`
+- PR #64 `fix: harden native front-door CLI parity`: merged and released as `v1.8.29`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
 - `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed
@@ -145,6 +141,12 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - GitHub release asset verifier passed for `v1.8.28` with the `native-frontdoor` profile.
 - Public upgrade dogfood verified `tg upgrade` from `v1.8.27` to sidecar `tensor-grep==1.8.28`, the scheduled Windows native-front-door retry helper, and final profiled PowerShell / `cmd` / `pwsh -NoProfile` / WSL resolution to `tg 1.8.28`.
 - PyPI reports `tensor-grep 1.8.28` as latest and pinned `tensor-grep==1.8.28` resolves from PyPI JSON.
+- Main CI run `25557263658`: passed through `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- Main CodeQL run `25557263900`: passed.
+- GitHub release assets are uploaded for `v1.8.29`, including `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, `CHECKSUMS.txt`, `BUNDLE_CHECKSUMS.txt`, `oimiragieo.tensor-grep.yaml`, `tensor-grep.rb`, and `PUBLISH_INSTRUCTIONS.md`.
+- PyPI version-specific page and simple index expose `tensor-grep 1.8.29`; `python -m pip index versions tensor-grep --no-cache-dir` reports `1.8.29`.
+- Public upgrade dogfood verified `tg upgrade` from `v1.8.28` to sidecar `tensor-grep==1.8.29`, the scheduled Windows native-front-door retry helper, and final profiled PowerShell / `cmd` / `pwsh -NoProfile` / Git Bash / WSL resolution to `tg 1.8.29`.
+- Public native CLI dogfood verified `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` on installed `tg 1.8.29`.
 
 ## What Works Well Now
 
@@ -195,7 +197,7 @@ git log -3 --oneline
 uv run tg --version
 uv run tg doctor --json
 python -m pip index versions tensor-grep --index-url https://pypi.org/simple --no-cache-dir
-gh release view v1.8.28 --json tagName,publishedAt,url
+gh release view v1.8.29 --json tagName,publishedAt,url,assets
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg --version
 cmd /c tg --version
