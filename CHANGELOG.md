@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.8.30 (2026-05-08)
+
+### Bug Fixes
+
+- Preserve quoted patterns in Windows cmd shim
+  ([`e6d09a5`](https://github.com/oimiragieo/tensor-grep/commit/e6d09a5be822657bc99c2a5c1ed27b6853860f6f))
+
+fix: preserve quoted patterns in Windows cmd shim
+
+### Documentation
+
+- Define agent context capsule roadmap
+  ([`f311469`](https://github.com/oimiragieo/tensor-grep/commit/f311469f130dd07268f9143a2cb1dfe1995c92cf))
+
+docs: define agent context capsule roadmap
+
+- Update tensor-grep skill handoff state
+  ([`04d88fb`](https://github.com/oimiragieo/tensor-grep/commit/04d88fb46f95c3613cda861e4f48732ae2b4900d))
+
+docs: update tensor-grep skill handoff state
+
+- Update v1.8.29 release handoff
+  ([`22f5746`](https://github.com/oimiragieo/tensor-grep/commit/22f57465116b2fb5346c9a107a30e31f01faf947))
+
+
 ## v1.8.29 (2026-05-08)
 
 ### Bug Fixes
