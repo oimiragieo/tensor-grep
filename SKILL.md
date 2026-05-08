@@ -7,22 +7,24 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-08, the current released version is `v1.8.30`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, and Windows `.cmd` quoted-pattern launcher handling are released and publicly dogfooded.
+As of 2026-05-08, the current released version is `v1.8.31`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, and GPU scale benchmark correctness gates are released and publicly dogfooded.
 
 Current release facts:
 
-- Release commit: `b81b331 chore(release): v1.8.30 [skip ci]`
-- Latest merged fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
-- PR #68 `fix: preserve quoted patterns in Windows cmd shim` merged and released
+- Release commit: `a2e2bcc chore(release): v1.8.31 [skip ci]`
+- Latest merged fix commit: `015fad9 fix: harden public launcher and agent contracts`
+- PR #70 `fix: harden public launcher and agent contracts` merged and released
+- Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
-- Main CI run `25569020620` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25569020092` passed
-- PyPI latest and pinned public install both resolve `tensor-grep==1.8.30`
-- GitHub release assets for `v1.8.30` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public upgrade dogfood: `tg update` from `v1.8.29` installed sidecar `tensor-grep==1.8.30`; the new sidecar scheduled and completed the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.30`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolve `tg 1.8.30`; `tg doctor --json` reports `rust_binary_version_status = matches` and `search_acceleration_backend = standalone-native-tg`.
-- Public native CLI dogfood: `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` all accept the advertised public shape on the installed `v1.8.30` front door.
-- Public Windows launcher dogfood: `cmd /c tg search "gpu no-such-phrase" ...`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` all return exit `1` with empty stdout for the quoted no-match phrase.
-- Post-release fast gate: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1830.json` passed all checks after docs were updated.
+- Main CI run `25576067952` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL/dynamic run `25576067576` passed on the release-bearing merge commit and release-commit dynamic run `25576666702` passed
+- PyPI latest and pinned public install both resolve `tensor-grep==1.8.31`
+- GitHub release assets for `v1.8.31` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public update dogfood: `tg update` from `v1.8.30` installed sidecar `tensor-grep==1.8.31`; the new sidecar scheduled and completed the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.31`. Profiled PowerShell, `cmd`, and `pwsh -NoProfile` resolve `tg 1.8.31`; `tg doctor --json` reports `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`.
+- Public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
+- Public native CLI dogfood: `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` all accept the advertised public shape on the installed `v1.8.31` front door.
+- Public Windows launcher dogfood: `cmd /c tg search "gpu no-such-phrase-zxqv-817263" ...`, direct managed `tg.cmd`, and native `tg.exe` all return exit `1` with empty stdout for the quoted no-match phrase.
+- Post-release fast gate before the `v1.8.31` PR: `python scripts/agent_readiness.py --output artifacts/agent_readiness_native_shim_edit_plan.json` passed all checks.
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -31,7 +33,7 @@ Current product read:
 - `rg` remains the benchmark for raw cold exact-text search.
 - `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a validated useful slice, not full ast-grep equivalence.
 - `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
-- The native front door must accept advertised public flags or intentionally route them to the sidecar. `v1.8.30` covers `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, `tg classify --format json`, and Windows `.cmd` quoted multi-word no-match patterns.
+- The native front door must accept advertised public flags or intentionally route them to the sidecar. `v1.8.31` covers `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, `tg classify --format json`, Windows `.cmd` quoted multi-word no-match patterns, and native-first Windows PATH ordering for fresh managed shells.
 - The quoted multi-word no-match pattern case from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` is a public Windows launcher contract. A split pattern can become a shorter false-positive search plus bogus paths, so keep `public-windows-launcher-quoted-patterns` in the fast agent-readiness gate.
 - Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. On Windows, the managed native front-door directory should be ahead of compatibility `.cmd` shim directories on PATH so `cmd`, unprofiled PowerShell, and Python subprocess calls resolve `~/.tensor-grep/bin/tg.exe` before the slower argv-safe bridge. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path, and managed native front doors must be refreshed when the verified sidecar version moves ahead of `tg.exe`.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
@@ -170,7 +172,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.30` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.31` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

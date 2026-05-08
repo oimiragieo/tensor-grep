@@ -4,18 +4,19 @@
 
 ## 2026-05-08 Current Handoff
 
-The current released state is `v1.8.30`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, and the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.31`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, and GPU scale correctness gates cover 1GB/5GB rows. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `b81b331 chore(release): v1.8.30 [skip ci]`
-- Latest merged fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
-- Main CI run `25569020620`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL run `25569020092`: passed
-- PyPI latest and pinned public install: `tensor-grep==1.8.30` resolves from PyPI.
-- GitHub release assets for `v1.8.30` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native-upgrade dogfood: `tg update` from `v1.8.29` installed sidecar `tensor-grep==1.8.30`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.30`.
-- Public native CLI dogfood: installed `tg 1.8.30` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Release commit: `a2e2bcc chore(release): v1.8.31 [skip ci]`
+- Latest merged fix commit: `015fad9 fix: harden public launcher and agent contracts`
+- Main CI run `25576067952`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL/dynamic run `25576067576`: passed on the release-bearing merge commit; release-commit dynamic run `25576666702` also passed
+- PyPI latest and pinned public install: `tensor-grep==1.8.31` resolves from PyPI.
+- GitHub release assets for `v1.8.31` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native-upgrade dogfood: `tg update` from `v1.8.30` installed sidecar `tensor-grep==1.8.31`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.31`.
+- Public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.
+- Public native CLI dogfood: installed `tg 1.8.31` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
 - Public Windows launcher dogfood: `cmd /c tg`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` preserve quoted multi-word no-match patterns and return exit `1` with no false-positive stdout.
 
 Current product read:
@@ -29,11 +30,10 @@ Current product read:
 - Windows/WSL installer shims are materially cleaner. Direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv; use normal PowerShell `tg` / `tg.ps1` for regex metacharacters.
 - Dev-path native safety should ignore stale in-tree standalone binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly; `uv run tg doctor --json` should report skipped stale candidates instead of letting searches validate through old native code.
 - Raw unsorted root output is semantic parity. Use `--sort path --format rg` for automation that needs deterministic ripgrep-style stdout.
-- Release-native install/update hardening: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, staged replacement, sidecar/native version alignment after `tg upgrade`, and public native CLI parity for advertised search/run/classify flags; do not change benchmark docs from installer work.
-- Post-`v1.8.30` launcher hardening should put `~/.tensor-grep/bin` ahead of compatibility shim directories on Windows PATH so normal `tg` resolution uses native `tg.exe`; direct `tg.cmd` remains a correctness fallback, not the fast path.
-- `edit-plan` and `context-render` JSON should both expose top-level `validation_commands` for agent contract consistency.
-- `classify` should stay deterministic and local by default; use `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` only for intentional CyBERT/Triton provider probes.
-- GPU benchmark gates should include 1GB and 5GB rows and exact match/file-set correctness for every >=1GB corpus before any GPU promotion claim.
+- Release-native install/update hardening: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, staged replacement, sidecar/native version alignment after `tg upgrade`, public native CLI parity for advertised search/run/classify flags, and fresh Windows PATH precedence for the managed native front door; do not change benchmark docs from installer work.
+- `edit-plan` and `context-render` JSON expose top-level `validation_commands` for agent contract consistency; preserve that shape in future edits.
+- `classify` stays deterministic and local by default; use `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` only for intentional CyBERT/Triton provider probes.
+- GPU benchmark gates include 1GB and 5GB rows and exact match/file-set correctness for every >=1GB corpus before any GPU promotion claim.
 - Token-output follow-up from `rtk-ai/rtk`: add a future opt-in agent-bounded output profile with grouped excerpts, hard caps, truncation, and omission counts. Do not mutate raw `--format rg`, `--json`, or `--ndjson` to save tokens.
 - The next standout product surface should be `tg agent` / Actionable Context Capsule, not another raw grep wrapper. The target output is a deterministic work packet with primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when the evidence is weak.
 - Search-intent routing should be explicit about evidence type. Future capsules should label each conclusion as `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, or `stale/uncertain` so agents know what is proven and what is inferred.
