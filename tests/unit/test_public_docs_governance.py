@@ -94,6 +94,16 @@ def test_handoff_docs_should_record_current_v1824_release_state_and_fast_gate() 
     assert "Exact symbol context queries" in handoff
     assert 'uppercase `API_KEY = "..."` assignments' in handoff
 
+    readme = docs["README.md"]
+    assert "## Current Release State" in readme
+    assert "d5245f6 docs: update v1.8.24 handoff and skill guidance" in readme
+    assert "25529282908" in readme
+    assert "25529282683" in readme
+    assert "not a full ast-grep replacement" in readme
+    assert "GPU and `classify` remain opt-in/experimental" in readme
+    assert "Directly invoking `tg.cmd`" in readme
+    assert "not a default agent primitive" in readme
+
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
     doc = ROUTING_DOC_PATH.read_text(encoding="utf-8")
