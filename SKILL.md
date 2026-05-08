@@ -7,19 +7,17 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-08, the current released version is `v1.8.27`. Stable installer and PyPI metadata refresh hardening shipped, and the active follow-up branch fixes managed-native front-door refresh after `tg upgrade` updates the Python sidecar.
+As of 2026-05-08, the current released version is `v1.8.28`. Stable installer, PyPI metadata refresh, release-native asset publication, and managed-native front-door refresh after `tg upgrade` are released and publicly dogfooded.
 
 Current release facts:
 
-- Release commit: `34142ea chore(release): v1.8.27 [skip ci]`
-- Latest merged fix commit: `8420cab fix: harden stable installer and upgrade resolution`
-- PR #61 `fix: harden stable installer and upgrade resolution` merged and released
-- Main CI run `25538976953` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25538976656` and `25539436754` passed
-- PyPI latest and pinned public install both resolve `tensor-grep==1.8.27`
-- GitHub release assets for `v1.8.27` verified with the `native-frontdoor` profile
-- Public upgrade dogfood: `tg upgrade` from `v1.8.26` installed sidecar `tensor-grep==1.8.27`, but `tg --version` still reported native `tg 1.8.26`; `tg doctor --json` exposed the sidecar/native mismatch.
-- Active follow-up: `tg upgrade` must refresh the managed release-native front door to the verified package version and schedule a Windows retry helper when the running native `tg.exe` is still locked.
-- Expected patch release from the active native-upgrade branch: `v1.8.28`
+- Release commit: `6c8a065 chore(release): v1.8.28 [skip ci]`
+- Latest merged fix commit: `4dcc6d7 fix: refresh managed native front door after upgrade`
+- PR #62 `fix: refresh managed native front door after upgrade` merged and released
+- Main CI run `25541354485` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25541353932` and `25541905895` passed
+- PyPI latest and pinned public install both resolve `tensor-grep==1.8.28`
+- GitHub release assets for `v1.8.28` verified with the `native-frontdoor` profile
+- Public upgrade dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` from the new sidecar scheduled the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.28`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, and WSL resolve `tg 1.8.28`; `tg doctor --json` reports `rust_binary_version_status = matches`.
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -161,7 +159,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.27` positioning, and the expected `v1.8.28` native-upgrade patch note. It does not replace the full validation gate.
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.28` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
