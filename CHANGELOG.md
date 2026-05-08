@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.28 (2026-05-08)
+
+### Bug Fixes
+
+- Refresh managed native front door after upgrade
+  ([`4dcc6d7`](https://github.com/oimiragieo/tensor-grep/commit/4dcc6d7c8242d6159f244f251a7dfb3cc18eb9b0))
+
+Refresh the managed release-native front door during tg upgrade so sidecar and native versions stay
+  aligned.
+
+
 ## v1.8.27 (2026-05-08)
 
 ### Bug Fixes
