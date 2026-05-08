@@ -134,6 +134,20 @@ def test_handoff_docs_should_record_current_v1829_release_state_and_fast_gate() 
     assert "not a default agent primitive" in readme
 
 
+def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`"
+        in skill
+    )
+    assert "PR #66 `docs: define agent context capsule roadmap` merged" in skill
+    assert "Main CI run `25561521904` passed" in skill
+    assert "CodeQL/dynamic main run `25561520180` passed" in skill
+    assert "semantic-release correctly skipped publishing" in skill
+    assert "Latest release remains `v1.8.29`" in skill
+
+
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
     doc = ROUTING_DOC_PATH.read_text(encoding="utf-8")
 

@@ -14,6 +14,8 @@ Current release facts:
 - Release commit: `648a740 chore(release): v1.8.29 [skip ci]`
 - Latest merged fix commit: `7742258 fix: harden native front-door CLI parity`
 - PR #64 `fix: harden native front-door CLI parity` merged and released
+- Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
+- PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing. Latest release remains `v1.8.29`.
 - Main CI run `25557263658` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25557263900` passed
 - PyPI latest and pinned public install both resolve `tensor-grep==1.8.29`
 - GitHub release assets for `v1.8.29` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
@@ -32,6 +34,7 @@ Current product read:
 - Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path, and managed native front doors must be refreshed when the verified sidecar version moves ahead of `tg.exe`.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
 - Future `tg agent` / Actionable Context Capsule work should be treated as the product wedge: an opt-in workflow packet with primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when evidence is weak. Evidence labels should distinguish `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, and `stale/uncertain` conclusions.
+- Product-roadmap docs are current through PR #66. Future sessions should implement capsule behavior behind explicit contracts and regression tests, not reinterpret the roadmap as permission to alter raw search output.
 - `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
 - Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
 - `tg ast-info --json` exposes AST language identifiers for agents without help-text scraping.
