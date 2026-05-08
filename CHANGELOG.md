@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.8.29 (2026-05-08)
+
+### Bug Fixes
+
+- Harden native front-door CLI parity
+  ([`7742258`](https://github.com/oimiragieo/tensor-grep/commit/7742258fc6ab2b4ae2ad65445a60ed7ec2f9380e))
+
+### Documentation
+
+- Update v1.8.28 release handoff
+  ([`84a02f6`](https://github.com/oimiragieo/tensor-grep/commit/84a02f689dea1dff2f280afcf30824b8ac755abe))
+
+* docs: update v1.8.28 release handoff
+
+* docs: refine v1.8.28 handoff evidence
+
+
 ## v1.8.28 (2026-05-08)
 
 ### Bug Fixes
