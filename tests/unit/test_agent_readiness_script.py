@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -68,6 +69,37 @@ def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypat
     powershell_probe = next(check for check in checks if check.name == "public-version-powershell")
     assert powershell_probe.command[0].lower() == "powershell"
     assert "tg --version" in powershell_probe.command
+
+    quoted_probe = next(
+        check for check in checks if check.name == "public-windows-launcher-quoted-patterns"
+    )
+    assert quoted_probe.command == []
+    assert quoted_probe.validator is module.validate_windows_launcher_quoted_patterns
+
+
+def test_agent_readiness_windows_launcher_probe_rejects_split_quoted_patterns(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script_module()
+    monkeypatch.setattr(module, "IS_WINDOWS", True)
+    monkeypatch.setattr(module.shutil, "which", lambda name: "C:/Users/test/bin/tg.cmd")
+
+    def _fake_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="artifacts/agent_readiness_launcher_argv.txt:agent launcher sentinel\n",
+            stderr="rg: no-such-phrase: The system cannot find the file specified. (os error 2)\n",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", _fake_run)
+
+    try:
+        module.validate_windows_launcher_quoted_patterns("", tmp_path, "1.8.29")
+    except module.ReadinessError as exc:
+        assert "quoted multi-word no-match pattern" in str(exc)
+    else:
+        raise AssertionError("expected split quoted pattern probe to fail")
 
 
 def test_agent_readiness_should_validate_context_render_trust_payload() -> None:

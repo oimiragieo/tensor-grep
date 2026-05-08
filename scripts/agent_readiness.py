@@ -64,6 +64,53 @@ def validate_version_output(stdout: str, _repo_root: Path, expected_version: str
         )
 
 
+def validate_windows_launcher_quoted_patterns(
+    _stdout: str, repo_root: Path, _expected_version: str
+) -> None:
+    if not IS_WINDOWS:
+        return
+
+    probe_dir = repo_root / "artifacts" / "agent_readiness"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    probe_file = probe_dir / "launcher_argv_probe.txt"
+    probe_file.write_text("agent launcher sentinel\nplain text\n", encoding="utf-8")
+
+    pattern = "agent no-such-phrase"
+    tg_cmd = shutil.which("tg.cmd")
+    if not tg_cmd:
+        raise ReadinessError("could not resolve public tg.cmd for quoted-argument probe")
+
+    cases = [
+        (
+            "cmd /c tg via Python subprocess.run([...])",
+            ["cmd", "/c", "tg", "search", pattern, str(probe_file)],
+        ),
+        (
+            "direct tg.cmd via Python subprocess.run([...])",
+            [tg_cmd, "search", pattern, str(probe_file)],
+        ),
+    ]
+    for label, command in cases:
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        stdout = completed.stdout.strip()
+        stderr = completed.stderr.strip()
+        if completed.returncode != 1 or stdout or "no-such-phrase" in stderr:
+            raise ReadinessError(
+                f"{label} did not preserve quoted multi-word no-match pattern; "
+                f"exit={completed.returncode}, stdout={stdout or '<empty>'}, "
+                f"stderr={stderr or '<empty>'}"
+            )
+
+
 def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str) -> None:
     payload = _json_from_stdout(stdout)
     if not isinstance(payload, dict):
@@ -254,6 +301,19 @@ def build_check_plan(
                     timeout_s=30,
                     validator=validate_version_output,
                     required=False,
+                )
+            )
+        if IS_WINDOWS:
+            checks.append(
+                Check(
+                    name="public-windows-launcher-quoted-patterns",
+                    command=[],
+                    description=(
+                        "Verify cmd.exe and direct tg.cmd preserve quoted multi-word "
+                        "no-match patterns."
+                    ),
+                    timeout_s=30,
+                    validator=validate_windows_launcher_quoted_patterns,
                 )
             )
 

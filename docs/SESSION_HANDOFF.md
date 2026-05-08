@@ -23,6 +23,8 @@ Last updated: 2026-05-08
 
 Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The latest docs/product merge is PR #66 `docs: define agent context capsule roadmap` at `f311469`; main CI run `25561521904` and CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing because the change was docs-only.
 
+Active follow-up: fix the public Windows `.cmd` bridge so quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` stay one argv item instead of producing a shorter false-positive search plus bogus paths. The fast gate now includes `public-windows-launcher-quoted-patterns`.
+
 The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
 - Native `search` forwards `--multiline` / `-U`, `--null`, and `--files` shapes instead of rejecting Python-advertised flags.
