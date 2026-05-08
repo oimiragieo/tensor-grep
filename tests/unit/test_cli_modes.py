@@ -889,6 +889,10 @@ def test_doctor_json_reports_path_tg_candidates(monkeypatch, tmp_path: Path) -> 
             {"path": str(current_tg), "version": "tensor-grep 1.8.11"},
         ],
     )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [],
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
@@ -901,6 +905,70 @@ def test_doctor_json_reports_path_tg_candidates(monkeypatch, tmp_path: Path) -> 
     ]
     assert payload["path_tg_first_version_matches"] is False
     assert payload["path_tg_first_version"] == "tensor-grep 1.8.0"
+    assert payload["path_tg_first_launcher_kind"] == "python-entrypoint"
+
+
+def test_doctor_launcher_kind_classifies_virtualenv_console_entrypoint(tmp_path: Path) -> None:
+    from tensor_grep.cli import main as cli_main
+
+    venv_tg = tmp_path / ".venv" / "Scripts" / "tg.exe"
+
+    assert cli_main._doctor_tg_launcher_kind(str(venv_tg)) == "python-entrypoint"
+
+
+def test_doctor_json_warns_when_current_path_hits_compat_shim_before_fresh_native(
+    monkeypatch, tmp_path: Path
+) -> None:
+    shim_tg = tmp_path / "bin" / "tg.cmd"
+    native_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    shim_tg.parent.mkdir(parents=True)
+    native_tg.parent.mkdir(parents=True)
+    shim_tg.write_text("@echo off\n", encoding="utf-8")
+    native_tg.write_text("native\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.31")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tensor-grep 1.8.31",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_lsp_provider_statuses",
+        lambda path: [],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [
+            {"path": str(shim_tg), "version": "tensor-grep 1.8.31"},
+            {"path": str(native_tg), "version": "tensor-grep 1.8.31"},
+        ],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [{"path": str(native_tg), "version": "tensor-grep 1.8.31"}],
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["path_tg_first_launcher_kind"] == "cmd-shim"
+    assert payload["fresh_shell_path_tg_first_launcher_kind"] == "managed-native"
+    assert payload["fresh_shell_path_tg_first_version_matches"] is True
+    assert (
+        "current process PATH resolves a compatibility shim" in payload["path_tg_launcher_warning"]
+    )
+    assert "restart the shell" in payload["path_tg_launcher_warning"]
 
 
 def test_lsp_setup_runs_managed_provider_installer(

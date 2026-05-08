@@ -43,7 +43,7 @@ Environment blocks should at minimum record:
 - `machine`
 - `python_version` when Python orchestrates the benchmark
 
-For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` so cold-path comparisons stay tied to an explicit entrypoint mode rather than inferred from the command line after the fact.
+For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim.
 
 For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:
 
@@ -176,6 +176,7 @@ This is a governance refresh, not a relaxed gate. The accepted Windows line now 
 - `host_provenance`
 - `environment.tg_binary_source`
 - `environment.tg_launcher_mode`
+- `environment.tg_launcher_command_kind`
 
 `check_regression.py` policy is unchanged. The only contract repair is that the accepted Windows baseline now matches fresh clean-head evidence on the current host class instead of forcing stale-baseline failures on clean `origin/main`.
 

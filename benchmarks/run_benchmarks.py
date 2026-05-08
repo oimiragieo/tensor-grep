@@ -153,6 +153,25 @@ def resolve_tg_cli_launcher(binary: str | None = None) -> list[str]:
     return [sys.executable, "-m", "tensor_grep"]
 
 
+def classify_tg_launcher_command(cmd: list[str]) -> str:
+    if not cmd:
+        return "unknown"
+    first = Path(cmd[0])
+    first_name = first.name.lower()
+    first_suffix = first.suffix.lower()
+    if first_name == "uv" or first_name == "uv.exe":
+        return "uv"
+    if len(cmd) >= 3 and cmd[1:3] == ["-m", "tensor_grep"]:
+        return "python_module"
+    if first_suffix in {".cmd", ".bat"}:
+        return "cmd_shim"
+    if first_suffix == ".ps1":
+        return "powershell_shim"
+    if first_suffix == ".exe" or first_name == "tg":
+        return "native_exe"
+    return "unknown"
+
+
 def resolve_bench_data_dir() -> Path:
     """
     Resolve benchmark data location. Defaults to artifacts to avoid mutating
@@ -674,7 +693,7 @@ def main() -> int:
         rg_binary=rg_bin,
         launcher_mode=args.launcher_mode,
     )
-    _, tg_launcher_mode, tg_env_overrides = build_tg_benchmark_cmd_with_mode(
+    sample_tg_cmd, tg_launcher_mode, tg_env_overrides = build_tg_benchmark_cmd_with_mode(
         ["ERROR", str(bench_dir)],
         binary=tg_binary,
         force_cpu=args.native,
@@ -682,6 +701,7 @@ def main() -> int:
         return_env=True,
         launcher_mode=args.launcher_mode,
     )
+    tg_launcher_command_kind = classify_tg_launcher_command(sample_tg_cmd)
 
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
     print("-" * 75)
@@ -776,6 +796,7 @@ def main() -> int:
             "python_version": platform.python_version(),
             "tg_binary_source": tg_binary_source,
             "tg_launcher_mode": tg_launcher_mode,
+            "tg_launcher_command_kind": tg_launcher_command_kind,
         },
         "host_provenance": _build_host_provenance({
             "platform": platform.system().lower(),
@@ -783,6 +804,7 @@ def main() -> int:
             "python_version": platform.python_version(),
             "tg_binary_source": tg_binary_source,
             "tg_launcher_mode": tg_launcher_mode,
+            "tg_launcher_command_kind": tg_launcher_command_kind,
         }),
         "rows": rows,
         "parity_failures": parity_failures,
