@@ -24,6 +24,30 @@ Weak or unfinished:
 * there is still no broad accepted end-to-end corpus beyond the current 12-scenario real patch pack
 * trust artifacts were still carrying one avoidable CI risk: review bundles created from the same inputs could drift in `created_at` and `bundle_sha256`
 
+## Strategic Wedge
+
+The strongest product direction is not to compete with `rg` as "faster grep" or with `ast-grep` as a complete structural-search clone. The stronger category is an agentic code-intelligence runtime that uses those surfaces underneath and answers the questions an editing agent has before it changes code:
+
+* what files, functions, and tests matter
+* why those targets outrank the alternatives
+* what source snippets fit inside the token budget
+* what to read next if the budget is too small
+* what validation commands are evidence-backed
+* what can go wrong and how to roll back
+
+The flagship future command should be an agent context capsule, for example `tg agent "change invoice tax calculation"` or an equivalent explicit profile on `context-render` / `edit-plan`. The output contract should be compact and deterministic:
+
+* primary file, symbol, and exact span
+* routing rationale with backend labels such as `rg-backed`, `parser-backed`, `graph-derived`, `LSP-confirmed`, or `heuristic`
+* bounded executable snippets with line maps
+* related call sites and tests
+* validation commands with detected/heuristic/generic provenance
+* risk level, edit order, checkpoint or rollback metadata
+* omitted file/section counts and suggested follow-up reads
+* confidence score and an "ask before editing" recommendation when evidence is weak
+
+Token-efficiency work should follow the same contract discipline. The useful lesson from token-filtering tools is explicit budgets, grouping, truncation, deduplication, omission counts, and raw-output recovery. Do not mutate raw `--format rg`, `--json`, or `--ndjson`; add an opt-in agent profile such as `tg search-agent ... --budget N` or a capsule renderer with hard caps and refetch commands.
+
 Recently accepted:
 
 * review bundle creation is now deterministic for identical inputs

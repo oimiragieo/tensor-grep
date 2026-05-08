@@ -201,6 +201,22 @@ pub struct SearchArgs {
     #[arg(long = "sortr")]
     pub sort_reverse: Option<String>,
 
+    /// Follow file paths with a NUL byte
+    #[arg(short = '0', long = "null")]
+    pub null: bool,
+
+    /// Use NUL as a line terminator instead of newline
+    #[arg(long = "null-data")]
+    pub null_data: bool,
+
+    /// Enable searching across multiple lines
+    #[arg(short = 'U', long = "multiline")]
+    pub multiline: bool,
+
+    /// Enable dot-all mode for multiline searches
+    #[arg(long = "multiline-dotall")]
+    pub multiline_dotall: bool,
+
     /// Show NUM context lines before and after each match
     #[arg(short = 'C', long)]
     pub context: Option<usize>,
@@ -216,6 +232,10 @@ pub struct SearchArgs {
     /// Stop after NUM matching lines per file
     #[arg(short = 'm', long)]
     pub max_count: Option<usize>,
+
+    /// Limit depth of directory traversal
+    #[arg(short = 'd', long = "max-depth")]
+    pub max_depth: Option<usize>,
 
     /// Show matches with word boundaries
     #[arg(short = 'w', long)]
@@ -325,7 +345,7 @@ pub struct RunArgs {
     pub lang: String,
 
     /// Rewrite matched nodes with this replacement pattern (metavar substitution supported)
-    #[arg(long, conflicts_with = "batch_rewrite")]
+    #[arg(short = 'r', long, conflicts_with = "batch_rewrite")]
     pub rewrite: Option<String>,
 
     /// Apply multiple rewrite rules from a JSON config file
@@ -416,6 +436,16 @@ pub struct AuditVerifyArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct ClassifyArgs {
+    /// Output format
+    #[arg(long = "format", default_value = "json")]
+    pub format: String,
+
+    /// The log file to classify
+    pub file_path: String,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Search for a regex pattern with the validated rg-compatible surface
@@ -431,7 +461,7 @@ pub enum Commands {
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
-    Classify { file_path: String },
+    Classify(ClassifyArgs),
     /// Run AST structural search and optional rewrites (ast-grep parity)
     Run(RunArgs),
     /// Scan code by configuration
@@ -912,6 +942,27 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
         .skip(2)
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+    if args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--files" | "--allow-broad-generated-scan" | "--ast"
+        )
+    }) {
+        return Some(args);
+    }
+    let structured_output = args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--json" | "--ndjson"));
+    if structured_output
+        && args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "-U" | "--multiline" | "--multiline-dotall" | "--null-data"
+            )
+        })
+    {
+        return Some(args);
+    }
     let mut index = 0usize;
     while index < args.len() {
         let token = &args[index];
@@ -936,6 +987,7 @@ fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
 
 fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let mut args = RipgrepSearchArgs {
+        files: false,
         ignore_case: false,
         fixed_strings: false,
         invert_match: false,
@@ -962,6 +1014,11 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         replace: None,
         sort: None,
         sort_reverse: None,
+        max_depth: None,
+        null: false,
+        null_data: false,
+        multiline: false,
+        multiline_dotall: false,
         patterns: Vec::new(),
         paths: Vec::new(),
         no_ignore_vcs: false,
@@ -986,6 +1043,10 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-n" | "--line-number" => args.line_number = true,
             "-o" | "--only-matching" => args.only_matching = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
+            "-0" | "--null" => args.null = true,
+            "--null-data" => args.null_data = true,
+            "-U" | "--multiline" => args.multiline = true,
+            "--multiline-dotall" => args.multiline_dotall = true,
             "--no-ignore" => args.no_ignore = true,
             "-C" | "--context" => {
                 index += 1;
@@ -1007,11 +1068,22 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
                 args.max_count = Some(value);
             }
+            "-d" | "--max-depth" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.max_depth = Some(value);
+            }
             _ if token.starts_with("--max-count=") => {
                 let value = token
                     .split_once('=')
                     .and_then(|(_, value)| value.parse::<usize>().ok())?;
                 args.max_count = Some(value);
+            }
+            _ if token.starts_with("--max-depth=") => {
+                let value = token
+                    .split_once('=')
+                    .and_then(|(_, value)| value.parse::<usize>().ok())?;
+                args.max_depth = Some(value);
             }
             "--color" => {
                 index += 1;
@@ -1649,7 +1721,10 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::AuditVerify(args) => handle_audit_verify_command(args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
-        Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
+        Commands::Classify(args) => handle_sidecar_command(
+            "classify",
+            vec!["--format".to_string(), args.format, args.file_path],
+        ),
         Commands::Run(args) => handle_ast_run(args),
         Commands::Scan { args } => {
             if ast_scan_requires_python_passthrough(&args) {
@@ -2278,6 +2353,7 @@ fn positional_ripgrep_args(
     paths: &[String],
 ) -> RipgrepSearchArgs {
     RipgrepSearchArgs {
+        files: false,
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
@@ -2305,6 +2381,11 @@ fn positional_ripgrep_args(
         replace: cli.replace.clone(),
         sort: None,
         sort_reverse: None,
+        max_depth: None,
+        null: false,
+        null_data: false,
+        multiline: false,
+        multiline_dotall: false,
         patterns: vec![pattern.to_string()],
         paths: paths.to_vec(),
         pcre2: cli.pcre2,
@@ -2314,6 +2395,7 @@ fn positional_ripgrep_args(
 
 fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> RipgrepSearchArgs {
     RipgrepSearchArgs {
+        files: false,
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
         invert_match: args.invert_match,
@@ -2341,6 +2423,11 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         replace: args.replace.clone(),
         sort: args.sort.clone(),
         sort_reverse: args.sort_reverse.clone(),
+        max_depth: args.max_depth,
+        null: args.null,
+        null_data: args.null_data,
+        multiline: args.multiline,
+        multiline_dotall: args.multiline_dotall,
         patterns: request.patterns.clone(),
         paths: request.paths.clone(),
         pcre2: args.pcre2,
@@ -2361,6 +2448,11 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
             || args.files_without_match
             || args.sort.is_some()
             || args.sort_reverse.is_some()
+            || args.max_depth.is_some()
+            || args.null
+            || args.null_data
+            || args.multiline
+            || args.multiline_dotall
             || !args.file_type.is_empty())
 }
 
@@ -5066,6 +5158,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                         fallback_decision
                             .allow_rg_fallback
                             .then(|| RipgrepSearchArgs {
+                                files: false,
                                 ignore_case: params.ignore_case,
                                 fixed_strings: params.fixed_strings,
                                 invert_match: params.invert_match,
@@ -5092,6 +5185,11 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 replace: None,
                                 sort: None,
                                 sort_reverse: None,
+                                max_depth: None,
+                                null: false,
+                                null_data: false,
+                                multiline: false,
+                                multiline_dotall: false,
                                 patterns: params.patterns.to_vec(),
                                 paths: vec![params.path.to_string()],
                                 no_ignore_vcs: false,

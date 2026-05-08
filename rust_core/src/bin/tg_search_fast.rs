@@ -18,6 +18,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
     }
 
     let mut args = RipgrepSearchArgs {
+        files: false,
         ignore_case: false,
         fixed_strings: false,
         invert_match: false,
@@ -44,6 +45,11 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         replace: None,
         sort: None,
         sort_reverse: None,
+        max_depth: None,
+        null: false,
+        null_data: false,
+        multiline: false,
+        multiline_dotall: false,
         patterns: Vec::new(),
         paths: Vec::new(),
         no_ignore_vcs: false,
@@ -68,6 +74,10 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
             "--count-matches" => args.count_matches = true,
             "--column" => args.column = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
+            "-0" | "--null" => args.null = true,
+            "--null-data" => args.null_data = true,
+            "-U" | "--multiline" => args.multiline = true,
+            "--multiline-dotall" => args.multiline_dotall = true,
             "-S" | "--smart-case" => args.smart_case = true,
             "--no-ignore" => args.no_ignore = true,
             "--hidden" | "-." => args.hidden = true,
@@ -110,6 +120,15 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                     .parse::<usize>()
                     .context("invalid max-count value")?;
                 args.max_count = Some(value);
+            }
+            "-d" | "--max-depth" => {
+                index += 1;
+                let value = tokens
+                    .get(index)
+                    .context("missing value for max-depth")?
+                    .parse::<usize>()
+                    .context("invalid max-depth value")?;
+                args.max_depth = Some(value);
             }
             "-g" | "--glob" => {
                 index += 1;

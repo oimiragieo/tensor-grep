@@ -224,6 +224,7 @@ impl RustBackend {
     ) -> PyResult<i32> {
         use crate::rg_passthrough::{execute_ripgrep_search, RipgrepSearchArgs};
         let args = RipgrepSearchArgs {
+            files: false,
             ignore_case,
             fixed_strings,
             invert_match,
@@ -251,6 +252,11 @@ impl RustBackend {
             replace,
             sort: None,
             sort_reverse: None,
+            max_depth: None,
+            null: false,
+            null_data: false,
+            multiline: false,
+            multiline_dotall: false,
             patterns,
             paths: vec![path],
             pcre2,

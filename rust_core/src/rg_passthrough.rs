@@ -15,6 +15,7 @@ static RG_BINARY_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct RipgrepSearchArgs {
+    pub files: bool,
     pub ignore_case: bool,
     pub fixed_strings: bool,
     pub invert_match: bool,
@@ -42,6 +43,11 @@ pub struct RipgrepSearchArgs {
     pub replace: Option<String>,
     pub sort: Option<String>,
     pub sort_reverse: Option<String>,
+    pub max_depth: Option<usize>,
+    pub null: bool,
+    pub null_data: bool,
+    pub multiline: bool,
+    pub multiline_dotall: bool,
     pub patterns: Vec<String>,
     pub paths: Vec<String>,
     pub pcre2: bool,
@@ -64,8 +70,26 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.pcre2 {
         command.arg("-P");
     }
+    if args.files {
+        command.arg("--files");
+    }
     if let Some(size) = &args.max_filesize {
         command.arg("--max-filesize").arg(size);
+    }
+    if let Some(max_depth) = args.max_depth {
+        command.arg("--max-depth").arg(max_depth.to_string());
+    }
+    if args.null {
+        command.arg("--null");
+    }
+    if args.null_data {
+        command.arg("--null-data");
+    }
+    if args.multiline {
+        command.arg("--multiline");
+    }
+    if args.multiline_dotall {
+        command.arg("--multiline-dotall");
     }
     if args.no_ignore_vcs {
         command.arg("--no-ignore-vcs");
@@ -149,8 +173,10 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         command.arg("-g").arg(glob);
     }
 
-    for pattern in &args.patterns {
-        command.arg("-e").arg(pattern);
+    if !args.files {
+        for pattern in &args.patterns {
+            command.arg("-e").arg(pattern);
+        }
     }
 
     for path in &args.paths {
