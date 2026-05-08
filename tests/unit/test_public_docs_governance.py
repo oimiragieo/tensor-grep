@@ -53,7 +53,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "stale-skipped" in contracts
 
 
-def test_handoff_docs_should_record_current_v1823_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v1824_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -63,7 +63,7 @@ def test_handoff_docs_should_record_current_v1823_release_state_and_fast_gate() 
     }
 
     for content in docs.values():
-        assert "v1.8.23" in content
+        assert "v1.8.24" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -72,14 +72,14 @@ def test_handoff_docs_should_record_current_v1823_release_state_and_fast_gate() 
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "90bf942 chore(release): v1.8.23 [skip ci]" in content
-        assert "19e515d fix: add generated-root scan guardrails" in content
+        assert "1518a24 chore(release): v1.8.24 [skip ci]" in content
+        assert "ef0c114 fix: harden v1.8.23 dogfood regressions" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25495769957" in handoff
-    assert "25495768899" in handoff
-    assert "25496404791" in handoff
-    assert "tensor-grep==1.8.23" in handoff
+    assert "25527718815" in handoff
+    assert "25527718311" in handoff
+    assert "25528154549" in handoff
+    assert "tensor-grep==1.8.24" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff
@@ -89,6 +89,10 @@ def test_handoff_docs_should_record_current_v1823_release_state_and_fast_gate() 
     assert "no runner evidence exists" in handoff
     assert "agent-readiness dogfood gate" in handoff
     assert "--allow-broad-generated-scan" in handoff
+    assert "--pcre2 --sort path" in handoff
+    assert "multiline searches forward" in handoff
+    assert "Exact symbol context queries" in handoff
+    assert 'uppercase `API_KEY = "..."` assignments' in handoff
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
