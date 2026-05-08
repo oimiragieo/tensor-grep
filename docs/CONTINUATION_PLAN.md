@@ -4,18 +4,17 @@
 
 ## 2026-05-08 Current Handoff
 
-The current released state is `v1.8.27`. Stable installer and sidecar upgrade hardening shipped, and the active follow-up branch is fixing managed-native front-door refresh after `tg upgrade` updates the Python sidecar. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.28`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `34142ea chore(release): v1.8.27 [skip ci]`
-- Latest merged fix commit: `8420cab fix: harden stable installer and upgrade resolution`
-- Main CI run `25538976953`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL runs `25538976656` and `25539436754`: passed
-- PyPI latest and pinned public install: `tensor-grep==1.8.27` resolves from PyPI.
-- GitHub release asset verification: `v1.8.27` release assets passed the `native-frontdoor` verifier profile.
-- Active native-upgrade follow-up: `tg upgrade` must refresh the managed release-native front door to the verified sidecar package version, or schedule a Windows retry helper when the running native `tg.exe` is still locked.
-- Expected patch release from the active native-upgrade branch: `v1.8.28`.
+- Release commit: `6c8a065 chore(release): v1.8.28 [skip ci]`
+- Latest merged fix commit: `4dcc6d7 fix: refresh managed native front door after upgrade`
+- Main CI run `25541354485`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL runs `25541353932` and `25541905895`: passed
+- PyPI latest and pinned public install: `tensor-grep==1.8.28` resolves from PyPI.
+- GitHub release asset verification: `v1.8.28` release assets passed the `native-frontdoor` verifier profile.
+- Managed native-upgrade dogfood: `tg upgrade` from `v1.8.27` installed sidecar `tensor-grep==1.8.28`; the next `tg upgrade` scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.28`.
 
 Current product read:
 
@@ -28,7 +27,7 @@ Current product read:
 - Windows/WSL installer shims are materially cleaner. Direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv; use normal PowerShell `tg` / `tg.ps1` for regex metacharacters.
 - Dev-path native safety should ignore stale in-tree standalone binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly; `uv run tg doctor --json` should report skipped stale candidates instead of letting searches validate through old native code.
 - Raw unsorted root output is semantic parity. Use `--sort path --format rg` for automation that needs deterministic ripgrep-style stdout.
-- Active release follow-up: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, and staged replacement. The remaining active patch is sidecar/native version alignment after `tg upgrade`; do not change benchmark docs from installer work.
+- Release-native install/update hardening: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, staged replacement, and sidecar/native version alignment after `tg upgrade`; do not change benchmark docs from installer work.
 - Token-output follow-up from `rtk-ai/rtk`: add a future opt-in agent-bounded output profile with grouped excerpts, hard caps, truncation, and omission counts. Do not mutate raw `--format rg`, `--json`, or `--ndjson` to save tokens.
 
 Current next work:
