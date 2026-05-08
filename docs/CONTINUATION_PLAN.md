@@ -15,6 +15,7 @@ Current release facts:
 - PyPI latest and pinned public install: `tensor-grep==1.8.26` resolves from PyPI.
 - GitHub release asset verification: `v1.8.26` release assets passed the `native-frontdoor` verifier profile.
 - Active installer/update follow-up: stable installers and `tg upgrade` must clear stale package metadata, pin the current non-yanked PyPI version when known, verify post-upgrade imports, check native installer exit codes, and stage managed-environment plus front-door replacement before swapping `~/.tensor-grep`.
+- Expected patch release from the active installer/update branch: `v1.8.27`.
 
 Current product read:
 

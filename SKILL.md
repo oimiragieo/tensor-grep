@@ -18,6 +18,7 @@ Current release facts:
 - PyPI latest and pinned public install both resolve `tensor-grep==1.8.26`
 - GitHub release assets for `v1.8.26` verified with the `native-frontdoor` profile
 - Active follow-up: stable installers and `tg upgrade` clear stale package metadata, request the exact current non-yanked PyPI version when known, verify the target Python can still import `tensor_grep`, check native installer exit codes, and stage the new managed environment plus front-door files before replacing `~/.tensor-grep`
+- Expected patch release from the active installer/update branch: `v1.8.27`
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 

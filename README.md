@@ -63,6 +63,7 @@ Active post-`v1.8.26` installer work:
 - immediate Windows dogfood found that a just-published PyPI version can be hidden behind stale `uv` Simple API metadata even after PyPI JSON reports the new version
 - public `tg upgrade` also must not report an unchanged local version as the latest PyPI release or miss a sidecar that can no longer import `tensor_grep`
 - the active follow-up branch clears cached `tensor-grep` package metadata before stable installs, asks `uv`/pip for the exact current non-yanked PyPI version when known, verifies the target Python after upgrade including the scheduled Windows self-upgrade path, checks native installer exit codes, and stages the new managed environment plus front-door files before replacing `~/.tensor-grep`, so a transient resolver failure cannot break an existing shim
+- expected patch release from this installer/update branch: `v1.8.27`
 - this is installer correctness and release-readiness work; benchmark docs should not claim a cold-search speed win from it
 
 Release proof:

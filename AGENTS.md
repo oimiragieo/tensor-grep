@@ -42,6 +42,7 @@ As of 2026-05-08, the current released state is `v1.8.26`. The GitHub release as
 - GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.26 --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5` passed
 - Public installer dogfood: local patched Windows installer pinned to `1.8.26` resolved `tg 1.8.26` from PowerShell, `cmd`, and `pwsh -NoProfile`, installed `tg-windows-amd64-cpu.exe`, and cleaned the staging directory
 - Active follow-up: fix stable installers and `tg upgrade` so they refresh stale package metadata, request the exact current PyPI version when known, verify the target Python can still import `tensor_grep`, and stage the new managed environment before replacing `~/.tensor-grep`
+- Expected patch release from the active installer/update branch: `v1.8.27`
 - Session handoff: `docs/SESSION_HANDOFF.md`
 - Active post-`v1.8.26` branch work is tracked in `docs/SESSION_HANDOFF.md`: keep release-native assets verified, preserve the managed installer fallback when assets are absent, and prevent transient package-index or upgrade verification failures from breaking existing public shims.
 

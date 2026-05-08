@@ -32,6 +32,7 @@ This branch targets the immediate `v1.8.26` installer and updater dogfood follow
 - Windows and Unix installers build the new managed environment and front-door files under a staging directory and only replace the existing install after package installation and front-door generation succeed
 - failed staged installs keep the previous managed directory in place, preserving existing profile/shim targets
 - Windows dogfood reproduced the stale `uv` cache failure, confirmed `uv cache clean tensor-grep` fixes the resolver view, then confirmed the patched installer installs `1.8.26` and cleans the staging directory
+- Expected patch release from this installer/update branch after PR CI and squash-merge: `v1.8.27`
 
 Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
