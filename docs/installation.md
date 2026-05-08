@@ -13,9 +13,17 @@
 
 The install scripts create an isolated environment, print `tg --version` at the end, and keep Python-level dependencies away from your system interpreter.
 
+Stable script installs prefer the matching release-native CPU binary as the public `tg` front door:
+
+- Windows downloads `tg-windows-amd64-cpu.exe` into `~/.tensor-grep/bin/tg.exe`.
+- Linux x64 downloads `tg-linux-amd64-cpu` into `~/.tensor-grep/bin/tg-native`.
+- macOS x64 downloads `tg-macos-amd64-cpu` into `~/.tensor-grep/bin/tg-native`.
+
+The isolated Python environment remains installed and is exposed to the native front door with `TG_SIDECAR_PYTHON`; `TG_NATIVE_TG_BINARY` points Python-backed commands back at the managed native binary. If a release-native asset is unavailable, or when installing from `TENSOR_GREP_CHANNEL=main`, the same front door falls back to `python -m tensor_grep`.
+
 They also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. If you install through `pip`, `uv`, or a package-manager channel and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains.
 
-On Windows, the install script removes stale same-directory `tg.exe`/`tg.bat` launchers from the managed shim directories, then puts those directories ahead of stale Python `Scripts` launchers on User PATH. If an old tensor-grep-owned `Python*\Scripts\tg.exe` still shadows the managed shim, the installer attempts to uninstall the stale Python package owner. If a profile-free shell still reports an older `tg`, run `where.exe tg`, `Get-Command tg -All`, and `tg doctor --json` to see which launcher is winning.
+On Windows, the install script removes stale same-directory `tg.exe`/`tg.bat` launchers from the managed shim directories, then puts those directories ahead of stale Python `Scripts` launchers on User PATH. Normal PowerShell, Git Bash, and WSL shims route to the managed native front door when it exists. The `.cmd` shim keeps the argv-safe Python bridge for `cmd.exe` and execs the managed native binary from that bridge when available. If an old tensor-grep-owned `Python*\Scripts\tg.exe` still shadows the managed shim, the installer attempts to uninstall the stale Python package owner. If a profile-free shell still reports an older `tg`, run `where.exe tg`, `Get-Command tg -All`, and `tg doctor --json` to see which launcher is winning.
 
 **Windows (PowerShell):**
 ```powershell

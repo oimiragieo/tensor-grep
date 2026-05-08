@@ -19,6 +19,26 @@ Last updated: 2026-05-07
 - Public generated-root guard dogfood: `tg search --files . --hidden` refused generated/cache/dependency roots with exit code `2`; normal scoped hidden search still succeeded.
 - Repo-dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.24`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`.
 
+## Active Post-v1.8.24 PR Scope
+
+Current branch: `fix/v1-8-24-dogfood-performance-token-context`.
+
+This branch targets the `v1.8.24` dogfood follow-up without changing the public speed claim yet:
+
+- managed stable install scripts download the matching release-native CPU front door (`tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, or `tg-macos-amd64-cpu`) when the asset exists
+- generated shims set `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY` so Python-backed commands return to the managed native binary instead of stale PATH discovery
+- the Rust front door treats `--format rg` as a no-op for rg-compatible output, keeps `--sort path` on ripgrep passthrough, and sends non-rg search formats to the Python CLI
+- `rtk-ai/rtk` was reviewed for token-output lessons: its useful idea is an explicit agent-bounded output profile with hard global/per-file caps and compact grouped excerpts, not changing raw rg-compatible stdout by default
+
+Current benchmark evidence:
+
+- `python benchmarks/run_benchmarks.py --binary rust_core/target/release/tg.exe --launcher-mode explicit_binary --output artifacts/bench_run_benchmarks_native_frontdoor_pr.json`: parity passed on all 10 rows
+- `python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks_native_frontdoor_pr.json`: refused comparison because the frozen baseline uses Python `3.12.12` and this host shell uses Python `3.14.4`
+- `python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks_native_frontdoor_pr.json --allow-env-mismatch`: no `tg` regressions detected; rg comparator drift was faster on all rows
+- measured medians on this host: `tg = 0.259509s`, `rg = 0.112597s`
+
+Do not claim a cold-search speed win from this branch; it is launcher/control-plane correctness evidence and keeps `rg` as the cold exact-text baseline.
+
 ## Release Completion Contract
 
 A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state.
@@ -102,6 +122,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Scoped text search, JSON, NDJSON, multi-root search, globs, `--column`, `--vimgrep`, `--path-separator`, `--type-list`, and invalid-regex diagnostics are stable enough for agent workflows.
 - Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.24` install on this host.
 - `tg --version` is script-friendly by default; use `tg --version --verbose` for feature/SIMD/Arrow diagnostics.
+- Stable managed installs should prefer the release-native front door when the matching GitHub asset exists; Python remains the sidecar/fallback instead of the first hop for normal shell `tg`.
 - Public help starts with `Usage: tg`, including `python -m tensor_grep --help` and installed command help paths.
 - `defs`, `source`, `refs`, `callers`, `context-render`, and `blast-radius` are useful for scoped repo navigation and planning.
 - Released context work tightens `context-render` / MCP trust: source-body evidence ranks natural queries, default LLM rendering preserves executable body lines, `context_consistency` reports seed/render/navigation agreement, and validation commands carry detection provenance.
@@ -120,7 +141,8 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - `impact --symbol` is still less trustworthy than `blast-radius` for direct symbol impact.
 - `validation_commands` can still be heuristic when stack evidence is partial. Treat targeted commands as hints, not proof of full coverage; require `validation_plan[].detection`, do not trust npm/package-manager hints without `package.json` evidence, and omit commands entirely when no runner evidence exists.
 - Local `uv run tg doctor --json` can find stale in-tree standalone binaries at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current dev-path safety should ignore them for implicit native delegation, report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
-- Explicitly opted-in broad `tg search --files ...` over generated artifact trees can still be expensive. The managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
+- Explicitly opted-in broad `tg search --files ...` over generated artifact trees can still be expensive. The managed launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
+- Public script-install cold-path performance is an active follow-up. The branch should prove whether the release-native front door materially improves public managed installs before any docs or README speed row changes.
 - Root-scale unsorted `--files-with-matches`, `--count`, and `--force-cpu` can still differ from raw `rg` in output ordering even when the file set and counts match. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting before claiming golden stdout parity; sorted files-with-matches, files-without-match, and replacement output are now regression-covered parity edges on the active branch.
 - Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; use normal PowerShell `tg` / `tg.ps1` or quote the metacharacter argument for `cmd.exe`.
 - Always verify command resolution with `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, `where.exe tg`, `Get-Command tg -All`, and WSL `wsl bash -lc 'command -v tg; tg --version'` after installer changes. A stale `Python*\Scripts\tg.exe` returning an older tensor-grep version is a release blocker.
@@ -130,8 +152,9 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) fast and representative; it should cover context trust, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct impact.
-4. Track public shim performance, AST parity roadmap gaps, GPU benchmark/no-match cleanup, and `classify` provider/cache UX as blockers for a future "world-class" claim, not as blockers for this correctness PR.
-5. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
+4. Track AST parity roadmap gaps, GPU benchmark/no-match cleanup, and `classify` provider/cache UX as blockers for a future "world-class" claim, not as blockers for this launcher/control-plane PR.
+5. Design an opt-in agent-bounded search/context output profile inspired by `rtk`: grouped by file, capped globally and per file, with line truncation and omission counts. Keep raw `--format rg`, `--json`, and `--ndjson` contracts unchanged.
+6. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
 
 ## Safe Next-Session Commands
 

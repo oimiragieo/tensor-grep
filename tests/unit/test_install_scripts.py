@@ -36,6 +36,20 @@ def test_install_ps1_should_target_native_frontdoor_instead_of_venv_console_scri
     assert r"$installDir\.venv\Scripts\tg.exe" not in content
 
 
+def test_install_ps1_should_download_release_native_frontdoor_and_configure_sidecar():
+    content = _read_script("scripts/install.ps1")
+
+    assert "tg-windows-amd64-cpu.exe" in content
+    assert (
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion" in content
+    )
+    assert '$nativeFrontdoorPath = Join-Path $frontdoorDir "tg.exe"' in content
+    assert "$env:TG_SIDECAR_PYTHON" in content
+    assert "$env:TG_NATIVE_TG_BINARY" in content
+    assert "set TG_SIDECAR_PYTHON=" in content
+    assert "set TG_NATIVE_TG_BINARY=" in content
+
+
 def test_install_ps1_should_refresh_managed_lsp_providers_via_frontdoor():
     content = _read_script("scripts/install.ps1")
 
@@ -107,6 +121,9 @@ def test_install_ps1_should_create_argv_safe_utf8_powershell_shims():
     assert "$frontdoorPs1Path" in content
     assert '$env:PYTHONUTF8 = "1"' in content
     assert '$env:PYTHONIOENCODING = "utf-8"' in content
+    assert '$env:TG_SIDECAR_PYTHON = "$installDir\\.venv\\Scripts\\python.exe"' in content
+    assert 'if (Test-Path -LiteralPath "$nativeFrontdoorPath") {' in content
+    assert '& "$nativeFrontdoorPath" @args' in content
     assert '& "$installDir\\.venv\\Scripts\\python.exe" -X utf8 -m tensor_grep @args' in content
     assert '& "$frontdoorPs1Path" @args' in content
     assert 'function tg { & `"$frontdoorPs1Path`" @args }' in content
@@ -130,7 +147,12 @@ def test_install_ps1_should_create_git_bash_shims_without_pathext():
 
     assert "$frontdoorBashPath" in content
     assert "$msysInstallDir" in content
+    assert 'TG_NATIVE="$msysInstallDir/bin/tg.exe"' in content
     assert 'TG_PYTHON="$msysInstallDir/.venv/Scripts/python.exe"' in content
+    assert 'export TG_SIDECAR_PYTHON="`$TG_PYTHON"' in content
+    assert 'export TG_NATIVE_TG_BINARY="`$TG_NATIVE"' in content
+    assert 'if [ -f "`$TG_NATIVE" ]; then' in content
+    assert '    exec "`$TG_NATIVE" "`$@"' in content
     assert 'exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"' in content
     assert 'TG_FRONTDOOR="$msysFrontdoorPath"' in content
     assert 'exec "`$TG_FRONTDOOR" "`$@"' in content
@@ -143,6 +165,7 @@ def test_install_ps1_should_create_wsl_aware_bash_shims():
     assert "$wslInstallDir = Convert-ToWslPath $installDir" in content
     assert "$wslFrontdoorPath = Convert-ToWslPath $frontdoorBashPath" in content
     assert "grep -qi microsoft /proc/version" in content
+    assert 'TG_NATIVE="$wslInstallDir/bin/tg.exe"' in content
     assert 'TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"' in content
     assert 'TG_FRONTDOOR="$wslFrontdoorPath"' in content
 
@@ -182,6 +205,21 @@ def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_scrip
         )
     )
     assert '"$INSTALL_DIR/.venv/bin/tg"' not in content
+
+
+def test_install_sh_should_download_release_native_frontdoor_and_configure_sidecar():
+    content = _read_script("scripts/install.sh")
+
+    assert "tg-linux-amd64-cpu" in content
+    assert "tg-macos-amd64-cpu" in content
+    assert 'NATIVE_BINARY="$INSTALL_DIR/bin/tg-native"' in content
+    assert (
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}"
+        in content
+    )
+    assert 'export TG_SIDECAR_PYTHON="$INSTALL_DIR/.venv/bin/python"' in content
+    assert 'export TG_NATIVE_TG_BINARY="\\$NATIVE_BINARY"' in content
+    assert 'exec "\\$NATIVE_BINARY" "\\$@"' in content
 
 
 def test_install_sh_should_refresh_managed_lsp_providers_via_frontdoor():

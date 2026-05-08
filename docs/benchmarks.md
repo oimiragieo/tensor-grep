@@ -98,6 +98,16 @@ Current Roadmap 1 launcher-mode read on this host:
 
 This is useful control-plane evidence, but not yet an accepted speed win. Both modes still regress against the accepted Windows baseline under `benchmarks/check_regression.py`, so the current conclusion is only that `python_module_launcher` is the better measured launcher mode of the two on this host.
 
+Post-`v1.8.24` managed-native front-door probe:
+
+- artifact: `artifacts/bench_run_benchmarks_native_frontdoor_pr.json`
+- command shape: `python benchmarks/run_benchmarks.py --binary rust_core/target/release/tg.exe --launcher-mode explicit_binary --output artifacts/bench_run_benchmarks_native_frontdoor_pr.json`
+- launcher/source: `explicit_binary`, `explicit_arg`
+- result: parity passed on all 10 rows; `check_regression.py --allow-env-mismatch` reported no `tg` benchmark regressions and rg comparator drift
+- measured medians on this host: `tg = 0.259509s`, `rg = 0.112597s`
+
+This supports the managed installer change from Python-first front door to release-native front door as a control-plane correctness improvement, not as a cold-search speed claim. `rg` remains the cold exact-text baseline.
+
 For the current release line, that closes Roadmap 1 as a boundary rather than leaving it as an implied open loop: there is still no accepted cold-path win from Python-side launcher variants, so a larger native rewrite is required for material movement toward raw `rg`.
 
 For the Rust-first native control-plane roadmap, `run_benchmarks.py` should now also record `tg_binary_source` so future launcher/control-plane experiments can distinguish repo-default binary dispatch (`default_binary_path`) from a user-supplied native binary (`explicit_arg`) before making any new speed claim.

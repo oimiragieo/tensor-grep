@@ -249,6 +249,8 @@ impl RustBackend {
             file_types,
             color,
             replace,
+            sort: None,
+            sort_reverse: None,
             patterns,
             paths: vec![path],
             pcre2,

@@ -87,6 +87,72 @@ def test_main_entry_should_passthrough_raw_rg_style_invocation(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["-i", "ERROR", "."]}
 
 
+def test_main_entry_should_strip_noop_rg_format_for_rg_passthrough(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "--format", "rg", "ERROR", "."])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "rg", "search_args": ["ERROR", "."]}
+
+
+def test_main_entry_should_strip_noop_rg_format_and_keep_sort_for_rg_passthrough(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "--format=rg", "--sort", "path", "ERROR", "."],
+    )
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "rg", "search_args": ["--sort", "path", "ERROR", "."]}
+
+
+def test_main_entry_should_keep_non_rg_format_on_full_cli(monkeypatch):
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "--format=json", "ERROR", "."])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_fallback_to_full_cli_for_tg_specific_flags(monkeypatch):
     called = {"full_cli": False}
 
