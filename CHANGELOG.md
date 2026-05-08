@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.8.25 (2026-05-08)
+
+### Documentation
+
+- Clarify v1.8.24 README current state
+  ([`b6c466f`](https://github.com/oimiragieo/tensor-grep/commit/b6c466f571fce8efc7babea4e9c5c8765b1d275d))
+
+- Update v1.8.24 handoff and skill guidance
+  ([`d5245f6`](https://github.com/oimiragieo/tensor-grep/commit/d5245f6ade15fc715cbdd6a3dc9550febbad37b5))
+
+### Performance Improvements
+
+- Use native front door for managed installs
+  ([`7b38bbb`](https://github.com/oimiragieo/tensor-grep/commit/7b38bbbb347ab002076c49965ebfa5785c53b2ce))
+
+Use the release-native CPU binary as the managed-install front door while preserving Python fallback
+  behavior and rg-compatible output contracts.
+
+
 ## v1.8.24 (2026-05-07)
 
 ### Bug Fixes
