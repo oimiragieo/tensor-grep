@@ -11,7 +11,7 @@ Environment:
 - Host: Windows 10 (`amd64`)
 - `tg` binary: `rust_core/target/release/tg.exe` (`tg 1.7.0`)
 - GPU under test: device `0` (`NVIDIA GeForce RTX 4070`, `sm_89`)
-- Corpus sizes: `10MB`, `100MB`, `500MB`, `1GB`
+- Corpus sizes in this historical artifact: `10MB`, `100MB`, `500MB`, `1GB`
 - Corpus layout: 8 synthetic log shards per size
 - Query: fixed-string `gpu benchmark sentinel`
 - Timing: median of 3 end-to-end CLI runs per command
@@ -33,7 +33,7 @@ No crossover was found.
 | 500MB | 0.126s | 0.131s | timeout | n/a | FAIL |
 | 1GB | 0.144s | 0.150s | timeout | n/a | FAIL |
 
-Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks_post_v170_audit.json`.
+Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks_post_v170_audit.json`. Current benchmark scripts add a 5GB default row and require exact match/file-set correctness on every >=1GB GPU corpus before any future GPU routing promotion claim.
 
 ## Correctness parity
 

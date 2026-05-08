@@ -89,13 +89,15 @@ def test_install_ps1_should_refresh_managed_lsp_providers_via_frontdoor():
     assert "Managed external LSP provider setup failed; run 'tg lsp-setup' manually." in content
 
 
-def test_install_ps1_should_prepend_shim_dirs_ahead_of_stale_python_scripts():
+def test_install_ps1_should_prepend_native_frontdoor_ahead_of_cmd_shim_dirs():
     content = _read_script("scripts/install.ps1")
 
+    assert "$managedPathDirs = @($frontdoorDir) + $shimDirs" in content
     assert (
-        "$userPathParts = @($shimDirs + "
-        "($userPathParts | Where-Object { $shimDirs -notcontains $_ }))"
+        "$userPathParts = @($managedPathDirs + "
+        "($userPathParts | Where-Object { $managedPathDirs -notcontains $_ }))"
     ) in content
+    assert "$currentPathParts = @($managedPathDirs + " in content
     assert "$env:Path = ($currentPathParts -join ';')" in content
     assert '"$userPath;$shimDir"' not in content
     assert '"$env:Path;$shimDir"' not in content

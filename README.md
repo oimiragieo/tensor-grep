@@ -48,7 +48,7 @@ Current positioning:
 - `tg` is the agent-native search, context, AST, and edit-planning orchestration layer.
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
-- GPU and `classify` remain opt-in/experimental surfaces until local benchmarks and provider/cache UX prove otherwise.
+- GPU and `classify` remain opt-in/experimental surfaces until local benchmarks and provider/cache UX prove otherwise. Default `classify` should stay deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - The next product wedge is an agent context capsule: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, and confidence. That should be an explicit agent profile or command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 
@@ -67,6 +67,10 @@ What `v1.8.30` closed:
 
 Active post-`v1.8.30` follow-up:
 
+- put the managed native front-door directory ahead of compatibility `.cmd` shim directories on Windows PATH so `cmd`, unprofiled PowerShell, and `subprocess.run(["tg", ...])` resolve the native `tg.exe` first; keep `tg.cmd` as the argv-safe compatibility fallback for direct `.cmd` calls
+- normalize `edit-plan` and `context-render` JSON by exposing top-level `validation_commands` in both shapes so agents do not need command-specific fallback logic
+- keep `classify` fast by defaulting to local deterministic heuristics and requiring `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` before probing Triton/tokenizer/model providers
+- extend GPU benchmark defaults to include 5GB and run exact match/file-set correctness on every >=1GB GPU corpus before any GPU promotion claim
 - design `tg agent` / Actionable Context Capsule as an opt-in agent workflow, not a replacement for raw search output
 - the capsule target is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when warranted
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
@@ -280,7 +284,7 @@ Important constraint:
 - **It has a validated compatibility set for common ripgrep use.** `tg search` has a benchmarked compatibility contract for the day-to-day flags that matter most in code and log search, with the currently validated rows documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 - **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
 - **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag.
-- **Optional log classification.** `tg classify` uses `cyBERT` when the NLP stack is installed and reachable. Treat it as an experimental helper, not a default agent primitive or hot search path.
+- **Optional log classification.** `tg classify` uses deterministic local heuristics by default and only probes `cyBERT` / Triton when `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` is set. Treat the model-backed path as an experimental helper, not a default agent primitive or hot search path.
 - **Unified Harness API.** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
 - **NDJSON Streaming Output.** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
 - **Batch AST Rewrite.** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.

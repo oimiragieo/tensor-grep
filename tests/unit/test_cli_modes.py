@@ -2999,6 +2999,9 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
         primary_file=module_path,
         primary_symbol_name="create_invoice",
     )
+    assert "validation_commands" in payload
+    assert payload["validation_commands"] == payload["navigation_pack"]["validation_commands"]
+    assert payload["validation_commands"] == payload["edit_plan_seed"]["validation_commands"]
 
 
 def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):

@@ -16,6 +16,7 @@ EXPECTED_EXAMPLES = {
         "candidate_edit_targets",
         "edit_plan_seed",
         "navigation_pack",
+        "validation_commands",
     ),
     "context_render.json": (
         "query",

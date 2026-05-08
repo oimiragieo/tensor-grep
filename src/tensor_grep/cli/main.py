@@ -5141,31 +5141,18 @@ def checkpoint_undo(
 def classify(
     file_path: str, format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
-    """Run semantic log classification via cyBERT."""
+    """Run log classification with local heuristics or an explicit cyBERT provider."""
     import json
-    import re
 
-    from tensor_grep.backends.cybert_backend import CybertBackend
     from tensor_grep.io.reader_fallback import FallbackReader
+    from tensor_grep.sidecar import _classify_lines
 
     reader = FallbackReader()
     lines = list(reader.read_lines(file_path))
     if not lines:
         sys.exit(1)
 
-    backend = CybertBackend()
-    try:
-        results = backend.classify(lines)
-    except Exception:
-        # Keep CLI usable when Triton/PyTorch is unavailable in CI or local environments.
-        results = []
-        for line in lines:
-            if re.search(r"\berror\b|\bfail(?:ed)?\b|\bexception\b", line, re.IGNORECASE):
-                results.append({"label": "error", "confidence": 0.9})
-            elif re.search(r"\bwarn(?:ing)?\b", line, re.IGNORECASE):
-                results.append({"label": "warn", "confidence": 0.8})
-            else:
-                results.append({"label": "info", "confidence": 0.7})
+    results = _classify_lines(lines)
 
     if format_type == "json":
         data = {"classifications": results}
