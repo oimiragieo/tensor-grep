@@ -181,6 +181,9 @@ class TestCybertBackend:
         import tritonclient.http as httpclient
 
         mock_client = MagicMock()
+        mock_client.is_server_live.return_value = True
+        mock_client.is_server_ready.return_value = True
+        mock_client.is_model_ready.return_value = True
         httpclient.InferenceServerClient.return_value = mock_client
 
         mock_result = MagicMock()
@@ -208,6 +211,9 @@ class TestCybertBackend:
         import tritonclient.http as httpclient
 
         mock_client = MagicMock()
+        mock_client.is_server_live.return_value = True
+        mock_client.is_server_ready.return_value = True
+        mock_client.is_model_ready.return_value = True
         httpclient.InferenceServerClient.return_value = mock_client
 
         mock_result = MagicMock()
@@ -243,6 +249,9 @@ class TestCybertBackend:
         import tritonclient.http as httpclient
 
         mock_client = MagicMock()
+        mock_client.is_server_live.return_value = True
+        mock_client.is_server_ready.return_value = True
+        mock_client.is_model_ready.return_value = True
         mock_client.infer.side_effect = RuntimeError("server unavailable")
         httpclient.InferenceServerClient.return_value = mock_client
 
@@ -251,6 +260,26 @@ class TestCybertBackend:
         backend = CybertBackend()
         with pytest.raises(RuntimeError, match="CyBERT inference failed"):
             backend.classify(["test line"])
+
+    @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
+    def test_should_use_heuristic_fallback_before_tokenization_when_triton_unavailable(self):
+        import tritonclient.http as httpclient
+
+        mock_client = MagicMock()
+        mock_client.is_server_live.return_value = False
+        httpclient.InferenceServerClient.return_value = mock_client
+
+        from tensor_grep.backends import cybert_backend
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        with patch.object(
+            cybert_backend,
+            "tokenize",
+            side_effect=AssertionError("tokenizer should not run when Triton is unavailable"),
+        ):
+            results = CybertBackend().classify(["ERROR database failed"])
+
+        assert results == [{"label": "error", "confidence": 0.95}]
 
     def test_should_use_heuristic_fallback_when_triton_missing(self):
         from tensor_grep.backends.cybert_backend import CybertBackend

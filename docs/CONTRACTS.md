@@ -27,6 +27,7 @@ Current validated rows:
 - `-F/--fixed-strings`
 - `-w/--word-regexp`
 - `-m/--max-count`
+- `--files`
 - `-t/--type`
 - `-./--hidden`
 - `-L/--follow`
@@ -36,6 +37,9 @@ Current validated rows:
 - `-c/--count`
 - `--count-matches`
 - `-a/--text`
+- `-0/--null`
+- `-U/--multiline`
+- `--multiline-dotall`
 
 Character-for-character identity is not required for help formatting, but command presence, supported rows, accepted normalization, and the deterministic parity corpus are part of the public contract. Additional rg-style flags may be exposed in `tg search --help`, but they are not covered by the stable compatibility claim until they are added to the contract suite and benchmark runner.
 
@@ -46,6 +50,9 @@ Agent automation contracts:
 - `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
 - `tg search` with `--format rg` is a public exact ripgrep-style text formatter for automation that needs rg-shaped stdout. Pair it with `--sort path` when deterministic path ordering matters across backends.
 - The native front door treats `--format rg` as a no-op for rg-compatible text output and preserves `--sort path` when forwarding to ripgrep. Non-rg `--format` search output remains a Python CLI formatting surface.
+- The public native front door must not reject flags advertised by the public Python CLI. It may execute the request natively, forward to ripgrep, or route to the Python sidecar, but sidecar routing must be intentional and covered by a public-native regression test.
+- `tg search --files` remains a generated-root guardrail surface. The native front door may route it to the Python sidecar so broad generated-root refusal, `--glob`, `--type`, `--max-depth`, and `--allow-broad-generated-scan` keep the same public semantics.
+- `tg search --multiline` / `-U`, `--multiline-dotall`, and `-0/--null` must be accepted by the native front door and forwarded to the backend that preserves rg-compatible behavior for the requested output mode.
 - `--sort path` is the deterministic contract for `--files-with-matches`, `--files-without-match`, `--replace`, and path-list automation. The parity suite also checks match, no-match, parse-error, and binary-skip exit-code behavior.
 - Default output ordering for root-scale `--files-with-matches`, `--count`, and `--force-cpu` is a semantic result parity contract, not a golden stdout ordering contract. Use `--sort path` when automation needs deterministic path ordering across backends.
 - Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
@@ -56,6 +63,8 @@ Agent automation contracts:
 - Stable managed install scripts should prefer the matching release-native CPU `tg` binary as the public front door when the GitHub release asset is available, set `TG_SIDECAR_PYTHON` for Python-backed commands, set `TG_NATIVE_TG_BINARY` for the sidecar, and fall back to `python -m tensor_grep` when no native asset exists.
 - Stable installers must build replacement managed environments and front-door files in a staging directory and only swap them into `~/.tensor-grep` after package installation and front-door generation succeed. PowerShell installer native commands must check `$LASTEXITCODE` before the staged swap. A failed package resolve/install must preserve the previous managed install and shims.
 - `tg upgrade` must not infer "latest PyPI version" solely from unchanged local metadata. It should refresh package metadata, skip yanked PyPI releases when selecting an exact version, pin the latest same-or-newer PyPI version when known, verify the target Python can import `tensor_grep`, and report a verification error instead of success if the sidecar is corrupted. The scheduled Windows self-upgrade helper must run the same import/version verification before writing a success log. Managed installs must also refresh the managed release-native front door to the verified sidecar package version, or schedule a Windows native-front-door retry helper when the running native `tg.exe` is locked.
+- `tg classify --format json` is a public sidecar command even when invoked through the native front door. When Triton is unavailable, `classify` should use deterministic heuristic fallback before tokenization or Hugging Face model loading so agent calls fail fast and quietly instead of hanging on provider setup.
+- GPU benchmark correctness compares result sets, not only successful match exits. `rg` exit code `1` is a valid no-match outcome, so no-match patterns must be accepted as correctness passes when `tg` also returns no matches.
 - The fast agent-readiness dogfood gate is `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`. For the current `v1.8.28` release line it checks public shell version probes, repo doctor sanity, `context_consistency`, deterministic rg parity edges, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, the managed native-upgrade contract, and the public positioning that `rg` remains the cold exact-text baseline while `ast-grep` remains the structural-search feature/performance baseline.
 
 Context and edit-planning contracts:

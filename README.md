@@ -49,6 +49,8 @@ Current positioning:
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU and `classify` remain opt-in/experimental surfaces until local benchmarks and provider/cache UX prove otherwise.
+- The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
+- The next product wedge is an agent context capsule: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, and confidence. That should be an explicit agent profile or command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 
 What `v1.8.28` closed:
 
@@ -59,6 +61,13 @@ What `v1.8.28` closed:
 - the Rust front door treats `--format rg` as a no-op for ripgrep-compatible text output and preserves `--sort path` passthrough for deterministic automation
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
+
+Active post-`v1.8.28` follow-up:
+
+- public dogfood showed the native front door is finally competitive for core cold search and AST startup, but it exposed parser gaps where the native command rejected Python-advertised flags
+- this branch hardens native CLI parity for `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`
+- `classify` must fall back before expensive tokenization when Triton is unavailable, and the GPU correctness benchmark must treat `rg` exit code `1` as a valid no-match comparator result
+- this is contract correctness for the native front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 
 Managed native-upgrade dogfood:
 

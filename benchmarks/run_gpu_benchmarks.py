@@ -358,7 +358,7 @@ def run_correctness_check(
     rg_result = _run_command(rg_command, env=env, capture_output=True)
     gpu_result = _run_command(gpu_command, env=env, capture_output=True)
 
-    if rg_result.returncode != 0:
+    if rg_result.returncode not in (0, 1):
         return {
             "device_id": device_id,
             "pattern": pattern,
@@ -367,7 +367,7 @@ def run_correctness_check(
             "matches_equal": False,
             "files_equal": False,
         }
-    if gpu_result.returncode != 0:
+    if gpu_result.returncode not in (0, 1):
         return {
             "device_id": device_id,
             "pattern": pattern,

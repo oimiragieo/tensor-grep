@@ -21,7 +21,7 @@ Last updated: 2026-05-08
 
 ## Current Post-v1.8.28 Scope
 
-Current release branch is closed. Use a new branch from `origin/main` for follow-up work.
+Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The active follow-up branch is `fix/native-frontdoor-cli-parity`.
 
 The immediate `v1.8.27` native-front-door updater dogfood follow-up shipped in `v1.8.28`:
 
@@ -29,6 +29,13 @@ The immediate `v1.8.27` native-front-door updater dogfood follow-up shipped in `
 - The downloaded native front door is smoke-tested with `--version` before replacement and the installed destination is version-checked after replacement.
 - On Windows file-lock failures, `tg upgrade` schedules a detached retry helper that waits for the parent process to exit, downloads the matching asset, retries replacement, and writes a log under `~/.tensor-grep/logs`.
 - Existing `v1.8.27` behavior means the first upgrade from `v1.8.27` to `v1.8.28` can update only the sidecar; once `v1.8.28` is installed, a subsequent `tg upgrade` or stable installer run refreshes the native front door, and future upgrades keep sidecar/native versions aligned in one command.
+
+Public `v1.8.28` dogfood exposed the next native-front-door contract gap:
+
+- The public native front door is now fast enough to be the normal shell path, but it rejected several Python-advertised flags: `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- The accepted fix direction is parser and routing parity, not a new speed claim. The native front door should execute these requests directly, forward them to ripgrep, or intentionally route them to the Python sidecar while preserving the public behavior and generated-root guardrails.
+- `classify` must fall back before expensive tokenization when Triton is unavailable so an agent call does not hang on provider/model setup.
+- The GPU benchmark correctness harness should treat `rg` exit code `1` as a valid no-match comparator result; a zero-match fixture is not a GPU correctness failure when `tg` also returns zero matches.
 
 Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
@@ -89,6 +96,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - The `v1.8.26` release moved release-native CPU asset build/upload/verification into main CI after semantic-release, so GitHub release assets are present before PyPI publish and public installers can use the matching native front door.
 - The `v1.8.27` release hardened stable installers and sidecar upgrade resolution against stale package metadata, yanked releases, missing post-upgrade imports, unchecked native installer failures, and broken staged replacement.
 - The `v1.8.28` release refreshes the managed release-native front door after sidecar upgrades, including the Windows retry-helper path for locked `tg.exe` replacement.
+- The active post-`v1.8.28` branch hardens public-native CLI parity for advertised search/run/classify flags and fixes the GPU no-match correctness benchmark harness.
 
 ## Verified Before Release Closeout
 
@@ -153,6 +161,8 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - MCP entrypoint is present via `tg mcp --help`; MCP tool behavior is covered by the repo tests.
 - GPU devices are detected locally; GPU routing remains benchmark-governed and should not be marketed as automatic crossover.
 - `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a useful validated slice, not full ast-grep equivalence.
+- The native front door must not advertise a Python CLI surface that it rejects. If a command remains Python-backed, route it to the sidecar deliberately and regression-test the public native invocation shape.
+- Token-efficiency work should become an explicit agent profile or command, not a mutation of raw search outputs. The likely product shape is an agent context capsule with hard budgets, line maps, omission counts, validation evidence, checkpoint/rollback metadata, and confidence.
 
 ## Known Weak Spots
 

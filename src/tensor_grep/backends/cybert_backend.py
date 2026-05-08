@@ -60,6 +60,17 @@ def _create_triton_http_client(url: str) -> Any:
     )
 
 
+def _triton_model_ready(client: Any, model_name: str) -> bool:
+    try:
+        if not client.is_server_live():
+            return False
+        if not client.is_server_ready():
+            return False
+        return bool(client.is_model_ready(model_name))
+    except Exception:
+        return False
+
+
 def deobfuscate_payload(line: str) -> str:
     """
     Attempts to decode common cybersecurity obfuscation techniques (Base64, URL encoding)
@@ -150,14 +161,7 @@ class CybertBackend(ComputeBackend):
         except Exception:
             return False
 
-        try:
-            if not client.is_server_live():
-                return False
-            if not client.is_server_ready():
-                return False
-            return bool(client.is_model_ready(self.model_name))
-        except Exception:
-            return False
+        return _triton_model_ready(client, self.model_name)
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
@@ -220,6 +224,8 @@ class CybertBackend(ComputeBackend):
             return self._heuristic_classify(lines)
 
         client = _create_triton_http_client(self.url)
+        if not _triton_model_ready(client, self.model_name):
+            return self._heuristic_classify(lines)
 
         # Simplified simulation of triton prepare and request
         try:
