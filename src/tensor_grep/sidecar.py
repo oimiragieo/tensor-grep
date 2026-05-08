@@ -8,7 +8,11 @@ import re
 import sys
 import traceback
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
+
+_CLASSIFY_PROVIDER_ENV = "TENSOR_GREP_CLASSIFY_PROVIDER"
+_CYBERT_CLASSIFY_PROVIDERS = {"cybert", "triton"}
 
 
 def _read_request() -> dict[str, Any]:
@@ -30,26 +34,36 @@ def _extract_exit_code(exc: SystemExit) -> int:
     return 1
 
 
+def _heuristic_classify_lines(lines: list[str]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for line in lines:
+        line_lower = line.lower()
+        if re.search(r"\berror\b|\bfail(?:ed|ure)?\b|\bfatal\b|\bexception\b", line_lower):
+            results.append({"label": "error", "confidence": 0.95})
+        elif re.search(r"\bwarn(?:ing)?\b|\bdegraded\b|\bslow\b", line_lower):
+            results.append({"label": "warn", "confidence": 0.85})
+        else:
+            results.append({"label": "info", "confidence": 0.80})
+    return results
+
+
 def _classify_lines(lines: list[str]) -> list[dict[str, Any]]:
+    provider = os.environ.get(_CLASSIFY_PROVIDER_ENV, "heuristic").strip().lower()
+    if provider not in _CYBERT_CLASSIFY_PROVIDERS:
+        return _heuristic_classify_lines(lines)
+
     from tensor_grep.backends.cybert_backend import CybertBackend
 
     backend = CybertBackend()
     try:
         return backend.classify(lines)
     except Exception:
-        results: list[dict[str, Any]] = []
-        for line in lines:
-            if re.search(r"\berror\b|\bfail(?:ed)?\b|\bexception\b", line, re.IGNORECASE):
-                results.append({"label": "error", "confidence": 0.9})
-            elif re.search(r"\bwarn(?:ing)?\b", line, re.IGNORECASE):
-                results.append({"label": "warn", "confidence": 0.8})
-            else:
-                results.append({"label": "info", "confidence": 0.7})
-        return results
+        return _heuristic_classify_lines(lines)
 
 
 def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tuple[str, str, int]:
     format_type = "json"
+    positional_args: list[str] = []
     index = 0
     while index < len(args):
         arg = args[index]
@@ -61,6 +75,7 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
             format_type = arg.split("=", 1)[1]
             index += 1
             continue
+        positional_args.append(str(arg))
         index += 1
 
     content = None
@@ -68,7 +83,12 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
         content = payload.get("content")
 
     if not isinstance(content, str):
-        return _dispatch_cli("classify", list(args))
+        if len(positional_args) != 1:
+            return _dispatch_cli("classify", list(args))
+        try:
+            content = Path(positional_args[0]).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return "", f"failed to read classify input: {exc}\n", 1
 
     lines = content.splitlines(keepends=True)
     if content and not lines:

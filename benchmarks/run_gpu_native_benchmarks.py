@@ -28,7 +28,7 @@ from run_gpu_benchmarks import (  # noqa: E402
     parse_corpus_sizes,
 )
 
-DEFAULT_CORPUS_SIZES = (10 * MB, 100 * MB, 500 * MB, 1 * GB)
+DEFAULT_CORPUS_SIZES = (10 * MB, 100 * MB, 500 * MB, 1 * GB, 5 * GB)
 DEFAULT_RUNS = 3
 DEFAULT_WARMUP = 0
 DEFAULT_COMMAND_TIMEOUT_S = 180
@@ -983,7 +983,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--corpus-sizes",
         type=parse_corpus_sizes,
         default=DEFAULT_CORPUS_SIZES,
-        help="Comma-separated corpus sizes such as 10MB,100MB,500MB,1GB.",
+        help="Comma-separated corpus sizes such as 10MB,100MB,500MB,1GB,5GB.",
     )
     parser.add_argument(
         "--runs", type=int, default=DEFAULT_RUNS, help="Benchmark samples per command."

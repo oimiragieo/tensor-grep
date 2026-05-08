@@ -489,6 +489,7 @@ exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
         "$env:USERPROFILE\.local\bin",
         "$env:USERPROFILE\bin"
     )
+    $managedPathDirs = @($frontdoorDir) + $shimDirs
     $cmdShimContent = (
         "@echo off`r`n" +
         "setlocal`r`n" +
@@ -548,16 +549,16 @@ exec "`$TG_FRONTDOOR" "`$@"
     if ($userPath) {
         $userPathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
     }
-    $userPathParts = @($shimDirs + ($userPathParts | Where-Object { $shimDirs -notcontains $_ }))
+    $userPathParts = @($managedPathDirs + ($userPathParts | Where-Object { $managedPathDirs -notcontains $_ }))
     $userPath = ($userPathParts -join ';')
-    foreach ($shimDir in $shimDirs) {
-        Write-Host "Ensured $shimDir is ahead of stale tg launchers on user PATH."
+    foreach ($managedPathDir in $managedPathDirs) {
+        Write-Host "Ensured $managedPathDir is ahead of stale tg launchers on user PATH."
     }
     [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
 
     # Ensure current process PATH resolves managed shims immediately.
     $currentPathParts = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    $currentPathParts = @($shimDirs + ($currentPathParts | Where-Object { $shimDirs -notcontains $_ }))
+    $currentPathParts = @($managedPathDirs + ($currentPathParts | Where-Object { $managedPathDirs -notcontains $_ }))
     $env:Path = ($currentPathParts -join ';')
 
     # Remove unmanaged tensor-grep launchers from effective PATH entries that User PATH cannot outrank.

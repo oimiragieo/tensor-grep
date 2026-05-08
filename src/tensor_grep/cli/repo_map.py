@@ -7643,6 +7643,7 @@ def build_context_edit_plan_from_map(
         max_symbols=normalized_max_symbols,
         _profiling_collector=collector,
     )
+    payload["validation_commands"] = _top_level_validation_commands(payload)
     return _attach_profiling(payload, collector)
 
 
@@ -7901,6 +7902,18 @@ def _compact_context_sections(sections: object) -> list[dict[str, Any]]:
     return compact_sections
 
 
+def _top_level_validation_commands(payload: dict[str, Any]) -> list[str]:
+    navigation_pack = payload.get("navigation_pack")
+    navigation_commands = (
+        navigation_pack.get("validation_commands", []) if isinstance(navigation_pack, dict) else []
+    )
+    edit_plan_seed = payload.get("edit_plan_seed")
+    seed_commands = (
+        edit_plan_seed.get("validation_commands", []) if isinstance(edit_plan_seed, dict) else []
+    )
+    return _list_of_strings(navigation_commands or seed_commands)
+
+
 def _compact_context_render_payload(
     payload: dict[str, Any],
     *,
@@ -7942,9 +7955,7 @@ def _compact_context_render_payload(
             compact.get("candidate_edit_targets"),
             max_files=max_files,
         )
-    navigation_commands = compact.get("navigation_pack", {}).get("validation_commands", [])
-    seed_commands = compact.get("edit_plan_seed", {}).get("validation_commands", [])
-    compact["validation_commands"] = _list_of_strings(navigation_commands or seed_commands)
+    compact["validation_commands"] = _top_level_validation_commands(compact)
     compact["context_payload_profile"] = f"{render_profile}-compact"
     compact["payload_compaction"] = {
         "omitted_keys": omitted_keys,
@@ -8168,17 +8179,7 @@ def build_context_render_from_map(
             max_files=max_files,
             max_symbols=max_sources,
         )
-    navigation_commands = (
-        payload.get("navigation_pack", {}).get("validation_commands", [])
-        if isinstance(payload.get("navigation_pack"), dict)
-        else []
-    )
-    seed_commands = (
-        payload.get("edit_plan_seed", {}).get("validation_commands", [])
-        if isinstance(payload.get("edit_plan_seed"), dict)
-        else []
-    )
-    payload["validation_commands"] = _list_of_strings(navigation_commands or seed_commands)
+    payload["validation_commands"] = _top_level_validation_commands(payload)
     (
         rendered_context,
         sections,

@@ -334,6 +334,7 @@ It reuses the Context Pack JSON shape and adds:
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, suggested edits, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
 | `navigation_pack` | `object` | Compact AI-facing navigation bundle with the primary target, mention-ready follow-up reads, related tests, and validation commands. |
+| `validation_commands` | `array<string>` | Top-level copy of the best validation commands from `navigation_pack` or `edit_plan_seed` for quick agent access. Matches the `context-render` contract. |
 
 When this payload is carried into `python benchmarks/run_tensor_grep_patch_driver.py`, the emitted patch-driver records preserve both `edit_plan_seed` and `navigation_pack` so executor loops can keep the richer plan and the smaller planner-to-reader handoff together.
 

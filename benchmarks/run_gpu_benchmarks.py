@@ -23,7 +23,7 @@ from run_benchmarks import resolve_rg_binary  # noqa: E402
 KB = 1024
 MB = 1024 * KB
 GB = 1024 * MB
-DEFAULT_CORPUS_SIZES = (1 * MB, 10 * MB, 100 * MB, 1 * GB)
+DEFAULT_CORPUS_SIZES = (1 * MB, 10 * MB, 100 * MB, 1 * GB, 5 * GB)
 DEFAULT_RUNS = 1
 DEFAULT_WARMUP = 0
 DEFAULT_SHARD_COUNT = 8
@@ -645,31 +645,38 @@ def run_gpu_scale_benchmarks(
 
         rows.append(row)
 
-    correctness_corpus_size = next(
-        (size for size in corpus_sizes if size >= 10 * MB),
-        corpus_sizes[0],
-    )
-    correctness_corpus_dir = generated_corpora[correctness_corpus_size]
-    correctness_checks: list[dict[str, object]] = []
-    for device in devices:
-        if not device.get("operational", False):
-            continue
-        for pattern in correctness_patterns:
-            check = run_correctness_check(
-                rg_binary=rg_binary,
-                tg_binary=tg_binary,
-                corpus_dir=correctness_corpus_dir,
-                pattern=pattern,
-                device_id=int(device["device_id"]),
-                env=command_env,
+    correctness_corpus_sizes = [size for size in corpus_sizes if size >= 1 * GB]
+    if not correctness_corpus_sizes:
+        correctness_corpus_sizes = [
+            next(
+                (size for size in corpus_sizes if size >= 10 * MB),
+                corpus_sizes[0],
             )
-            check["device_name"] = device.get("name")
-            check["corpus_size_label"] = _format_size_label(correctness_corpus_size)
-            if not (check.get("matches_equal") and check.get("files_equal")):
-                errors.append(
-                    f"Correctness mismatch for GPU {device.get('device_id')} pattern {pattern!r}."
+        ]
+    correctness_checks: list[dict[str, object]] = []
+    for correctness_corpus_size in correctness_corpus_sizes:
+        correctness_corpus_dir = generated_corpora[correctness_corpus_size]
+        for device in devices:
+            if not device.get("operational", False):
+                continue
+            for pattern in correctness_patterns:
+                check = run_correctness_check(
+                    rg_binary=rg_binary,
+                    tg_binary=tg_binary,
+                    corpus_dir=correctness_corpus_dir,
+                    pattern=pattern,
+                    device_id=int(device["device_id"]),
+                    env=command_env,
                 )
-            correctness_checks.append(check)
+                size_label = _format_size_label(correctness_corpus_size)
+                check["device_name"] = device.get("name")
+                check["corpus_size_label"] = size_label
+                if not (check.get("matches_equal") and check.get("files_equal")):
+                    errors.append(
+                        "Correctness mismatch for GPU "
+                        f"{device.get('device_id')} pattern {pattern!r} at {size_label}."
+                    )
+                correctness_checks.append(check)
 
     return {
         "bench_dir": str(bench_dir),
@@ -713,7 +720,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--corpus-sizes",
         type=parse_corpus_sizes,
         default=DEFAULT_CORPUS_SIZES,
-        help="Comma-separated corpus sizes such as 1MB,10MB,100MB,1GB.",
+        help="Comma-separated corpus sizes such as 1MB,10MB,100MB,1GB,5GB.",
     )
     parser.add_argument(
         "--runs", type=int, default=DEFAULT_RUNS, help="Benchmark samples per command."

@@ -27,6 +27,13 @@ Current release branch is closed. Use a new branch from `origin/main` for follow
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The fast gate now includes `public-windows-launcher-quoted-patterns`.
 
+Active post-`v1.8.30` implementation scope:
+
+- Put `~/.tensor-grep/bin` ahead of compatibility shim directories on Windows PATH so `cmd`, unprofiled PowerShell, and Python `subprocess.run(["tg", ...])` resolve the native `tg.exe` first. Direct `tg.cmd` remains an argv-safe compatibility bridge, not the fast path.
+- Normalize `edit-plan` and `context-render` JSON by exposing top-level `validation_commands` in both payloads.
+- Keep `classify` deterministic and local by default; require `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` before probing CyBERT/Triton/tokenizer/model providers.
+- Extend GPU benchmark defaults to include 5GB and run exact match/file-set correctness checks on every >=1GB GPU corpus before any GPU promotion claim.
+
 The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
 - Native `search` forwards `--multiline` / `-U`, `--null`, and `--files` shapes instead of rejecting Python-advertised flags.
