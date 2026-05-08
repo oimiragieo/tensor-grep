@@ -4,19 +4,20 @@
 
 ## 2026-05-08 Current Handoff
 
-The current released state is `v1.8.31`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, and GPU scale correctness gates cover 1GB/5GB rows. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.32`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, and cold benchmark artifacts record the actual launcher command kind. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `a2e2bcc chore(release): v1.8.31 [skip ci]`
-- Latest merged fix commit: `015fad9 fix: harden public launcher and agent contracts`
-- Main CI run `25576067952`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL/dynamic run `25576067576`: passed on the release-bearing merge commit; release-commit dynamic run `25576666702` also passed
-- PyPI latest and pinned public install: `tensor-grep==1.8.31` resolves from PyPI.
-- GitHub release assets for `v1.8.31` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native-upgrade dogfood: `tg update` from `v1.8.30` installed sidecar `tensor-grep==1.8.31`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.31`.
-- Public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.
-- Public native CLI dogfood: installed `tg 1.8.31` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Release commit: `3adf044 chore(release): v1.8.32 [skip ci]`
+- Latest merged fix commit: `ab2635a fix: expose launcher route observability`
+- Main CI run `25581373995`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL/dynamic run `25581373725`: passed on the release-bearing merge commit; release-commit dynamic run `25581894666` also passed
+- PyPI latest and pinned public install: `tensor-grep==1.8.32` resolves from PyPI.
+- GitHub release assets for `v1.8.32` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native-upgrade dogfood: `tg update` from `v1.8.31` installed sidecar `tensor-grep==1.8.32`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.32`.
+- Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.
+- Public native CLI dogfood: installed `tg 1.8.32` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Public doctor dogfood: `tg doctor --json` reports `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and `path_tg_launcher_warning` when an existing shell still routes through the compatibility shim before fresh-shell PATH.
 - Public Windows launcher dogfood: `cmd /c tg`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` preserve quoted multi-word no-match patterns and return exit `1` with no false-positive stdout.
 
 Current product read:
@@ -30,7 +31,7 @@ Current product read:
 - Windows/WSL installer shims are materially cleaner. Direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv; use normal PowerShell `tg` / `tg.ps1` for regex metacharacters.
 - Dev-path native safety should ignore stale in-tree standalone binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly; `uv run tg doctor --json` should report skipped stale candidates instead of letting searches validate through old native code.
 - Raw unsorted root output is semantic parity. Use `--sort path --format rg` for automation that needs deterministic ripgrep-style stdout.
-- Release-native install/update hardening: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, staged replacement, sidecar/native version alignment after `tg upgrade`, public native CLI parity for advertised search/run/classify flags, and fresh Windows PATH precedence for the managed native front door; do not change benchmark docs from installer work.
+- Release-native install/update hardening: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, staged replacement, sidecar/native version alignment after `tg upgrade`, public native CLI parity for advertised search/run/classify flags, fresh Windows PATH precedence for the managed native front door, and doctor/benchmark attribution for the actual launcher route; do not change benchmark docs from installer work.
 - `edit-plan` and `context-render` JSON expose top-level `validation_commands` for agent contract consistency; preserve that shape in future edits.
 - `classify` stays deterministic and local by default; use `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` only for intentional CyBERT/Triton provider probes.
 - GPU benchmark gates include 1GB and 5GB rows and exact match/file-set correctness for every >=1GB corpus before any GPU promotion claim.
@@ -40,7 +41,7 @@ Current product read:
 
 Current next work:
 
-1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) covering context-render trust, `context_consistency`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
+1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) covering context-render trust, `context_consistency`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, launcher route diagnostics, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 4. Track AST parity roadmap, GPU readiness, and model-backed classify provider/cache UX as blockers for a future "100% ready" claim.
