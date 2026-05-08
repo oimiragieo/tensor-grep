@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-07, the current released state is `v1.8.23`.
+As of 2026-05-07, the current released state is `v1.8.24`.
 
-- Release commit: `90bf942 chore(release): v1.8.23 [skip ci]`
+- Release commit: `1518a24 chore(release): v1.8.24 [skip ci]`
 - Recent fix commits:
+  - `ef0c114 fix: harden v1.8.23 dogfood regressions`
   - `19e515d fix: add generated-root scan guardrails`
   - `8a061ee fix: improve agent context trust and rg parity`
   - `1bf2c76 fix: ignore stale native binaries in dev resolution`
@@ -32,16 +33,16 @@ As of 2026-05-07, the current released state is `v1.8.23`.
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25495769957`: passed through `publish-pypi` and `publish-success-gate`
-- Main CodeQL run `25495768899`: passed
-- Release-commit CodeQL run `25496404791`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.23` resolves from PyPI
-- Public installer dogfood: `tg update` upgraded the managed install from `1.8.22` to `1.8.23`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.23`; normal scoped search still worked; unbounded `tg search --files . --hidden` refused generated roots with exit code `2`.
-- Repo dev dogfood: `uv run tg doctor --json` reported `version = 1.8.23`, skipped stale in-tree standalone binaries as `stale-skipped`, left `native_tg_binary` unset, and kept `search_acceleration_backend = rust-core-extension`.
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.23>
+- Main CI run `25527718815`: passed through `publish-pypi` and `publish-success-gate`
+- Main CodeQL run `25527718311`: passed
+- Release-commit CodeQL run `25528154549`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.24` resolves from PyPI
+- Public installer dogfood: the managed install was upgraded from `1.8.23` to `1.8.24`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.24`; public `tg doctor --json` reported `version = 1.8.24`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = rust-core-extension`.
+- Repo dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.24`, skipped stale in-tree standalone binaries as `stale-skipped`, left `native_tg_binary` unset, and kept `search_acceleration_backend = rust-core-extension`.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.24>
 - Session handoff: `docs/SESSION_HANDOFF.md`
 
-The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, and replacement output, and explicit broad generated-root scan refusal unless callers bound the search or opt in.
+The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, and explicit broad generated-root scan refusal unless callers bound the search or opt in.
 
 Known current weak spots:
 

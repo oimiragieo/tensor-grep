@@ -4,17 +4,17 @@
 
 ## 2026-05-07 Current Handoff
 
-The current released state is `v1.8.23`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.24`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `90bf942 chore(release): v1.8.23 [skip ci]`
-- Latest fix commit: `19e515d fix: add generated-root scan guardrails`
-- Main CI run `25495769957`: passed through `publish-success-gate`
-- Main CodeQL run `25495768899`: passed
-- Release-commit CodeQL run `25496404791`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.23`
-- PyPI pinned public installer dogfood: `1.8.23` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, one-line version output, public help, public doctor PATH-version parity, repo-dev stale-native skipping, and unbounded broad generated-root scan refusal.
+- Release commit: `1518a24 chore(release): v1.8.24 [skip ci]`
+- Latest fix commit: `ef0c114 fix: harden v1.8.23 dogfood regressions`
+- Main CI run `25527718815`: passed through `publish-success-gate`
+- Main CodeQL run `25527718311`: passed
+- Release-commit CodeQL run `25528154549`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.24`
+- PyPI pinned public installer dogfood: `1.8.24` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, one-line version output, public help, public doctor PATH-version parity, repo-dev stale-native skipping, and unbounded broad generated-root scan refusal.
 
 Current product read:
 

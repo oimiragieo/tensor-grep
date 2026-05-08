@@ -7,15 +7,15 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-07, the current released version is `v1.8.23`.
+As of 2026-05-07, the current released version is `v1.8.24`.
 
 Current release facts:
 
-- Release commit: `90bf942 chore(release): v1.8.23 [skip ci]`
-- Latest fix commit: `19e515d fix: add generated-root scan guardrails`
-- PR #54 `fix: add generated-root scan guardrails` merged, released, and publicly dogfooded
-- Main CI run `25495769957` passed through `publish-success-gate`; CodeQL runs `25495768899` and `25496404791` passed
-- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.23`
+- Release commit: `1518a24 chore(release): v1.8.24 [skip ci]`
+- Latest fix commit: `ef0c114 fix: harden v1.8.23 dogfood regressions`
+- PR #56 `fix: harden v1.8.23 dogfood regressions` merged, released, and publicly dogfooded
+- Main CI run `25527718815` passed through `publish-success-gate`; CodeQL runs `25527718311` and `25528154549` passed
+- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.24`
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -154,7 +154,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.23` positioning. It does not replace the full validation gate.
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.24` positioning. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
