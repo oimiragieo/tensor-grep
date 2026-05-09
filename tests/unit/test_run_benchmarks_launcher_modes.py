@@ -47,6 +47,25 @@ def test_launcher_command_kind_should_identify_timed_entrypoint(tmp_path):
     )
 
 
+def test_benchmark_launcher_warnings_should_flag_non_native_timed_entrypoints():
+    module = _load_run_benchmarks_module()
+
+    native_warnings = module.benchmark_launcher_warnings(
+        command_kind="native_exe",
+        launcher_mode="explicit_binary",
+    )
+    shim_warnings = module.benchmark_launcher_warnings(
+        command_kind="cmd_shim",
+        launcher_mode="discovered_cli_binary",
+    )
+
+    assert native_warnings == []
+    assert shim_warnings
+    assert "cmd_shim" in shim_warnings[0]
+    assert "wrapper/interpreter overhead" in shim_warnings[0]
+    assert "native executable" in shim_warnings[0]
+
+
 def test_run_benchmarks_should_record_launcher_command_kind_in_environment(monkeypatch, tmp_path):
     module = _load_run_benchmarks_module()
     tg_binary = tmp_path / "tg.cmd"
@@ -82,3 +101,5 @@ def test_run_benchmarks_should_record_launcher_command_kind_in_environment(monke
     assert exit_code == 0
     assert payload["environment"]["tg_launcher_mode"] == "explicit_binary"
     assert payload["environment"]["tg_launcher_command_kind"] == "cmd_shim"
+    assert payload["warnings"]
+    assert "cmd_shim" in payload["warnings"][0]

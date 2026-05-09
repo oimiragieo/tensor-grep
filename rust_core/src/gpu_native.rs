@@ -785,26 +785,11 @@ struct DeviceSearchOutcome {
 }
 
 pub fn enumerate_cuda_devices() -> Result<Vec<CudaDeviceInfo>> {
-    let device_count = catch_cuda("initialize CUDA driver", || {
-        CudaContext::device_count().map_err(anyhow::Error::new)
-    })?;
+    let device_count = cuda_device_count()?;
 
     let mut devices = Vec::new();
     for ordinal in 0..device_count {
-        let context = open_cuda_context(ordinal)?;
-        let name = context
-            .name()
-            .map_err(anyhow::Error::new)
-            .with_context(|| format!("failed to read CUDA device {ordinal} name"))?;
-        let compute_capability = context
-            .compute_capability()
-            .map_err(anyhow::Error::new)
-            .with_context(|| format!("failed to read CUDA device {ordinal} compute capability"))?;
-        devices.push(CudaDeviceInfo {
-            device_id: ordinal,
-            name,
-            compute_capability,
-        });
+        devices.push(device_info_for_ordinal(ordinal)?);
     }
 
     Ok(devices)
@@ -3481,16 +3466,49 @@ fn file_estimated_bytes(path: &Path) -> Result<usize> {
 }
 
 fn resolve_cuda_devices(device_ids: &[i32]) -> Result<Vec<CudaDeviceInfo>> {
+    let device_count = cuda_device_count()?;
+    if device_count <= 0 {
+        return Err(anyhow!(
+            "CUDA is unavailable: no CUDA devices were detected by cudarc"
+        ));
+    }
+    let requested_device_ids = validate_requested_cuda_device_ids(device_ids, device_count)?;
+
+    let mut selected = Vec::new();
+    for device_id in requested_device_ids {
+        selected.push(device_info_for_ordinal(device_id)?);
+    }
+
+    Ok(selected)
+}
+
+fn cuda_device_count() -> Result<i32> {
+    catch_cuda("initialize CUDA driver", || {
+        CudaContext::device_count().map_err(anyhow::Error::new)
+    })
+}
+
+fn device_info_for_ordinal(device_id: i32) -> Result<CudaDeviceInfo> {
+    let context = open_cuda_context(device_id)?;
+    let name = context
+        .name()
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("failed to read CUDA device {device_id} name"))?;
+    let compute_capability = context
+        .compute_capability()
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("failed to read CUDA device {device_id} compute capability"))?;
+    Ok(CudaDeviceInfo {
+        device_id,
+        name,
+        compute_capability,
+    })
+}
+
+fn validate_requested_cuda_device_ids(device_ids: &[i32], device_count: i32) -> Result<Vec<i32>> {
     if device_ids.is_empty() {
         return Err(anyhow!(
             "GPU native search requires at least one CUDA device id"
-        ));
-    }
-
-    let devices = enumerate_cuda_devices()?;
-    if devices.is_empty() {
-        return Err(anyhow!(
-            "CUDA is unavailable: no CUDA devices were detected by cudarc"
         ));
     }
 
@@ -3500,19 +3518,14 @@ fn resolve_cuda_devices(device_ids: &[i32]) -> Result<Vec<CudaDeviceInfo>> {
         if !seen.insert(device_id) {
             continue;
         }
-        let device = devices
-            .iter()
-            .find(|candidate| candidate.device_id == device_id)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow!(
-                    "invalid CUDA device id {device_id}; available CUDA devices: {}",
-                    format_available_devices(&devices)
-                )
-            })?;
-        selected.push(device);
+        if device_id < 0 || device_id >= device_count {
+            return Err(anyhow!(
+                "invalid CUDA device id {device_id}; available CUDA devices: {}",
+                format_available_device_ids_from_count(device_count)
+            ));
+        }
+        selected.push(device_id);
     }
-
     Ok(selected)
 }
 
@@ -3837,18 +3850,12 @@ fn validate_device_id(device_id: i32) -> Result<()> {
     resolve_cuda_devices(&[device_id]).map(|_| ())
 }
 
-fn format_available_devices(devices: &[CudaDeviceInfo]) -> String {
-    devices
-        .iter()
-        .map(|device| {
-            format!(
-                "{}:{} (sm_{}{})",
-                device.device_id,
-                device.name,
-                device.compute_capability.0,
-                device.compute_capability.1
-            )
-        })
+fn format_available_device_ids_from_count(device_count: i32) -> String {
+    if device_count <= 0 {
+        return "none".to_string();
+    }
+    (0..device_count)
+        .map(|device_id| device_id.to_string())
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -3896,6 +3903,27 @@ fn ensure_cuda_library_path() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_requested_cuda_device_ids;
+
+    #[test]
+    fn validate_requested_cuda_device_ids_preserves_selected_subset_without_expanding() {
+        let selected = validate_requested_cuda_device_ids(&[0, 0], 2).unwrap();
+
+        assert_eq!(selected, vec![0]);
+    }
+
+    #[test]
+    fn validate_requested_cuda_device_ids_rejects_out_of_range_with_available_ids() {
+        let err = validate_requested_cuda_device_ids(&[3], 2).unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("invalid CUDA device id 3"));
+        assert!(message.contains("available CUDA devices: 0, 1"));
+    }
 }
 
 fn cuda_library_search_paths() -> Vec<PathBuf> {
