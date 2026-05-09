@@ -86,6 +86,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Context Pack JSON" in doc
     assert "## Edit Plan JSON" in doc
     assert "## Context Render JSON" in doc
+    assert "## Agent Capsule JSON" in doc
     assert "## Rewrite Plan JSON" in doc
     assert "## Batch Rewrite Config" in doc
     assert "## Apply + Verify JSON" in doc
@@ -121,6 +122,11 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_context_pack" in doc
     assert "tg_edit_plan" in doc
     assert "tg_context_render" in doc
+    assert "tg_agent_capsule" in doc
+    assert "capsule_version" in doc
+    assert "call_site_evidence" in doc
+    assert "capsule_primary_file_omitted" in doc
+    assert "raw_context_ref" in doc
     assert "tg_rulesets" in doc
     assert "tg_ruleset_scan" in doc
     assert "tg_mcp_capabilities" in doc

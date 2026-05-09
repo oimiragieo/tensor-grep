@@ -130,6 +130,21 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
         "python",
     }:
         raise ReadinessError(f"unexpected search acceleration backend: {backend!r}")
+    launcher_kind = payload.get("path_tg_first_launcher_kind")
+    fresh_launcher_kind = payload.get("fresh_shell_path_tg_first_launcher_kind")
+    if not isinstance(launcher_kind, str) or not isinstance(fresh_launcher_kind, str):
+        raise ReadinessError("doctor JSON missing launcher route diagnostics")
+    fresh_matches = payload.get("fresh_shell_path_tg_first_version_matches")
+    if fresh_matches is not True:
+        raise ReadinessError("doctor reports fresh-shell tg version does not match")
+    rust_matches = payload.get("rust_binary_version_matches")
+    rust_status = payload.get("rust_binary_version_status")
+    if rust_matches is not True or rust_status not in {"matches", "stale-skipped"}:
+        raise ReadinessError(
+            "doctor reports managed native-upgrade contract drift: "
+            f"rust_binary_version_matches={rust_matches!r}, "
+            f"rust_binary_version_status={rust_status!r}"
+        )
 
 
 def validate_context_render_payload(
@@ -230,6 +245,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         f"v{expected_version}",
         "python scripts/agent_readiness.py",
         "context_consistency",
+        "tg agent",
         "validated compatibility set",
         "broad generated-root scan",
         "rg` remains",
@@ -397,6 +413,21 @@ def build_check_plan(
                 "test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target",
             ],
             description="Verify MCP context-render preserves invoice tax body and target.",
+            timeout_s=120,
+        ),
+        Check(
+            name="agent-capsule",
+            command=[
+                "uv",
+                "run",
+                "pytest",
+                "tests/unit/test_cli_modes.py",
+                "tests/unit/test_mcp_server.py",
+                "-q",
+                "-k",
+                "agent_capsule",
+            ],
+            description="Verify tg agent Actionable Context Capsule CLI and MCP contracts.",
             timeout_s=120,
         ),
         Check(

@@ -392,6 +392,10 @@ def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
     assert "--glob" in result.output
     assert "--max-depth" in result.output
     assert "--allow-broad-generated-scan" in result.output
+    assert "For bounded output:" in result.output
+    assert "tg search --files <path> --hidden --max-depth" in result.output
+    assert "For intentional broad scans:" in result.output
+    assert "--allow-broad-generated-scan" in result.output
 
 
 def test_files_mode_allows_bounded_broad_generated_root_scan(monkeypatch, tmp_path: Path):
@@ -1955,6 +1959,54 @@ def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
     assert str(other_path.resolve()) in payload["files"]
     assert payload["tests"][0] == str(test_path.resolve())
     assert str(test_path.resolve()) in payload["related_paths"]
+    assert payload["preferred_command"] == "blast-radius"
+    assert (
+        payload["preferred_command_reason"]
+        == "direct symbol impact is better served by blast-radius"
+    )
+    assert payload["trust_level"] in {"planning-signal", "heuristic"}
+
+
+def test_impact_json_no_match_includes_preferred_command_metadata(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["impact", "--symbol", "missing", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "symbol-impact"
+    assert payload["no_match"] is True
+    assert payload["preferred_command"] == "blast-radius"
+    assert (
+        payload["preferred_command_reason"]
+        == "direct symbol impact is better served by blast-radius"
+    )
+    assert payload["trust_level"] in {"planning-signal", "heuristic"}
+
+
+def test_impact_text_guides_direct_symbol_impact_to_blast_radius(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["impact", "--symbol", "create_invoice", str(project)])
+
+    assert result.exit_code == 0
+    assert "preferred=blast-radius for direct symbol impact" in result.stdout
 
 
 def test_source_json_returns_exact_symbol_source_blocks(tmp_path):
@@ -2437,6 +2489,302 @@ def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
         primary_file=module_path,
         primary_symbol_name="create_invoice",
     )
+
+
+def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(10, 2) == 12\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "change invoice tax calculation",
+            "--max-tokens",
+            "160",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["routing_reason"] == "agent-context-capsule"
+    assert payload["capsule_kind"] == "actionable_context"
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["snippets"][0]["file"] == str(module_path.resolve())
+    assert "subtotal = total + tax" in payload["snippets"][0]["source"]
+    assert payload["snippets"][0]["line_map"][0]["line"] == 1
+    assert payload["related_call_sites"] == []
+    assert payload["validation_commands"]
+    assert payload["rollback"]["checkpoint_recommended"] is True
+    assert payload["omissions"]["token_budget"] == 160
+    assert "follow_up_reads" in payload["omissions"]
+    assert payload["raw_context_ref"]["command"].startswith("tg context-render")
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_agent_capsule_json_preserves_original_line_map_after_compaction(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    # bookkeeping noise\n"
+        "    subtotal = total + tax\n"
+        "    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "change invoice tax calculation",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    snippet = next(
+        item for item in payload["snippets"] if item["file"] == str(module_path.resolve())
+    )
+    assert "# bookkeeping noise" not in snippet["source"]
+    assert "subtotal = total + tax" in snippet["source"]
+    assert snippet["line_map"] == [
+        {"line": 1, "text": "def create_invoice(total, tax):"},
+        {"line": 3, "text": "    subtotal = total + tax"},
+        {"line": 4, "text": "    return subtotal"},
+    ]
+
+
+def test_agent_capsule_json_reports_omissions_and_follow_up_reads_when_budget_is_tight(
+    tmp_path,
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(3):
+        (src_dir / f"invoice_{index}.py").write_text(
+            f"def create_invoice_{index}(total, tax):\n"
+            f"    subtotal = total + tax + {index}\n"
+            "    return subtotal\n",
+            encoding="utf-8",
+        )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "invoice",
+            "--max-tokens",
+            "40",
+            "--max-files",
+            "3",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["omissions"]["omitted_section_count"] >= 1
+    assert payload["omissions"]["follow_up_reads"]
+    assert all(
+        "tg source" in item["command"] or "tg context-render" in item["command"]
+        for item in payload["omissions"]["follow_up_reads"]
+    )
+    assert all("argv" in item for item in payload["omissions"]["follow_up_reads"])
+    assert payload["confidence"]["overall"] < 0.95
+
+
+def test_agent_capsule_json_emits_argv_safe_recovery_commands_for_spaced_paths(tmp_path):
+    project = tmp_path / "project with spaces"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            'change invoice "tax" calculation',
+            "--max-tokens",
+            "1",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    raw_ref = payload["raw_context_ref"]
+    assert raw_ref["argv"] == [
+        "tg",
+        "context-render",
+        "--query",
+        'change invoice "tax" calculation',
+        "--json",
+        str(project.resolve()),
+        "--max-files",
+        "3",
+        "--max-sources",
+        "5",
+        "--max-tokens",
+        "1",
+        "--max-repo-files",
+        "512",
+    ]
+    assert f'"{project.resolve()}"' in raw_ref["command"]
+    rollback = payload["rollback"]
+    assert rollback["argv"] == ["tg", "checkpoint", "create", str(project.resolve())]
+    assert f'"{project.resolve()}"' in rollback["command"]
+    follow_up_reads = payload["omissions"]["follow_up_reads"]
+    assert follow_up_reads
+    assert any(read["argv"][-1] == str(project.resolve()) for read in follow_up_reads)
+    assert any(f'"{project.resolve()}"' in read["command"] for read in follow_up_reads)
+
+
+def test_agent_capsule_json_requires_user_confirmation_without_validation_commands(tmp_path):
+    src_dir = tmp_path / "standalone"
+    src_dir.mkdir()
+    (src_dir / "helper.py").write_text(
+        "def update_helper(value):\n    return value.strip()\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "update standalone helper",
+            "--json",
+            str(src_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["validation_commands"] == []
+    assert payload["validation_plan"] == []
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert "no validation command evidence" in payload["ask_user_before_editing"]["reasons"]
+
+
+def test_agent_capsule_json_reports_primary_consistency_and_downgrades_when_primary_is_omitted(
+    tmp_path,
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    primary_path = src_dir / "invoice.py"
+    primary_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    subtotal = total\n"
+        + "".join(f"    subtotal = subtotal + tax + {index}\n" for index in range(80))
+        + "    return subtotal\n",
+        encoding="utf-8",
+    )
+    secondary_path = src_dir / "related.py"
+    secondary_path.write_text(
+        'def invoice_note():\n    return "invoice"\n',
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "create invoice tax",
+            "--max-tokens",
+            "12",
+            "--max-files",
+            "2",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "context_consistency" in payload
+    assert payload["primary_target"]["file"] == str(primary_path.resolve())
+    assert payload["context_consistency"]["primary_file"] == payload["primary_target"]["file"]
+    assert payload["snippets"]
+    assert str(primary_path.resolve()) not in {snippet["file"] for snippet in payload["snippets"]}
+    assert str(secondary_path.resolve()) in {snippet["file"] for snippet in payload["snippets"]}
+    assert payload["context_consistency"]["capsule_primary_file_in_snippets"] is False
+    assert payload["context_consistency"]["capsule_primary_file_in_follow_up_reads"] is True
+    assert payload["context_consistency"]["capsule_primary_file_omitted"] is True
+    assert payload["confidence"]["overall"] < 0.75
+    assert (
+        "primary file omitted from capsule snippets by token budget"
+        in payload["confidence"]["downgrade_reasons"]
+    )
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert (
+        "primary file omitted from capsule snippets"
+        in payload["ask_user_before_editing"]["reasons"]
+    )
+
+
+def test_agent_capsule_text_summary_names_primary_target_and_validation(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(10, 2) == 12\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["agent", "--query", "change invoice tax calculation", str(project)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Agent capsule for" in result.stdout
+    assert "primary=" in result.stdout
+    assert "validation=" in result.stdout
+    assert "confidence=" in result.stdout
 
 
 def test_build_context_render_can_skip_edit_plan_seed_for_bounded_roots(monkeypatch, tmp_path):

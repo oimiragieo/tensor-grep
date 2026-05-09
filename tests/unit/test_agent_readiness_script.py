@@ -38,6 +38,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "ast-info-json" in names
     assert "ast-run-smoke" in names
     assert "mcp-context-render-smoke" in names
+    assert "agent-capsule" in names
     assert "docs-claim-check" in names
 
     rg_check = next(check for check in checks if check.name == "rg-parity-edges")
@@ -53,6 +54,17 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target" in (
         mcp_check.command
     )
+
+    capsule_check = next(check for check in checks if check.name == "agent-capsule")
+    assert capsule_check.timeout_s <= 120
+    assert capsule_check.command[:5] == [
+        "uv",
+        "run",
+        "pytest",
+        "tests/unit/test_cli_modes.py",
+        "tests/unit/test_mcp_server.py",
+    ]
+    assert "agent_capsule" in capsule_check.command
 
 
 def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypatch) -> None:
@@ -131,10 +143,54 @@ def test_agent_readiness_should_accept_current_doctor_backend_name() -> None:
     payload = {
         "version": "1.8.22",
         "path_tg_first_version_matches": True,
+        "path_tg_first_launcher_kind": "managed-native",
+        "fresh_shell_path_tg_first_launcher_kind": "managed-native",
+        "fresh_shell_path_tg_first_version_matches": True,
         "search_acceleration_backend": "standalone-native-tg",
+        "rust_binary_version_matches": True,
+        "rust_binary_version_status": "matches",
     }
 
     module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.8.22")
+
+
+def test_agent_readiness_should_reject_doctor_without_launcher_diagnostics() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.8.22",
+        "path_tg_first_version_matches": True,
+        "search_acceleration_backend": "standalone-native-tg",
+        "rust_binary_version_matches": True,
+        "rust_binary_version_status": "matches",
+    }
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.8.22")
+    except module.ReadinessError as exc:
+        assert "launcher route diagnostics" in str(exc)
+    else:
+        raise AssertionError("expected missing launcher diagnostics to fail")
+
+
+def test_agent_readiness_should_reject_doctor_native_version_drift() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.8.22",
+        "path_tg_first_version_matches": True,
+        "path_tg_first_launcher_kind": "managed-native",
+        "fresh_shell_path_tg_first_launcher_kind": "managed-native",
+        "fresh_shell_path_tg_first_version_matches": True,
+        "search_acceleration_backend": "standalone-native-tg",
+        "rust_binary_version_matches": False,
+        "rust_binary_version_status": "stale",
+    }
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.8.22")
+    except module.ReadinessError as exc:
+        assert "managed native-upgrade contract" in str(exc)
+    else:
+        raise AssertionError("expected native version drift to fail")
 
 
 def test_agent_readiness_should_accept_native_and_python_version_prefixes() -> None:

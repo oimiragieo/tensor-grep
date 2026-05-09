@@ -36,6 +36,7 @@ _REWRITE_ROUTING_BACKEND = "AstBackend"
 _REWRITE_ROUTING_REASON = "ast-native"
 _INDEX_ROUTING_BACKEND = "TrigramIndex"
 _INDEX_ROUTING_REASON = "index-accelerated"
+_AGENT_ROUTING_REASON = "agent-context-capsule"
 _WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
 _NATIVE_TG_REMEDIATION = (
     "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
@@ -49,6 +50,7 @@ _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_context_pack",
     "tg_edit_plan",
     "tg_context_render",
+    "tg_agent_capsule",
     "tg_session_edit_plan",
     "tg_session_context_render",
     "tg_session_blast_radius",
@@ -319,6 +321,19 @@ def _index_search_error(message: str, *, code: str, pattern: str, path: str) -> 
     payload["query"] = pattern
     payload["path"] = path
     payload["error"] = {"code": code, "message": message}
+    return json.dumps(payload, indent=2)
+
+
+def _agent_capsule_error(message: str, *, code: str, query: str, path: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "RepoMap",
+        "routing_reason": _AGENT_ROUTING_REASON,
+        "sidecar_used": False,
+        "query": query,
+        "path": str(Path(path).expanduser()),
+        "error": {"code": code, "message": message},
+    }
     return json.dumps(payload, indent=2)
 
 
@@ -1145,6 +1160,67 @@ def tg_context_render(
             },
         }
         return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_agent_capsule(
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_tokens: int | None = 1200,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    model: str | None = None,
+) -> str:
+    """
+    Return an Actionable Context Capsule for agent edit planning.
+
+    Args:
+        query: Natural-language task or symbol query.
+        path: File or directory to inventory.
+        max_files: Maximum ranked files to consider.
+        max_sources: Maximum source snippets to include.
+        max_tokens: Token budget for bounded capsule output.
+        max_repo_files: Maximum repository files to scan.
+        model: Optional model name used for token estimation.
+    """
+    if not Path(path).expanduser().exists():
+        return _agent_capsule_error(
+            f"Path not found: {Path(path).expanduser().resolve()}",
+            code="invalid_input",
+            query=query,
+            path=path,
+        )
+
+    try:
+        from tensor_grep.cli.agent_capsule import build_agent_capsule
+
+        return json.dumps(
+            build_agent_capsule(
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
+                max_repo_files=max_repo_files,
+                model=model,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        return _agent_capsule_error(
+            f"Path not found: {Path(path).expanduser().resolve()}",
+            code="invalid_input",
+            query=query,
+            path=path,
+        )
+    except ValueError as exc:
+        return _agent_capsule_error(
+            str(exc),
+            code="invalid_input",
+            query=query,
+            path=path,
+        )
 
 
 @mcp.tool()  # type: ignore

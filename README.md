@@ -50,7 +50,7 @@ Current positioning:
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
-- The next product wedge is an agent context capsule: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, and confidence. That should be an explicit agent profile or command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
+- `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 
 What `v1.8.33` closed:
 
@@ -73,8 +73,8 @@ What `v1.8.33` closed:
 
 Active post-`v1.8.33` follow-up:
 
-- design `tg agent` / Actionable Context Capsule as an opt-in agent workflow, not a replacement for raw search output
-- the capsule target is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when warranted
+- harden and dogfood `tg agent` / Actionable Context Capsule as an opt-in agent workflow, not a replacement for raw search output
+- the capsule output is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when warranted. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected.
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
 - keep launcher-route diagnostics in `tg doctor --json` visible in dogfood before trusting Windows benchmark results
@@ -126,7 +126,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.8.33` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.8.33` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -532,6 +532,7 @@ Available MCP tools now include:
 - `tg_rewrite_plan` (dry-run AST rewrite, returns JSON edit plan)
 - `tg_rewrite_apply` (apply AST rewrite edits with optional byte-level verification)
 - `tg_rewrite_diff` (unified diff preview of planned rewrites)
+- `tg_agent_capsule` (Actionable Context Capsule JSON for pre-edit agent context, validation, omissions, and rollback guidance)
 
 Call `tg_mcp_capabilities` first when running from PyPI wheels or agent sandboxes. It reports whether a standalone native `tg` binary is available, whether embedded rewrite fallback is importable, and which tools require native `tg`.
 

@@ -15,6 +15,7 @@ from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
 PUBLIC_TOP_LEVEL_COMMANDS = {
+    "agent",
     "search",
     "calibrate",
     "upgrade",
