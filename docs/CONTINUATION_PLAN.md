@@ -2,19 +2,19 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
-## 2026-05-08 Current Handoff
+## 2026-05-09 Current Handoff
 
-The current released state is `v1.8.32`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, and cold benchmark artifacts record the actual launcher command kind. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.33`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, cold benchmark artifacts record the actual launcher command kind, benchmark scripts warn when timings include shim/interpreter overhead, and explicit GPU device routing probes only selected devices. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `3adf044 chore(release): v1.8.32 [skip ci]`
-- Latest merged fix commit: `ab2635a fix: expose launcher route observability`
-- Main CI run `25581373995`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL/dynamic run `25581373725`: passed on the release-bearing merge commit; release-commit dynamic run `25581894666` also passed
-- PyPI latest and pinned public install: `tensor-grep==1.8.32` resolves from PyPI.
-- GitHub release assets for `v1.8.32` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native-upgrade dogfood: `tg update` from `v1.8.31` installed sidecar `tensor-grep==1.8.32`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.32`.
+- Release commit: `89b31eb chore(release): v1.8.33 [skip ci]`
+- Latest merged fix commit: `e2bd7c2 fix: scope GPU probing and benchmark launcher warnings`
+- Main CI run `25586858341`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL run `25586857874`: passed on the release-bearing merge commit
+- PyPI latest and pinned public install: `tensor-grep==1.8.33` resolves from PyPI.
+- GitHub release assets for `v1.8.33` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native-upgrade dogfood: `tg update` from `v1.8.32` installed sidecar `tensor-grep==1.8.33`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.33`.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.
 - Public native CLI dogfood: installed `tg 1.8.32` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
 - Public doctor dogfood: `tg doctor --json` reports `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and `path_tg_launcher_warning` when an existing shell still routes through the compatibility shim before fresh-shell PATH.

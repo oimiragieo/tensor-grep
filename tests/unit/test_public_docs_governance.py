@@ -64,7 +64,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "skip yanked PyPI releases" in contracts
     assert "refresh the managed release-native front door" in contracts
     assert "Windows native-front-door retry helper" in contracts
-    assert "current `v1.8.32` release line" in contracts
+    assert "current `v1.8.33` release line" in contracts
     assert "managed native-upgrade contract" in contracts
     assert "path_tg_first_launcher_kind" in contracts
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
@@ -72,7 +72,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "tg_launcher_command_kind" in contracts
 
 
-def test_handoff_docs_should_record_current_v1832_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v1833_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -82,7 +82,7 @@ def test_handoff_docs_should_record_current_v1832_release_state_and_fast_gate() 
     }
 
     for content in docs.values():
-        assert "v1.8.32" in content
+        assert "v1.8.33" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -91,15 +91,15 @@ def test_handoff_docs_should_record_current_v1832_release_state_and_fast_gate() 
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "3adf044 chore(release): v1.8.32 [skip ci]" in content
-        assert "ab2635a fix: expose launcher route observability" in content
+        assert "89b31eb chore(release): v1.8.33 [skip ci]" in content
+        assert "e2bd7c2 fix: scope GPU probing and benchmark launcher warnings" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25581373995" in handoff
-    assert "25581373725" in handoff
-    assert "25581894666" in handoff
-    assert "tensor-grep==1.8.32" in handoff
-    assert "Closed launcher observability and benchmark attribution gaps" in handoff
+    assert "25586858341" in handoff
+    assert "25586857874" in handoff
+    assert "tensor-grep==1.8.33" in handoff
+    assert "Closed GPU probe and benchmark-warning gaps" in handoff
+    assert "Prior launcher observability and benchmark attribution gaps" in handoff
     assert "Prior public launcher and agent contract gaps" in handoff
     assert "Prior Windows `.cmd` quoted-pattern gap" in handoff
     assert "publish-github-release-assets" in handoff
@@ -130,15 +130,17 @@ def test_handoff_docs_should_record_current_v1832_release_state_and_fast_gate() 
     assert "path_tg_first_launcher_kind = cmd-shim" in handoff
     assert "fresh_shell_path_tg_first_launcher_kind = managed-native" in handoff
     assert "tg_launcher_command_kind" in handoff
+    assert "does not initialize or warn about unrelated unsupported GPUs" in handoff
+    assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme
-    assert "ab2635a fix: expose launcher route observability" in readme
-    assert "3adf044 chore(release): v1.8.32 [skip ci]" in readme
-    assert "25581373995" in readme
-    assert "25581373725" in readme
-    assert "GitHub release assets for `v1.8.32`" in readme
-    assert "sidecar `tensor-grep==1.8.32`" in readme
+    assert "e2bd7c2 fix: scope GPU probing and benchmark launcher warnings" in readme
+    assert "89b31eb chore(release): v1.8.33 [skip ci]" in readme
+    assert "25586858341" in readme
+    assert "25586857874" in readme
+    assert "GitHub release assets for `v1.8.33`" in readme
+    assert "sidecar `tensor-grep==1.8.33`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "Windows retry helper" in readme
@@ -151,6 +153,7 @@ def test_handoff_docs_should_record_current_v1832_release_state_and_fast_gate() 
     assert "local deterministic classifications" in readme
     assert "path_tg_first_launcher_kind" in readme
     assert "tg_launcher_command_kind" in readme
+    assert "only initialize selected devices" in readme
 
 
 def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
@@ -164,8 +167,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.8.32`" in skill
-    assert "PR #72 `fix: expose launcher route observability` merged" in skill
+    assert "current released version is `v1.8.33`" in skill
+    assert "PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged" in skill
     assert (
         "Previous agent-contract fix commit: `015fad9 fix: harden public launcher and agent contracts`"
         in skill
