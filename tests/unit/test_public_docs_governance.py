@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 README_PATH = Path("README.md")
@@ -17,6 +18,11 @@ CURRENT_RELEASE_COMMIT = "8143ccb chore(release): v1.9.2 [skip ci]"
 CURRENT_FIX_COMMIT = "faf67ed fix: harden edit JSON and capsule validation trust"
 CURRENT_MAIN_CI = "25609611007"
 CURRENT_CODEQL = "25609610737"
+
+
+def _project_release_tag() -> str:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    return f"v{pyproject['project']['version']}"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -93,7 +99,7 @@ def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -
 
     for content in docs.values():
         assert CURRENT_RELEASE_TAG in content
-        assert "release_docs_current_tag: v1.9.2" in content
+        assert f"release_docs_current_tag: {_project_release_tag()}" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (

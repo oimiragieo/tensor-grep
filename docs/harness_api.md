@@ -609,6 +609,7 @@ Optional edit selection flags:
 
 When edit selection flags are present, the emitted `plan` object reflects the filtered subset that was actually applied and verified.
 When validation flags are present, the emitted payload also includes a structured `validation` object describing each post-apply command.
+Validation command templates may use `$file` or `{file}` for the target path passed to `tg run`; quote the placeholder in the command template when paths may contain spaces, for example `--lint-cmd 'python -m py_compile "$file"'` in PowerShell.
 
 Example: [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 
