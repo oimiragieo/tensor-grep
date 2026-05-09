@@ -193,6 +193,22 @@ def test_agent_readiness_should_reject_doctor_native_version_drift() -> None:
         raise AssertionError("expected native version drift to fail")
 
 
+def test_agent_readiness_should_accept_stale_skipped_in_tree_native_binary() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.9.0",
+        "path_tg_first_version_matches": True,
+        "path_tg_first_launcher_kind": "python-entrypoint",
+        "fresh_shell_path_tg_first_launcher_kind": "managed-native",
+        "fresh_shell_path_tg_first_version_matches": True,
+        "search_acceleration_backend": "rust-core-extension",
+        "rust_binary_version_matches": None,
+        "rust_binary_version_status": "stale-skipped",
+    }
+
+    module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.9.0")
+
+
 def test_agent_readiness_should_accept_native_and_python_version_prefixes() -> None:
     module = _load_script_module()
 
