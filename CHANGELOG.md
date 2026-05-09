@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.9.1 (2026-05-09)
+
+### Bug Fixes
+
+- Harden agent capsule trust alignment
+  ([`5791489`](https://github.com/oimiragieo/tensor-grep/commit/579148900600bf8361067056bf9b03a802537bfe))
+
+Squash merge PR #78 after green PR CI and CodeQL.
+
+### Documentation
+
+- Update v1.9.0 release handoff
+  ([`c28c07f`](https://github.com/oimiragieo/tensor-grep/commit/c28c07fb6fcdb41b925f1c5bebd1debf05244335))
+
+
 ## v1.9.0 (2026-05-09)
 
 ### Documentation
