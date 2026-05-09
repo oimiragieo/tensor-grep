@@ -4,17 +4,18 @@
 
 ## 2026-05-09 Current Handoff
 
-The current released state is `v1.9.0`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes advertised Python-backed shapes, the Windows `.cmd` launcher preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, cold benchmark artifacts record the actual launcher command kind, benchmark scripts warn when timings include shim/interpreter overhead, explicit GPU device routing probes only selected devices, and `tg agent` exposes the opt-in Actionable Context Capsule. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.9.1`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes advertised Python-backed shapes, the Windows `.cmd` launcher preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, cold benchmark artifacts record the actual launcher command kind, benchmark scripts warn when timings include shim/interpreter overhead, explicit GPU device routing probes only selected devices, `tg agent` exposes the opt-in Actionable Context Capsule, and mixed-language capsule confidence/validation alignment is release-hardened. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `19c7295 chore(release): v1.9.0 [skip ci]`
+- Release commit: `8f226ba chore(release): v1.9.1 [skip ci]`
+- Latest merged fix commit: `5791489 fix: harden agent capsule trust alignment`
 - Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
-- Main CI run `25601232312`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL run `25601232120`: passed on the release-bearing merge commit
-- PyPI latest and pinned public install: `tensor-grep==1.9.0` resolves from PyPI.
-- GitHub release assets for `v1.9.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native-upgrade dogfood: `tg update` from `v1.8.33` installed sidecar `tensor-grep==1.9.0` and refreshed the native front door to `tg 1.9.0`.
+- Main CI run `25604843919`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL runs `25604843742` and release-commit `25605123376`: passed
+- PyPI latest and pinned public install: `tensor-grep==1.9.1` resolves from PyPI.
+- GitHub release assets for `v1.9.1` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native-upgrade dogfood: `tg update` from `v1.9.0` installed sidecar `tensor-grep==1.9.1` and refreshed the native front door to `tg 1.9.1`.
 - Public capsule dogfood: `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.
 - Public native CLI dogfood: installed `tg 1.8.32` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.

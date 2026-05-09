@@ -7,12 +7,14 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-09, the current released version is `v1.9.0`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, and the opt-in `tg agent` Actionable Context Capsule are released and publicly dogfooded. Active branch work hardens mixed-language capsule confidence/validation alignment and GPU benchmark recommendation hygiene.
+As of 2026-05-09, the current released version is `v1.9.1`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, and GPU benchmark recommendation hygiene are released and publicly dogfooded.
 
 Current release facts:
 
-- Release commit: `19c7295 chore(release): v1.9.0 [skip ci]`
+- Release commit: `8f226ba chore(release): v1.9.1 [skip ci]`
+- Latest merged fix commit: `5791489 fix: harden agent capsule trust alignment`
 - Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
+- PR #78 `fix: harden agent capsule trust alignment` merged and released
 - PR #76 `feat: add actionable agent context capsule` merged and released
 - Previous GPU/benchmark warning fix commit: `e2bd7c2 fix: scope GPU probing and benchmark launcher warnings`
 - PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged and released as `v1.8.33`
@@ -21,10 +23,10 @@ Current release facts:
 - Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
-- Main CI run `25601232312` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25601232120` passed on the release-bearing merge commit
-- PyPI latest and pinned public install both resolve `tensor-grep==1.9.0`
-- GitHub release assets for `v1.9.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public update dogfood: `tg update` from `v1.8.33` installed sidecar `tensor-grep==1.9.0`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.0`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolve `tg 1.9.0`; `tg doctor --json` reports `version = 1.9.0`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH. Public `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.
+- Main CI run `25604843919` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25604843742` and release-commit `25605123376` passed
+- PyPI latest and pinned public install both resolve `tensor-grep==1.9.1`
+- GitHub release assets for `v1.9.1` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public update dogfood: `tg update` from `v1.9.0` installed sidecar `tensor-grep==1.9.1`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.1`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolve `tg 1.9.1`; `tg doctor --json` reports `version = 1.9.1`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH. Public `tg agent` capsule and mixed-language trust readiness checks pass.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
 - Public native CLI dogfood: `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` all accept the advertised public shape on the installed front door.
 - Public Windows launcher dogfood: `cmd /c tg`, direct managed `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...])` all return exit `1` with empty stdout for fresh quoted no-match phrases.
@@ -184,7 +186,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.0` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.1` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

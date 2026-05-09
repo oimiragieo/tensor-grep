@@ -65,7 +65,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "skip yanked PyPI releases" in contracts
     assert "refresh the managed release-native front door" in contracts
     assert "Windows native-front-door retry helper" in contracts
-    assert "current `v1.9.0` release line" in contracts
+    assert "current `v1.9.1` release line" in contracts
     assert "managed native-upgrade contract" in contracts
     assert "path_tg_first_launcher_kind" in contracts
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
@@ -76,7 +76,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "GPU auto-recommendation must remain false" in contracts
 
 
-def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v191_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -86,7 +86,7 @@ def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -
     }
 
     for content in docs.values():
-        assert "v1.9.0" in content
+        assert "v1.9.1" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -95,14 +95,16 @@ def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "19c7295 chore(release): v1.9.0 [skip ci]" in content
+        assert "8f226ba chore(release): v1.9.1 [skip ci]" in content
+        assert "5791489 fix: harden agent capsule trust alignment" in content
         assert "95bfd81 feat: add actionable agent context capsule" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25601232312" in handoff
-    assert "25601232120" in handoff
-    assert "tensor-grep==1.9.0" in handoff
-    assert "Closed Actionable Context Capsule gap" in handoff
+    assert "25604843919" in handoff
+    assert "25604843742" in handoff
+    assert "25605123376" in handoff
+    assert "tensor-grep==1.9.1" in handoff
+    assert "Closed capsule trust-alignment gap" in handoff
     assert "Prior GPU probe and benchmark-warning gaps" in handoff
     assert "Prior launcher observability and benchmark attribution gaps" in handoff
     assert "Prior public launcher and agent contract gaps" in handoff
@@ -140,15 +142,18 @@ def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
+    assert "v1.9.1` release hardens mixed-language capsule confidence" in handoff
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme
+    assert "5791489 fix: harden agent capsule trust alignment" in readme
     assert "95bfd81 feat: add actionable agent context capsule" in readme
-    assert "19c7295 chore(release): v1.9.0 [skip ci]" in readme
-    assert "25601232312" in readme
-    assert "25601232120" in readme
-    assert "GitHub release assets for `v1.9.0`" in readme
-    assert "sidecar `tensor-grep==1.9.0`" in readme
+    assert "8f226ba chore(release): v1.9.1 [skip ci]" in readme
+    assert "25604843919" in readme
+    assert "25604843742" in readme
+    assert "25605123376" in readme
+    assert "GitHub release assets for `v1.9.1`" in readme
+    assert "sidecar `tensor-grep==1.9.1`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -163,11 +168,11 @@ def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    closed_heading = "What `v1.9.0` closed:"
-    follow_up_heading = "Active post-`v1.9.0` follow-up:"
+    closed_heading = "What `v1.9.1` closed:"
+    follow_up_heading = "Active post-`v1.9.1` follow-up:"
     closed_block = readme.split(closed_heading, 1)[1].split(follow_up_heading, 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "GPU benchmark auto-recommendation" not in closed_block
+    assert "GPU benchmark auto-recommendation remains false" in closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
 
 
@@ -182,7 +187,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.9.0`" in skill
+    assert "current released version is `v1.9.1`" in skill
+    assert "PR #78 `fix: harden agent capsule trust alignment` merged" in skill
     assert "PR #76 `feat: add actionable agent context capsule` merged" in skill
     assert "PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged" in skill
     assert (
