@@ -209,6 +209,104 @@ def test_run_gpu_benchmarks_should_not_attach_unsupported_inventory_warning_to_g
     assert gpu1["stderr"] == unsupported_error
 
 
+def test_run_gpu_benchmarks_should_sanitize_correctness_error_for_selected_gpu(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_benchmarks_correctness_warning_scope",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    sidecar_python = tmp_path / "python.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    sidecar_python.write_text("python", encoding="utf-8")
+
+    inventory_warning = (
+        "Inventory warning: GPU 1 NVIDIA GeForce RTX 5070 is unsupported by "
+        "the current CUDA-enabled PyTorch build."
+    )
+    unsupported_error = (
+        "GPU 1 NVIDIA GeForce RTX 5070 unsupported: no kernel image is available "
+        "for execution on the device"
+    )
+
+    monkeypatch.setattr(
+        module,
+        "probe_gpu_devices",
+        lambda _sidecar_python: {
+            "available": True,
+            "torch_version": "2.6.0",
+            "devices": [
+                {"device_id": 0, "name": "NVIDIA GeForce RTX 4070", "operational": True},
+                {
+                    "device_id": 1,
+                    "name": "NVIDIA GeForce RTX 5070",
+                    "operational": False,
+                    "error": unsupported_error,
+                },
+            ],
+            "warnings": [inventory_warning],
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "generate_gpu_scale_corpus",
+        lambda output_dir, target_bytes, shard_count: {
+            "corpus_dir": output_dir,
+            "actual_bytes": target_bytes,
+            "total_lines": 10,
+            "file_count": shard_count,
+            "pattern_counts": {"gpu benchmark sentinel": 1},
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_search_command",
+        lambda *_args, **_kwargs: {
+            "status": "PASS",
+            "median_s": 1.0,
+            "samples_s": [1.0],
+            "stderr": "",
+        },
+    )
+
+    monkeypatch.setattr(
+        module,
+        "run_correctness_check",
+        lambda **kwargs: {
+            "device_id": kwargs["device_id"],
+            "pattern": kwargs["pattern"],
+            "status": "FAIL",
+            "error": (
+                "GPU 0 correctness mismatch after compare\n"
+                f"{inventory_warning}\n"
+                f"{unsupported_error}"
+            ),
+            "matches_equal": False,
+            "files_equal": False,
+        },
+    )
+
+    payload = module.run_gpu_scale_benchmarks(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        bench_dir=module.ROOT_DIR / "artifacts" / "unit_gpu_bench_data",
+        corpus_sizes=(module.GB,),
+        runs=1,
+        warmup=0,
+        sidecar_python=sidecar_python,
+        benchmark_pattern="gpu benchmark sentinel",
+        correctness_patterns=("gpu benchmark sentinel",),
+        shard_count=2,
+    )
+
+    check = payload["correctness_checks"][0]
+    assert "GPU 0 correctness mismatch after compare" in check["error"]
+    assert "GPU 1" not in check["error"]
+    assert "RTX 5070" not in check["error"]
+    assert "unsupported" not in check["error"]
+
+
 def test_gpu_auto_recommendation_should_not_recommend_for_small_winning_row_only():
     module = _load_script_module(
         "run_gpu_benchmarks_small_recommendation",

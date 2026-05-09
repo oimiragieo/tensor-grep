@@ -4071,6 +4071,23 @@ def _target_language_for_path(path: str | Path | None) -> str | None:
     return None
 
 
+def _path_matches_query_language_hints(path: str | Path, hints: list[str]) -> bool:
+    language = _target_language_for_path(path)
+    return bool(language is not None and language in hints)
+
+
+def _query_file_name_hint_score(path: str | Path, query: str) -> int:
+    query_lower = query.lower()
+    path_obj = Path(str(path))
+    name = path_obj.name.lower()
+    stem = path_obj.stem.lower()
+    if name and name in query_lower:
+        return 24
+    if stem and re.search(rf"\b{re.escape(stem)}\b", query_lower):
+        return 12
+    return 0
+
+
 def _score_text_terms(text: str, terms: list[str]) -> int:
     haystack = text.lower()
     return sum(1 for term in terms if term in haystack)
@@ -4659,6 +4676,7 @@ def _build_context_pack_from_map(
     with _profiling_phase(_profiling_collector, "context_scoring"):
         terms = _query_terms(query)
         symbol_terms = _symbol_query_terms(query)
+        query_language_hints = _query_language_hints(query)
         all_symbols = [dict(symbol) for symbol in payload["symbols"]]
         imports_by_file = {
             str(entry["file"]): [str(item) for item in entry["imports"]]
@@ -4671,6 +4689,10 @@ def _build_context_pack_from_map(
         for current, score in file_scores.items():
             if score > 0:
                 _append_reason(file_reasons, current, "path")
+            file_name_bonus = _query_file_name_hint_score(current, query)
+            if file_name_bonus > 0:
+                file_scores[current] = file_scores.get(current, 0) + file_name_bonus
+                _append_reason(file_reasons, current, "filename")
 
         scored_symbols: list[dict[str, Any]] = []
         for symbol in payload["symbols"]:
@@ -4825,6 +4847,14 @@ def _build_context_pack_from_map(
                 1, round(graph_score * 10)
             )
             _append_reason(file_reasons, current_path, "graph-centrality")
+
+        if query_language_hints:
+            for current_path, score in list(file_scores.items()):
+                if score <= 0:
+                    continue
+                if _path_matches_query_language_hints(current_path, query_language_hints):
+                    file_scores[current_path] = score + 20
+                    _append_reason(file_reasons, current_path, "language")
 
         scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
         scored_files.sort(key=lambda item: (-item[0], item[1]))
