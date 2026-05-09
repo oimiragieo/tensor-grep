@@ -183,6 +183,8 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "--checkpoint" in doc
     assert "--lint-cmd" in doc
     assert "--test-cmd" in doc
+    assert "$file" in doc
+    assert "{file}" in doc
     assert "--batch-rewrite" in doc
     assert "rewrites" in doc
     assert "verify" in doc

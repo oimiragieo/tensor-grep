@@ -1401,6 +1401,47 @@ fn test_tg_run_apply_validation_accepts_quoted_windows_path_with_spaces() {
 }
 
 #[test]
+fn test_tg_run_apply_validation_substitutes_file_placeholder() {
+    let dir = tempdir().unwrap();
+    let spaced_dir = dir.path().join("path with spaces");
+    fs::create_dir(&spaced_dir).unwrap();
+    let file_path = spaced_dir.join("app.py");
+    fs::write(&file_path, "def add(x, y): return x + y\n").unwrap();
+    let expected_cmd = format!("python -m py_compile \"{}\"", file_path.display());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg(r#"python -m py_compile "$file""#)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["validation"]["success"], true);
+    assert_eq!(
+        parsed["validation"]["commands"][0]["command"]
+            .as_str()
+            .unwrap(),
+        expected_cmd
+    );
+}
+
+#[test]
 fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
     let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");

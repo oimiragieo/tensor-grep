@@ -4111,15 +4111,39 @@ fn run_validation_command(
     }
 }
 
+fn validation_template_file_path(path: &str) -> String {
+    let candidate = Path::new(path);
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(candidate)
+    };
+    absolute.to_string_lossy().to_string()
+}
+
+fn expand_validation_command_template(command: &str, path: &str) -> String {
+    if !command.contains("$file") && !command.contains("{file}") {
+        return command.to_string();
+    }
+    let file_path = validation_template_file_path(path);
+    command
+        .replace("$file", &file_path)
+        .replace("{file}", &file_path)
+}
+
 fn run_post_apply_validation(args: &RunArgs, path: &str) -> Option<ValidationSummary> {
     let mut commands = Vec::new();
     let working_dir = validation_working_dir(path);
 
     if let Some(command) = &args.lint_cmd {
-        commands.push(run_validation_command("lint", command, &working_dir));
+        let expanded = expand_validation_command_template(command, path);
+        commands.push(run_validation_command("lint", &expanded, &working_dir));
     }
     if let Some(command) = &args.test_cmd {
-        commands.push(run_validation_command("test", command, &working_dir));
+        let expanded = expand_validation_command_template(command, path);
+        commands.push(run_validation_command("test", &expanded, &working_dir));
     }
 
     if commands.is_empty() {
