@@ -16,7 +16,7 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-release_docs_current_tag: v1.9.2
+release_docs_current_tag: v1.9.3
 
 As of 2026-05-09, the current released state is `v1.9.2`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, and capsule validation-trust fixes are released and publicly dogfooded. Follow-up work should focus on capsule ranking/token economy, validation command quoting, AST parity roadmap, GPU production viability, classify provider/cache UX, context/session latency, and keeping docs synchronized with release proof.
 

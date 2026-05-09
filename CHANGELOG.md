@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.9.3 (2026-05-09)
+
+### Bug Fixes
+
+- Harden agent ranking docs and validation quoting
+  ([`73c5f91`](https://github.com/oimiragieo/tensor-grep/commit/73c5f91d6bbc59e1d72112b1967c5bb8029a480a))
+
+Harden agent capsule ranking, release docs stamping, Windows validation quoting, and selected-GPU
+  correctness diagnostics.
+
+
 ## v1.9.2 (2026-05-09)
 
 ### Bug Fixes
