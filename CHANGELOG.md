@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.9.2 (2026-05-09)
+
+### Bug Fixes
+
+- Harden edit JSON and capsule validation trust
+  ([`faf67ed`](https://github.com/oimiragieo/tensor-grep/commit/faf67edbfe979de012c500ed42226c08e584ab46))
+
+Harden agent-facing edit JSON contracts and validation rollback behavior, and refine capsule trust
+  downgrades when aligned validation commands remain.
+
+### Documentation
+
+- Update v1.9.1 release handoff
+  ([`514f3c7`](https://github.com/oimiragieo/tensor-grep/commit/514f3c783e45fcc7bb44bd26c9f32314453cfacf))
+
+Update handoff docs and governance tests with v1.9.1 release proof after PR #78.
+
+
 ## v1.9.1 (2026-05-09)
 
 ### Bug Fixes
