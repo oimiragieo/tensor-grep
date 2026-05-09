@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.9.0 (2026-05-09)
+
+### Documentation
+
+- Update v1.8.33 release handoff
+  ([`803ac61`](https://github.com/oimiragieo/tensor-grep/commit/803ac619a5a182b4f481cb9adc89f365d4fad846))
+
+### Features
+
+- Add actionable agent context capsule
+  ([`95bfd81`](https://github.com/oimiragieo/tensor-grep/commit/95bfd813dde14c15e56d10b60afde7a9b20d327a))
+
+
 ## v1.8.33 (2026-05-09)
 
 ### Bug Fixes
