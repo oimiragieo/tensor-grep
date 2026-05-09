@@ -139,7 +139,9 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
         raise ReadinessError("doctor reports fresh-shell tg version does not match")
     rust_matches = payload.get("rust_binary_version_matches")
     rust_status = payload.get("rust_binary_version_status")
-    if rust_matches is not True or rust_status not in {"matches", "stale-skipped"}:
+    rust_version_ok = rust_status == "matches" and rust_matches is True
+    stale_skip_ok = rust_status == "stale-skipped" and rust_matches is None
+    if not (rust_version_ok or stale_skip_ok):
         raise ReadinessError(
             "doctor reports managed native-upgrade contract drift: "
             f"rust_binary_version_matches={rust_matches!r}, "

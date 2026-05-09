@@ -7,26 +7,28 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-09, the current released version is `v1.8.33`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, and benchmark launcher warnings are released and publicly dogfooded.
+As of 2026-05-09, the current released version is `v1.9.0`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, and the opt-in `tg agent` Actionable Context Capsule are released and publicly dogfooded.
 
 Current release facts:
 
-- Release commit: `89b31eb chore(release): v1.8.33 [skip ci]`
-- Latest merged fix commit: `e2bd7c2 fix: scope GPU probing and benchmark launcher warnings`
-- PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged and released
+- Release commit: `19c7295 chore(release): v1.9.0 [skip ci]`
+- Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
+- PR #76 `feat: add actionable agent context capsule` merged and released
+- Previous GPU/benchmark warning fix commit: `e2bd7c2 fix: scope GPU probing and benchmark launcher warnings`
+- PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged and released as `v1.8.33`
 - Previous launcher observability fix commit: `ab2635a fix: expose launcher route observability`
 - Previous agent-contract fix commit: `015fad9 fix: harden public launcher and agent contracts`
 - Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
-- Main CI run `25586858341` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25586857874` passed on the release-bearing merge commit
-- PyPI latest and pinned public install both resolve `tensor-grep==1.8.33`
-- GitHub release assets for `v1.8.33` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public update dogfood: `tg update` from `v1.8.32` installed sidecar `tensor-grep==1.8.33`; the new sidecar scheduled and completed the Windows native-front-door retry helper, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.33`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, and direct managed native `tg.exe` resolve `tg 1.8.33`; `tg doctor --json` reports `version = 1.8.33`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH.
+- Main CI run `25601232312` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25601232120` passed on the release-bearing merge commit
+- PyPI latest and pinned public install both resolve `tensor-grep==1.9.0`
+- GitHub release assets for `v1.9.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public update dogfood: `tg update` from `v1.8.33` installed sidecar `tensor-grep==1.9.0`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.0`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolve `tg 1.9.0`; `tg doctor --json` reports `version = 1.9.0`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH. Public `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
 - Public native CLI dogfood: `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` all accept the advertised public shape on the installed front door.
 - Public Windows launcher dogfood: `cmd /c tg`, direct managed `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...])` all return exit `1` with empty stdout for fresh quoted no-match phrases.
-- Post-release fast gate before the `v1.8.33` PR: `python scripts/agent_readiness.py --output artifacts/agent_readiness_gpu_probe_benchmark_warnings.json` passed all checks.
+- Fast gate before PR #76: `python scripts/agent_readiness.py --output artifacts/agent_readiness_agent_capsule.json` passed all checks.
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -43,7 +45,7 @@ Current product read:
 - Explicit `--gpu-device-ids` routing should only probe selected CUDA ordinals. Selecting GPU 0 must not initialize or warn about unrelated unsupported devices such as GPU 1.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
 - `tg agent` / Actionable Context Capsule is the product wedge: an opt-in workflow packet with primary file/function, route rationale, bounded snippets with line maps, validation evidence, edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when evidence is weak. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected. Evidence labels should distinguish `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, and `stale/uncertain` conclusions.
-- Product-roadmap docs are current through PR #66. Future sessions should implement capsule behavior behind explicit contracts and regression tests, not reinterpret the roadmap as permission to alter raw search output.
+- Product-roadmap docs are current through PR #66, and capsule v1 shipped in PR #76. Future sessions should harden capsule behavior behind explicit contracts and regression tests, not reinterpret the roadmap as permission to alter raw search output.
 - `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
 - Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
 - `tg ast-info --json` exposes AST language identifiers for agents without help-text scraping.
@@ -179,7 +181,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.33` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.0` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
