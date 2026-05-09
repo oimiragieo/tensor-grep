@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.9.4 (2026-05-09)
+
+### Bug Fixes
+
+- Harden docs governance and validation placeholders
+  ([`646b089`](https://github.com/oimiragieo/tensor-grep/commit/646b089e15f44eb2aee7253d361ff9d47dcfbc0f))
+
+Fix docs governance version tracking and edit validation file placeholders.
+
+
 ## v1.9.3 (2026-05-09)
 
 ### Bug Fixes

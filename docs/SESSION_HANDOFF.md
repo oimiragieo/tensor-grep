@@ -4,7 +4,7 @@ Last updated: 2026-05-09
 
 ## Current Release State
 
-release_docs_current_tag: v1.9.3
+release_docs_current_tag: v1.9.4
 
 - Latest released version: `v1.9.2`
 - Latest release commit: `8143ccb chore(release): v1.9.2 [skip ci]`

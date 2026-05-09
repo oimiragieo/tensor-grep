@@ -4,7 +4,7 @@
 
 ## 2026-05-09 Current Handoff
 
-release_docs_current_tag: v1.9.3
+release_docs_current_tag: v1.9.4
 
 The current released state is `v1.9.2`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes advertised Python-backed shapes, the Windows `.cmd` launcher preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, cold benchmark artifacts record the actual launcher command kind, benchmark scripts warn when timings include shim/interpreter overhead, explicit GPU device routing probes only selected devices, `tg agent` exposes the opt-in Actionable Context Capsule, mixed-language capsule confidence/validation alignment is release-hardened, and edit JSON/rollback safety is release-hardened. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
