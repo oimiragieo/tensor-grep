@@ -555,6 +555,7 @@ struct ApplyVerifyExample {
     audit_manifest: Option<AuditManifestExample>,
     plan: RewritePlanExample,
     validation: Option<ValidationSummaryExample>,
+    rollback: Option<ValidationRollbackSummaryExample>,
     verification: Option<VerifyResultExample>,
 }
 
@@ -578,6 +579,16 @@ struct AuditManifestExample {
     applied_edit_count: usize,
     signed: bool,
     signature_kind: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ValidationRollbackSummaryExample {
+    triggered_by: String,
+    success: bool,
+    files_restored: Vec<PathBuf>,
+    errors: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -1758,6 +1769,38 @@ fn assert_apply_verify_validation_failed_example(path: &Path) {
     assert!(
         !validation.commands.is_empty(),
         "{} validation commands must not be empty",
+        path.display()
+    );
+    let rollback = example
+        .rollback
+        .as_ref()
+        .unwrap_or_else(|| panic!("{} rollback payload missing", path.display()));
+    assert_eq!(
+        rollback.triggered_by,
+        "validation",
+        "{} rollback should be triggered by validation failure",
+        path.display()
+    );
+    assert!(
+        rollback.success,
+        "{} validation failure should record successful rollback",
+        path.display()
+    );
+    assert!(
+        !rollback.files_restored.is_empty(),
+        "{} rollback files_restored must not be empty",
+        path.display()
+    );
+    for restored_file in &rollback.files_restored {
+        assert!(
+            is_portable_absolute_path(restored_file),
+            "{} rollback restored file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    assert!(
+        rollback.errors.is_empty(),
+        "{} successful rollback must not include errors",
         path.display()
     );
     let verification = example

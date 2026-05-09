@@ -479,7 +479,7 @@ Use these public examples when wiring retries or stop conditions into an externa
 - [`examples/defs_provider_disagreement.json`](examples/defs_provider_disagreement.json): provider disagreement metadata; treat provider state as diagnostic context, not proof that the native answer is wrong
 - [`examples/provider_status_unavailable.json`](examples/provider_status_unavailable.json): provider unavailable snapshot; fall back to native behavior or surface the limitation to the caller
 - [`examples/provider_status_unavailable.json`](examples/provider_status_unavailable.json): provider unavailable; read `provider_status.last_error`, stay on native routing, and avoid blind provider retries
-- [`examples/rewrite_apply_verify_validation_failed.json`](examples/rewrite_apply_verify_validation_failed.json): patch applied and verified, but repo validation failed; rollback or repair before continuing
+- [`examples/rewrite_apply_verify_validation_failed.json`](examples/rewrite_apply_verify_validation_failed.json): patch applied and verified, but repo validation failed; rollback metadata records the restored files before retry or repair
 
 Recommended control-flow policy:
 

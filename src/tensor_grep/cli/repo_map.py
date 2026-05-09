@@ -8186,7 +8186,8 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
         else {}
     )
     validation_filtered_count = int(validation_alignment.get("filtered_count", 0) or 0)
-    if validation_filtered_count > 0:
+    validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
+    if validation_filtered_count > 0 and validation_kept_count == 0:
         confidence_downgraded = True
     primary_target_language = _target_language_for_path(primary_file)
 

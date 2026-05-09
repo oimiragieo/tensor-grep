@@ -2614,6 +2614,22 @@ def test_agent_capsule_python_invoice_tax_query_selects_python_evidence(tmp_path
     assert payload["context_consistency"]["primary_target_language"] == "python"
 
 
+def test_agent_capsule_python_invoice_tax_query_keeps_python_target_with_js_manifest(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "python invoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["python"].resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["context_consistency"]["query_language_hints"] == ["python"]
+    assert payload["context_consistency"]["primary_target_language"] == "python"
+    assert any("pytest" in command for command in payload["validation_commands"])
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
 def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tmp_path):
     paths = _write_mixed_invoice_fixture(tmp_path)
 

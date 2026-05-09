@@ -1309,7 +1309,7 @@ Failure-mode companion examples:
 - [`examples/defs_provider_disagreement.json`](examples/defs_provider_disagreement.json): symbol-navigation payload showing provider disagreement metadata
 - [`examples/provider_status_unavailable.json`](examples/provider_status_unavailable.json): provider unavailable snapshot; treat provider disagreement or provider unavailable state as diagnostic context rather than a separate schema
 - [`examples/provider_status_unavailable.json`](examples/provider_status_unavailable.json): standalone provider health snapshot showing `provider_status.last_error`; keep routing native until provider transport health is restored
-- [`examples/rewrite_apply_verify_validation_failed.json`](examples/rewrite_apply_verify_validation_failed.json): apply/verify payload where edits verified byte-for-byte but post-apply validation failed
+- [`examples/rewrite_apply_verify_validation_failed.json`](examples/rewrite_apply_verify_validation_failed.json): apply/verify payload where edits verified byte-for-byte but post-apply validation failed and rollback metadata records restored files
 
 These examples reuse the existing public contracts above; they are not separate schema families.
 

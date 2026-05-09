@@ -398,6 +398,43 @@ fn test_tg_run_rewrite_apply_no_matches_reports_nothing() {
 }
 
 #[test]
+fn test_tg_run_rewrite_apply_json_no_matches_emits_empty_payload() {
+    let (_dir, file_path) = write_source_file("py", "x = 1\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).expect("no-match apply stdout must still be JSON");
+    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["plan"]["total_edits"], 0);
+    assert_eq!(parsed["validation"], Value::Null);
+    assert_eq!(parsed["verification"], Value::Null);
+    assert_eq!(parsed["rollback"], Value::Null);
+    assert_eq!(fs::read_to_string(&file_path).unwrap(), "x = 1\n");
+    assert!(
+        output.stderr.is_empty(),
+        "json no-match apply should not emit human stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn test_rewrite_plan_json_contract_fields() {
     let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
     let (_dir, file_path) = write_source_file("py", source);
@@ -529,6 +566,87 @@ fn test_tg_run_rewrite_diff_shows_unified_diff() {
 
     let content = fs::read_to_string(&file_path).unwrap();
     assert_eq!(content, source, "diff should not modify file");
+}
+
+#[test]
+fn test_tg_run_rewrite_diff_json_wraps_unified_diff() {
+    let source = "x = 1\ndef add(x, y): return x + y\nz = 3\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--diff")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("diff stdout must be JSON");
+    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["routing_backend"], "AstBackend");
+    assert_eq!(parsed["routing_reason"], "ast-native");
+    assert_eq!(parsed["sidecar_used"], false);
+    assert_eq!(parsed["plan"]["total_edits"], 1);
+    let diff = parsed["diff"].as_str().expect("diff must be a string");
+    assert!(diff.contains("--- a/"), "should contain --- header: {diff}");
+    assert!(diff.contains("+++ b/"), "should contain +++ header: {diff}");
+    assert!(diff.contains("@@"), "should contain hunk header: {diff}");
+    assert!(
+        diff.contains("-def add(x, y): return x + y"),
+        "should show removed line: {diff}"
+    );
+    assert!(
+        diff.contains("+lambda x, y: x + y"),
+        "should show added line: {diff}"
+    );
+
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(content, source, "diff should not modify file");
+}
+
+#[test]
+fn test_tg_run_rewrite_diff_json_no_matches_emits_empty_payload() {
+    let source = "x = 1\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--diff")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).expect("no-match diff stdout must still be JSON");
+    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["plan"]["total_edits"], 0);
+    assert_eq!(parsed["diff"], "");
+    assert!(
+        output.stderr.is_empty(),
+        "json no-match diff should not emit human stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -1587,9 +1705,18 @@ fn test_tg_run_apply_verify_json_reports_failed_validation_and_exits_non_zero() 
         .as_str()
         .unwrap()
         .contains("lint-fail"));
+    assert_eq!(parsed["rollback"]["success"], true);
+    assert_eq!(parsed["rollback"]["triggered_by"], "validation");
+    assert_eq!(
+        parsed["rollback"]["files_restored"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(
         fs::read_to_string(&file_path).unwrap(),
-        "lambda x, y: x + y\n"
+        "def add(x, y): return x + y\n"
     );
 }
 
