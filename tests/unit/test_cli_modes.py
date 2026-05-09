@@ -2630,6 +2630,47 @@ def test_agent_capsule_python_invoice_tax_query_keeps_python_target_with_js_mani
     assert payload["ask_user_before_editing"]["required"] is False
 
 
+def test_agent_capsule_language_hint_beats_cross_language_lexical_noise(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+    paths["typescript"].write_text(
+        "export function createInvoice(subtotal: number): number {\n"
+        "  const taxCalculation = subtotal * 0.0825;\n"
+        "  const invoiceTaxCalculation = subtotal + taxCalculation;\n"
+        "  return invoiceTaxCalculation;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "python invoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["python"].resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["context_consistency"]["primary_target_language"] == "python"
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_agent_capsule_file_name_hint_beats_cross_language_symbol_similarity(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+    paths["typescript"].write_text(
+        "export function createInvoice(subtotal: number): number {\n"
+        "  const taxCalculation = subtotal * 0.0825;\n"
+        "  return subtotal + taxCalculation;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "payments.py invoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["python"].resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+
+
 def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tmp_path):
     paths = _write_mixed_invoice_fixture(tmp_path)
 

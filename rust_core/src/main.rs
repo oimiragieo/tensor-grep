@@ -1203,6 +1203,24 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn simple_windows_validation_split_preserves_quoted_path_but_rejects_shell_builtin() {
+        assert_eq!(
+            split_simple_windows_validation_command(
+                r#"python -m py_compile "C:\path with spaces\app.py""#
+            )
+            .unwrap(),
+            vec![
+                "python".to_string(),
+                "-m".to_string(),
+                "py_compile".to_string(),
+                r#"C:\path with spaces\app.py"#.to_string(),
+            ]
+        );
+        assert!(split_simple_windows_validation_command("echo lint-ok").is_none());
+    }
+
     #[test]
     fn search_request_preserves_multiple_path_roots_for_structured_output() {
         let args =
@@ -3930,8 +3948,16 @@ fn filter_batch_rewrite_plan(
 
 #[cfg(windows)]
 fn build_validation_shell_command(command: &str) -> Command {
+    if let Some(argv) = split_simple_windows_validation_command(command) {
+        if let Some((program, args)) = argv.split_first() {
+            let mut process = Command::new(program);
+            process.args(args);
+            return process;
+        }
+    }
+
     let mut process = Command::new("cmd");
-    process.args(["/C", command]);
+    process.args(["/S", "/C", command]);
     process
 }
 
@@ -3940,6 +3966,102 @@ fn build_validation_shell_command(command: &str) -> Command {
     let mut process = Command::new("sh");
     process.args(["-c", command]);
     process
+}
+
+#[cfg(windows)]
+fn split_simple_windows_validation_command(command: &str) -> Option<Vec<String>> {
+    let mut argv = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '\0';
+
+    for character in command.chars() {
+        if !in_quotes && matches!(character, '&' | '|' | '<' | '>' | '^' | '%') {
+            return None;
+        }
+        if matches!(character, '"' | '\'') {
+            if in_quotes && character == quote_char {
+                in_quotes = false;
+                quote_char = '\0';
+                continue;
+            }
+            if !in_quotes {
+                in_quotes = true;
+                quote_char = character;
+                continue;
+            }
+        }
+        if character.is_whitespace() && !in_quotes {
+            if !current.is_empty() {
+                argv.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(character);
+    }
+
+    if in_quotes {
+        return None;
+    }
+    if !current.is_empty() {
+        argv.push(current);
+    }
+    if argv.is_empty() {
+        return None;
+    }
+    if is_windows_shell_builtin(&argv[0]) {
+        return None;
+    }
+    Some(argv)
+}
+
+#[cfg(windows)]
+fn is_windows_shell_builtin(program: &str) -> bool {
+    let program = program.trim_matches('"').to_ascii_lowercase();
+    matches!(
+        program.as_str(),
+        "assoc"
+            | "break"
+            | "call"
+            | "cd"
+            | "chdir"
+            | "cls"
+            | "color"
+            | "copy"
+            | "date"
+            | "del"
+            | "dir"
+            | "echo"
+            | "endlocal"
+            | "erase"
+            | "exit"
+            | "for"
+            | "ftype"
+            | "if"
+            | "md"
+            | "mkdir"
+            | "move"
+            | "path"
+            | "pause"
+            | "popd"
+            | "prompt"
+            | "pushd"
+            | "rd"
+            | "rem"
+            | "ren"
+            | "rename"
+            | "rmdir"
+            | "set"
+            | "setlocal"
+            | "shift"
+            | "start"
+            | "time"
+            | "title"
+            | "type"
+            | "ver"
+            | "verify"
+            | "vol"
+    )
 }
 
 fn validation_working_dir(path: &str) -> PathBuf {

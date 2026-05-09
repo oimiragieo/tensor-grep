@@ -41,7 +41,9 @@ These documents define the operating and governance surface for teams running `t
 
 ## Current Release State
 
-Latest stable PyPI release: [`v1.9.1`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.1).
+release_docs_current_tag: v1.9.2
+
+Latest stable PyPI release: [`v1.9.2`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.2).
 
 Current positioning:
 
@@ -52,6 +54,12 @@ Current positioning:
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.9.2` closed:
+
+- edit-mode `--diff --json` and `--apply --json` now emit parseable JSON-only stdout for agent use
+- failed edit validation rolls changed files back and reports structured rollback metadata
+- capsule validation trust no longer downgrades or asks before editing when mismatched commands were filtered but aligned validation remains
 
 What `v1.9.1` closed:
 
@@ -80,9 +88,10 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.1` follow-up:
+Active post-`v1.9.2` follow-up:
 
-- harden `tg agent` / Actionable Context Capsule ranking, token economy, follow-up reads, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
+- harden `tg agent` / Actionable Context Capsule ranking, language-intent weighting, token economy, follow-up reads, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
+- keep edit validation command parsing argv-safe for quoted Windows paths with spaces
 - preserve the mixed-language capsule trust contract: explicit language intent, exact symbol intent, primary target language, `validation_alignment`, and `ask_user_before_editing` must agree or confidence must drop
 - the capsule output is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when warranted. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected.
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
@@ -94,20 +103,22 @@ Active post-`v1.9.1` follow-up:
 
 Managed native-upgrade dogfood:
 
-- `tg update` from `v1.9.0` installed sidecar `tensor-grep==1.9.1` and refreshed the managed native front door to `tg 1.9.1`
-- `tg doctor --json` now reports `version = 1.9.1`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route
-- profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` all resolve `tg 1.9.1`
+- `tg update` from `v1.9.1` installed sidecar `tensor-grep==1.9.2` and refreshed the managed native front door to `tg 1.9.2`
+- `tg doctor --json` now reports `version = 1.9.2`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route
+- profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` all resolve `tg 1.9.2`
 - prior `scripts/install.ps1` dogfood for `v1.8.31` updated User PATH so fresh shells resolve `C:\Users\oimir\.tensor-grep\bin\tg.exe` before compatibility shim directories
 - this is installer correctness and release-readiness work; benchmark docs should not claim a cold-search speed win from it
 
 Release proof:
 
+- PR #80 merged and released from `faf67ed fix: harden edit JSON and capsule validation trust`
+- release commit `8143ccb chore(release): v1.9.2 [skip ci]`
+- main CI run `25609611007` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL run `25609610737` passed
+- GitHub release assets for `v1.9.2` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI reports `tensor-grep 1.9.2`; `tensor-grep==1.9.2` resolves from PyPI
 - PR #78 merged and released from `5791489 fix: harden agent capsule trust alignment`
 - release commit `8f226ba chore(release): v1.9.1 [skip ci]`
-- main CI run `25604843919` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- main CodeQL runs `25604843742` and release-commit `25605123376` passed
-- GitHub release assets for `v1.9.1` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- PyPI reports `tensor-grep 1.9.1`; `tensor-grep==1.9.1` resolves from PyPI
 - PR #76 merged and released from `95bfd81 feat: add actionable agent context capsule`
 - release commit `19c7295 chore(release): v1.9.0 [skip ci]`
 - main CI run `25601232312` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
@@ -144,7 +155,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.9.1` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.9.2` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -165,7 +176,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.9.1` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
+- `v1.9.2` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

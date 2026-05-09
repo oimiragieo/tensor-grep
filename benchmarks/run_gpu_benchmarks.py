@@ -807,6 +807,14 @@ def run_gpu_scale_benchmarks(
                     device_id=int(device["device_id"]),
                     env=command_env,
                 )
+                for diagnostic_key in ("stderr", "error"):
+                    if diagnostic_key in check:
+                        check[diagnostic_key] = _clean_selected_gpu_stderr(
+                            check.get(diagnostic_key),
+                            devices=devices,
+                            selected_device_id=int(device["device_id"]),
+                            warnings=warnings,
+                        )
                 size_label = _format_size_label(correctness_corpus_size)
                 check["device_name"] = device.get("name")
                 check["corpus_size_label"] = size_label

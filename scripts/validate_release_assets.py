@@ -2837,6 +2837,12 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
         "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
         "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
         "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
+        "AGENTS.md:release_docs_current_tag:tf",
+        "README.md:release_docs_current_tag:tf",
+        "SKILL.md:release_docs_current_tag:tf",
+        "docs/SESSION_HANDOFF.md:release_docs_current_tag:tf",
+        "docs/CONTINUATION_PLAN.md:release_docs_current_tag:tf",
+        "docs/CONTRACTS.md:release_docs_current_tag:tf",
     }
     missing_toml = sorted(required_toml_entries - set(version_toml))
     missing_variables = sorted(required_variable_entries - set(version_variables))

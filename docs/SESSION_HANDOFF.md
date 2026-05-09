@@ -4,15 +4,18 @@ Last updated: 2026-05-09
 
 ## Current Release State
 
-- Latest released version: `v1.9.1`
-- Latest release commit: `8f226ba chore(release): v1.9.1 [skip ci]`
-- Latest fix commit: `5791489 fix: harden agent capsule trust alignment`
+release_docs_current_tag: v1.9.2
+
+- Latest released version: `v1.9.2`
+- Latest release commit: `8143ccb chore(release): v1.9.2 [skip ci]`
+- Latest fix commit: `faf67ed fix: harden edit JSON and capsule validation trust`
 - Latest feature commit: `95bfd81 feat: add actionable agent context capsule`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.1>
-- Main CI run `25604843919`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL runs `25604843742` and release-commit `25605123376`: passed
-- PyPI latest and pinned install: `tensor-grep==1.9.1` resolves from PyPI
-- GitHub release assets: `v1.9.1` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.2>
+- Main CI run `25609611007`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25609610737`: passed
+- PyPI latest and pinned install: `tensor-grep==1.9.2` resolves from PyPI
+- GitHub release assets: `v1.9.2` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Closed edit automation safety gap: `v1.9.2` emits parseable edit JSON for diff/apply, keeps human output out of JSON stdout, rolls changed files back after failed validation, and keeps capsule validation trust aligned when mismatched commands are filtered but valid target-language commands remain.
 - Closed capsule trust-alignment gap: `v1.9.1` caps capsule confidence and requires ask-before-editing when explicit language hints, exact symbol intent, primary target language, selected snippets, and validation commands disagree; validation commands are filtered to match the primary target language unless cross-language dependency evidence exists; GPU benchmark auto-recommendation remains gated by required 1GB/5GB correctness and selected-GPU speed evidence.
 - Prior Actionable Context Capsule gap: `v1.9.0` releases opt-in `tg agent --query ... --json` as a deterministic work packet with primary target metadata, route rationale, bounded snippets with line maps, validation evidence, edit order, rollback/checkpoint metadata, omissions/follow-up reads, confidence, call-site evidence status, and ask-before-editing recommendations.
 - Prior GPU probe and benchmark-warning gaps: `v1.8.33` scopes explicit GPU device probing so `--gpu-device-ids 0` does not initialize or warn about unrelated unsupported GPUs, and benchmark scripts now emit top-level warnings when the timed `tg` entrypoint includes `.cmd`, `uv`, or Python-module overhead.
@@ -20,9 +23,9 @@ Last updated: 2026-05-09
 - Prior public launcher and agent contract gaps: `v1.8.31` puts the managed native front-door directory ahead of compatibility shim directories on Windows User PATH for fresh shells, exposes top-level `validation_commands` on both `context-render` and `edit-plan` JSON, keeps default `classify` deterministic/local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into CyBERT/Triton, and extends GPU benchmark scale/correctness gates to 1GB/5GB rows.
 - Prior Windows `.cmd` quoted-pattern gap: `v1.8.30` preserves quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` instead of splitting them into shorter false-positive searches plus bogus paths.
 - Prior native-front-door CLI parity gap: `v1.8.29` accepts or intentionally sidecar-routes `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`; `classify` falls back before expensive provider/model setup when unavailable; and the GPU benchmark harness treats no-match as a valid comparator outcome.
-- Public update dogfood: `tg update` from `v1.9.0` installed sidecar `tensor-grep==1.9.1`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.1`. `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, WSL `tg --version`, Git Bash `tg --version`, and direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` report `tg 1.9.1`.
+- Public update dogfood: `tg update` from `v1.9.1` installed sidecar `tensor-grep==1.9.2`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.2`. `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, WSL `tg --version`, Git Bash `tg --version`, and direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` report `tg 1.9.2`.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
-- Public doctor dogfood: `tg doctor --json` reports `version = 1.9.1`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, `fresh_shell_path_tg_first_version_matches = true`, and `path_tg_launcher_warning` when the current process still resolves the compatibility shim before the managed native front door.
+- Public doctor dogfood: `tg doctor --json` reports `version = 1.9.2`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, `fresh_shell_path_tg_first_version_matches = true`, and `path_tg_launcher_warning` when the current process still resolves the compatibility shim before the managed native front door.
 - Public capsule dogfood: `tg agent src/tensor_grep/cli --query "agent context capsule" --json --max-tokens 300 --max-files 2 --max-sources 2` returned a capsule with primary target, route rationale, snippets, omitted primary follow-up reads, confidence downgrade, rollback command/argv, and ask-before-editing metadata.
 - Public `v1.9.0` dogfood follow-up found that ambiguous mixed-language invoice-tax capsule queries could be overconfident and pair a TypeScript primary target with pytest validation. `v1.9.1` adds mixed-language capsule regressions, shared `validation_alignment`, confidence caps for query-language/target-language conflicts, and GPU benchmark recommendation gates.
 - Public native CLI dogfood: installed `tg 1.8.32` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
@@ -31,15 +34,16 @@ Last updated: 2026-05-09
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.9.1 Scope
+## Current Post-v1.9.2 Scope
 
-Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The latest fix release is PR #78 `fix: harden agent capsule trust alignment` at `5791489`; main CI run `25604843919` and CodeQL runs `25604843742` / `25605123376` passed, and semantic-release released `v1.9.1`.
+Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The latest fix release is PR #80 `fix: harden edit JSON and capsule validation trust` at `faf67ed`; main CI run `25609611007` and CodeQL run `25609610737` passed, and semantic-release released `v1.9.2`.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`.
 
-Active post-`v1.9.1` implementation scope:
+Active post-`v1.9.2` implementation scope:
 
-- Harden `tg agent` / Actionable Context Capsule ranking, token economy, follow-up reads, call-site evidence, and workflow benchmarks without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
+- Harden `tg agent` / Actionable Context Capsule ranking, explicit language/file-name intent weighting, token economy, follow-up reads, call-site evidence, and workflow benchmarks without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
+- Keep edit validation command parsing argv-safe for quoted Windows paths with spaces.
 - Preserve mixed-language capsule trust: explicit query language hints, exact symbol intent, primary target language, selected snippets, and validation commands must agree or `confidence.overall` / `primary_target.confidence` must be capped and `ask_user_before_editing.required` must become true.
 - Keep validation hints aligned with the selected primary target language unless verified cross-language dependency evidence exists. `validation_alignment` should report filtered mismatches so a TypeScript target is not silently paired with pytest-only validation.
 - Keep Windows managed installer/update dogfood checking both the update path and a fresh-shell PATH environment; existing parent shells may keep old PATH until restarted.
@@ -81,7 +85,7 @@ Do not report final version state before the GitHub release assets, PyPI/package
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.9.1 Fixed
+## What v1.8.12-v1.9.2 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -126,6 +130,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - The `v1.8.33` release scopes explicit GPU device probing to requested CUDA ordinals and makes benchmark scripts warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead. It is release correctness/observability, not a GPU speed claim.
 - The `v1.9.0` release adds `tg agent` / Actionable Context Capsule as an opt-in agent work packet with primary target metadata, route rationale, bounded snippets with line maps, validation evidence, edit order, rollback/checkpoint metadata, omission counts, confidence, and ask-before-editing guidance. It is token-economy/context orchestration, not a mutation of raw rg/json/ndjson output.
 - The `v1.9.1` release hardens mixed-language capsule confidence/validation alignment, filters incompatible validation commands unless cross-language evidence exists, and keeps GPU auto-recommendation false unless the required 1GB/5GB correctness and selected-GPU speed gates pass.
+- The `v1.9.2` release hardens edit JSON and rollback safety, keeps validation-failure apply output parseable, and avoids over-downgrading capsules when filtered cross-language commands still leave aligned validation evidence.
 
 ## Verified Before Release Closeout
 
@@ -147,6 +152,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PR #74 `fix: scope GPU probing and benchmark launcher warnings`: merged and released as `v1.8.33`
 - PR #76 `feat: add actionable agent context capsule`: merged and released as `v1.9.0`
 - PR #78 `fix: harden agent capsule trust alignment`: merged and released as `v1.9.1`
+- PR #80 `fix: harden edit JSON and capsule validation trust`: merged and released as `v1.9.2`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
 - `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed

@@ -12,6 +12,12 @@ SESSION_HANDOFF_PATH = Path("docs/SESSION_HANDOFF.md")
 CONTINUATION_PLAN_PATH = Path("docs/CONTINUATION_PLAN.md")
 CONTRACTS_DOC_PATH = Path("docs/CONTRACTS.md")
 
+CURRENT_RELEASE_TAG = "v1.9.2"
+CURRENT_RELEASE_COMMIT = "8143ccb chore(release): v1.9.2 [skip ci]"
+CURRENT_FIX_COMMIT = "faf67ed fix: harden edit JSON and capsule validation trust"
+CURRENT_MAIN_CI = "25609611007"
+CURRENT_CODEQL = "25609610737"
+
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
@@ -65,7 +71,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "skip yanked PyPI releases" in contracts
     assert "refresh the managed release-native front door" in contracts
     assert "Windows native-front-door retry helper" in contracts
-    assert "current `v1.9.1` release line" in contracts
+    assert "current `v1.9.2` release line" in contracts
     assert "managed native-upgrade contract" in contracts
     assert "path_tg_first_launcher_kind" in contracts
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
@@ -76,7 +82,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "GPU auto-recommendation must remain false" in contracts
 
 
-def test_handoff_docs_should_record_current_v191_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -86,7 +92,8 @@ def test_handoff_docs_should_record_current_v191_release_state_and_fast_gate() -
     }
 
     for content in docs.values():
-        assert "v1.9.1" in content
+        assert CURRENT_RELEASE_TAG in content
+        assert "release_docs_current_tag: v1.9.2" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -95,15 +102,15 @@ def test_handoff_docs_should_record_current_v191_release_state_and_fast_gate() -
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "8f226ba chore(release): v1.9.1 [skip ci]" in content
-        assert "5791489 fix: harden agent capsule trust alignment" in content
+        assert CURRENT_RELEASE_COMMIT in content
+        assert CURRENT_FIX_COMMIT in content
         assert "95bfd81 feat: add actionable agent context capsule" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25604843919" in handoff
-    assert "25604843742" in handoff
-    assert "25605123376" in handoff
-    assert "tensor-grep==1.9.1" in handoff
+    assert CURRENT_MAIN_CI in handoff
+    assert CURRENT_CODEQL in handoff
+    assert "tensor-grep==1.9.2" in handoff
+    assert "Closed edit automation safety gap" in handoff
     assert "Closed capsule trust-alignment gap" in handoff
     assert "Prior GPU probe and benchmark-warning gaps" in handoff
     assert "Prior launcher observability and benchmark attribution gaps" in handoff
@@ -142,18 +149,18 @@ def test_handoff_docs_should_record_current_v191_release_state_and_fast_gate() -
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
+    assert "v1.9.2` release hardens edit JSON" in handoff
     assert "v1.9.1` release hardens mixed-language capsule confidence" in handoff
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme
-    assert "5791489 fix: harden agent capsule trust alignment" in readme
+    assert CURRENT_FIX_COMMIT in readme
     assert "95bfd81 feat: add actionable agent context capsule" in readme
-    assert "8f226ba chore(release): v1.9.1 [skip ci]" in readme
-    assert "25604843919" in readme
-    assert "25604843742" in readme
-    assert "25605123376" in readme
-    assert "GitHub release assets for `v1.9.1`" in readme
-    assert "sidecar `tensor-grep==1.9.1`" in readme
+    assert CURRENT_RELEASE_COMMIT in readme
+    assert CURRENT_MAIN_CI in readme
+    assert CURRENT_CODEQL in readme
+    assert "GitHub release assets for `v1.9.2`" in readme
+    assert "sidecar `tensor-grep==1.9.2`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -168,11 +175,12 @@ def test_handoff_docs_should_record_current_v191_release_state_and_fast_gate() -
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    closed_heading = "What `v1.9.1` closed:"
-    follow_up_heading = "Active post-`v1.9.1` follow-up:"
+    closed_heading = "What `v1.9.2` closed:"
+    follow_up_heading = "Active post-`v1.9.2` follow-up:"
     closed_block = readme.split(closed_heading, 1)[1].split(follow_up_heading, 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "GPU benchmark auto-recommendation remains false" in closed_block
+    assert "--diff --json" in closed_block
+    assert "rolls changed files back" in closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
 
 
@@ -187,7 +195,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.9.1`" in skill
+    assert "current released version is `v1.9.2`" in skill
+    assert "PR #80 `fix: harden edit JSON and capsule validation trust` merged" in skill
     assert "PR #78 `fix: harden agent capsule trust alignment` merged" in skill
     assert "PR #76 `feat: add actionable agent context capsule` merged" in skill
     assert "PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged" in skill
