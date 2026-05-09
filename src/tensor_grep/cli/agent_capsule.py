@@ -97,6 +97,7 @@ def _capsule_trust_checks(
     downgrade_reasons: list[str] = []
     ask_reasons: list[str] = []
     validation_filtered_count = int(validation_alignment.get("filtered_count", 0) or 0)
+    validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
 
     if (
         query_language_hints
@@ -111,7 +112,7 @@ def _capsule_trust_checks(
         downgrade_reasons.append(reason)
         ask_reasons.append(reason)
 
-    if validation_filtered_count > 0:
+    if validation_filtered_count > 0 and validation_kept_count == 0:
         confidence_cap = min(confidence_cap, 0.65)
         reason = "validation commands did not align with primary target language"
         downgrade_reasons.append(reason)

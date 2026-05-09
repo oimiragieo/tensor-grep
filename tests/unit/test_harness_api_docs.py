@@ -449,6 +449,9 @@ def test_failure_mode_examples_exist_and_have_actionable_shapes() -> None:
             assert payload["verification"]["mismatches"] == []
             assert payload["validation"]["success"] is False
             assert payload["validation"]["commands"]
+            assert payload["rollback"]["triggered_by"] == "validation"
+            assert payload["rollback"]["success"] is True
+            assert payload["rollback"]["files_restored"]
         elif file_name == "session_invalid_request_stale.json":
             assert payload["error"]["code"] == "invalid_request"
             assert "stale" in payload["error"]["message"].lower()
@@ -508,3 +511,4 @@ def test_harness_api_failure_mode_examples_exist_and_match_documented_shapes() -
     assert validation_failed["validation"] is not None
     assert validation_failed["validation"]["success"] is False
     assert validation_failed["verification"]["mismatches"] == []
+    assert validation_failed["rollback"]["success"] is True

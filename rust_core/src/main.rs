@@ -3071,6 +3071,18 @@ struct ApplyVerifyJson<'a> {
     plan: &'a tensor_grep_rs::backend_ast::RewritePlan,
     verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
     validation: Option<&'a ValidationSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rollback: Option<&'a ValidationRollbackSummary>,
+}
+
+#[derive(Serialize)]
+struct RewriteDiffJson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    plan: &'a tensor_grep_rs::backend_ast::RewritePlan,
+    diff: String,
 }
 
 #[derive(Serialize)]
@@ -3084,6 +3096,18 @@ struct BatchApplyVerifyJson<'a> {
     plan: &'a BatchRewritePlan,
     verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
     validation: Option<&'a ValidationSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rollback: Option<&'a ValidationRollbackSummary>,
+}
+
+#[derive(Serialize)]
+struct BatchRewriteDiffJson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    plan: &'a BatchRewritePlan,
+    diff: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3120,6 +3144,14 @@ struct CheckpointMetadata {
 struct ValidationSummary {
     success: bool,
     commands: Vec<ValidationCommandResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ValidationRollbackSummary {
+    triggered_by: &'static str,
+    success: bool,
+    files_restored: Vec<String>,
+    errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4030,6 +4062,58 @@ fn collect_pre_apply_hashes(
     Ok(hashes)
 }
 
+fn collect_validation_rollback_snapshots(
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
+    let mut snapshots = BTreeMap::new();
+    for file in edits
+        .iter()
+        .map(|edit| edit.file.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let bytes = std::fs::read(&file).with_context(|| {
+            format!("failed to read {} for validation rollback", file.display())
+        })?;
+        snapshots.insert(file.to_string_lossy().to_string(), bytes);
+    }
+    Ok(snapshots)
+}
+
+fn restore_validation_rollback_snapshots(
+    snapshots: &BTreeMap<String, Vec<u8>>,
+) -> ValidationRollbackSummary {
+    let mut files_restored = Vec::new();
+    let mut errors = Vec::new();
+
+    for (file, bytes) in snapshots {
+        match std::fs::write(file, bytes) {
+            Ok(()) => files_restored.push(file.clone()),
+            Err(error) => errors.push(format!("failed to restore {file}: {error}")),
+        }
+    }
+
+    ValidationRollbackSummary {
+        triggered_by: "validation",
+        success: errors.is_empty(),
+        files_restored,
+        errors,
+    }
+}
+
+fn emit_rollback_status(summary: &ValidationRollbackSummary) {
+    if summary.success {
+        eprintln!(
+            "[rollback] restored {} file(s) after failed validation",
+            summary.files_restored.len()
+        );
+    } else {
+        eprintln!(
+            "[rollback] failed to restore {} file(s) after failed validation",
+            summary.errors.len()
+        );
+    }
+}
+
 struct AuditManifestWriteInput<'a> {
     path: &'a Path,
     lang: &'a str,
@@ -4388,12 +4472,41 @@ fn handle_ast_rewrite(
     }
 
     if plan.edits.is_empty() {
+        if args.diff && args.json {
+            let payload = RewriteDiffJson {
+                version: plan.version,
+                routing_backend: plan.routing_backend,
+                routing_reason: plan.routing_reason,
+                sidecar_used: plan.sidecar_used,
+                plan: &plan,
+                diff: String::new(),
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+            return Ok(());
+        }
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+            return Ok(());
+        }
         eprintln!("[rewrite] no matches found, nothing to rewrite");
         return Ok(());
     }
 
     if args.diff {
-        print!("{}", plan.generate_diff()?);
+        let diff = plan.generate_diff()?;
+        if args.json {
+            let payload = RewriteDiffJson {
+                version: plan.version,
+                routing_backend: plan.routing_backend,
+                routing_reason: plan.routing_reason,
+                sidecar_used: plan.sidecar_used,
+                plan: &plan,
+                diff,
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            print!("{diff}");
+        }
         return Ok(());
     }
 
@@ -4435,17 +4548,41 @@ fn handle_ast_rewrite_apply(
     };
 
     if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
-        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        if args.json {
+            let payload = ApplyVerifyJson {
+                version: plan.version,
+                routing_backend: plan.routing_backend,
+                routing_reason: plan.routing_reason,
+                sidecar_used: plan.sidecar_used,
+                checkpoint: None,
+                audit_manifest: None,
+                plan: &plan,
+                verification: None,
+                validation: None,
+                rollback: None,
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            eprintln!("[rewrite] no matches found, nothing to rewrite");
+        }
         return Ok(());
     }
 
     let checkpoint = if args.checkpoint {
         let checkpoint = create_checkpoint(path)?;
-        eprintln!(
-            "[checkpoint] created {} ({}, files={})",
-            checkpoint.checkpoint_id, checkpoint.mode, checkpoint.file_count
-        );
+        if !args.json {
+            eprintln!(
+                "[checkpoint] created {} ({}, files={})",
+                checkpoint.checkpoint_id, checkpoint.mode, checkpoint.file_count
+            );
+        }
         Some(checkpoint)
+    } else {
+        None
+    };
+
+    let rollback_snapshots = if args.lint_cmd.is_some() || args.test_cmd.is_some() {
+        Some(collect_validation_rollback_snapshots(&plan.edits)?)
     } else {
         None
     };
@@ -4460,26 +4597,30 @@ fn handle_ast_rewrite_apply(
         AstBackend::apply_rewrites(&plan)?;
     }
 
-    if !plan.rejected_overlaps.is_empty() {
+    if !plan.rejected_overlaps.is_empty() && !args.json {
         eprintln!(
             "[rewrite] {} overlapping edit(s) rejected",
             plan.rejected_overlaps.len()
         );
     }
 
-    eprintln!("[rewrite] applied {} edit(s)", plan.edits.len(),);
+    if !args.json {
+        eprintln!("[rewrite] applied {} edit(s)", plan.edits.len(),);
+    }
 
     let verification = if args.verify {
         let v = plan.verify(backend)?;
-        if v.mismatches.is_empty() {
-            eprintln!("[verify] {}/{} edits verified", v.verified, v.total_edits);
-        } else {
-            eprintln!(
-                "[verify] {}/{} edits verified, {} mismatches",
-                v.verified,
-                v.total_edits,
-                v.mismatches.len()
-            );
+        if !args.json {
+            if v.mismatches.is_empty() {
+                eprintln!("[verify] {}/{} edits verified", v.verified, v.total_edits);
+            } else {
+                eprintln!(
+                    "[verify] {}/{} edits verified, {} mismatches",
+                    v.verified,
+                    v.total_edits,
+                    v.mismatches.len()
+                );
+            }
         }
         Some(v)
     } else {
@@ -4487,9 +4628,29 @@ fn handle_ast_rewrite_apply(
     };
 
     let validation = run_post_apply_validation(args, path);
-    if let Some(summary) = &validation {
-        emit_validation_status(summary);
+    if !args.json {
+        if let Some(summary) = &validation {
+            emit_validation_status(summary);
+        }
     }
+
+    let rollback = if let Some(summary) = &validation {
+        if !summary.success {
+            let rollback = rollback_snapshots
+                .as_ref()
+                .map(restore_validation_rollback_snapshots);
+            if !args.json {
+                if let Some(rollback_summary) = &rollback {
+                    emit_rollback_status(rollback_summary);
+                }
+            }
+            rollback
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
         Some(write_audit_manifest_for_plan(AuditManifestWriteInput {
@@ -4520,6 +4681,7 @@ fn handle_ast_rewrite_apply(
             plan: &plan,
             verification: verification.as_ref(),
             validation: validation.as_ref(),
+            rollback: rollback.as_ref(),
         };
         println!("{}", serde_json::to_string_pretty(&payload)?);
     }
@@ -4554,6 +4716,22 @@ fn handle_ast_batch_rewrite(
     }
 
     if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
+        if args.diff && args.json {
+            let payload = BatchRewriteDiffJson {
+                version: plan.version,
+                routing_backend: plan.routing_backend,
+                routing_reason: plan.routing_reason,
+                sidecar_used: plan.sidecar_used,
+                plan: &plan,
+                diff: String::new(),
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+            return Ok(());
+        }
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+            return Ok(());
+        }
         eprintln!("[rewrite] no matches found, nothing to rewrite");
         return Ok(());
     }
@@ -4563,7 +4741,20 @@ fn handle_ast_batch_rewrite(
             eprintln!("[rewrite] no non-overlapping matches found, nothing to diff");
             return Ok(());
         }
-        print!("{}", plan.generate_diff()?);
+        let diff = plan.generate_diff()?;
+        if args.json {
+            let payload = BatchRewriteDiffJson {
+                version: plan.version,
+                routing_backend: plan.routing_backend,
+                routing_reason: plan.routing_reason,
+                sidecar_used: plan.sidecar_used,
+                plan: &plan,
+                diff,
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            print!("{diff}");
+        }
         return Ok(());
     }
 
@@ -4600,17 +4791,41 @@ fn handle_ast_batch_rewrite_apply(
     let plan = filter_batch_rewrite_plan(&plan, args)?;
 
     if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
-        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        if args.json {
+            let payload = BatchApplyVerifyJson {
+                version: plan.version,
+                routing_backend: plan.routing_backend,
+                routing_reason: plan.routing_reason,
+                sidecar_used: plan.sidecar_used,
+                checkpoint: None,
+                audit_manifest: None,
+                plan: &plan,
+                verification: None,
+                validation: None,
+                rollback: None,
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            eprintln!("[rewrite] no matches found, nothing to rewrite");
+        }
         return Ok(());
     }
 
     let checkpoint = if args.checkpoint {
         let checkpoint = create_checkpoint(path)?;
-        eprintln!(
-            "[checkpoint] created {} ({}, files={})",
-            checkpoint.checkpoint_id, checkpoint.mode, checkpoint.file_count
-        );
+        if !args.json {
+            eprintln!(
+                "[checkpoint] created {} ({}, files={})",
+                checkpoint.checkpoint_id, checkpoint.mode, checkpoint.file_count
+            );
+        }
         Some(checkpoint)
+    } else {
+        None
+    };
+
+    let rollback_snapshots = if args.lint_cmd.is_some() || args.test_cmd.is_some() {
+        Some(collect_validation_rollback_snapshots(&plan.edits)?)
     } else {
         None
     };
@@ -4623,33 +4838,37 @@ fn handle_ast_batch_rewrite_apply(
 
     AstBackend::apply_batch_rewrites(&plan)?;
 
-    if !plan.rejected_overlaps.is_empty() {
+    if !plan.rejected_overlaps.is_empty() && !args.json {
         eprintln!(
             "[rewrite] {} overlapping edit(s) rejected",
             plan.rejected_overlaps.len()
         );
     }
 
-    if plan.edits.is_empty() {
-        eprintln!("[rewrite] no non-overlapping edits applied");
-    } else {
-        eprintln!("[rewrite] applied {} edit(s)", plan.edits.len());
+    if !args.json {
+        if plan.edits.is_empty() {
+            eprintln!("[rewrite] no non-overlapping edits applied");
+        } else {
+            eprintln!("[rewrite] applied {} edit(s)", plan.edits.len());
+        }
     }
 
     let verification = if config.verify || args.verify {
         let result = plan.verify(backend)?;
-        if result.mismatches.is_empty() {
-            eprintln!(
-                "[verify] {}/{} edits verified",
-                result.verified, result.total_edits
-            );
-        } else {
-            eprintln!(
-                "[verify] {}/{} edits verified, {} mismatches",
-                result.verified,
-                result.total_edits,
-                result.mismatches.len()
-            );
+        if !args.json {
+            if result.mismatches.is_empty() {
+                eprintln!(
+                    "[verify] {}/{} edits verified",
+                    result.verified, result.total_edits
+                );
+            } else {
+                eprintln!(
+                    "[verify] {}/{} edits verified, {} mismatches",
+                    result.verified,
+                    result.total_edits,
+                    result.mismatches.len()
+                );
+            }
         }
         Some(result)
     } else {
@@ -4657,9 +4876,29 @@ fn handle_ast_batch_rewrite_apply(
     };
 
     let validation = run_post_apply_validation(args, path);
-    if let Some(summary) = &validation {
-        emit_validation_status(summary);
+    if !args.json {
+        if let Some(summary) = &validation {
+            emit_validation_status(summary);
+        }
     }
+
+    let rollback = if let Some(summary) = &validation {
+        if !summary.success {
+            let rollback = rollback_snapshots
+                .as_ref()
+                .map(restore_validation_rollback_snapshots);
+            if !args.json {
+                if let Some(rollback_summary) = &rollback {
+                    emit_rollback_status(rollback_summary);
+                }
+            }
+            rollback
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
         Some(write_audit_manifest_for_plan(AuditManifestWriteInput {
@@ -4690,6 +4929,7 @@ fn handle_ast_batch_rewrite_apply(
             plan: &plan,
             verification: verification.as_ref(),
             validation: validation.as_ref(),
+            rollback: rollback.as_ref(),
         };
         println!("{}", serde_json::to_string_pretty(&payload)?);
     }

@@ -74,5 +74,13 @@
     "total_edits": 1,
     "verified": 1,
     "mismatches": []
+  },
+  "rollback": {
+    "triggered_by": "validation",
+    "success": true,
+    "files_restored": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+    ],
+    "errors": []
   }
 }
