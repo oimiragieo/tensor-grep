@@ -60,13 +60,13 @@ What `v1.8.32` closed:
 - `tg upgrade` skips yanked PyPI releases, refreshes stale package metadata, verifies that the target Python can still import `tensor_grep`, refreshes the managed release-native front door to the verified sidecar version, and schedules a Windows retry helper when the running native `tg.exe` is still locked
 - Windows managed installs put `~/.tensor-grep/bin` ahead of compatibility shim directories on User PATH so fresh `cmd`, unprofiled PowerShell, and `subprocess.run(["tg", ...])` shells resolve the native `tg.exe` first
 - `tg doctor --json` reports current-process and fresh-shell launcher route kinds, including `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, and `path_tg_launcher_warning`, so benchmark runs can distinguish managed native execution from compatibility shim timing
-- cold-path benchmark artifacts record both configured `tg_launcher_mode` and actual `tg_launcher_command_kind`, keeping native-exe, `.cmd` shim, `uv`, and Python-module timings separate
+- cold-path benchmark artifacts record both configured `tg_launcher_mode` and actual `tg_launcher_command_kind`, keeping native-exe, `.cmd` shim, `uv`, and Python-module timings separate; benchmark scripts warn when the timed `tg` entrypoint is not the native executable
 - the Rust front door treats `--format rg` as a no-op for ripgrep-compatible text output and preserves `--sort path` passthrough for deterministic automation
 - the Rust front door accepts or intentionally routes the advertised public shapes `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`
 - the Windows `.cmd` launcher preserves quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` instead of splitting the phrase into a false-positive shorter search plus bogus paths
 - `classify` is deterministic and local by default unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` explicitly opts into CyBERT/Triton, and the GPU benchmark harness treats no-match as a valid comparator outcome
 - `context-render` and `edit-plan` JSON both expose top-level `validation_commands` so agents do not need command-specific fallback parsing
-- GPU benchmark defaults now include 1GB and 5GB scale rows and exact correctness checks for every >=1GB GPU corpus before any GPU promotion claim
+- GPU benchmark defaults now include 1GB and 5GB scale rows and exact correctness checks for every >=1GB GPU corpus before any GPU promotion claim; explicit `--gpu-device-ids` routes should only initialize selected devices
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
@@ -77,7 +77,7 @@ Active post-`v1.8.32` follow-up:
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
 - keep launcher-route diagnostics in `tg doctor --json` visible in dogfood before trusting Windows benchmark results
-- keep both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim
+- keep both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim; treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons
 - this release is observability and benchmark-attribution correctness for the public front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 
 Managed native-upgrade dogfood:

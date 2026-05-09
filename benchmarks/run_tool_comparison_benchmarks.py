@@ -23,6 +23,8 @@ from native_cpu_benchmark_utils import (
     resolve_native_cpu_bench_data_dir,
 )
 from run_benchmarks import (
+    benchmark_launcher_warnings,
+    classify_tg_launcher_command,
     collect_timing_samples,
     default_binary_path,
     generate_test_data,
@@ -45,6 +47,14 @@ def stringify_cmd(cmd: list[str]) -> str:
 
 def resolve_optional_tool(name: str) -> str | None:
     return shutil.which(name)
+
+
+def tg_launcher_warnings_for_binary(tg_binary: Path) -> list[str]:
+    command_kind = classify_tg_launcher_command([str(tg_binary), "search"])
+    return benchmark_launcher_warnings(
+        command_kind=command_kind,
+        launcher_mode="explicit_binary",
+    )
 
 
 def build_tool_commands(
@@ -184,6 +194,9 @@ def main() -> int:
 
     tg_binary = resolve_tg_binary(args.binary)
     rg_binary = resolve_rg_binary()
+    warnings = tg_launcher_warnings_for_binary(tg_binary)
+    for warning in warnings:
+        print(f"[warning] {warning}", file=sys.stderr)
 
     bench_dir = resolve_bench_data_dir()
     if not bench_dir.exists() or not any(bench_dir.glob("*.log")):
@@ -260,6 +273,7 @@ def main() -> int:
             "Only tools present on PATH are benchmarked.",
             "ratios are relative to ripgrep on the same scenario and host.",
         ],
+        "warnings": warnings,
         "rows": rows,
     }
 

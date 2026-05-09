@@ -172,6 +172,19 @@ def classify_tg_launcher_command(cmd: list[str]) -> str:
     return "unknown"
 
 
+def benchmark_launcher_warnings(*, command_kind: str, launcher_mode: str) -> list[str]:
+    if command_kind == "native_exe":
+        return []
+    return [
+        (
+            "tensor-grep benchmark warning: timed tg entrypoint is "
+            f"{command_kind} via launcher_mode={launcher_mode}; timings include "
+            "wrapper/interpreter overhead. Use an explicit native executable "
+            "for benchmark-quality cold-search measurements."
+        )
+    ]
+
+
 def resolve_bench_data_dir() -> Path:
     """
     Resolve benchmark data location. Defaults to artifacts to avoid mutating
@@ -702,6 +715,12 @@ def main() -> int:
         launcher_mode=args.launcher_mode,
     )
     tg_launcher_command_kind = classify_tg_launcher_command(sample_tg_cmd)
+    warnings = benchmark_launcher_warnings(
+        command_kind=tg_launcher_command_kind,
+        launcher_mode=tg_launcher_mode,
+    )
+    for warning in warnings:
+        print(f"[warning] {warning}", file=sys.stderr)
 
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
     print("-" * 75)
@@ -806,6 +825,7 @@ def main() -> int:
             "tg_launcher_mode": tg_launcher_mode,
             "tg_launcher_command_kind": tg_launcher_command_kind,
         }),
+        "warnings": warnings,
         "rows": rows,
         "parity_failures": parity_failures,
     }

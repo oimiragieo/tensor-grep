@@ -43,7 +43,7 @@ Environment blocks should at minimum record:
 - `machine`
 - `python_version` when Python orchestrates the benchmark
 
-For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim.
+For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also include a top-level `warnings` array when the timed `tg` entrypoint is a shim or interpreter route.
 
 For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:
 
