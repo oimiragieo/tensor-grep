@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.8.33 (2026-05-09)
+
+### Bug Fixes
+
+- Scope GPU probing and benchmark launcher warnings
+  ([`e2bd7c2`](https://github.com/oimiragieo/tensor-grep/commit/e2bd7c211669a0d0a64821115f582d842e53a7df))
+
+### Documentation
+
+- Update v1.8.32 release handoff
+  ([`b077f84`](https://github.com/oimiragieo/tensor-grep/commit/b077f8418f48e17de1024802d47d2236a9753e3e))
+
+Update handoff docs, project and global skill guidance, release proof, and governance assertions for
+  v1.8.32. Docs/test only; semantic-release should skip publishing.
+
+
 ## v1.8.32 (2026-05-08)
 
 ### Bug Fixes
