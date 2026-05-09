@@ -99,6 +99,193 @@ def test_run_gpu_benchmarks_should_check_every_gb_scale_corpus(monkeypatch, tmp_
     ]
 
 
+def test_run_gpu_benchmarks_should_not_attach_unsupported_inventory_warning_to_gpu0(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_benchmarks_inventory_warning_scope",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    sidecar_python = tmp_path / "python.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    sidecar_python.write_text("python", encoding="utf-8")
+
+    inventory_warning = (
+        "Inventory warning: GPU 1 NVIDIA GeForce RTX 5070 is unsupported by "
+        "the current CUDA-enabled PyTorch build."
+    )
+    unsupported_error = (
+        "GPU 1 NVIDIA GeForce RTX 5070 unsupported: no kernel image is available "
+        "for execution on the device"
+    )
+
+    monkeypatch.setattr(
+        module,
+        "probe_gpu_devices",
+        lambda _sidecar_python: {
+            "available": True,
+            "torch_version": "2.6.0",
+            "devices": [
+                {"device_id": 0, "name": "NVIDIA GeForce RTX 4070", "operational": True},
+                {
+                    "device_id": 1,
+                    "name": "NVIDIA GeForce RTX 5070",
+                    "operational": False,
+                    "error": unsupported_error,
+                },
+            ],
+            "warnings": [inventory_warning],
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "generate_gpu_scale_corpus",
+        lambda output_dir, target_bytes, shard_count: {
+            "corpus_dir": output_dir,
+            "actual_bytes": target_bytes,
+            "total_lines": 10,
+            "file_count": shard_count,
+            "pattern_counts": {"gpu benchmark sentinel": 1},
+        },
+    )
+
+    def _fake_benchmark_search_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--gpu-device-ids" in command_text:
+            return {
+                "status": "FAIL",
+                "median_s": None,
+                "samples_s": [],
+                "stderr": (
+                    "GPU 0 timing failed after kernel launch\n"
+                    f"{inventory_warning}\n"
+                    f"{unsupported_error}"
+                ),
+                "command": command_text,
+            }
+        return {
+            "status": "PASS",
+            "median_s": 1.0,
+            "samples_s": [1.0],
+            "stderr": "",
+            "command": command_text,
+        }
+
+    monkeypatch.setattr(module, "benchmark_search_command", _fake_benchmark_search_command)
+    monkeypatch.setattr(
+        module,
+        "run_correctness_check",
+        lambda **kwargs: {
+            "device_id": kwargs["device_id"],
+            "pattern": kwargs["pattern"],
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        },
+    )
+
+    payload = module.run_gpu_scale_benchmarks(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        bench_dir=module.ROOT_DIR / "artifacts" / "unit_gpu_bench_data",
+        corpus_sizes=(module.MB,),
+        runs=1,
+        warmup=0,
+        sidecar_python=sidecar_python,
+        benchmark_pattern="gpu benchmark sentinel",
+        correctness_patterns=("gpu benchmark sentinel",),
+        shard_count=2,
+    )
+
+    gpu0, gpu1 = payload["rows"][0]["gpu"]
+    assert inventory_warning in payload["warnings"]
+    assert gpu0["status"] == "FAIL"
+    assert "GPU 0 timing failed after kernel launch" in gpu0["stderr"]
+    assert "GPU 1" not in gpu0["stderr"]
+    assert "RTX 5070" not in gpu0["stderr"]
+    assert "unsupported" not in gpu0["stderr"]
+    assert gpu1["status"] == "UNSUPPORTED"
+    assert gpu1["stderr"] == unsupported_error
+
+
+def test_gpu_auto_recommendation_should_not_recommend_for_small_winning_row_only():
+    module = _load_script_module(
+        "run_gpu_benchmarks_small_recommendation",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+
+    recommendation = module.analyze_gpu_auto_recommendation(
+        [
+            {
+                "size_label": "100MB",
+                "size_bytes": 100 * module.MB,
+                "rg": {"status": "PASS", "median_s": 10.0},
+                "tg_cpu": {"status": "PASS", "median_s": 9.0},
+                "gpu": [{"device_id": 0, "status": "PASS", "median_s": 1.0}],
+            }
+        ],
+        correctness_checks=[],
+        correctness_patterns=("gpu benchmark sentinel",),
+    )
+
+    assert recommendation["should_add_flag"] is False
+    assert recommendation["winning_rows"] == []
+    assert "1GB/5GB correctness" in recommendation["reason"]
+
+
+def test_gpu_auto_recommendation_should_recommend_required_scale_win_with_correctness():
+    module = _load_script_module(
+        "run_gpu_benchmarks_required_recommendation",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 10.0},
+            "tg_cpu": {"status": "PASS", "median_s": 12.0},
+            "gpu": [{"device_id": 0, "status": "PASS", "median_s": 5.0}],
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 60.0},
+            "tg_cpu": {"status": "PASS", "median_s": 70.0},
+            "gpu": [{"device_id": 0, "status": "PASS", "median_s": 55.0}],
+        },
+    ]
+    correctness_checks = [
+        {
+            "device_id": 0,
+            "corpus_size_label": size_label,
+            "pattern": pattern,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+        for pattern in ("gpu benchmark sentinel", "WARN retry budget exhausted")
+    ]
+
+    recommendation = module.analyze_gpu_auto_recommendation(
+        rows,
+        correctness_checks=correctness_checks,
+        correctness_patterns=("gpu benchmark sentinel", "WARN retry budget exhausted"),
+    )
+
+    assert recommendation["should_add_flag"] is True
+    assert recommendation["winning_rows"] == [
+        {
+            "device_id": 0,
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "speedup_vs_rg_pct": 50.0,
+            "speedup_vs_tg_cpu_pct": 58.33,
+        }
+    ]
+
+
 def test_run_gpu_native_benchmarks_should_default_to_1gb_and_5gb_scale():
     module = _load_script_module(
         "run_gpu_native_benchmarks_scale_defaults",

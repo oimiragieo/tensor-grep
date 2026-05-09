@@ -4035,6 +4035,42 @@ def _symbol_query_terms(query: str) -> list[str]:
     return expanded_terms
 
 
+_QUERY_LANGUAGE_ALIASES = {
+    "python": "python",
+    "py": "python",
+    "typescript": "typescript",
+    "ts": "typescript",
+    "javascript": "javascript",
+    "js": "javascript",
+    "rust": "rust",
+    "rs": "rust",
+}
+
+
+def _query_language_hints(query: str) -> list[str]:
+    hints: list[str] = []
+    for raw_token in re.findall(r"[A-Za-z0-9_]+", query):
+        language = _QUERY_LANGUAGE_ALIASES.get(raw_token.lower())
+        if language is not None and language not in hints:
+            hints.append(language)
+    return hints
+
+
+def _target_language_for_path(path: str | Path | None) -> str | None:
+    if path is None:
+        return None
+    suffix = Path(str(path)).suffix.lower()
+    if suffix == ".py":
+        return "python"
+    if suffix in _TS_SUFFIXES:
+        return "typescript"
+    if suffix in _JS_TS_SUFFIXES:
+        return "javascript"
+    if suffix in _RUST_SUFFIXES:
+        return "rust"
+    return None
+
+
 def _score_text_terms(text: str, terms: list[str]) -> int:
     haystack = text.lower()
     return sum(1 for term in terms if term in haystack)
@@ -6060,7 +6096,7 @@ def _validation_commands_for_tests(
     ]
 
 
-def _validation_plan_for_tests(
+def _raw_validation_plan_for_tests(
     tests: list[str],
     *,
     repo_root: str | Path,
@@ -6347,6 +6383,114 @@ def _validation_plan_for_tests(
             detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
         )
 
+    return plan
+
+
+def _validation_runner_languages(step: dict[str, Any]) -> set[str]:
+    runner = str(step.get("runner", "") or "").strip().lower()
+    command = str(step.get("command", "") or "").strip().lower()
+    if runner in {"pytest", "python"} or re.search(r"(^|\s)pytest(\s|$)", command):
+        return {"python"}
+    if runner == "cargo" or command.startswith("cargo "):
+        return {"rust"}
+    if runner in {"vitest", "jest", "mocha", "node:test", "javascript"}:
+        return {"javascript", "typescript"}
+    if any(token in command for token in ("vitest", "jest", "mocha", "node --test")):
+        return {"javascript", "typescript"}
+    if command.startswith(("npm ", "pnpm ", "yarn ", "npx ")):
+        return {"javascript", "typescript"}
+    return set()
+
+
+def _validation_step_matches_primary_language(
+    step: dict[str, Any],
+    primary_language: str | None,
+) -> bool:
+    if primary_language is None:
+        return True
+    languages = _validation_runner_languages(step)
+    if not languages:
+        return True
+    return primary_language in languages
+
+
+def _align_validation_plan_for_primary_language(
+    validation_plan: list[dict[str, Any]],
+    primary_file: str | Path | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    primary_language = _target_language_for_path(primary_file)
+    aligned: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
+    issues: list[str] = []
+    for raw_step in validation_plan:
+        step = dict(raw_step)
+        if _validation_step_matches_primary_language(step, primary_language):
+            aligned.append(step)
+            continue
+        filtered.append(step)
+        runner = str(step.get("runner", "") or "unknown")
+        command = str(step.get("command", "") or "")
+        issues.append(
+            f"filtered {runner} validation for {primary_language} primary target: {command}"
+        )
+
+    if not validation_plan:
+        status = "no-validation"
+    elif filtered:
+        status = "mismatch-filtered"
+    else:
+        status = "aligned"
+    alignment = {
+        "status": status,
+        "primary_target_language": primary_language,
+        "kept_count": len(aligned),
+        "filtered_count": len(filtered),
+        "issues": issues,
+    }
+    return aligned, alignment
+
+
+def _validation_plan_and_alignment_for_tests(
+    tests: list[str],
+    *,
+    repo_root: str | Path,
+    primary_test: str | None = None,
+    primary_symbol: dict[str, Any] | None = None,
+    primary_file: str | Path | None = None,
+    query: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    raw_plan = _raw_validation_plan_for_tests(
+        tests,
+        repo_root=repo_root,
+        primary_test=primary_test,
+        primary_symbol=primary_symbol,
+        query=query,
+    )
+    resolved_primary_file = (
+        str(primary_symbol.get("file"))
+        if isinstance(primary_symbol, dict) and primary_symbol.get("file")
+        else (str(primary_file) if primary_file is not None and str(primary_file) else None)
+    )
+    return _align_validation_plan_for_primary_language(raw_plan, resolved_primary_file)
+
+
+def _validation_plan_for_tests(
+    tests: list[str],
+    *,
+    repo_root: str | Path,
+    primary_test: str | None = None,
+    primary_symbol: dict[str, Any] | None = None,
+    primary_file: str | Path | None = None,
+    query: str | None = None,
+) -> list[dict[str, Any]]:
+    plan, _alignment = _validation_plan_and_alignment_for_tests(
+        tests,
+        repo_root=repo_root,
+        primary_test=primary_test,
+        primary_symbol=primary_symbol,
+        primary_file=primary_file,
+        query=query,
+    )
     return plan
 
 
@@ -6847,6 +6991,9 @@ def _navigation_pack(
         "validation_commands": [
             str(current) for current in seed.get("validation_commands", []) if str(current)
         ],
+        "validation_alignment": dict(seed.get("validation_alignment", {}))
+        if isinstance(seed.get("validation_alignment"), dict)
+        else {},
         "edit_ordering": [
             str(current) for current in seed.get("edit_ordering", []) if str(current)
         ],
@@ -7278,6 +7425,24 @@ def _build_edit_plan_seed(
         if radius_payload is not None
         else ([suggested_edit_primary_symbol] if suggested_edit_primary_symbol is not None else [])
     )
+    validation_plan, validation_alignment = _validation_plan_and_alignment_for_tests(
+        validation_tests,
+        repo_root=payload.get("path", "."),
+        primary_test=primary_test,
+        primary_symbol=primary_symbol,
+        primary_file=str(primary_file) if primary_file is not None else None,
+        query=query,
+    )
+    validation_commands = [str(step["command"]) for step in validation_plan]
+    confidence = {
+        "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
+        "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
+        if primary_symbol is not None
+        else 0.0,
+        "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
+    }
+    if int(validation_alignment.get("filtered_count", 0) or 0) > 0:
+        confidence = {key: round(min(float(value), 0.65), 3) for key, value in confidence.items()}
 
     return {
         "primary_file": primary_file,
@@ -7285,28 +7450,11 @@ def _build_edit_plan_seed(
         "primary_span": _primary_span_for_symbol(primary_symbol),
         "primary_test": primary_test,
         "validation_tests": validation_tests,
-        "validation_commands": _validation_commands_for_tests(
-            validation_tests,
-            repo_root=payload.get("path", "."),
-            primary_test=primary_test,
-            primary_symbol=primary_symbol,
-            query=query,
-        ),
-        "validation_plan": _validation_plan_for_tests(
-            validation_tests,
-            repo_root=payload.get("path", "."),
-            primary_test=primary_test,
-            primary_symbol=primary_symbol,
-            query=query,
-        ),
+        "validation_commands": validation_commands,
+        "validation_plan": validation_plan,
+        "validation_alignment": validation_alignment,
         "reasons": list(primary_file_match.get("reasons", [])),
-        "confidence": {
-            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
-            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
-            if primary_symbol is not None
-            else 0.0,
-            "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
-        },
+        "confidence": confidence,
         "related_spans": related_spans,
         "suggested_edits": _suggested_edits_from_related_spans(
             related_spans,
@@ -7508,26 +7656,23 @@ def _attach_lightweight_navigation_metadata(
         ),
         payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
     )
+    validation_plan, validation_alignment = _validation_plan_and_alignment_for_tests(
+        [],
+        repo_root=payload.get("path", repo_map.get("path", ".")),
+        primary_test=None,
+        primary_symbol=primary_symbol,
+        primary_file=primary_file,
+        query=query,
+    )
     lightweight_seed = {
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
         "primary_span": _primary_span_for_symbol(primary_symbol),
         "primary_test": None,
         "validation_tests": [],
-        "validation_commands": _validation_commands_for_tests(
-            [],
-            repo_root=payload.get("path", repo_map.get("path", ".")),
-            primary_test=None,
-            primary_symbol=primary_symbol,
-            query=query,
-        ),
-        "validation_plan": _validation_plan_for_tests(
-            [],
-            repo_root=payload.get("path", repo_map.get("path", ".")),
-            primary_test=None,
-            primary_symbol=primary_symbol,
-            query=query,
-        ),
+        "validation_commands": [str(step["command"]) for step in validation_plan],
+        "validation_plan": validation_plan,
+        "validation_alignment": validation_alignment,
         "reasons": list(primary_file_match.get("reasons", [])),
         "confidence": {
             "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
@@ -8034,9 +8179,24 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
                     continue
             edit_plan_seed["confidence"] = confidence
 
+    validation_alignment = (
+        dict(edit_plan_seed.get("validation_alignment", {}))
+        if isinstance(edit_plan_seed, dict)
+        and isinstance(edit_plan_seed.get("validation_alignment"), dict)
+        else {}
+    )
+    validation_filtered_count = int(validation_alignment.get("filtered_count", 0) or 0)
+    if validation_filtered_count > 0:
+        confidence_downgraded = True
+    primary_target_language = _target_language_for_path(primary_file)
+
     payload["context_consistency"] = {
         "primary_file": primary_file or None,
         "navigation_primary_file": navigation_primary_file or None,
+        "query_language_hints": _query_language_hints(str(payload.get("query", "") or "")),
+        "primary_target_language": primary_target_language,
+        "validation_alignment": validation_alignment,
+        "validation_filtered_count": validation_filtered_count,
         "primary_file_included": included,
         "render_matches_primary_target": render_matches_primary_target,
         "rendered_context_includes_primary": rendered_includes_primary,
