@@ -567,6 +567,11 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    #[command(name = "agent", disable_help_flag = true)]
+    Agent {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     #[command(name = "context-render", disable_help_flag = true)]
     ContextRender {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -1809,6 +1814,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         }
         Commands::BlastRadiusPlan { args } => handle_python_passthrough("blast-radius-plan", args),
         Commands::EditPlan { args } => handle_python_passthrough("edit-plan", args),
+        Commands::Agent { args } => handle_python_passthrough("agent", args),
         Commands::ContextRender { args } => handle_python_passthrough("context-render", args),
         Commands::AstInfo { args } => handle_python_passthrough("ast-info", args),
         Commands::Rulesets { args } => handle_python_passthrough("rulesets", args),

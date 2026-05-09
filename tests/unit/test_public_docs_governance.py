@@ -25,6 +25,7 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "tg calibrate" in readme
     assert "tg search --ndjson" in readme
     assert "tg mcp" in readme
+    assert "tg_agent_capsule" in readme
     assert "native CPU engine" in readme
     assert "native GPU engine" in readme
     assert "benchmark-governed" in readme
@@ -180,6 +181,7 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "public-windows-launcher-quoted-patterns" in skill
     assert "path_tg_first_launcher_kind" in skill
     assert "tg_launcher_command_kind" in skill
+    assert "tg_agent_capsule" in skill
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
@@ -607,6 +609,7 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
     continuation = CONTINUATION_PLAN_PATH.read_text(encoding="utf-8")
 
     for doc in (agents, readme, skill, contracts, handoff, continuation):
+        assert "tg agent" in doc
         assert "Actionable Context Capsule" in doc
         assert "route rationale" in doc
         assert "line maps" in doc

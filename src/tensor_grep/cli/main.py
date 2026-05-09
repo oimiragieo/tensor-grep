@@ -1616,7 +1616,11 @@ def _format_broad_generated_scan_error(generated_dirs: list[str]) -> str:
     return (
         "Error: broad generated-root scan refused: path contains generated, cache, "
         f"or dependency directories ({visible_dirs}). Scope the path, add --glob, --type, "
-        "or --max-depth, or pass --allow-broad-generated-scan to opt in."
+        "or --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
+        "For bounded output:\n"
+        "tg search --files <path> --hidden --max-depth <N>\n"
+        "For intentional broad scans:\n"
+        "--allow-broad-generated-scan"
     )
 
 
@@ -4055,6 +4059,74 @@ def context_render(
     typer.echo(payload["rendered_context"])
 
 
+@app.command(name="agent")
+def agent(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(..., "--query", help="Natural-language task or symbol query."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the capsule."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
+    max_tokens: int | None = typer.Option(
+        1200, "--max-tokens", min=1, help="Approximate maximum capsule snippet tokens."
+    ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return an actionable context capsule for agents before editing."""
+    from tensor_grep.cli.agent_capsule import build_agent_capsule, build_agent_capsule_json
+
+    try:
+        if json_output:
+            typer.echo(
+                build_agent_capsule_json(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
+                    max_repo_files=max_repo_files,
+                    model=model,
+                )
+            )
+            return
+
+        payload = build_agent_capsule(
+            query,
+            path,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_tokens=max_tokens,
+            max_repo_files=max_repo_files,
+            model=model,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    primary = payload.get("primary_target", {})
+    primary_file = primary.get("file") or "<none>"
+    primary_line = primary.get("line") or 1
+    primary_symbol = primary.get("symbol") or "<unknown>"
+    validation_commands = payload.get("validation_commands", [])
+    confidence = payload.get("confidence", {}).get("overall", 0)
+    typer.echo(f"Agent capsule for {payload['path']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(f"primary={primary_file}#L{primary_line} {primary_symbol}")
+    typer.echo(f"validation={len(validation_commands)} commands")
+    typer.echo(f"confidence={confidence}")
+
+
 @app.command(name="edit-plan")
 def edit_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -4234,6 +4306,7 @@ def impact(
 
     typer.echo(f"Impact for {payload['symbol']} in {payload['path']}")
     typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+    typer.echo("preferred=blast-radius for direct symbol impact")
 
 
 @app.command()

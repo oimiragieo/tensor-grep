@@ -7,6 +7,7 @@ PYTHON_FULL_HELP_COMMANDS = {
 }
 
 KNOWN_COMMANDS = {
+    "agent",
     "search",
     "calibrate",
     "upgrade",

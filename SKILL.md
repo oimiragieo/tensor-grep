@@ -42,7 +42,7 @@ Current product read:
 - Cold-path benchmark artifacts should separate configured launcher mode from actual timed command kind. Use `environment.tg_launcher_mode` for the experiment and `environment.tg_launcher_command_kind` to distinguish native-exe, `.cmd` shim, `uv`, and Python-module routes. Treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons.
 - Explicit `--gpu-device-ids` routing should only probe selected CUDA ordinals. Selecting GPU 0 must not initialize or warn about unrelated unsupported devices such as GPU 1.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
-- Future `tg agent` / Actionable Context Capsule work should be treated as the product wedge: an opt-in workflow packet with primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when evidence is weak. Evidence labels should distinguish `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, and `stale/uncertain` conclusions.
+- `tg agent` / Actionable Context Capsule is the product wedge: an opt-in workflow packet with primary file/function, route rationale, bounded snippets with line maps, validation evidence, edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when evidence is weak. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected. Evidence labels should distinguish `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, and `stale/uncertain` conclusions.
 - Product-roadmap docs are current through PR #66. Future sessions should implement capsule behavior behind explicit contracts and regression tests, not reinterpret the roadmap as permission to alter raw search output.
 - `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
 - Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
@@ -158,6 +158,7 @@ Useful MCP tools include:
 - `tg_rewrite_plan`
 - `tg_rewrite_apply`
 - `tg_rewrite_diff`
+- `tg_agent_capsule`
 
 Call `tg_mcp_capabilities` first in PyPI wheels, sandboxes, and agent hosts so the client knows whether a standalone native `tg` binary is available.
 
@@ -178,7 +179,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.33` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.33` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

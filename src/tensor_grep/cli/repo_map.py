@@ -8831,6 +8831,11 @@ def build_symbol_impact_from_map(
     if defs_payload.get("no_match"):
         payload = dict(defs_payload)
         payload["routing_reason"] = "symbol-impact"
+        payload["preferred_command"] = "blast-radius"
+        payload["preferred_command_reason"] = (
+            "direct symbol impact is better served by blast-radius"
+        )
+        payload["trust_level"] = "planning-signal"
         payload["file_matches"] = []
         payload["file_summaries"] = []
         payload["test_matches"] = []
@@ -8940,6 +8945,9 @@ def build_symbol_impact_from_map(
     payload = _envelope(Path(defs_payload["path"]))
     payload["routing_reason"] = "symbol-impact"
     payload["symbol"] = symbol
+    payload["preferred_command"] = "blast-radius"
+    payload["preferred_command_reason"] = "direct symbol impact is better served by blast-radius"
+    payload["trust_level"] = "planning-signal"
     payload["definitions"] = definitions
     payload["files"] = impacted_files
     payload["file_matches"] = [file_matches_by_path[str(current)] for current in impacted_files]

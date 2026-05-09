@@ -222,3 +222,45 @@ fn test_classify_format_json_is_accepted_on_public_native_frontdoor() {
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["classifications"].as_array().unwrap().len(), 3);
 }
+
+#[test]
+fn test_agent_json_is_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(
+        project.join("payments.py"),
+        "def create_invoice(total, tax):\n    return total + tax\n",
+    )
+    .unwrap();
+    let fake_python = fake_python_passthrough_script(
+        dir.path(),
+        r#"{"routing_reason":"agent-context-capsule","capsule_kind":"actionable_context"}"#,
+    );
+
+    let output = tg()
+        .current_dir(repo_root())
+        .arg("agent")
+        .arg("--query")
+        .arg("change invoice tax calculation")
+        .arg("--json")
+        .arg(&project)
+        .env("TG_SIDECAR_PYTHON", &fake_python)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_reason"], "agent-context-capsule");
+}

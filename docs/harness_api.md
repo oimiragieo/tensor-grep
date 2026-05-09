@@ -30,6 +30,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Context pack JSON | `tg.exe context --query ... --json ...` | [`examples/context_pack.json`](examples/context_pack.json) |
 | Edit plan JSON | `tg.exe edit-plan --query ... --json ...` | [`examples/edit_plan.json`](examples/edit_plan.json) |
 | Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
+| Agent capsule JSON | `tg.exe agent --query ... --json ...` | Schema documented in Agent Capsule JSON below. |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
 | Attempt ledger JSON | multi-attempt harness/replay ledger | [`examples/attempt_ledger.json`](examples/attempt_ledger.json) |
@@ -476,6 +477,47 @@ For Python source blocks, compact and optimized `llm` profiles can strip:
 
 - leading docstrings
 - pure `pass` boilerplate in otherwise empty class/function bodies
+
+## Agent Capsule JSON
+
+Emitted by `tg.exe agent --query ... --json ...`.
+
+Use this shape when an agent needs the smallest actionable work packet before editing code. It composes context rendering, edit-plan evidence, validation hints, and rollback guidance without changing raw `search --format rg`, `search --json`, or `search --ndjson` output contracts.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `agent-context-capsule`. |
+| `capsule_version` | `integer` | Capsule schema version. Current value: `1`; future changes should be additive. |
+| `capsule_kind` | `string` | `actionable_context`. |
+| `query` | `string` | Natural-language task or symbol query used for ranking. |
+| `path` | `string` | Absolute root path inventoried. |
+| `primary_target` | `object` | Selected edit target with `file`, `symbol`, `kind`, `line`, `confidence`, and evidence labels. |
+| `route_rationale` | `array<object>` | Deterministic explanation of which route selected the target and why. |
+| `snippets` | `array<object>` | Bounded executable source snippets with `file`, `symbol`, `start_line`, `end_line`, `source`, `line_map`, `token_estimate`, and evidence labels. |
+| `related_call_sites` | `array<object>` | Verified call-site hints when available. Capsule v1 leaves this empty unless call-site evidence is explicitly collected; follow-up reads are reported under `omissions.follow_up_reads`. |
+| `call_site_evidence` | `object` | Status metadata explaining whether call-site evidence was collected, disabled, or omitted. |
+| `validation_plan` | `array<object>` | Structured validation hints copied from edit-plan evidence, including provenance fields such as `detection` when available. |
+| `validation_commands` | `array<string>` | Top-level validation commands for quick agent access. Empty means no runner evidence was found. |
+| `edit_order` | `array<string>` | Suggested file edit order. |
+| `rollback` | `object` | Checkpoint recommendation plus shell-display `command` and machine-safe `argv` for rollback preparation. |
+| `omissions` | `object` | Token budget, omitted section count, omitted section metadata, and follow-up read commands for recovering detail. |
+| `confidence` | `object` | Overall score and downgrade reasons derived from ranking, omissions, and `context_consistency`. |
+| `ask_user_before_editing` | `object` | `required` plus reasons when evidence is weak, validation is absent, snippets are missing, or context consistency was downgraded. |
+| `context_consistency` | `object` | Same primary-target consistency contract as Context Render JSON. |
+| `raw_context_ref` | `object` | Reproduction reference for the underlying context-render payload. Includes both shell-display `command` and machine-safe `argv`. |
+
+Capsule-level `context_consistency` extends the Context Render JSON contract with `capsule_primary_file_in_snippets`, `capsule_primary_file_in_follow_up_reads`, and `capsule_primary_file_omitted`. When a token budget omits the primary file from `snippets`, the capsule must report the omission reason, include a follow-up read when available, downgrade `confidence`, and set `ask_user_before_editing.required = true`.
+
+Recovery references such as `raw_context_ref` and `omissions.follow_up_reads[]` include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `command` | `string` | Shell-display command with arguments quoted for paths or queries that contain spaces. |
+| `argv` | `array<string>` | Machine-safe argument vector preferred by subprocess callers. |
+
+The text form of `tg agent` prints only a short summary with the query, primary target, validation command count, and confidence. Use `--json` for the stable capsule contract.
 
 ## Rewrite Plan JSON
 
@@ -1288,6 +1330,7 @@ Current tool set:
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
+- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=512, model=None)`
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".")`
@@ -1323,7 +1366,7 @@ Capability modes:
 
 | Mode | Meaning | Representative tools |
 | --- | --- | --- |
-| `python-local` | Runs without a standalone native `tg` binary. | `tg_mcp_capabilities`, `tg_repo_map`, `tg_context_pack`, `tg_search`, `tg_ast_search`, `tg_devices`, `tg_checkpoint_create`, `tg_session_context` |
+| `python-local` | Runs without a standalone native `tg` binary. | `tg_mcp_capabilities`, `tg_repo_map`, `tg_context_pack`, `tg_agent_capsule`, `tg_search`, `tg_ast_search`, `tg_devices`, `tg_checkpoint_create`, `tg_session_context` |
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
 
@@ -1355,6 +1398,7 @@ Response mapping:
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
 - `tg_edit_plan(...)` returns the same v1 envelope and payload shape as [`examples/edit_plan.json`](examples/edit_plan.json)
 - `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)
+- `tg_agent_capsule(...)` returns the same v1 capsule contract as `tg.exe agent --query ... --json ...`, with `routing_reason = "agent-context-capsule"`
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
 - `tg_symbol_source(...)` returns the same v1 envelope and payload shape as [`examples/source.json`](examples/source.json)
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)

@@ -2775,6 +2775,65 @@ def test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target(tmp
     assert payload["context_consistency"]["primary_file_included"] is True
 
 
+def test_tg_agent_capsule_returns_actionable_context_capsule(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_agent_capsule(
+            "change invoice tax calculation",
+            str(project),
+            max_tokens=160,
+        )
+    )
+
+    assert payload["routing_reason"] == "agent-context-capsule"
+    assert payload["capsule_kind"] == "actionable_context"
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["snippets"][0]["file"] == str(module_path.resolve())
+    assert "subtotal = total + tax" in payload["snippets"][0]["source"]
+    assert payload["snippets"][0]["line_map"][0]["line"] == 1
+    assert payload["validation_commands"]
+    assert payload["rollback"]["checkpoint_recommended"] is True
+    assert payload["omissions"]["token_budget"] == 160
+    assert "follow_up_reads" in payload["omissions"]
+    assert payload["raw_context_ref"]["command"].startswith("tg context-render")
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_tg_agent_capsule_returns_invalid_input_for_missing_path(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(
+        mcp_server.tg_agent_capsule(
+            "change invoice tax calculation",
+            str(tmp_path / "missing"),
+        )
+    )
+
+    assert payload["routing_reason"] == "agent-context-capsule"
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Path not found" in payload["error"]["message"]
+
+
 def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
     from tensor_grep.cli import mcp_server
 

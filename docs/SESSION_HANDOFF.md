@@ -34,7 +34,7 @@ The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in
 
 Active post-`v1.8.33` implementation scope:
 
-- Design `tg agent` / Actionable Context Capsule as an opt-in agent workflow without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
+- Harden the new `tg agent` / Actionable Context Capsule opt-in workflow without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 - Keep Windows managed installer/update dogfood checking both the update path and a fresh-shell PATH environment; existing parent shells may keep old PATH until restarted.
 - Keep current-process vs fresh-shell launcher routing visible in `tg doctor --json` with `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, and `path_tg_launcher_warning` so slower compatibility-shim timing is visible.
 - Keep benchmark `tg_launcher_command_kind` in the environment block so native-exe, `.cmd` shim, `uv`, and Python-module routes are not mixed in cold-path claims. Treat benchmark warnings about shim/interpreter overhead as blocking evidence for performance comparisons.
@@ -51,7 +51,7 @@ The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.
 - GPU benchmark correctness accepts `rg` exit code `1` as a valid no-match comparator result when `tg` also returns zero matches.
 - This is contract correctness for the public native front door, not a new speed claim.
 
-Next product-surface follow-up: design `tg agent` / Actionable Context Capsule as an opt-in agent workflow. The capsule target should include primary file/function, route rationale, bounded source snippets with line maps, related call sites, validation evidence, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when uncertainty or risk is high. It should improve token economy without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
+Current branch product-surface follow-up: `tg agent` / Actionable Context Capsule is implemented as an opt-in sidecar-routed workflow. The capsule includes primary file/function, route rationale, bounded source snippets with line maps, validation evidence, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when uncertainty or risk is high. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected. It improves token economy without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 
 Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
@@ -219,14 +219,14 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - GPU devices are detected locally; GPU routing remains benchmark-governed and should not be marketed as automatic crossover.
 - `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a useful validated slice, not full ast-grep equivalence.
 - The native front door must not advertise a Python CLI surface that it rejects. If a command remains Python-backed, route it to the sidecar deliberately and regression-test the public native invocation shape.
-- Token-efficiency work should become an explicit agent profile or command, not a mutation of raw search outputs. The likely product shape is an agent context capsule with hard budgets, line maps, omission counts, validation evidence, checkpoint/rollback metadata, and confidence.
+- Token-efficiency work is now anchored by the explicit `tg agent` capsule command, not a mutation of raw search outputs. Keep improving hard budgets, line maps, omission counts, validation evidence, checkpoint/rollback metadata, and confidence without changing raw search contracts.
 
 ## Known Weak Spots
 
 - `rg` remains the raw cold exact-text benchmark. `tg` should win on agent-native code intelligence, not by pretending every grep workload is faster.
 - `ast-grep` remains the structural-search feature/performance baseline until the AST compatibility roadmap is closed with tests and benchmark evidence.
 - Broad generated roots remain agent-hostile when callers opt into them. Unbounded `tg search --files --hidden` scans and no-ignore/unrestricted fallback scans through generated/cache/dependency directories are refused unless the request is bounded with `--glob`, `--type`, or `--max-depth`, or explicitly opts in with `--allow-broad-generated-scan`. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in. `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
-- `impact --symbol` is still less trustworthy than `blast-radius` for direct symbol impact.
+- `impact --symbol` now marks `preferred_command = "blast-radius"` because it remains a broader planning signal; prefer `blast-radius` for direct symbol impact.
 - `validation_commands` can still be heuristic when stack evidence is partial. Treat targeted commands as hints, not proof of full coverage; require `validation_plan[].detection`, do not trust npm/package-manager hints without `package.json` evidence, and omit commands entirely when no runner evidence exists.
 - Local `uv run tg doctor --json` can find stale in-tree standalone binaries at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current dev-path safety should ignore them for implicit native delegation, report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
 - Explicitly opted-in broad `tg search --files ...` over generated artifact trees can still be expensive. The managed launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
@@ -239,11 +239,11 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 ## Next Highest-Value Work
 
-1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) fast and representative; it should cover context trust, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
+1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) fast and representative; it should cover context trust, `agent-capsule`, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
-3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct impact.
+3. Keep dogfooding `impact --symbol` preferred-command metadata so agents consistently choose `blast-radius` for direct impact.
 4. Track AST parity roadmap gaps, GPU benchmark/no-match cleanup, and `classify` provider/cache UX as blockers for a future "world-class" claim, not as blockers for this launcher/control-plane PR.
-5. Design an opt-in agent-bounded search/context output profile inspired by `rtk`: grouped by file, capped globally and per file, with line truncation and omission counts. Keep raw `--format rg`, `--json`, and `--ndjson` contracts unchanged.
+5. Harden the opt-in `tg agent` capsule budget profile inspired by `rtk`: grouped by file, capped globally and per file, with line truncation and omission counts. Keep raw `--format rg`, `--json`, and `--ndjson` contracts unchanged.
 6. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
 
 ## Safe Next-Session Commands
