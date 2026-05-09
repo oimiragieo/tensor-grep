@@ -433,6 +433,24 @@ def build_check_plan(
             timeout_s=120,
         ),
         Check(
+            name="agent-capsule-mixed-language",
+            command=[
+                "uv",
+                "run",
+                "pytest",
+                "tests/unit/test_cli_modes.py",
+                "-q",
+                "-k",
+                (
+                    "(agent_capsule and (language or validation or invoice)) "
+                    "or context_render_filters_pytest_only_validation_for_typescript_primary "
+                    "or edit_plan_filters_pytest_only_validation_for_typescript_primary"
+                ),
+            ],
+            description="Verify mixed-language invoice capsule and validation trust stay aligned.",
+            timeout_s=120,
+        ),
+        Check(
             name="docs-claim-check",
             command=[],
             description="Verify public docs keep the current positioning and gate command.",

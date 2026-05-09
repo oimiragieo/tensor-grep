@@ -71,6 +71,9 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
     assert "path_tg_launcher_warning" in contracts
     assert "tg_launcher_command_kind" in contracts
+    assert "agent-capsule-mixed-language" in contracts
+    assert "validation_alignment" in contracts
+    assert "GPU auto-recommendation must remain false" in contracts
 
 
 def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -> None:
@@ -133,6 +136,8 @@ def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -
     assert "fresh_shell_path_tg_first_launcher_kind = managed-native" in handoff
     assert "tg_launcher_command_kind" in handoff
     assert "does not initialize or warn about unrelated unsupported GPUs" in handoff
+    assert "GPU benchmark auto-recommendation must remain false" in handoff
+    assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
 
@@ -157,6 +162,13 @@ def test_handoff_docs_should_record_current_v190_release_state_and_fast_gate() -
     assert "tg_launcher_command_kind" in readme
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
+    assert "validation_alignment" in readme
+    closed_heading = "What `v1.9.0` closed:"
+    follow_up_heading = "Active post-`v1.9.0` follow-up:"
+    closed_block = readme.split(closed_heading, 1)[1].split(follow_up_heading, 1)[0]
+    follow_up_block = readme.split(follow_up_heading, 1)[1]
+    assert "GPU benchmark auto-recommendation" not in closed_block
+    assert "GPU benchmark auto-recommendation disabled" in follow_up_block
 
 
 def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
@@ -185,6 +197,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "path_tg_first_launcher_kind" in skill
     assert "tg_launcher_command_kind" in skill
     assert "tg_agent_capsule" in skill
+    assert "agent-capsule-mixed-language" in skill
+    assert "validation_alignment" in skill
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
@@ -597,10 +611,12 @@ def test_agent_docs_should_lock_agent_context_and_validation_contracts() -> None
         assert "context_consistency" in doc
         assert "executable" in doc
         assert "validation_plan[].detection" in doc
+        assert "validation_alignment" in doc
 
     for doc in (agents, skill, contracts, handoff):
         assert "`package.json` evidence" in doc
         assert "no runner evidence exists" in doc
+        assert "primary target language" in doc
 
 
 def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
@@ -619,6 +635,7 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
         assert "checkpoint" in doc
         assert "omission counts" in doc
         assert "confidence" in doc
+        assert "ask" in doc.lower()
 
     for doc in (agents, skill, contracts, continuation):
         assert "parser-backed" in doc

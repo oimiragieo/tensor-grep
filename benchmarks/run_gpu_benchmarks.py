@@ -34,6 +34,8 @@ DEFAULT_CORRECTNESS_PATTERNS = (
     "WARN retry budget exhausted",
     "Database connection timeout",
 )
+RECOMMENDATION_REQUIRED_CORPUS_SIZES = (1 * GB, 5 * GB)
+GPU_RECOMMENDATION_MIN_SPEEDUP_PCT = 20.0
 PAYLOAD_FILLER = "payload=" + ("0123456789abcdef" * 224)
 
 
@@ -465,37 +467,168 @@ print(json.dumps(payload))
         }
 
 
-def analyze_gpu_auto_recommendation(rows: list[dict[str, object]]) -> dict[str, object]:
+def _clean_selected_gpu_stderr(
+    stderr: object,
+    *,
+    devices: list[dict[str, object]],
+    selected_device_id: int,
+    warnings: list[str],
+) -> str:
+    if not isinstance(stderr, str) or not stderr:
+        return ""
+
+    exact_inventory_lines = {warning.strip() for warning in warnings if warning.strip()}
+    other_devices = [
+        device
+        for device in devices
+        if str(device.get("device_id")) != str(selected_device_id)
+        and not device.get("operational", False)
+    ]
+    cleaned_lines: list[str] = []
+    for raw_line in stderr.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line in exact_inventory_lines:
+            continue
+
+        lower_line = line.lower()
+        is_other_device_inventory = False
+        for device in other_devices:
+            other_id = str(device.get("device_id"))
+            other_name = str(device.get("name") or "")
+            other_error = str(device.get("error") or "")
+            if other_name and other_name in line:
+                is_other_device_inventory = True
+            if other_error and other_error in line:
+                is_other_device_inventory = True
+            if f"gpu {other_id}" in lower_line and "unsupported" in lower_line:
+                is_other_device_inventory = True
+            if f"cuda:{other_id}" in lower_line and "unsupported" in lower_line:
+                is_other_device_inventory = True
+        if is_other_device_inventory:
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+
+def _passing_required_correctness_device_ids(
+    *,
+    correctness_checks: list[dict[str, object]],
+    correctness_patterns: tuple[str, ...],
+    required_corpus_sizes: tuple[int, ...],
+) -> set[str]:
+    required_labels = {_format_size_label(size_bytes) for size_bytes in required_corpus_sizes}
+    required_patterns = set(correctness_patterns)
+    if not required_labels or not required_patterns:
+        return set()
+
+    required_cases = {
+        (size_label, pattern) for size_label in required_labels for pattern in required_patterns
+    }
+    passed_cases_by_device: dict[str, set[tuple[str, str]]] = {}
+    for check in correctness_checks:
+        device_id = check.get("device_id")
+        size_label = check.get("corpus_size_label")
+        pattern = check.get("pattern")
+        if device_id is None or not isinstance(size_label, str) or not isinstance(pattern, str):
+            continue
+        if size_label not in required_labels or pattern not in required_patterns:
+            continue
+        if not (
+            check.get("status") == "PASS"
+            and check.get("matches_equal") is True
+            and check.get("files_equal") is True
+        ):
+            continue
+        passed_cases_by_device.setdefault(str(device_id), set()).add((size_label, pattern))
+
+    return {
+        device_id
+        for device_id, passed_cases in passed_cases_by_device.items()
+        if required_cases.issubset(passed_cases)
+    }
+
+
+def analyze_gpu_auto_recommendation(
+    rows: list[dict[str, object]],
+    *,
+    correctness_checks: list[dict[str, object]] | None = None,
+    correctness_patterns: tuple[str, ...] = DEFAULT_CORRECTNESS_PATTERNS,
+    required_corpus_sizes: tuple[int, ...] = RECOMMENDATION_REQUIRED_CORPUS_SIZES,
+    min_speedup_pct: float = GPU_RECOMMENDATION_MIN_SPEEDUP_PCT,
+) -> dict[str, object]:
+    correctness_passing_device_ids = _passing_required_correctness_device_ids(
+        correctness_checks=correctness_checks or [],
+        correctness_patterns=correctness_patterns,
+        required_corpus_sizes=required_corpus_sizes,
+    )
+    required_size_bytes = set(required_corpus_sizes)
+    required_size_labels = "/".join(_format_size_label(size) for size in required_corpus_sizes)
+    if not correctness_passing_device_ids:
+        return {
+            "should_add_flag": False,
+            "reason": (
+                "No GPU has passing "
+                f"{required_size_labels} correctness checks for every required pattern."
+            ),
+            "winning_rows": [],
+        }
+
     winners: list[dict[str, object]] = []
     for row in rows:
+        if row.get("size_bytes") not in required_size_bytes:
+            continue
         rg_result = row.get("rg", {})
+        tg_cpu_result = row.get("tg_cpu", {})
         rg_median = rg_result.get("median_s") if isinstance(rg_result, dict) else None
-        if not isinstance(rg_median, (int, float)) or rg_median <= 0:
+        tg_cpu_median = tg_cpu_result.get("median_s") if isinstance(tg_cpu_result, dict) else None
+        if (
+            not isinstance(rg_median, (int, float))
+            or not isinstance(tg_cpu_median, (int, float))
+            or rg_median <= 0
+            or tg_cpu_median <= 0
+        ):
             continue
         for gpu_result in row.get("gpu", []):
+            device_id = gpu_result.get("device_id")
+            if str(device_id) not in correctness_passing_device_ids:
+                continue
             gpu_median = gpu_result.get("median_s")
             if gpu_result.get("status") != "PASS" or not isinstance(gpu_median, (int, float)):
                 continue
             speedup_vs_rg_pct = round((rg_median - gpu_median) / rg_median * 100.0, 2)
+            speedup_vs_tg_cpu_pct = round(
+                (tg_cpu_median - gpu_median) / tg_cpu_median * 100.0,
+                2,
+            )
             gpu_result["speedup_vs_rg_pct"] = speedup_vs_rg_pct
-            if speedup_vs_rg_pct >= 20.0:
+            gpu_result["speedup_vs_tg_cpu_pct"] = speedup_vs_tg_cpu_pct
+            if speedup_vs_rg_pct >= min_speedup_pct and speedup_vs_tg_cpu_pct >= min_speedup_pct:
                 winners.append({
-                    "device_id": gpu_result.get("device_id"),
+                    "device_id": device_id,
                     "size_label": row.get("size_label"),
                     "size_bytes": row.get("size_bytes"),
                     "speedup_vs_rg_pct": speedup_vs_rg_pct,
+                    "speedup_vs_tg_cpu_pct": speedup_vs_tg_cpu_pct,
                 })
 
     if not winners:
         return {
             "should_add_flag": False,
-            "reason": "No measured GPU/device row beat rg by at least 20% at any corpus size.",
+            "reason": (
+                "No correctness-passing GPU row beat both rg and tg_cpu by at least "
+                f"{min_speedup_pct:.0f}% at the required {required_size_labels} scale."
+            ),
             "winning_rows": [],
         }
 
     return {
         "should_add_flag": True,
-        "reason": "At least one measured GPU/device row beat rg by 20% or more.",
+        "reason": (
+            "At least one GPU row passed required correctness and beat both rg and "
+            f"tg_cpu by {min_speedup_pct:.0f}% or more at required scale."
+        ),
         "winning_rows": winners,
     }
 
@@ -601,6 +734,12 @@ def run_gpu_scale_benchmarks(
                     runs=runs,
                     warmup=warmup,
                 )
+                result["stderr"] = _clean_selected_gpu_stderr(
+                    result.get("stderr"),
+                    devices=devices,
+                    selected_device_id=int(device["device_id"]),
+                    warnings=warnings,
+                )
                 entry.update(result)
             gpu_results.append(entry)
 
@@ -687,7 +826,11 @@ def run_gpu_scale_benchmarks(
         "devices": devices,
         "rows": rows,
         "correctness_checks": correctness_checks,
-        "gpu_auto_recommendation": analyze_gpu_auto_recommendation(rows),
+        "gpu_auto_recommendation": analyze_gpu_auto_recommendation(
+            rows,
+            correctness_checks=correctness_checks,
+            correctness_patterns=correctness_patterns,
+        ),
         "warnings": warnings,
         "errors": errors,
         "benchmark_pattern": benchmark_pattern,

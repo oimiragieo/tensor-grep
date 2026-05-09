@@ -15,7 +15,7 @@ import pytest
 from typer.completion import get_completion_script
 from typer.testing import CliRunner
 
-from tensor_grep.cli import repo_map
+from tensor_grep.cli import agent_capsule, repo_map
 from tensor_grep.cli.main import (
     _candidate_versions_from_pypi_json,
     _candidate_versions_from_pypi_simple_index,
@@ -2540,6 +2540,351 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     assert "follow_up_reads" in payload["omissions"]
     assert payload["raw_context_ref"]["command"].startswith("tg context-render")
     assert payload["ask_user_before_editing"]["required"] is False
+
+
+def _write_mixed_invoice_fixture(tmp_path: Path, *, package_json: bool = False) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    python_path = src_dir / "payments.py"
+    python_path.write_text(
+        "TAX_RATE = 0.0825\n\n"
+        "def create_invoice(subtotal):\n"
+        "    tax = subtotal * TAX_RATE\n"
+        "    total = subtotal + tax\n"
+        "    return {'subtotal': subtotal, 'tax': tax, 'total': total}\n",
+        encoding="utf-8",
+    )
+    python_test_path = tests_dir / "test_payments.py"
+    python_test_path.write_text(
+        "from src.payments import TAX_RATE, create_invoice\n\n"
+        "def test_create_invoice_tax_calculation():\n"
+        "    invoice = create_invoice(100)\n"
+        "    assert invoice['tax'] == 100 * TAX_RATE\n"
+        "    assert invoice['total'] == 100 + 100 * TAX_RATE\n",
+        encoding="utf-8",
+    )
+    ts_path = src_dir / "app.ts"
+    ts_path.write_text(
+        "export function createInvoice(subtotal: number): number {\n"
+        "  const serviceFee = 0;\n"
+        "  return subtotal + serviceFee;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    if package_json:
+        (project / "package.json").write_text(
+            json.dumps({
+                "name": "mixed-invoice",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }),
+            encoding="utf-8",
+        )
+    return {
+        "project": project,
+        "python": python_path,
+        "python_test": python_test_path,
+        "typescript": ts_path,
+    }
+
+
+def _agent_capsule_payload_for_query(project: Path, query: str) -> dict[str, object]:
+    result = CliRunner().invoke(
+        app,
+        ["agent", "--query", query, "--json", str(project)],
+    )
+    assert result.exit_code == 0, result.output
+    return json.loads(result.output)
+
+
+def test_agent_capsule_python_invoice_tax_query_selects_python_evidence(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "python invoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["python"].resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["context_consistency"]["query_language_hints"] == ["python"]
+    assert payload["context_consistency"]["primary_target_language"] == "python"
+
+
+def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "change invoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["python"].resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert any(
+        command.startswith("uv run pytest tests/test_payments.py")
+        for command in payload["validation_commands"]
+    )
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_agent_capsule_exact_camel_symbol_stays_above_snake_case_bridge(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "createInvoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["typescript"].resolve())
+    assert payload["primary_target"]["symbol"] == "createInvoice"
+    assert payload["context_consistency"]["primary_target_language"] == "typescript"
+
+
+def test_agent_capsule_exact_snake_symbol_keeps_python_target(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "create_invoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["python"].resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["context_consistency"]["primary_target_language"] == "python"
+
+
+def test_agent_capsule_conflicting_language_and_exact_symbol_requires_confirmation(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "python createInvoice tax calculation",
+    )
+
+    assert payload["primary_target"]["file"] == str(paths["typescript"].resolve())
+    assert payload["context_consistency"]["query_language_hints"] == ["python"]
+    assert payload["context_consistency"]["primary_target_language"] == "typescript"
+    assert payload["confidence"]["overall"] <= 0.55
+    assert payload["primary_target"]["confidence"] <= 0.55
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert any(
+        "language intent" in reason for reason in payload["ask_user_before_editing"]["reasons"]
+    )
+
+
+def test_query_language_hints_are_token_bounded() -> None:
+    assert repo_map._query_language_hints("python invoice tax") == ["python"]
+    assert repo_map._query_language_hints("py ts js rs") == [
+        "python",
+        "typescript",
+        "javascript",
+        "rust",
+    ]
+    assert repo_map._query_language_hints("cryptography typescriptish") == []
+
+
+def test_context_render_filters_pytest_only_validation_for_typescript_primary(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "context-render",
+            "--query",
+            "createInvoice tax calculation",
+            "--json",
+            str(paths["project"]),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["edit_plan_seed"]["primary_file"] == str(paths["typescript"].resolve())
+    assert payload["edit_plan_seed"]["validation_plan"] == []
+    assert payload["edit_plan_seed"]["validation_commands"] == []
+    assert payload["validation_commands"] == []
+    assert payload["navigation_pack"]["validation_commands"] == []
+    alignment = payload["edit_plan_seed"]["validation_alignment"]
+    assert alignment["primary_target_language"] == "typescript"
+    assert alignment["status"] == "mismatch-filtered"
+    assert alignment["filtered_count"] >= 1
+    assert any("pytest" in issue for issue in alignment["issues"])
+    assert payload["context_consistency"]["validation_filtered_count"] >= 1
+
+
+def test_edit_plan_filters_pytest_only_validation_for_typescript_primary(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "createInvoice tax calculation",
+            "--json",
+            str(paths["project"]),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["edit_plan_seed"]["primary_file"] == str(paths["typescript"].resolve())
+    assert payload["edit_plan_seed"]["validation_plan"] == []
+    assert payload["edit_plan_seed"]["validation_commands"] == []
+    assert payload["validation_commands"] == []
+    assert payload["navigation_pack"]["validation_commands"] == []
+    alignment = payload["edit_plan_seed"]["validation_alignment"]
+    assert alignment["primary_target_language"] == "typescript"
+    assert alignment["status"] == "mismatch-filtered"
+    assert alignment["filtered_count"] >= 1
+    assert any("pytest" in issue for issue in alignment["issues"])
+
+
+def test_validation_alignment_uses_primary_file_when_primary_symbol_is_missing(
+    tmp_path,
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    ts_primary = src_dir / "app.ts"
+    ts_primary.write_text("export const invoiceTotal = 1;\n", encoding="utf-8")
+    py_test = tests_dir / "test_payments.py"
+    py_test.write_text("def test_invoice_total():\n    assert True\n", encoding="utf-8")
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [str(py_test)],
+        repo_root=project,
+        primary_test=str(py_test),
+        primary_symbol=None,
+        primary_file=ts_primary,
+        query="invoice total",
+    )
+
+    assert plan == []
+    assert alignment["primary_target_language"] == "typescript"
+    assert alignment["status"] == "mismatch-filtered"
+    assert alignment["filtered_count"] >= 1
+
+
+def test_validation_alignment_filters_javascript_commands_for_python_primary_file(
+    tmp_path,
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    python_primary = src_dir / "payments.py"
+    python_primary.write_text("TAX_RATE = 0.08\n", encoding="utf-8")
+    ts_test = tests_dir / "payments.test.ts"
+    ts_test.write_text(
+        'import { test } from "vitest";\ntest("invoice tax", () => {\n  expect(1).toBe(1);\n});\n',
+        encoding="utf-8",
+    )
+    (project / "package.json").write_text(
+        json.dumps({"devDependencies": {"vitest": "^1.0.0"}}),
+        encoding="utf-8",
+    )
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [str(ts_test)],
+        repo_root=project,
+        primary_test=str(ts_test),
+        primary_symbol=None,
+        primary_file=python_primary,
+        query="python invoice tax",
+    )
+
+    assert plan == []
+    assert alignment["primary_target_language"] == "python"
+    assert alignment["status"] == "mismatch-filtered"
+    assert alignment["filtered_count"] >= 1
+    assert any("vitest" in issue for issue in alignment["issues"])
+
+
+def test_agent_capsule_filters_pytest_only_validation_for_typescript_primary(
+    monkeypatch,
+    tmp_path,
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    ts_path = project / "src" / "app.ts"
+    ts_path.parent.mkdir()
+    ts_path.write_text(
+        "export function createInvoice(subtotal: number): number {\n  return subtotal;\n}\n",
+        encoding="utf-8",
+    )
+    test_path = project / "tests" / "test_payments.py"
+    test_path.parent.mkdir()
+    test_path.write_text("def test_create_invoice():\n    assert True\n", encoding="utf-8")
+
+    def _fake_context_render(*_args, **_kwargs):
+        return {
+            "navigation_pack": {
+                "primary_target": {
+                    "file": str(ts_path),
+                    "symbol": "createInvoice",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 3,
+                },
+                "follow_up_reads": [],
+                "validation_commands": [f"uv run pytest {test_path} -q"],
+            },
+            "edit_plan_seed": {
+                "primary_file": str(ts_path),
+                "primary_symbol": {"name": "createInvoice", "kind": "function"},
+                "primary_span": {"start_line": 1, "end_line": 3},
+                "confidence": {"overall": 0.94},
+                "validation_plan": [
+                    {
+                        "command": f"uv run pytest {test_path} -q",
+                        "scope": "file",
+                        "runner": "pytest",
+                        "target": str(test_path),
+                        "confidence": 0.82,
+                        "detection": "detected",
+                    }
+                ],
+                "validation_commands": [f"uv run pytest {test_path} -q"],
+                "edit_ordering": [str(ts_path)],
+            },
+            "validation_commands": [f"uv run pytest {test_path} -q"],
+            "sources": [
+                {
+                    "file": str(ts_path),
+                    "symbol": "createInvoice",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "source": ts_path.read_text(encoding="utf-8"),
+                }
+            ],
+            "context_consistency": {"primary_file_included": True},
+        }
+
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        "createInvoice tax calculation",
+        project,
+        max_tokens=400,
+    )
+
+    assert payload["primary_target"]["file"] == str(ts_path)
+    assert payload["validation_plan"] == []
+    assert payload["validation_commands"] == []
+    assert payload["context_consistency"]["validation_alignment"]["status"] == "mismatch-filtered"
+    assert payload["context_consistency"]["validation_filtered_count"] == 1
+    assert payload["confidence"]["overall"] <= 0.65
+    assert payload["primary_target"]["confidence"] <= 0.65
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert any("validation" in reason for reason in payload["ask_user_before_editing"]["reasons"])
 
 
 def test_agent_capsule_json_preserves_original_line_map_after_compaction(tmp_path):

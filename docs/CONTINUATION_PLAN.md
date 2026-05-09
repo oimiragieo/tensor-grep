@@ -37,7 +37,7 @@ Current product read:
 - `classify` stays deterministic and local by default; use `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` only for intentional CyBERT/Triton provider probes.
 - GPU benchmark gates include 1GB and 5GB rows and exact match/file-set correctness for every >=1GB corpus before any GPU promotion claim.
 - Token-output follow-up from `rtk-ai/rtk`: add a future opt-in agent-bounded output profile with grouped excerpts, hard caps, truncation, and omission counts. Do not mutate raw `--format rg`, `--json`, or `--ndjson` to save tokens.
-- The next standout product surface should be `tg agent` / Actionable Context Capsule, not another raw grep wrapper. The target output is a deterministic work packet with primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when the evidence is weak.
+- The next standout product surface should be `tg agent` / Actionable Context Capsule, not another raw grep wrapper. The target output is a deterministic work packet with primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when the evidence is weak. Mixed-language capsules must keep query language hints, exact symbol intent, primary target language, `validation_alignment`, and confidence honest instead of hiding contradictions behind a single ranked target.
 - Search-intent routing should be explicit about evidence type. Future capsules should label each conclusion as `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, or `stale/uncertain` so agents know what is proven and what is inferred.
 
 Current next work:
@@ -47,7 +47,8 @@ Current next work:
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 4. Track AST parity roadmap, GPU readiness, and model-backed classify provider/cache UX as blockers for a future "100% ready" claim.
 5. Build the opt-in agent-bounded output profile only with explicit contracts and regression tests, starting from the Actionable Context Capsule shape above.
-6. Continue dogfooding and preserve exact failing commands as product evidence.
+6. Keep GPU auto-recommendation off the marketing path unless required 1GB/5GB correctness checks pass and a selected GPU beats both `rg` and `tg_cpu` at required scale.
+7. Continue dogfooding and preserve exact failing commands as product evidence.
 
 Agent product-surface backlog:
 

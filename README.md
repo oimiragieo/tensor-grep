@@ -51,6 +51,7 @@ Current positioning:
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
+- Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 
 What `v1.9.0` closed:
 
@@ -76,11 +77,13 @@ What `v1.9.0` closed:
 Active post-`v1.9.0` follow-up:
 
 - harden `tg agent` / Actionable Context Capsule ranking, token economy, follow-up reads, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
+- preserve the mixed-language capsule trust contract: explicit language intent, exact symbol intent, primary target language, `validation_alignment`, and `ask_user_before_editing` must agree or confidence must drop
 - the capsule output is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when warranted. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected.
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
 - keep launcher-route diagnostics in `tg doctor --json` visible in dogfood before trusting Windows benchmark results
 - keep both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim; treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons
+- keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings.
 - this release is observability and benchmark-attribution correctness for the public front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 
 Managed native-upgrade dogfood:
@@ -129,7 +132,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.9.0` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.9.0` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 

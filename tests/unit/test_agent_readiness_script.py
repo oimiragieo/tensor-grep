@@ -39,6 +39,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "ast-run-smoke" in names
     assert "mcp-context-render-smoke" in names
     assert "agent-capsule" in names
+    assert "agent-capsule-mixed-language" in names
     assert "docs-claim-check" in names
 
     rg_check = next(check for check in checks if check.name == "rg-parity-edges")
@@ -65,6 +66,28 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "tests/unit/test_mcp_server.py",
     ]
     assert "agent_capsule" in capsule_check.command
+
+    mixed_capsule_check = next(
+        check for check in checks if check.name == "agent-capsule-mixed-language"
+    )
+    assert mixed_capsule_check.timeout_s <= 120
+    assert mixed_capsule_check.command[:4] == [
+        "uv",
+        "run",
+        "pytest",
+        "tests/unit/test_cli_modes.py",
+    ]
+    mixed_capsule_command = " ".join(mixed_capsule_check.command)
+    assert "agent_capsule" in mixed_capsule_command
+    assert "language" in mixed_capsule_command
+    assert "validation" in mixed_capsule_command
+    assert "invoice" in mixed_capsule_command
+    assert "context_render_filters_pytest_only_validation_for_typescript_primary" in (
+        mixed_capsule_command
+    )
+    assert "edit_plan_filters_pytest_only_validation_for_typescript_primary" in (
+        mixed_capsule_command
+    )
 
 
 def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypatch) -> None:

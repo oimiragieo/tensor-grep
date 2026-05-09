@@ -18,6 +18,125 @@ def _as_list_of_dicts(value: object) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, dict)]
 
 
+def _as_list_of_strings(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None and str(item)]
+
+
+def _numeric_confidence(value: object, fallback: float = 0.9) -> float:
+    if not isinstance(value, str | int | float):
+        return fallback
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _cap_primary_target_confidence(target: dict[str, Any], cap: float) -> None:
+    target["confidence"] = round(min(_numeric_confidence(target.get("confidence")), cap), 3)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def _capsule_validation_alignment(
+    target: dict[str, Any],
+    validation_plan: list[dict[str, Any]],
+    validation_commands: list[str],
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+    aligned_plan, computed_alignment = repo_map._align_validation_plan_for_primary_language(
+        validation_plan,
+        str(target.get("file") or ""),
+    )
+    edit_alignment = _as_dict(_as_dict(payload.get("edit_plan_seed")).get("validation_alignment"))
+    payload_alignment = _as_dict(
+        _as_dict(payload.get("context_consistency")).get("validation_alignment")
+    )
+    alignment = edit_alignment or payload_alignment or computed_alignment
+    if int(computed_alignment.get("filtered_count", 0) or 0) > int(
+        alignment.get("filtered_count", 0) or 0
+    ):
+        alignment = computed_alignment
+
+    if aligned_plan:
+        allowed_commands = {str(step.get("command") or "") for step in aligned_plan}
+        aligned_commands = [
+            command for command in validation_commands if command in allowed_commands
+        ]
+        if not aligned_commands:
+            aligned_commands = [str(step["command"]) for step in aligned_plan]
+    elif int(alignment.get("filtered_count", 0) or 0) > 0:
+        aligned_commands = []
+    else:
+        aligned_commands = validation_commands
+    return aligned_plan, aligned_commands, alignment
+
+
+def _capsule_trust_checks(
+    query: str,
+    target: dict[str, Any],
+    snippets: list[dict[str, Any]],
+    validation_commands: list[str],
+    validation_alignment: dict[str, Any],
+) -> dict[str, Any]:
+    query_language_hints = repo_map._query_language_hints(query)
+    primary_target_language = repo_map._target_language_for_path(str(target.get("file") or ""))
+    snippet_languages = {
+        language
+        for language in (
+            repo_map._target_language_for_path(str(snippet.get("file") or ""))
+            for snippet in snippets
+        )
+        if language is not None
+    }
+
+    confidence_cap = 1.0
+    downgrade_reasons: list[str] = []
+    ask_reasons: list[str] = []
+    validation_filtered_count = int(validation_alignment.get("filtered_count", 0) or 0)
+
+    if (
+        query_language_hints
+        and primary_target_language is not None
+        and primary_target_language not in query_language_hints
+    ):
+        confidence_cap = min(confidence_cap, 0.55)
+        reason = (
+            "query language intent conflicts with primary target language "
+            f"({', '.join(query_language_hints)} vs {primary_target_language})"
+        )
+        downgrade_reasons.append(reason)
+        ask_reasons.append(reason)
+
+    if validation_filtered_count > 0:
+        confidence_cap = min(confidence_cap, 0.65)
+        reason = "validation commands did not align with primary target language"
+        downgrade_reasons.append(reason)
+        ask_reasons.append(reason)
+
+    if (
+        primary_target_language is not None
+        and any(language != primary_target_language for language in snippet_languages)
+        and not validation_commands
+    ):
+        confidence_cap = min(confidence_cap, 0.72)
+        reason = "cross-language context lacks matching validation evidence"
+        downgrade_reasons.append(reason)
+        ask_reasons.append(reason)
+
+    return {
+        "query_language_hints": query_language_hints,
+        "primary_target_language": primary_target_language,
+        "validation_filtered_count": validation_filtered_count,
+        "confidence_cap": confidence_cap,
+        "downgrade_reasons": downgrade_reasons,
+        "ask_reasons": ask_reasons,
+    }
+
+
 def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
     navigation_pack = _as_dict(payload.get("navigation_pack"))
     target = _as_dict(navigation_pack.get("primary_target"))
@@ -360,7 +479,13 @@ def build_agent_capsule(
     )
     edit_plan_seed = _as_dict(payload.get("edit_plan_seed"))
     validation_plan = _as_list_of_dicts(edit_plan_seed.get("validation_plan"))
-    validation_commands = list(payload.get("validation_commands") or [])
+    validation_commands = _as_list_of_strings(payload.get("validation_commands"))
+    validation_plan, validation_commands, validation_alignment = _capsule_validation_alignment(
+        target,
+        validation_plan,
+        validation_commands,
+        payload,
+    )
     edit_order = list(edit_plan_seed.get("edit_ordering") or [])
     if not edit_order and target["file"]:
         edit_order = [target["file"]]
@@ -372,9 +497,32 @@ def build_agent_capsule(
         follow_up_reads,
         omitted_sources,
     )
-    downgrade_reasons: list[str] = []
+    trust = _capsule_trust_checks(
+        query,
+        target,
+        snippets,
+        validation_commands,
+        validation_alignment,
+    )
+    consistency["query_language_hints"] = trust["query_language_hints"]
+    consistency["primary_target_language"] = trust["primary_target_language"]
+    consistency["validation_alignment"] = validation_alignment
+    consistency["validation_filtered_count"] = trust["validation_filtered_count"]
+    if trust["downgrade_reasons"]:
+        consistency["confidence_downgraded"] = True
+        consistency["downgrade_reasons"] = _dedupe([
+            *list(consistency.get("downgrade_reasons") or []),
+            *trust["downgrade_reasons"],
+        ])
+
+    downgrade_reasons: list[str] = list(trust["downgrade_reasons"])
     confidence = _confidence(payload, snippets, downgrade_reasons, consistency)
+    confidence_cap = float(trust["confidence_cap"])
+    if confidence_cap < 1.0:
+        confidence["overall"] = round(min(float(confidence["overall"]), confidence_cap), 3)
+        _cap_primary_target_confidence(target, confidence_cap)
     ask_reasons: list[str] = []
+    ask_reasons.extend(trust["ask_reasons"])
     if not validation_commands:
         ask_reasons.append("no validation command evidence")
     if not snippets:
@@ -444,7 +592,7 @@ def build_agent_capsule(
         "confidence": confidence,
         "ask_user_before_editing": {
             "required": bool(ask_reasons),
-            "reasons": ask_reasons,
+            "reasons": _dedupe(ask_reasons),
         },
         "context_consistency": consistency,
         "raw_context_ref": raw_context_ref,
