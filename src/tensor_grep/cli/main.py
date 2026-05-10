@@ -3,6 +3,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -416,6 +417,80 @@ def _install_release_native_frontdoor(version: str, destination: Path) -> str:
     return url
 
 
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left == right
+
+
+def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: Path) -> list[Path]:
+    if not sys.platform.startswith("win"):
+        return []
+
+    path_values = [os.environ.get("PATH", "")]
+    fresh_path = _doctor_fresh_shell_path_value()
+    if fresh_path and fresh_path not in path_values:
+        path_values.append(fresh_path)
+
+    bridges: list[Path] = []
+    seen: set[str] = set()
+    for path_value in path_values:
+        for candidate in _doctor_path_tg_candidates(path_value):
+            candidate_path = Path(str(candidate.get("path") or ""))
+            if candidate_path.name.lower() != "tg.com":
+                continue
+            if _same_path(candidate_path, native_path):
+                continue
+            try:
+                key = str(candidate_path.resolve()).lower()
+            except OSError:
+                key = str(candidate_path).lower()
+            if key in seen:
+                continue
+            version = candidate.get("version")
+            if not _doctor_tg_version_looks_like_tensor_grep(version):
+                continue
+            if _native_tg_version_matches(expected_version, version):
+                continue
+            seen.add(key)
+            bridges.append(candidate_path)
+    return bridges
+
+
+def _refresh_windows_tensor_grep_com_bridges(
+    expected_version: str,
+    native_path: Path,
+    bridge_paths: list[Path] | None = None,
+) -> list[Path]:
+    if not sys.platform.startswith("win"):
+        return []
+    paths = bridge_paths
+    if paths is None:
+        paths = _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
+
+    refreshed: list[Path] = []
+    for bridge_path in paths:
+        shutil.copy2(native_path, bridge_path)
+        installed_version = _native_tg_version(bridge_path)
+        if not _native_tg_version_matches(expected_version, installed_version):
+            raise RuntimeError(
+                "refreshed PATH tg.com bridge reported "
+                f"{installed_version or 'no version'} instead of {expected_version}: "
+                f"{bridge_path}"
+            )
+        refreshed.append(bridge_path)
+    return refreshed
+
+
+def _refreshed_com_bridge_message(expected_version: str, paths: list[Path]) -> str | None:
+    if not paths:
+        return None
+    noun = "bridge" if len(paths) == 1 else "bridges"
+    rendered_paths = "\n".join(f"- {path}" for path in paths)
+    return f"Refreshed {len(paths)} PATH tg.com {noun} to {expected_version}.\n{rendered_paths}"
+
+
 def _looks_like_windows_file_lock_error(message: str) -> bool:
     lowered = message.lower()
     return (
@@ -427,16 +502,21 @@ def _looks_like_windows_file_lock_error(message: str) -> bool:
     )
 
 
-def _schedule_windows_native_frontdoor_refresh(native_path: Path, expected_version: str) -> Path:
+def _schedule_windows_native_frontdoor_refresh(
+    native_path: Path, expected_version: str, bridge_paths: list[Path] | None = None
+) -> Path:
     import textwrap
 
     url = _native_frontdoor_download_url(expected_version)
     if url is None:
         raise RuntimeError("no release-native front-door asset is available for this platform")
+    bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
 
     helper_code = textwrap.dedent(
         """
+        import json
         import os
+        import shutil
         import subprocess
         import sys
         import time
@@ -449,6 +529,7 @@ def _schedule_windows_native_frontdoor_refresh(native_path: Path, expected_versi
         native_path = Path(sys.argv[3])
         expected_version = sys.argv[4]
         url = sys.argv[5]
+        bridge_paths = [Path(path) for path in json.loads(sys.argv[6])]
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         for _ in range(300):
@@ -496,12 +577,30 @@ def _schedule_windows_native_frontdoor_refresh(native_path: Path, expected_versi
                         "installed native tg front door reported "
                         + (installed_version or "no version")
                     )
+                refreshed_bridges: list[str] = []
+                for bridge_path in bridge_paths:
+                    shutil.copy2(native_path, bridge_path)
+                    bridge_version = _version(bridge_path)
+                    if expected_version not in bridge_version:
+                        raise RuntimeError(
+                            "refreshed PATH tg.com bridge reported "
+                            + (bridge_version or "no version")
+                            + " for "
+                            + str(bridge_path)
+                        )
+                    refreshed_bridges.append(str(bridge_path))
+                bridge_text = ""
+                if refreshed_bridges:
+                    bridge_text = "\\nRefreshed PATH tg.com bridges:\\n" + "\\n".join(
+                        refreshed_bridges
+                    )
                 log_path.write_text(
                     "Native tg front-door refresh completed.\\n"
                     + "Verified "
                     + installed_version
                     + ".\\n"
-                    + url,
+                    + url
+                    + bridge_text,
                     encoding="utf-8",
                 )
                 raise SystemExit(0)
@@ -535,6 +634,7 @@ def _schedule_windows_native_frontdoor_refresh(native_path: Path, expected_versi
             str(native_path),
             expected_version,
             url,
+            bridge_payload,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -550,23 +650,40 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
     if native_path is None:
         return None
 
+    messages: list[str] = []
+    stale_com_bridges = _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
     current_version = _native_tg_version(native_path) if native_path.is_file() else None
-    if _native_tg_version_matches(expected_version, current_version):
-        return None
+    if not _native_tg_version_matches(expected_version, current_version):
+        try:
+            _install_release_native_frontdoor(expected_version, native_path)
+        except OSError as exc:
+            if sys.platform.startswith("win") and (
+                getattr(exc, "winerror", None) == 32
+                or _looks_like_windows_file_lock_error(str(exc))
+            ):
+                log_path = _schedule_windows_native_frontdoor_refresh(
+                    native_path, expected_version, stale_com_bridges
+                )
+                return (
+                    f"Native tg front door refresh scheduled for {expected_version}."
+                    f"\nUpgrade log: {log_path}"
+                )
+            raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
+        except RuntimeError as exc:
+            raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
+        messages.append(f"Native tg front door refreshed to {expected_version}.")
 
     try:
-        _install_release_native_frontdoor(expected_version, native_path)
+        refreshed_bridges = _refresh_windows_tensor_grep_com_bridges(
+            expected_version, native_path, stale_com_bridges
+        )
     except OSError as exc:
-        if sys.platform.startswith("win") and (
-            getattr(exc, "winerror", None) == 32 or _looks_like_windows_file_lock_error(str(exc))
-        ):
-            log_path = _schedule_windows_native_frontdoor_refresh(native_path, expected_version)
-            return f"Native tg front door refresh scheduled for {expected_version}.\nUpgrade log: {log_path}"
-        raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
-    except RuntimeError as exc:
-        raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
+        raise RuntimeError(f"PATH tg.com bridge refresh failed: {exc}") from exc
+    bridge_message = _refreshed_com_bridge_message(expected_version, refreshed_bridges)
+    if bridge_message:
+        messages.append(bridge_message)
 
-    return f"Native tg front door refreshed to {expected_version}."
+    return "\n".join(messages) if messages else None
 
 
 def _version_detail_lines() -> tuple[str, ...]:
@@ -966,16 +1083,24 @@ def _doctor_fresh_shell_path_value() -> str | None:
     parts: list[str] = []
     for value in (machine_path, user_path):
         if value:
-            parts.extend(entry for entry in value.split(os.pathsep) if entry)
+            parts.extend(entry for entry in value.split(";") if entry)
     if not parts:
         return None
-    return os.pathsep.join(parts)
+    return ";".join(parts)
+
+
+def _doctor_path_list_separator(path_value: str) -> str:
+    if not sys.platform.startswith("win"):
+        return os.pathsep
+    if ";" in path_value or re.search(r"(?:^|;)[A-Za-z]:[\\/]", path_value):
+        return ";"
+    return os.pathsep
 
 
 def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, str | None]]:
     if sys.platform.startswith("win"):
         raw_exts = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
-        extensions = [ext.lower() for ext in raw_exts.split(os.pathsep) if ext]
+        extensions = [ext.lower() for ext in raw_exts.split(";") if ext]
         if not extensions:
             extensions = [".com", ".exe", ".bat", ".cmd"]
         names = [f"tg{ext}" for ext in extensions]
@@ -986,7 +1111,7 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
     candidates: list[dict[str, str | None]] = []
     seen: set[str] = set()
     path_to_scan = os.environ.get("PATH", "") if path_value is None else path_value
-    for entry in path_to_scan.split(os.pathsep):
+    for entry in path_to_scan.split(_doctor_path_list_separator(path_to_scan)):
         if not entry:
             continue
         directory = Path(entry)

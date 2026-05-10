@@ -18,12 +18,13 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 release_docs_current_tag: v1.9.7
 
-As of 2026-05-10, the current released state is `v1.9.6`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, and foreign launcher diagnostics are released and publicly dogfooded. Follow-up work should focus on ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, GPU production viability, classify provider/cache UX, context/session latency, and keeping docs synchronized with release proof.
+As of 2026-05-10, the current released state is `v1.9.7`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, and benchmark promotion-gate taxonomy are released and publicly dogfooded. Follow-up work should focus on ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, GPU production viability, classify provider/cache UX, context/session latency, and keeping docs synchronized with release proof.
 
-- Release commit: `e06d5de chore(release): v1.9.6 [skip ci]`
-- Latest merged fix commit: `05ea29e fix: harden v1.9.5 dogfood blockers`
+- Release commit: `524a724 chore(release): v1.9.7 [skip ci]`
+- Latest merged fix commit: `4ff7a77 fix: clarify GPU benchmark promotion gates`
 - Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
 - Recent fix commits:
+  - `4ff7a77 fix: clarify GPU benchmark promotion gates`
   - `05ea29e fix: harden v1.9.5 dogfood blockers`
   - `23e5f52 fix: harden GPU gates and launcher diagnostics`
   - `646b089 fix: harden docs governance and validation placeholders`
@@ -52,12 +53,12 @@ As of 2026-05-10, the current released state is `v1.9.6`. The stable installer, 
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25631800575`: passed through semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL runs `25631800328` and `25632107771`: passed
-- PyPI latest and pinned install: `tensor-grep==1.9.6` resolves from PyPI
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.6>
-- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.9.6`
-- Public `v1.9.6` dogfood: direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.6`; PyPI `tensor-grep==1.9.6` resolves; `tg update` advanced the managed sidecar and front door from `1.9.5` to `1.9.6`; fresh `cmd` and unprofiled `pwsh` report `tg 1.9.6` after the local non-destructive `tg.com` bridge was refreshed; and `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation rather than deleting or treating it as tensor-grep-owned stale state.
+- Main CI run `25635877849`: passed through semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL runs `25635877677` and `25636164492`: passed
+- PyPI latest and pinned install: `tensor-grep==1.9.7` resolves from PyPI
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.7>
+- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.9.7`
+- Public `v1.9.7` dogfood: direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.7`; PyPI `tensor-grep==1.9.7` resolves; `tg update` advanced the managed sidecar and front door from `1.9.6` to `1.9.7`; fresh `cmd` and unprofiled `pwsh` report `tg 1.9.7` after the local non-destructive `tg.com` bridge was refreshed; and `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation rather than deleting or treating it as tensor-grep-owned stale state.
 - Prior public update dogfood: `tg update` from `v1.9.3` initially hit PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4`, scheduled/refreshed the managed native front door, and verified `tg 1.9.4`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolved `tg 1.9.4`; `tg doctor --json` reported `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
 - Public launcher dogfood: `cmd /c tg`, direct managed `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...])` preserve fresh quoted no-match phrases and return exit `1` without false-positive stdout.
