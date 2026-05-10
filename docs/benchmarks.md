@@ -91,6 +91,8 @@ The current bounded context-render contract is a correctness and feasibility lin
 - Latest local artifacts: `artifacts/bench_editor_profiling.json` and `artifacts/bench_context_render.json`.
 - Latest `bench_context_render` medians: `small cold=0.5227s / warm=0.5122s`, `medium cold=0.7458s / warm=0.7309s`, `large cold=2.1434s / warm=2.2001s`.
 
+Post-`v1.9.6` dogfood found small and medium warm-session rows slightly faster but the large warm-session row slower. Treat context/session timing as diagnostic until a stable artifact is accepted; do not market context/session speedups from one noisy run.
+
 Current Roadmap 1 launcher-mode read on this host:
 
 - `python_module_launcher`: mean `tg_time_s = 0.252554`, median `tg_time_s = 0.230292`
@@ -216,7 +218,7 @@ Notes:
 - When no operational GPU device is detected, `run_gpu_benchmarks.py` now records a top-level `status: "SKIP"` before generating synthetic corpora. This prevents no-GPU CI or unsupported-device hosts from creating misleading CPU-only GPU artifacts.
 - On this host, the current `run_benchmarks.py` rerun preserved output parity across all 10 rows, but `benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json` failed against the frozen Windows baseline because the `rg` comparator drifted and the case-insensitive `tg` row regressed by 8.93%. Treat the cold-path rerun as correctness evidence, not an accepted speed baseline refresh.
 - The current host-local CLI comparison artifact is `artifacts/bench_tool_comparison.json`. It is informational, not a release-gated regression suite.
-- Latest host-local CLI comparison medians: standard corpus `rg 0.227s`, `tg search 0.288s`, `tg search --cpu 0.288s`, `git grep --no-index 0.278s`; 200MB large file `rg 0.221s`, `tg search 0.220s`, `tg search --cpu 0.220s`, `git grep --no-index 0.232s`.
+- Latest post-`v1.9.6` dogfood tool comparison medians (3 samples): standard corpus `rg 0.087s`, `tg 0.097s`; 200MB file `rg 0.094s`, `tg 0.114s`; `git grep --no-index` remained much slower than both. Treat `rg` as the raw cold exact-text baseline.
 - Latest native CPU medians with `rg` fallback disabled: `cold_standard_corpus 0.173s vs rg 0.240s`, `large_file_200mb 0.220s vs rg 0.283s`, `large_file_200mb_count 0.072s vs rg 0.417s`, and `many_file_directory 0.159s vs rg 0.236s`; all rows passed.
 - Latest hot-query medians: repeated fixed-string `0.5671s -> 0.1470s`, repeated regex-prefilter `0.5476s -> 0.1662s`; both rows passed.
 - Latest AST search medians: single-query Python `tg 0.116s` vs `sg 0.151s` (`0.770x`); multi-language ratios were Python `0.722x`, JavaScript `0.800x`, TypeScript `0.726x`, and Rust `0.715x`.
@@ -225,7 +227,7 @@ Notes:
 - Latest editor-plane medians: context-render `small cold/warm 0.449s/0.373s`, `medium 0.691s/0.647s`, `large 1.808s/1.925s`; blast-radius `medium depth=2 0.579s`, `large depth=2 1.446s`.
 - Latest harness loop medians across five iterations: search `0.343s`, plan `0.136s`, apply `0.313s`, verify `0.037s`; all iterations passed.
 - Latest index scaling rows passed build/query thresholds: 1,000 files `build 0.155s / query 0.161s`, 5,000 files `0.728s / 0.691s`, 10,000 files `1.413s / 1.327s`.
-- Latest native GPU crossover audit still found no crossover: device `0` completed 10MB and 100MB but remained slower than `rg`, then timed out on 500MB and 1GB; device `1` (`RTX 5070`, `sm_120`) was blocked by the old PyTorch/CUDA 12.4 sidecar stack on this host. Managed NVIDIA installs now use PyTorch `cu128` wheels so RTX 50-series hosts have a compatible sidecar baseline, but the current benchmark scripts still require exact match/file-set correctness on every >=1GB GPU corpus and a measured win over both `rg` and `tg_cpu` before any GPU promotion claim.
+- Latest post-`v1.9.6` native GPU dogfood still found no crossover even after both local GPUs passed 1GB and 5GB correctness: RTX 4070 and RTX 5070 native rows remained slower than `rg` and `tg_cpu`, and Python GPU scale rows are unsupported for native CUDA promotion when they route through the sidecar. Managed NVIDIA installs use PyTorch `cu128` wheels so RTX 50-series hosts have a compatible sidecar baseline, but benchmark scripts still require native backend proof, exact match/file-set correctness, and a measured win over both baselines before any GPU promotion claim.
 - `run_repo_retrieval_benchmarks.py` now has a committed default smoke dataset at `benchmarks/datasets/repo_retrieval_eval.jsonl`, so the suite is runnable without a local-only fixture. Latest default artifact: `artifacts/bench_repo_retrieval_benchmarks.json`, with `recall_at_5 = 1.0`, `precision_at_5 = 0.333333`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.492064`, `line_f1 = 0.492064`, `p50_latency_ms = 4.8`, and `token_budget_mean = 74.333333`. This is benchmark-harness coverage, not a replacement for the accepted 2026-04-19 repo-map lexical feature line.
 - The current accepted provider hardcase artifact is `artifacts/bench_provider_navigation_click_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_click_hardcases.md`.
 - The current accepted JS/TS provider hardcase artifact is `artifacts/bench_provider_navigation_js_ts_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_js_ts_hardcases.md`.
@@ -596,25 +598,27 @@ The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails
 
 ### Native GPU crossover / throughput (`run_gpu_native_benchmarks.py`)
 
-| Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio | Result |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 10MB | 0.104s | 0.113s | 0.409s | 3.950x slower | no crossover |
-| 100MB | 0.110s | 0.116s | 1.033s | 9.416x slower | no crossover |
-| 500MB | 0.126s | 0.131s | timeout | n/a | FAIL |
-| 1GB | 0.144s | 0.150s | timeout | n/a | FAIL |
+The post-`v1.9.6` native CUDA dogfood split the GPU story into two separate facts: 1GB and 5GB correctness now passes on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`), but there is still no crossover. GPU remains slower than `rg` and `tg_cpu`, so keep explicit GPU search manual-only.
 
-The current native GPU benchmark reports `passed = false`, `crossover.exists = false`, and no winning GPU rows on this Windows host. Keep explicit GPU search manual-only until the end-to-end artifact shows both correctness and a real crossover. New GPU benchmark runs include a 5GB default row; do not backfill that table without an accepted artifact.
+| Device | Required correctness | Speed read | Result |
+| --- | --- | --- | --- |
+| RTX 4070 (`sm_89`) | 1GB and 5GB correctness passed | latest 5GB row: `rg 0.282s`, `tg_cpu 0.238s`, `tg_gpu 9.259s`; best recorded GPU/rg no-crossover ratio `22.9183x` slower | no crossover |
+| RTX 5070 (`sm_120`) | 1GB and 5GB correctness passed | latest 5GB row: `rg 0.260s`, `tg_cpu 0.254s`, `tg_gpu 9.117s`; best recorded GPU/rg no-crossover ratio `24.1120x` slower | no crossover |
+
+Native CUDA correctness passed, but speed/promotion failed. The native benchmark now exposes `scale_gate_summary.benchmark_surface = "native-cuda-scale"`, a separate `correctness_gate`, a separate `speed_gate`, and `promotion_ready = false` when correctness is good but speed does not beat both baselines.
 
 ### Python GPU/NLP sidecar benchmark (`run_gpu_benchmarks.py`)
 
-| Corpus size | `rg` | `tg --cpu` | GPU 0 (`RTX 4070`) | GPU 1 (`RTX 5070`) |
-| --- | ---: | ---: | ---: | --- |
-| 1MB | 0.353s | 0.114s | 2.923s PASS | UNSUPPORTED |
-| 10MB | 0.113s | 0.117s | 3.614s PASS | UNSUPPORTED |
-| 100MB | 0.111s | 0.112s | 12.306s PASS | UNSUPPORTED |
-| 1GB | 0.179s | 0.183s | timeout FAIL | UNSUPPORTED |
+Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar. The Python scale artifact is still useful for sidecar dependency health, device inventory, and NLP/GPU compatibility, but it is not native CUDA speed proof.
 
-The Python sidecar artifact reports PyTorch `2.6.0+cu124`: RTX 4070 is operational but does not beat `rg`, while RTX 5070 / `sm_120` is dependency-bound with `no kernel image`. New managed NVIDIA installs select PyTorch `cu128`; existing `cu124` sidecar environments must be upgraded or reinstalled before treating RTX 50-series failures as product bugs. If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, and empty timing rows. The Python GPU scale script now defaults to 5GB as well and checks exact rg-vs-GPU match/file sets for every >=1GB corpus.
+The Python benchmark now exposes the distinction directly:
+
+- `scale_gate_summary.benchmark_surface = "python-gpu-scale"`
+- `scale_gate_summary.native_cuda_scale_gate.status = "UNSUPPORTED"` when only sidecar backends are observed
+- `scale_gate_summary.speed_gate.status = "NOT_RUN"` when native CUDA scale proof is unavailable
+- `promotion_ready = false` unless native CUDA correctness and speed evidence both pass
+
+If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, and empty timing rows. The Python GPU scale script defaults to 5GB and checks exact rg-vs-GPU match/file sets for every >=1GB corpus, but those rows still need native backend support before they can feed a routing promotion.
 
 ### Repeated Fixed-String Microbenchmark
 

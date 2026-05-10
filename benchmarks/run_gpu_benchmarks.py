@@ -682,6 +682,112 @@ def analyze_gpu_auto_recommendation(
     }
 
 
+def _required_size_labels(required_corpus_sizes: tuple[int, ...]) -> list[str]:
+    return [_format_size_label(size_bytes) for size_bytes in required_corpus_sizes]
+
+
+def _observed_operational_backends(devices: list[dict[str, object]]) -> list[str]:
+    observed = {
+        str(device.get("tg_runtime_backend") or "unknown")
+        for device in devices
+        if device.get("operational", False)
+    }
+    return sorted(observed)
+
+
+def build_scale_gate_summary(
+    *,
+    devices: list[dict[str, object]],
+    correctness_checks: list[dict[str, object]],
+    gpu_auto_recommendation: dict[str, object],
+    required_corpus_sizes: tuple[int, ...] = RECOMMENDATION_REQUIRED_CORPUS_SIZES,
+    correctness_patterns: tuple[str, ...] = DEFAULT_CORRECTNESS_PATTERNS,
+) -> dict[str, object]:
+    required_labels = _required_size_labels(required_corpus_sizes)
+    observed_backends = _observed_operational_backends(devices)
+    has_native_cuda_backend = "NativeGpuBackend" in observed_backends
+    passing_device_ids = sorted(
+        _passing_required_correctness_device_ids(
+            correctness_checks=correctness_checks,
+            correctness_patterns=correctness_patterns,
+            required_corpus_sizes=required_corpus_sizes,
+        )
+    )
+
+    if has_native_cuda_backend:
+        native_gate = {
+            "status": "SUPPORTED",
+            "required_backend": "NativeGpuBackend",
+            "observed_backends": observed_backends,
+            "reason": "At least one operational device routed through the native CUDA backend.",
+        }
+    else:
+        native_gate = {
+            "status": "UNSUPPORTED",
+            "required_backend": "NativeGpuBackend",
+            "observed_backends": observed_backends,
+            "reason": (
+                "Operational GPU devices routed outside the native CUDA backend; "
+                "Python/Torch sidecar rows are not native CUDA scale proof."
+            )
+            if observed_backends
+            else "No operational GPU devices were available for native CUDA scale proof.",
+        }
+
+    if correctness_checks:
+        correctness_status = "PASS" if passing_device_ids else "FAIL"
+        correctness_reason = (
+            "Native CUDA correctness passed at every required scale."
+            if passing_device_ids
+            else "Native CUDA correctness did not pass every required scale."
+        )
+    else:
+        correctness_status = "NOT_RUN"
+        correctness_reason = "Native CUDA correctness checks did not run."
+
+    correctness_gate = {
+        "status": correctness_status,
+        "required_sizes": required_labels,
+        "passing_device_ids": passing_device_ids,
+        "reason": correctness_reason,
+    }
+
+    if not has_native_cuda_backend:
+        speed_gate = {
+            "status": "NOT_RUN",
+            "required_baselines": ["rg", "tg_cpu"],
+            "reason": (
+                "Native CUDA speed gate did not run because the native CUDA scale gate "
+                "is unsupported."
+            ),
+        }
+        summary = (
+            "Python GPU scale rows are unsupported for native CUDA promotion; run "
+            "benchmarks/run_gpu_native_benchmarks.py with a CUDA-enabled native tg binary "
+            "to evaluate correctness and speed separately."
+        )
+    else:
+        speed_gate = {
+            "status": "PASS" if gpu_auto_recommendation.get("should_add_flag") else "FAIL",
+            "required_baselines": ["rg", "tg_cpu"],
+            "reason": str(gpu_auto_recommendation.get("reason", "")),
+        }
+        summary = (
+            "Native CUDA correctness and speed gates passed."
+            if gpu_auto_recommendation.get("should_add_flag")
+            else "Native CUDA promotion is blocked by correctness or speed gate evidence."
+        )
+
+    return {
+        "benchmark_surface": "python-gpu-scale",
+        "native_cuda_scale_gate": native_gate,
+        "correctness_gate": correctness_gate,
+        "speed_gate": speed_gate,
+        "promotion_ready": bool(gpu_auto_recommendation.get("should_add_flag", False)),
+        "summary": summary,
+    }
+
+
 def run_gpu_scale_benchmarks(
     *,
     tg_binary: Path,
@@ -704,6 +810,11 @@ def run_gpu_scale_benchmarks(
     if probe.get("error"):
         warnings.append(str(probe["error"]))
     if not any(device.get("operational", False) for device in devices):
+        recommendation = {
+            "should_add_flag": False,
+            "reason": "Skipped because no operational GPU devices were detected.",
+            "winning_rows": [],
+        }
         return {
             "bench_dir": str(bench_dir),
             "corpus_sizes": [
@@ -713,11 +824,13 @@ def run_gpu_scale_benchmarks(
             "devices": devices,
             "rows": [],
             "correctness_checks": [],
-            "gpu_auto_recommendation": {
-                "should_add_flag": False,
-                "reason": "Skipped because no operational GPU devices were detected.",
-                "winning_rows": [],
-            },
+            "gpu_auto_recommendation": recommendation,
+            "scale_gate_summary": build_scale_gate_summary(
+                devices=devices,
+                correctness_checks=[],
+                gpu_auto_recommendation=recommendation,
+                correctness_patterns=correctness_patterns,
+            ),
             "warnings": warnings,
             "errors": errors,
             "benchmark_pattern": benchmark_pattern,
@@ -913,6 +1026,12 @@ def run_gpu_scale_benchmarks(
                     )
                 correctness_checks.append(check)
 
+    gpu_auto_recommendation = analyze_gpu_auto_recommendation(
+        rows,
+        correctness_checks=correctness_checks,
+        correctness_patterns=correctness_patterns,
+    )
+
     return {
         "bench_dir": str(bench_dir),
         "corpus_sizes": [
@@ -922,9 +1041,11 @@ def run_gpu_scale_benchmarks(
         "devices": devices,
         "rows": rows,
         "correctness_checks": correctness_checks,
-        "gpu_auto_recommendation": analyze_gpu_auto_recommendation(
-            rows,
+        "gpu_auto_recommendation": gpu_auto_recommendation,
+        "scale_gate_summary": build_scale_gate_summary(
+            devices=devices,
             correctness_checks=correctness_checks,
+            gpu_auto_recommendation=gpu_auto_recommendation,
             correctness_patterns=correctness_patterns,
         ),
         "warnings": warnings,
@@ -1006,6 +1127,11 @@ def main() -> int:
     }
 
     if not tg_binary.exists():
+        recommendation = {
+            "should_add_flag": False,
+            "reason": "Benchmark did not run because the tg binary was missing.",
+            "winning_rows": [],
+        }
         payload.update({
             "errors": [f"tg binary not found: {tg_binary}"],
             "warnings": [],
@@ -1013,11 +1139,12 @@ def main() -> int:
             "correctness_checks": [],
             "corpus_sizes": [],
             "devices": [],
-            "gpu_auto_recommendation": {
-                "should_add_flag": False,
-                "reason": "Benchmark did not run because the tg binary was missing.",
-                "winning_rows": [],
-            },
+            "gpu_auto_recommendation": recommendation,
+            "scale_gate_summary": build_scale_gate_summary(
+                devices=[],
+                correctness_checks=[],
+                gpu_auto_recommendation=recommendation,
+            ),
         })
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1

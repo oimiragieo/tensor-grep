@@ -679,7 +679,7 @@ $ cargo build --release --features cuda
 $ cargo test --features cuda
 ```
 
-The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compiles GPU kernels via NVRTC JIT at runtime. The current accepted benchmark line covers sm_89 (RTX 4070). RTX 50-series / sm_120 hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
+The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compiles GPU kernels via NVRTC JIT at runtime. The post-`v1.9.6` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`), but it still shows no crossover: GPU rows remain slower than `rg` and `tg_cpu`. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
 
 ## Hardware & Software Requirements
 

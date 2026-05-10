@@ -2694,6 +2694,7 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["routing_reason"] == "agent-context-capsule"
+    assert payload["capsule_version"] == 1
     assert payload["capsule_kind"] == "actionable_context"
     assert payload["primary_target"]["file"] == str(module_path.resolve())
     assert payload["primary_target"]["symbol"] == "create_invoice"
@@ -2702,6 +2703,9 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     assert payload["snippets"][0]["line_map"][0]["line"] == 1
     assert payload["related_call_sites"] == []
     assert payload["validation_commands"]
+    assert payload["edit_order"][0] == str(module_path.resolve())
+    assert [row["command"] for row in payload["validation_plan"]] == payload["validation_commands"]
+    assert all("detection" in row for row in payload["validation_plan"])
     assert payload["rollback"]["checkpoint_recommended"] is True
     assert payload["omissions"]["token_budget"] == 160
     assert "follow_up_reads" in payload["omissions"]

@@ -15,6 +15,55 @@ def _load_script_module():
     return module
 
 
+def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
+    required_content = "\n".join([
+        f"v{version}",
+        "python scripts/agent_readiness.py",
+        "context_consistency",
+        "tg agent",
+        "validated compatibility set",
+        "broad generated-root scan",
+        "rg` remains",
+        "ast-grep",
+    ])
+    for relative in (
+        "AGENTS.md",
+        "README.md",
+        "SKILL.md",
+        "docs/SESSION_HANDOFF.md",
+        "docs/CONTINUATION_PLAN.md",
+        "docs/CONTRACTS.md",
+    ):
+        path = repo_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(required_content, encoding="utf-8")
+
+    gpu_content = "\n".join([
+        "post-`v1.9.6`",
+        "1GB and 5GB correctness",
+        "RTX 4070",
+        "RTX 5070",
+        "no crossover",
+        "slower than `rg` and `tg_cpu`",
+    ])
+    for relative in (
+        "README.md",
+        "docs/benchmarks.md",
+        "docs/gpu_crossover.md",
+        "docs/PAPER.md",
+    ):
+        path = repo_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        prefix = path.read_text(encoding="utf-8") if path.exists() else ""
+        taxonomy = ""
+        if relative in {"docs/benchmarks.md", "docs/gpu_crossover.md"}:
+            taxonomy = "\n".join([
+                "Python GPU scale rows are unsupported for native CUDA promotion",
+                "Native CUDA correctness passed, but speed/promotion failed",
+            ])
+        path.write_text("\n".join([prefix, gpu_content, taxonomy]), encoding="utf-8")
+
+
 def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     module = _load_script_module()
 
@@ -88,6 +137,33 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "edit_plan_filters_pytest_only_validation_for_typescript_primary" in (
         mixed_capsule_command
     )
+
+
+def test_agent_readiness_docs_claims_cover_gpu_taxonomy(tmp_path) -> None:
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path)
+
+    module.validate_docs_claims("", tmp_path, "1.9.6")
+
+
+def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> None:
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path)
+    benchmarks_path = tmp_path / "docs" / "benchmarks.md"
+    benchmarks_path.write_text(
+        benchmarks_path.read_text(encoding="utf-8").replace(
+            "Python GPU scale rows are unsupported for native CUDA promotion",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        module.validate_docs_claims("", tmp_path, "1.9.6")
+    except module.ReadinessError as exc:
+        assert "Python GPU scale rows are unsupported for native CUDA promotion" in str(exc)
+    else:
+        raise AssertionError("expected docs claim validation to fail")
 
 
 def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypatch) -> None:

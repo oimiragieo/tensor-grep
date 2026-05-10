@@ -494,6 +494,7 @@ Use this shape when an agent needs the smallest actionable work packet before ed
 | `query` | `string` | Natural-language task or symbol query used for ranking. |
 | `path` | `string` | Absolute root path inventoried. |
 | `primary_target` | `object` | Selected edit target with `file`, `symbol`, `kind`, `line`, `confidence`, and evidence labels. |
+| `alternative_targets` | `array<object>` | Plausible non-primary targets surfaced when routing is ambiguous; entries include file/symbol/language evidence and do not raise primary confidence. |
 | `route_rationale` | `array<object>` | Deterministic explanation of which route selected the target and why. |
 | `snippets` | `array<object>` | Bounded executable source snippets with `file`, `symbol`, `start_line`, `end_line`, `source`, `line_map`, `token_estimate`, and evidence labels. |
 | `related_call_sites` | `array<object>` | Verified call-site hints when available. Capsule v1 leaves this empty unless call-site evidence is explicitly collected; follow-up reads are reported under `omissions.follow_up_reads`. |

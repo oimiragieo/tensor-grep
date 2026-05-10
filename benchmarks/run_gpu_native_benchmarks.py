@@ -802,6 +802,131 @@ def analyze_crossover(rows: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def _required_size_labels(required_corpus_sizes: tuple[int, ...]) -> list[str]:
+    return [_format_size_label(size_bytes) for size_bytes in required_corpus_sizes]
+
+
+def _passing_correctness_size_labels(
+    correctness_checks: list[dict[str, object]],
+    *,
+    required_corpus_sizes: tuple[int, ...],
+) -> list[str]:
+    required_labels = set(_required_size_labels(required_corpus_sizes))
+    passing = {
+        str(check.get("size_label"))
+        for check in correctness_checks
+        if str(check.get("size_label")) in required_labels
+        and check.get("status") == "PASS"
+        and check.get("matches_equal") is True
+        and check.get("files_equal") is True
+    }
+    return sorted(passing, key=_required_size_labels(required_corpus_sizes).index)
+
+
+def _native_speed_gate(
+    rows: list[dict[str, object]],
+    *,
+    required_corpus_sizes: tuple[int, ...],
+) -> dict[str, object]:
+    required_labels = set(_required_size_labels(required_corpus_sizes))
+    winning_sizes: list[str] = []
+    best_attempt: dict[str, object] | None = None
+
+    for row in rows:
+        size_label = row.get("size_label")
+        if not isinstance(size_label, str) or size_label not in required_labels:
+            continue
+        rg = row.get("rg", {})
+        tg_cpu = row.get("tg_cpu", {})
+        tg_gpu = row.get("tg_gpu", {})
+        if not isinstance(rg, dict) or not isinstance(tg_cpu, dict) or not isinstance(tg_gpu, dict):
+            continue
+        rg_median = rg.get("median_s")
+        tg_cpu_median = tg_cpu.get("median_s")
+        gpu_median = tg_gpu.get("median_s")
+        if not (
+            isinstance(rg_median, (float, int))
+            and isinstance(tg_cpu_median, (float, int))
+            and isinstance(gpu_median, (float, int))
+            and rg_median > 0
+            and tg_cpu_median > 0
+        ):
+            continue
+
+        attempt = {
+            "size_label": size_label,
+            "gpu_rg_ratio": round(float(gpu_median) / float(rg_median), 4),
+            "gpu_tg_cpu_ratio": round(float(gpu_median) / float(tg_cpu_median), 4),
+        }
+        if attempt["gpu_rg_ratio"] < 1.0 and attempt["gpu_tg_cpu_ratio"] < 1.0:
+            winning_sizes.append(size_label)
+        if best_attempt is None or max(
+            float(attempt["gpu_rg_ratio"]),
+            float(attempt["gpu_tg_cpu_ratio"]),
+        ) < max(
+            float(best_attempt["gpu_rg_ratio"]),
+            float(best_attempt["gpu_tg_cpu_ratio"]),
+        ):
+            best_attempt = attempt
+
+    status = "PASS" if winning_sizes else "FAIL"
+    return {
+        "status": status,
+        "required_baselines": ["rg", "tg_cpu"],
+        "winning_sizes": winning_sizes,
+        "best_attempt": best_attempt,
+        "reason": (
+            "Native CUDA beat both rg and tg_cpu at the required scale."
+            if winning_sizes
+            else "Native CUDA did not beat both rg and tg_cpu at the required scale."
+        ),
+    }
+
+
+def build_native_scale_gate_summary(
+    rows: list[dict[str, object]],
+    *,
+    correctness_checks: list[dict[str, object]],
+    required_corpus_sizes: tuple[int, ...] = (1 * GB, 5 * GB),
+) -> dict[str, object]:
+    required_labels = _required_size_labels(required_corpus_sizes)
+    passing_sizes = _passing_correctness_size_labels(
+        correctness_checks,
+        required_corpus_sizes=required_corpus_sizes,
+    )
+    correctness_status = "PASS" if passing_sizes == required_labels else "FAIL"
+    correctness_gate = {
+        "status": correctness_status,
+        "required_sizes": required_labels,
+        "passing_sizes": passing_sizes,
+        "reason": (
+            "Native CUDA correctness passed at every required scale."
+            if correctness_status == "PASS"
+            else "Native CUDA correctness did not pass every required scale."
+        ),
+    }
+    speed_gate = _native_speed_gate(rows, required_corpus_sizes=required_corpus_sizes)
+    promotion_ready = correctness_status == "PASS" and speed_gate["status"] == "PASS"
+    if promotion_ready:
+        summary = (
+            "Native CUDA correctness and speed gates passed; GPU promotion evidence is present."
+        )
+    elif correctness_status == "PASS":
+        summary = (
+            "Native CUDA correctness passed, but speed/promotion failed; keep GPU experimental."
+        )
+    else:
+        summary = "Native CUDA promotion is blocked by correctness and speed gate evidence."
+
+    return {
+        "benchmark_surface": "native-cuda-scale",
+        "correctness_gate": correctness_gate,
+        "speed_gate": speed_gate,
+        "promotion_ready": promotion_ready,
+        "summary": summary,
+    }
+
+
 def run_gpu_native_benchmarks(
     *,
     tg_binary: Path,
@@ -956,6 +1081,10 @@ def run_gpu_native_benchmarks(
         "error_tests": error_tests,
         "crossover": crossover,
         "throughput_target": throughput_target,
+        "scale_gate_summary": build_native_scale_gate_summary(
+            rows,
+            correctness_checks=correctness_checks,
+        ),
         "advanced": advanced_payload,
         "warnings": warnings,
         "errors": errors,
@@ -1678,6 +1807,10 @@ def main() -> int:
                 "best_attempt": None,
                 "summary": "Benchmark did not run because the tg binary was missing.",
             },
+            "scale_gate_summary": build_native_scale_gate_summary(
+                [],
+                correctness_checks=[],
+            ),
             "advanced": {"enabled": args.advanced},
             "crossover": {
                 "exists": False,
