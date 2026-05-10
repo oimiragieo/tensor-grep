@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.9.7 (2026-05-10)
+
+### Bug Fixes
+
+- Clarify GPU benchmark promotion gates
+  ([`4ff7a77`](https://github.com/oimiragieo/tensor-grep/commit/4ff7a77dc6b5917a4cee77f4501c7958918e870e))
+
+### Documentation
+
+- Sync v1.9.6 release governance ([#85](https://github.com/oimiragieo/tensor-grep/pull/85),
+  [`fc5d612`](https://github.com/oimiragieo/tensor-grep/commit/fc5d6123c464672327c9295d6ba8ae6bb78d549d))
+
+
 ## v1.9.6 (2026-05-10)
 
 ### Bug Fixes

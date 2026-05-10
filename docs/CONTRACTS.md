@@ -2,7 +2,7 @@
 
 This document defines the backward-compatibility guarantees for data structures and CLI outputs used by enterprise integrations, IDEs, and editor-plane agents.
 
-release_docs_current_tag: v1.9.6
+release_docs_current_tag: v1.9.7
 
 ## 1. Configuration (`sgconfig.yml`)
 The root-level keys and structure of `sgconfig.yml` are guaranteed to be stable within a major version. Unrecognized keys will be ignored rather than causing fatal errors to allow progressive rollout of new configurations.
