@@ -22,6 +22,7 @@ These scripts and artifact paths are the accepted benchmark surface for the curr
 | Blast-radius render latency | `benchmarks/run_blast_radius_benchmarks.py` | `artifacts/bench_blast_radius.json` |
 | Python GPU/NLP benchmark | `benchmarks/run_gpu_benchmarks.py` | `artifacts/bench_run_gpu_benchmarks.json` |
 | Native GPU crossover / throughput | `benchmarks/run_gpu_native_benchmarks.py` | `artifacts/bench_run_gpu_native_benchmarks.json` |
+| Agent capsule + edit loop workflow | `benchmarks/run_agent_workflow_benchmarks.py` | `artifacts/bench_agent_workflow.json` |
 | Harness loop | `benchmarks/run_harness_loop_benchmark.py` | `artifacts/bench_harness_loop.json` |
 | Index build/query scaling | `benchmarks/run_index_scaling_benchmark.py` | `artifacts/bench_index_scaling.json` |
 
@@ -55,6 +56,19 @@ For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieva
 - `line_f1`
 - `p50_latency_ms`
 - `token_budget_mean`
+
+For `run_agent_workflow_benchmarks.py`, the artifact is the workflow-level product-wedge surface, not a raw grep-speed comparison. It must include the literal positioning string `agent-native workflow benchmark; not a cold exact-text speed claim`, the top-level `workflow_surfaces` list, and separate `agent_capsule` and `edit_loop` sections. The capsule section should report confidence, alternatives, validation alignment, snippets, rollback, and edit order signals; the edit-loop section should report search/plan/apply/verify medians and pass/fail state.
+
+## Agent Workflow Benchmark
+
+`benchmarks/run_agent_workflow_benchmarks.py` is the canonical workflow benchmark for the post-`v1.9.8` dogfood wedge: agent capsule routing plus safe edit-loop execution. It intentionally measures an agent-native workflow benchmark; not a cold exact-text speed claim.
+
+The default artifact is `artifacts/bench_agent_workflow.json` and exposes two surfaces:
+
+- `agent_capsule`: runs ambiguous and explicit invoice-edit tasks through `tg agent --json`, then records confidence, alternatives, validation alignment, snippets, rollback, and edit order contract metrics.
+- `edit_loop`: reuses the AST search -> rewrite plan -> apply -> verify harness loop and records phase medians for `search_s`, `plan_s`, `apply_s`, and `verify_s`.
+
+Use this artifact when evaluating improvements to confidence honesty, alternative-target surfacing, validation-command filtering, rollback visibility, edit-order guidance, or whole-loop edit latency. Do not use it to claim that `tg` beats `rg` for cold exact-text search.
 
 ## Accepted Repo-Map Lexical Retrieval Snapshot (2026-04-19)
 
@@ -199,6 +213,7 @@ uv run python benchmarks/run_ast_workflow_benchmarks.py
 uv run python benchmarks/run_ast_rewrite_benchmarks.py
 uv run python benchmarks/run_context_render_benchmarks.py
 uv run python benchmarks/run_blast_radius_benchmarks.py
+uv run python benchmarks/run_agent_workflow_benchmarks.py
 uv run python benchmarks/run_harness_loop_benchmark.py
 uv run python benchmarks/run_index_scaling_benchmark.py
 uv run python benchmarks/run_repo_retrieval_benchmarks.py
