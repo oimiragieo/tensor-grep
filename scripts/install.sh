@@ -66,13 +66,13 @@ HARDWARE_FLAG="cpu"
 INDEX_URL=""
 
 if command -v nvidia-smi &> /dev/null; then
-    echo "      Detected NVIDIA GPU. Configuring for CUDA 12.4."
+    echo "      Detected NVIDIA GPU. Configuring for CUDA 12.8."
     HARDWARE_FLAG="nvidia"
-    INDEX_URL="--index-url https://download.pytorch.org/whl/cu124"
+    INDEX_URL="--index-url https://download.pytorch.org/whl/cu128"
 elif command -v rocm-smi &> /dev/null || lspci | grep -i "vga.*amd" &> /dev/null; then
-    echo "      Detected AMD GPU. Configuring for ROCm."
+    echo "      Detected AMD GPU. Configuring for ROCm 7.2."
     HARDWARE_FLAG="amd"
-    INDEX_URL="--index-url https://download.pytorch.org/whl/rocm6.0"
+    INDEX_URL="--index-url https://download.pytorch.org/whl/rocm7.2"
 else
     echo "      No compatible GPU detected (or macOS). Configuring for CPU/Metal execution."
 fi

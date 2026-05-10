@@ -1442,6 +1442,102 @@ fn test_tg_run_apply_validation_substitutes_file_placeholder() {
 }
 
 #[test]
+fn test_tg_run_apply_validation_substitutes_file_placeholder_for_each_edited_file_under_directory()
+{
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    fs::create_dir(&src_dir).unwrap();
+    let first_path = src_dir.join("a.py");
+    let second_path = src_dir.join("b.py");
+    fs::write(&first_path, "def a(x): return x\n").unwrap();
+    fs::write(&second_path, "def b(y): return y\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg(r#"python -m py_compile "$file""#)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["validation"]["success"], true);
+    let commands = parsed["validation"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 2);
+    let rendered_commands: Vec<&str> = commands
+        .iter()
+        .map(|command| command["command"].as_str().unwrap())
+        .collect();
+    let first_path_text = first_path.to_string_lossy();
+    let second_path_text = second_path.to_string_lossy();
+    let root_compile_command = format!("python -m py_compile \"{}\"", dir.path().display());
+    assert!(rendered_commands
+        .iter()
+        .any(|command| command.contains(first_path_text.as_ref())));
+    assert!(rendered_commands
+        .iter()
+        .any(|command| command.contains(second_path_text.as_ref())));
+    assert!(!rendered_commands
+        .iter()
+        .any(|command| *command == root_compile_command));
+}
+
+#[test]
+fn test_tg_run_apply_validation_substitutes_file_placeholder_once_per_file_for_multiple_edits_in_directory(
+) {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("multi.py");
+    fs::write(&file_path, "def a(x): return x\n\ndef b(y): return y\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg(r#"python -m py_compile "$file""#)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["validation"]["success"], true);
+    let commands = parsed["validation"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        commands[0]["command"].as_str().unwrap(),
+        format!("python -m py_compile \"{}\"", file_path.display())
+    );
+}
+
+#[test]
 fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
     let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");

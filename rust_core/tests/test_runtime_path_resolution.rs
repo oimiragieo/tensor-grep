@@ -195,7 +195,19 @@ fn test_help_documents_runtime_override_env_vars() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("TG_SIDECAR_PYTHON"), "stdout={stdout}");
+    assert!(stdout.contains("TG_NATIVE_TG_BINARY"), "stdout={stdout}");
     assert!(stdout.contains("TG_RG_PATH"), "stdout={stdout}");
+    assert!(stdout.contains("TG_FORCE_CPU"), "stdout={stdout}");
+    assert!(stdout.contains("TG_SIDECAR_TIMEOUT_MS"), "stdout={stdout}");
+    assert!(stdout.contains("TENSOR_GREP_DEVICE_IDS"), "stdout={stdout}");
+    assert!(
+        stdout.contains("TENSOR_GREP_CLASSIFY_PROVIDER"),
+        "stdout={stdout}"
+    );
+    assert!(
+        stdout.contains("TENSOR_GREP_TRITON_TIMEOUT_SECONDS"),
+        "stdout={stdout}"
+    );
 }
 
 #[test]

@@ -127,7 +127,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Agent contracts**
 - `tg agent` emits primary targets, alternative targets, snippets, validation_commands, rollback metadata, confidence, and ask-before-editing guidance.
 - `context-render` and `edit-plan` also expose top-level validation_commands.
-- Validation command templates can quote `$file` or `{file}` placeholders for target paths with spaces.
+- Validation command templates can quote `$file` or `{file}` placeholders; applied rewrites run placeholder commands once per edited file.
 
 **Search and safety**
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
@@ -146,7 +146,12 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
 - `TG_NATIVE_TG_BINARY`: Path to the native front door used by Python-backed commands.
-- `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.""",
+- `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.
+- `TG_FORCE_CPU`: Force CPU routing for search commands.
+- `TG_SIDECAR_TIMEOUT_MS`: Timeout for sidecar-backed commands.
+- `TENSOR_GREP_DEVICE_IDS`: Comma-separated GPU IDs available to tensor-grep.
+- `TENSOR_GREP_CLASSIFY_PROVIDER`: Set to `cybert` to opt into CyBERT/Triton classification.
+- `TENSOR_GREP_TRITON_TIMEOUT_SECONDS`: Timeout for Triton-backed NLP probes.""",
     no_args_is_help=True,
     add_completion=True,
     rich_markup_mode="markdown",
@@ -862,10 +867,14 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
+    env = os.environ.copy()
+    for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
+        env.pop(key, None)
     try:
         res = subprocess.run(
             [str(candidate), "--version"],
             capture_output=True,
+            env=env,
             text=True,
             timeout=2,
         )
@@ -880,10 +889,20 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     return None
 
 
-def _doctor_tg_launcher_kind(path: str | None, version_text: str | None = None) -> str | None:
+_DOCTOR_VERSION_NOT_PROVIDED = object()
+
+
+def _doctor_tg_launcher_kind(
+    path: str | None,
+    version_text: str | None | object = _DOCTOR_VERSION_NOT_PROVIDED,
+) -> str | None:
     if not path:
         return None
-    if version_text is not None and not _doctor_tg_version_looks_like_tensor_grep(version_text):
+    if version_text is not _DOCTOR_VERSION_NOT_PROVIDED and not isinstance(version_text, str):
+        return "foreign"
+    if isinstance(version_text, str) and not _doctor_tg_version_looks_like_tensor_grep(
+        version_text
+    ):
         return "foreign"
 
     candidate = Path(path)
@@ -893,11 +912,16 @@ def _doctor_tg_launcher_kind(path: str | None, version_text: str | None = None) 
         return "cmd-shim"
     if suffix == ".ps1":
         return "powershell-shim"
-    if suffix == ".exe":
+    if suffix in {".com", ".exe"}:
         if ".tensor-grep" in parts and "bin" in parts:
             return "managed-native"
         if "scripts" in parts and (
-            ".venv" in parts or "venv" in parts or any(part.startswith("python") for part in parts)
+            suffix == ".exe"
+            and (
+                ".venv" in parts
+                or "venv" in parts
+                or any(part.startswith("python") for part in parts)
+            )
         ):
             return "python-entrypoint"
         return "native-exe"
@@ -1173,8 +1197,9 @@ def _build_doctor_payload(
         rust_binary_version_status = "stale-skipped"
     rust_core_extension_available = _doctor_rust_core_extension_available()
     path_tg_candidates = _doctor_path_tg_candidates()
+    path_tg_first_raw_version = path_tg_candidates[0].get("version") if path_tg_candidates else None
     path_tg_first_version = (
-        str(path_tg_candidates[0].get("version")) if path_tg_candidates else None
+        str(path_tg_first_raw_version) if path_tg_first_raw_version is not None else None
     )
     path_tg_first_path = str(path_tg_candidates[0].get("path")) if path_tg_candidates else None
     path_tg_first_launcher_kind = _doctor_tg_launcher_kind(
@@ -1182,9 +1207,12 @@ def _build_doctor_payload(
         path_tg_first_version,
     )
     fresh_shell_path_tg_candidates = _doctor_fresh_shell_path_tg_candidates()
+    fresh_shell_path_tg_first_raw_version = (
+        fresh_shell_path_tg_candidates[0].get("version") if fresh_shell_path_tg_candidates else None
+    )
     fresh_shell_path_tg_first_version = (
-        str(fresh_shell_path_tg_candidates[0].get("version"))
-        if fresh_shell_path_tg_candidates
+        str(fresh_shell_path_tg_first_raw_version)
+        if fresh_shell_path_tg_first_raw_version is not None
         else None
     )
     fresh_shell_path_tg_first_path = (
@@ -3017,7 +3045,7 @@ The stable text-search contract is the validated rg-compatible surface documente
 - `tg calibrate`: Measure CPU vs GPU crossover thresholds
 - `tg devices`: Print routable GPU device IDs and VRAM inventory
 - `tg mcp`: Start the AI-assistant Model Context Protocol (MCP) server
-- `tg classify`: Run semantic NLP threat classification on logs via cyBERT
+- `tg classify`: Run log classification with local heuristics by default, or CyBERT when explicitly enabled
 - `tg run`: Run AST structural search and optional rewrites (ast-grep parity)
 - `tg scan` / `tg test` / `tg lsp`: Auxiliary AST workflows
 - `tg upgrade` / `tg update`: Upgrade tensor-grep in place

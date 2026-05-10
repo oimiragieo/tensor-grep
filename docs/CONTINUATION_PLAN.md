@@ -2,28 +2,29 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
-## 2026-05-09 Current Handoff
+## 2026-05-10 Current Handoff
 
 release_docs_current_tag: v1.9.5
 
-The current released state is `v1.9.4`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes advertised Python-backed shapes, the Windows `.cmd` launcher preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing, cold benchmark artifacts record the actual launcher command kind, benchmark scripts warn when timings include shim/interpreter overhead, explicit GPU device routing probes only selected devices, `tg agent` exposes the opt-in Actionable Context Capsule, mixed-language capsule confidence/validation alignment is release-hardened, edit JSON/rollback safety is release-hardened, explicit Python intent routing is hardened, quoted validation commands are argv-safe, and `$file` / `{file}` validation placeholders are substituted before validation. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.9.5`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes advertised Python-backed shapes, the Windows `.cmd` launcher preserves quoted multi-word no-match patterns, fresh Windows managed installs resolve the native front door ahead of compatibility shims when not shadowed by a foreign command, `context-render` and `edit-plan` expose top-level `validation_commands`, default `classify` is deterministic/local, GPU scale correctness gates cover 1GB/5GB rows, `tg doctor --json` exposes current-process vs fresh-shell launcher routing and foreign ownership, cold benchmark artifacts record the actual launcher command kind, benchmark scripts warn when timings include shim/interpreter overhead, explicit GPU device routing probes only selected devices, `tg agent` exposes the opt-in Actionable Context Capsule, mixed-language capsule confidence/validation alignment is release-hardened, edit JSON/rollback safety is release-hardened, explicit Python intent routing is hardened, quoted validation commands are argv-safe, `$file` / `{file}` validation placeholders run once per edited file for applied rewrites, sidecar-routed GPU rows are excluded from native CUDA scale proof, ambiguous capsules expose alternatives, and the root help menu advertises current operational settings. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `adde778 chore(release): v1.9.4 [skip ci]`
-- Latest merged fix commit: `646b089 fix: harden docs governance and validation placeholders`
+- Release commit: `db9cb98 chore(release): v1.9.5 [skip ci]`
+- Latest merged fix commit: `23e5f52 fix: harden GPU gates and launcher diagnostics`
 - Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
-- Main CI run `25614464124`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL runs `25614464010` and `25614702928`: passed
-- PyPI latest and pinned public install: `tensor-grep==1.9.4` resolves from PyPI.
-- GitHub release assets for `v1.9.4` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native-upgrade dogfood: `tg update` from `v1.9.3` installed sidecar `tensor-grep==1.9.4` and refreshed the native front door to `tg 1.9.4` after transient PyPI propagation lag.
+- Main CI run `25619996022`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL run `25619995837`: passed
+- PyPI latest and pinned public install: `tensor-grep==1.9.5` resolves from PyPI.
+- GitHub release assets for `v1.9.5` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.5`; the bare `tg` command on this host was shadowed by unrelated Together CLI until local dogfood added a non-destructive `tg.com` bridge ahead of the foreign `.exe` because Machine PATH ordering was not writable.
+- Prior managed native-upgrade dogfood: `tg update` from `v1.9.3` installed sidecar `tensor-grep==1.9.4` and refreshed the native front door to `tg 1.9.4` after transient PyPI propagation lag.
 - Public capsule dogfood: `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.
 - Public native CLI dogfood: installed `tg 1.8.32` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
 - Public doctor dogfood: `tg doctor --json` reports `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and `path_tg_launcher_warning` when an existing shell still routes through the compatibility shim before fresh-shell PATH.
 - Public Windows launcher dogfood: `cmd /c tg`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` preserve quoted multi-word no-match patterns and return exit `1` with no false-positive stdout.
-- Post-`v1.9.4` local dogfood: native CUDA debug search passes 1GB/5GB exact correctness but remains slower than both `rg` and `tg_cpu`; GPU sidecar rows are excluded from native CUDA scale-gate proof; ambiguous capsules expose `alternative_targets`; root `tg --help` advertises current agent/GPU/launcher/validation settings; and first-PATH `tg` commands from unrelated tools are classified as `foreign` in `tg doctor --json` with explicit readiness remediation.
+- Post-`v1.9.5` local dogfood: native CUDA release search passes correctness smoke checks and 1GB/5GB scale correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`), and PyTorch sidecar searches work on both after refreshing to `2.11.0+cu128`; GPU remains slower than both `rg` and `tg_cpu`, so this is compatibility evidence rather than a speed claim. Root `tg --help` advertises current agent/GPU/launcher/validation settings, and first-PATH `tg` commands from unrelated tools are classified as `foreign` in `tg doctor --json` with explicit readiness remediation. On this host, fresh Windows shell dogfood passes after adding a tensor-grep `tg.com` bridge ahead of the foreign `tg.exe` because Machine PATH ordering was not writable.
 
 Current product read:
 

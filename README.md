@@ -43,7 +43,7 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.9.5
 
-Latest stable PyPI release: [`v1.9.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.4).
+Latest stable PyPI release: [`v1.9.5`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.5).
 
 Current positioning:
 
@@ -55,19 +55,19 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 
+What `v1.9.5` closed:
+
+- native CUDA benchmark gates now distinguish real CUDA-enabled native rows from Python/Torch sidecar routing, so sidecar work cannot be counted as native CUDA scale proof
+- native CUDA debug dogfood passes exact match/file-set correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`) smoke corpora, while still keeping GPU auto-recommendation disabled because GPU remains slower than `rg` and `tg_cpu`
+- ambiguous `tg agent` capsules expose `alternative_targets` so cross-language candidates remain visible when the primary target is only one ranked choice
+- root `tg --help` surfaces the current agent capsule, validation placeholder, generated-root guardrail, GPU experimental, classify-provider, launcher, and environment-override contracts
+- `tg doctor --json` and agent-readiness classify first-PATH `tg` commands from unrelated tools as `foreign`, report explicit remediation, and do not delete or overwrite unrelated launchers
+
 What `v1.9.4` closed:
 
 - docs-governance tests now track the current project release tag instead of pinning stale v1.9.2 language
-- edit validation commands substitute `$file` and `{file}` placeholders with the target path before execution
+- edit validation commands substitute `$file` and `{file}` placeholders with each edited file path before execution; placeholder-free validation commands still run once in the original target working directory
 - quoted validation placeholders work on Windows paths with spaces; quote placeholders in docs and examples when paths may contain spaces
-
-Unreleased post-`v1.9.4` local fixes under validation:
-
-- native CUDA search no longer sizes adaptive match buffers from shard bytes; 1GB and 5GB CUDA-feature debug artifacts now pass exact match/file-set correctness, but GPU remains slower than `rg` and `tg_cpu`
-- GPU scale benchmarks now probe and record the runtime backend used for `--gpu-device-ids` and skip sidecar-routed rows instead of timing Python/Torch sidecar work as native CUDA
-- ambiguous `tg agent` capsules now expose `alternative_targets` so cross-language candidates remain visible when the primary target is still only one ranked choice
-- root `tg --help` now surfaces the current agent capsule, validation placeholder, generated-root guardrail, GPU experimental, classify-provider, launcher, and environment-override contracts instead of hiding them in docs only
-- `tg doctor --json` and agent-readiness now classify first-PATH `tg` commands from unrelated tools as `foreign`, report explicit remediation, and keep readiness failing until PATH is fixed; they do not delete or overwrite unrelated launchers
 
 What `v1.9.3` closed:
 
@@ -108,9 +108,9 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.4` follow-up:
+Active post-`v1.9.5` follow-up:
 
-- continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output; local post-`v1.9.4` work now surfaces plausible cross-language alternatives instead of hiding them behind a single primary target
+- continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
 - keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
 - preserve the mixed-language capsule trust contract: explicit language intent, exact symbol intent, primary target language, `validation_alignment`, and `ask_user_before_editing` must agree or confidence must drop
 - the capsule output is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when warranted. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected.
@@ -120,9 +120,14 @@ Active post-`v1.9.4` follow-up:
 - keep both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim; treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons
 - keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
 - keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
-- this release is docs-governance and validation-placeholder correctness; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
+- keep GPU experimental until the required 1GB/5GB correctness rows pass and a selected GPU beats both `rg` and `tg_cpu`; current RTX 4070/RTX 5070 smoke proof is correctness/compatibility evidence, not a speed claim
+- post-`v1.9.5` native CUDA scale dogfood now passes 1GB and 5GB correctness on both local GPUs, but still finds no crossover: best GPU/rg ratios are about `22.9x` slower on RTX 4070 and `24.1x` slower on RTX 5070
 
 Managed native-upgrade dogfood:
+
+- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.5`
+- PyPI latest and pinned public install resolve `tensor-grep==1.9.5`
+- `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation; this is a PATH-shadow environment blocker, not a tensor-grep-owned stale launcher cleanup target
 
 - `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
 - `tg doctor --json` now reports `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route
@@ -132,6 +137,12 @@ Managed native-upgrade dogfood:
 
 Release proof:
 
+- PR #83 merged and released from `23e5f52 fix: harden GPU gates and launcher diagnostics`
+- release commit `db9cb98 chore(release): v1.9.5 [skip ci]`
+- main CI run `25619996022` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL run `25619995837` passed
+- GitHub release assets for `v1.9.5` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI reports `tensor-grep 1.9.5`; `tensor-grep==1.9.5` resolves from PyPI
 - PR #82 merged and released from `646b089 fix: harden docs governance and validation placeholders`
 - release commit `adde778 chore(release): v1.9.4 [skip ci]`
 - main CI run `25614464124` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
@@ -183,7 +194,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.9.4` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.9.5` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -204,7 +215,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.9.4` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
+- `v1.9.5` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
@@ -662,7 +673,7 @@ $ cargo build --release --features cuda
 $ cargo test --features cuda
 ```
 
-The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compiles GPU kernels via NVRTC JIT at runtime. The current accepted benchmark line covers sm_89 (RTX 4070). RTX 50-series / sm_120 hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery alone.
+The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compiles GPU kernels via NVRTC JIT at runtime. The current accepted benchmark line covers sm_89 (RTX 4070). RTX 50-series / sm_120 hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
 
 ## Hardware & Software Requirements
 
@@ -680,14 +691,15 @@ To unlock GPU acceleration, your system must meet these requirements. End-to-end
   * Multi-GPU supported; current gains are workload-dependent and documented in [docs/gpu_crossover.md](docs/gpu_crossover.md)
 * **Software / Drivers:**
   * **NVIDIA Display Drivers:** v535.xx or newer
-  * **CUDA Toolkit:** 12.0 or newer (CUDA 12.4+ recommended for current accepted paths; CUDA 12.8+ is required for PyTorch-backed RTX 50-series / sm_120 compatibility)
+  * **CUDA Toolkit:** 12.0 or newer for native CUDA builds; CUDA 12.8+ is recommended for dual RTX 4070 / RTX 5070 hosts and required for PyTorch-backed RTX 50-series / sm_120 compatibility
 * **Build:** `cargo build --release --features cuda` in the `rust_core` directory
 
 ### Python backends (optional)
 
 The native CPU, AST, index, and primary GPU paths live in Rust. Python remains optional for NLP classification and compatibility sidecar paths:
 * **Linux / WSL2:** NVIDIA RAPIDS `cuDF` (`cudf-cu12`) for optional sidecar-backed GPU integrations.
-* **Windows Native:** PyTorch with CUDA 12 support for optional NLP and compatibility flows.
+* **Windows Native:** PyTorch CUDA 12.8 (`cu128`) for optional NVIDIA NLP and compatibility flows.
+* **AMD ROCm:** Linux-first PyTorch ROCm 7.2 is the managed AMD install target. Windows ROCm support is narrower and GPU-file-search paths must fall back to CPU/`rg` unless the host passes explicit device and correctness checks.
 * **All platforms:** `uv pip install "tensor-grep[ast,nlp]"` for optional AST/NLP Python extras where needed.
 
 ## Future Work

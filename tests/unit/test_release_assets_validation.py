@@ -3455,7 +3455,7 @@ def test_should_require_release_build_binaries_step_contracts():
         1,
     )
     release_workflow = release_workflow.replace(
-        "uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124",
+        "uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128",
         "uv pip install torch torchvision torchaudio",
         1,
     )
@@ -3521,7 +3521,7 @@ def test_should_require_release_build_binaries_step_contracts():
     )
     assert (
         "build-binaries `Install dependencies (NVIDIA)` step must invoke "
-        "`uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124`"
+        "`uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128`"
         in joined_errors
     )
     assert (

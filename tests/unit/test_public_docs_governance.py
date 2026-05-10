@@ -20,10 +20,10 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "adde778 chore(release): v1.9.4 [skip ci]"
-CURRENT_FIX_COMMIT = "646b089 fix: harden docs governance and validation placeholders"
-CURRENT_MAIN_CI = "25614464124"
-CURRENT_CODEQL = "25614464010"
+CURRENT_RELEASE_COMMIT = "db9cb98 chore(release): v1.9.5 [skip ci]"
+CURRENT_FIX_COMMIT = "23e5f52 fix: harden GPU gates and launcher diagnostics"
+CURRENT_MAIN_CI = "25619996022"
+CURRENT_CODEQL = "25619995837"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -116,7 +116,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert CURRENT_MAIN_CI in handoff
     assert CURRENT_CODEQL in handoff
-    assert "tensor-grep==1.9.4" in handoff
+    assert "tensor-grep==1.9.5" in handoff
+    assert "Closed GPU gates and launcher diagnostics gap" in handoff
     assert "Closed docs/version governance and validation placeholder gap" in handoff
     assert "Closed explicit ranking and validation quoting gap" in handoff
     assert "Closed edit automation safety gap" in handoff
@@ -158,6 +159,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
+    assert "v1.9.5` release hardens GPU native gate attribution" in handoff
     assert "v1.9.4` release fixes stale docs-governance expectations" in handoff
     assert "v1.9.3` release hardens explicit language/file-name agent ranking" in handoff
     assert "v1.9.2` release hardens edit JSON" in handoff
@@ -170,8 +172,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.9.4`" in readme
-    assert "sidecar `tensor-grep==1.9.4`" in readme
+    assert "GitHub release assets for `v1.9.5`" in readme
+    assert "tensor-grep==1.9.5" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -186,15 +188,19 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.9.4` closed:"
+    current_closed_heading = "What `v1.9.5` closed:"
+    v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.9.4` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v193_heading, 1)[0]
+    follow_up_heading = "Active post-`v1.9.5` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v194_heading, 1)[0]
+    v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "$file" in current_closed_block
-    assert "docs-governance tests" in current_closed_block
+    assert "sidecar" in current_closed_block
+    assert "foreign" in current_closed_block
+    assert "$file" in v194_closed_block
+    assert "docs-governance tests" in v194_closed_block
     assert "--diff --json" in v192_closed_block
     assert "rolls changed files back" in v192_closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
@@ -211,7 +217,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.9.4`" in skill
+    assert "current released version is `v1.9.5`" in skill
+    assert "PR #83 `fix: harden GPU gates and launcher diagnostics` merged" in skill
     assert "PR #82 `fix: harden docs governance and validation placeholders` merged" in skill
     assert "PR #81 `fix: harden agent ranking docs and validation quoting` merged" in skill
     assert "PR #80 `fix: harden edit JSON and capsule validation trust` merged" in skill
