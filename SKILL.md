@@ -7,7 +7,7 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-release_docs_current_tag: v1.9.4
+release_docs_current_tag: v1.9.5
 
 As of 2026-05-09, the current released version is `v1.9.4`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, capsule validation-trust fixes, explicit language/file-name ranking, quoted Windows validation commands, docs governance, and `$file` / `{file}` validation placeholder substitution are released and publicly dogfooded.
 

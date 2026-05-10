@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.9.5 (2026-05-10)
+
+### Bug Fixes
+
+- Harden GPU gates and launcher diagnostics
+  ([`23e5f52`](https://github.com/oimiragieo/tensor-grep/commit/23e5f520c41e7cb999d3ef3e89740d42faffb2ea))
+
+fix: harden GPU gates and launcher diagnostics
+
+
 ## v1.9.4 (2026-05-09)
 
 ### Bug Fixes
