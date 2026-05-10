@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.9.8 (2026-05-10)
+
+### Bug Fixes
+
+- Refresh stale tg.com bridge after upgrade
+  ([`f300cf3`](https://github.com/oimiragieo/tensor-grep/commit/f300cf391ae171b606cbaa88d8290074350968a3))
+
+
 ## v1.9.7 (2026-05-10)
 
 ### Bug Fixes
