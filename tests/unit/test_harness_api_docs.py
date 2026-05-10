@@ -124,6 +124,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_context_render" in doc
     assert "tg_agent_capsule" in doc
     assert "capsule_version" in doc
+    assert "alternative_targets" in doc
     assert "call_site_evidence" in doc
     assert "capsule_primary_file_omitted" in doc
     assert "raw_context_ref" in doc

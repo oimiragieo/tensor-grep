@@ -6,6 +6,7 @@ ROUTING_DOC_PATH = Path("docs/routing_policy.md")
 WORLD_CLASS_PLAN_PATH = Path("docs/world_class_plan.md")
 BENCHMARKS_DOC_PATH = Path("docs/benchmarks.md")
 TOOL_COMPARISON_DOC_PATH = Path("docs/tool_comparison.md")
+GPU_CROSSOVER_DOC_PATH = Path("docs/gpu_crossover.md")
 PAPER_DOC_PATH = Path("docs/PAPER.md")
 AGENTS_DOC_PATH = Path("AGENTS.md")
 SKILL_DOC_PATH = Path("SKILL.md")
@@ -208,6 +209,47 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "--diff --json" in v192_closed_block
     assert "rolls changed files back" in v192_closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
+
+
+def test_gpu_docs_should_record_current_v196_no_crossover_story() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+    benchmarks = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
+    gpu_doc = GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8")
+    paper = PAPER_DOC_PATH.read_text(encoding="utf-8")
+
+    for doc in (readme, benchmarks, gpu_doc, paper):
+        assert "post-`v1.9.6`" in doc
+        assert "1GB and 5GB correctness" in doc
+        assert "RTX 4070" in doc
+        assert "RTX 5070" in doc
+        assert "no crossover" in doc.lower()
+        assert "slower than `rg` and `tg_cpu`" in doc
+
+    for doc in (benchmarks, gpu_doc):
+        assert "Python GPU scale rows are unsupported for native CUDA promotion" in doc
+        assert "Native CUDA correctness passed, but speed/promotion failed" in doc
+
+    assert "22.9183x" in gpu_doc
+    assert "24.1120x" in gpu_doc
+
+
+def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:
+    docs = {
+        "README.md": README_PATH.read_text(encoding="utf-8"),
+        "docs/benchmarks.md": BENCHMARKS_DOC_PATH.read_text(encoding="utf-8"),
+        "docs/gpu_crossover.md": GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8"),
+        "docs/PAPER.md": PAPER_DOC_PATH.read_text(encoding="utf-8"),
+    }
+    banned_fragments = [
+        "mathematically guaranteeing",
+        "0ms interpreter lag",
+        "peak theoretical throughput",
+        "further buries",
+    ]
+
+    for path, doc in docs.items():
+        for fragment in banned_fragments:
+            assert fragment not in doc, f"{path} contains unaccepted claim `{fragment}`"
 
 
 def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:

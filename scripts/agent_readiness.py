@@ -269,6 +269,47 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         for fragment in required_fragments:
             if fragment not in content:
                 missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
+
+    gpu_docs = [
+        repo_root / "README.md",
+        repo_root / "docs" / "benchmarks.md",
+        repo_root / "docs" / "gpu_crossover.md",
+        repo_root / "docs" / "PAPER.md",
+    ]
+    gpu_fragments = [
+        "post-`v1.9.6`",
+        "1GB and 5GB correctness",
+        "RTX 4070",
+        "RTX 5070",
+        "no crossover",
+        "slower than `rg` and `tg_cpu`",
+    ]
+    banned_gpu_fragments = [
+        "mathematically guaranteeing",
+        "0ms interpreter lag",
+        "peak theoretical throughput",
+        "further buries",
+    ]
+    for path in gpu_docs:
+        content = path.read_text(encoding="utf-8")
+        lower_content = content.lower()
+        for fragment in gpu_fragments:
+            haystack = lower_content if fragment == "no crossover" else content
+            needle = fragment if fragment != "no crossover" else fragment.lower()
+            if needle not in haystack:
+                missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
+        for fragment in banned_gpu_fragments:
+            if fragment in content:
+                missing.append(f"{path.relative_to(repo_root)} contains `{fragment}`")
+
+    for path in (repo_root / "docs" / "benchmarks.md", repo_root / "docs" / "gpu_crossover.md"):
+        content = path.read_text(encoding="utf-8")
+        for fragment in (
+            "Python GPU scale rows are unsupported for native CUDA promotion",
+            "Native CUDA correctness passed, but speed/promotion failed",
+        ):
+            if fragment not in content:
+                missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
     if missing:
         raise ReadinessError("; ".join(missing))
 

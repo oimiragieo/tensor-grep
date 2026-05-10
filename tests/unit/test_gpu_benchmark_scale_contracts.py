@@ -302,6 +302,35 @@ def test_run_gpu_benchmarks_should_skip_sidecar_gpu_runtime_for_scale_gates(monk
     assert gpu0["status"] == "UNSUPPORTED"
     assert gpu0["tg_runtime_backend"] == "GpuSidecar"
     assert "requires a CUDA-enabled native tg binary" in gpu0["stderr"]
+    assert payload["scale_gate_summary"] == {
+        "benchmark_surface": "python-gpu-scale",
+        "native_cuda_scale_gate": {
+            "status": "UNSUPPORTED",
+            "required_backend": "NativeGpuBackend",
+            "observed_backends": ["GpuSidecar"],
+            "reason": (
+                "Operational GPU devices routed outside the native CUDA backend; "
+                "Python/Torch sidecar rows are not native CUDA scale proof."
+            ),
+        },
+        "correctness_gate": {
+            "status": "NOT_RUN",
+            "required_sizes": ["1GB", "5GB"],
+            "passing_device_ids": [],
+            "reason": "Native CUDA correctness checks did not run.",
+        },
+        "speed_gate": {
+            "status": "NOT_RUN",
+            "required_baselines": ["rg", "tg_cpu"],
+            "reason": "Native CUDA speed gate did not run because the native CUDA scale gate is unsupported.",
+        },
+        "promotion_ready": False,
+        "summary": (
+            "Python GPU scale rows are unsupported for native CUDA promotion; run "
+            "benchmarks/run_gpu_native_benchmarks.py with a CUDA-enabled native tg binary "
+            "to evaluate correctness and speed separately."
+        ),
+    }
     assert all("--gpu-device-ids" not in command for command in commands)
     assert correctness_called is False
     assert payload["correctness_checks"] == []
@@ -499,3 +528,65 @@ def test_run_gpu_native_benchmarks_should_default_to_1gb_and_5gb_scale():
     )
 
     assert module.DEFAULT_CORPUS_SIZES[-2:] == (module.GB, 5 * module.GB)
+
+
+def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_failure():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_scale_gate_summary",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 0.25},
+            "tg_cpu": {"status": "PASS", "median_s": 0.24},
+            "tg_gpu": {"status": "PASS", "median_s": 9.2},
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 0.28},
+            "tg_cpu": {"status": "PASS", "median_s": 0.23},
+            "tg_gpu": {"status": "PASS", "median_s": 9.4},
+        },
+    ]
+    correctness_checks = [
+        {
+            "size_label": size_label,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+    ]
+
+    summary = module.build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+
+    assert summary["benchmark_surface"] == "native-cuda-scale"
+    assert summary["correctness_gate"] == {
+        "status": "PASS",
+        "required_sizes": ["1GB", "5GB"],
+        "passing_sizes": ["1GB", "5GB"],
+        "reason": "Native CUDA correctness passed at every required scale.",
+    }
+    assert summary["speed_gate"] == {
+        "status": "FAIL",
+        "required_baselines": ["rg", "tg_cpu"],
+        "winning_sizes": [],
+        "best_attempt": {
+            "size_label": "1GB",
+            "gpu_rg_ratio": 36.8,
+            "gpu_tg_cpu_ratio": 38.3333,
+        },
+        "reason": "Native CUDA did not beat both rg and tg_cpu at the required scale.",
+    }
+    assert summary["promotion_ready"] is False
+    assert (
+        summary["summary"]
+        == "Native CUDA correctness passed, but speed/promotion failed; keep GPU experimental."
+    )
