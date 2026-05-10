@@ -188,6 +188,21 @@ Use this for:
 - `test`
 - AST workflow startup / batching / wrapper orchestration
 
+### Agent capsule / edit-loop workflow benchmark
+
+```powershell
+python benchmarks/run_agent_workflow_benchmarks.py --output artifacts/bench_agent_workflow.json
+```
+
+Use this for:
+
+- `tg agent` capsule routing
+- confidence / alternative target surfacing
+- validation alignment and filtering
+- rollback, edit order, and whole-loop edit latency
+
+This is workflow evidence, not a cold exact-text search speed claim.
+
 ### GPU / NLP backend benchmark
 
 ```powershell

@@ -23,6 +23,7 @@ def test_benchmark_docs_should_publish_the_current_benchmark_matrix() -> None:
     assert "run_ast_workflow_benchmarks.py" in doc
     assert "run_gpu_benchmarks.py" in doc
     assert "run_gpu_native_benchmarks.py" in doc
+    assert "run_agent_workflow_benchmarks.py" in doc
     assert "run_harness_loop_benchmark.py" in doc
     assert "run_index_scaling_benchmark.py" in doc
     assert "artifacts/bench_run_benchmarks.json" in doc
@@ -35,6 +36,7 @@ def test_benchmark_docs_should_publish_the_current_benchmark_matrix() -> None:
     assert "artifacts/bench_run_ast_workflow_benchmarks.json" in doc
     assert "artifacts/bench_run_gpu_benchmarks.json" in doc
     assert "artifacts/bench_run_gpu_native_benchmarks.json" in doc
+    assert "artifacts/bench_agent_workflow.json" in doc
     assert "artifacts/bench_harness_loop.json" in doc
     assert "artifacts/bench_index_scaling.json" in doc
 
@@ -51,3 +53,15 @@ def test_benchmark_docs_should_describe_artifact_and_baseline_governance() -> No
     assert "Do not update benchmark docs or claims" in doc
     assert "Gate (`<= 1.1`)" in doc
     assert "max_ratio_tg_vs_sg" in doc
+
+
+def test_benchmark_docs_should_describe_agent_workflow_benchmark_positioning() -> None:
+    doc = Path("docs/benchmarks.md").read_text(encoding="utf-8")
+
+    assert "## Agent Workflow Benchmark" in doc
+    assert "agent-native workflow benchmark; not a cold exact-text speed claim" in doc
+    assert "agent_capsule" in doc
+    assert "edit_loop" in doc
+    assert (
+        "confidence, alternatives, validation alignment, snippets, rollback, and edit order" in doc
+    )
