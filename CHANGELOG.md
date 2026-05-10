@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.9.9 (2026-05-10)
+
+### Bug Fixes
+
+- Add agent workflow benchmark governance
+  ([`21449bf`](https://github.com/oimiragieo/tensor-grep/commit/21449bf812cd077f55985ad716a38bde48d09130))
+
+### Documentation
+
+- Sync v1.9.8 release governance
+  ([`bb31ea3`](https://github.com/oimiragieo/tensor-grep/commit/bb31ea36c761688c79e0faed9cc89ac0e437219a))
+
+
 ## v1.9.8 (2026-05-10)
 
 ### Bug Fixes
