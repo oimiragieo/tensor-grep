@@ -21,10 +21,10 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "524a724 chore(release): v1.9.7 [skip ci]"
-CURRENT_FIX_COMMIT = "4ff7a77 fix: clarify GPU benchmark promotion gates"
-CURRENT_MAIN_CI = "25635877849"
-CURRENT_CODEQL = "25636164492"
+CURRENT_RELEASE_COMMIT = "6f10b87 chore(release): v1.9.8 [skip ci]"
+CURRENT_FIX_COMMIT = "f300cf3 fix: refresh stale tg.com bridge after upgrade"
+CURRENT_MAIN_CI = "25637706454"
+CURRENT_CODEQL = "25637706166"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -117,7 +117,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert CURRENT_MAIN_CI in handoff
     assert CURRENT_CODEQL in handoff
-    assert "tensor-grep==1.9.7" in handoff
+    assert "tensor-grep==1.9.8" in handoff
     assert "Closed GPU gates and launcher diagnostics gap" in handoff
     assert "Closed docs/version governance and validation placeholder gap" in handoff
     assert "Closed explicit ranking and validation quoting gap" in handoff
@@ -160,6 +160,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
+    assert "v1.9.8` release refreshes stale tensor-grep-owned `tg.com`" in handoff
     assert "v1.9.7` release clarifies GPU benchmark promotion gates" in handoff
     assert "v1.9.6` release fixes the `v1.9.5` dogfood blockers" in handoff
     assert "v1.9.5` release hardens GPU native gate attribution" in handoff
@@ -175,8 +176,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.9.7`" in readme
-    assert "tensor-grep==1.9.7" in readme
+    assert "GitHub release assets for `v1.9.8`" in readme
+    assert "tensor-grep==1.9.8" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -191,22 +192,27 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.9.7` closed:"
+    current_closed_heading = "What `v1.9.8` closed:"
+    v197_heading = "What `v1.9.7` closed:"
     v196_heading = "What `v1.9.6` closed:"
     v195_heading = "What `v1.9.5` closed:"
     v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.9.7` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v196_heading, 1)[0]
+    follow_up_heading = "Active post-`v1.9.8` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v197_heading, 1)[0]
+    v197_closed_block = readme.split(v197_heading, 1)[1].split(v196_heading, 1)[0]
     v196_closed_block = readme.split(v196_heading, 1)[1].split(v195_heading, 1)[0]
     v195_closed_block = readme.split(v195_heading, 1)[1].split(v194_heading, 1)[0]
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "Python GPU scale rows are unsupported" in current_closed_block
-    assert "Native CUDA correctness passed" in current_closed_block
-    assert "cold exact text" in current_closed_block
+    assert "stale tensor-grep-owned `tg.com`" in current_closed_block
+    assert "Windows `PATHEXT`" in current_closed_block
+    assert "fresh `cmd` and unprofiled `pwsh` report `tg 1.9.8`" in current_closed_block
+    assert "Python GPU scale rows are unsupported" in v197_closed_block
+    assert "Native CUDA correctness passed" in v197_closed_block
+    assert "cold exact text" in v197_closed_block
     assert "sidecar" in v196_closed_block
     assert "foreign" in v196_closed_block
     assert "GPU native gate attribution" in v195_closed_block
@@ -269,7 +275,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.9.7`" in skill
+    assert "current released version is `v1.9.8`" in skill
+    assert "PR #87 `fix: refresh stale tg.com bridge after upgrade` merged" in skill
     assert "PR #86 `fix: clarify GPU benchmark promotion gates` merged" in skill
     assert "PR #83 `fix: harden GPU gates and launcher diagnostics` merged" in skill
     assert "PR #82 `fix: harden docs governance and validation placeholders` merged" in skill
