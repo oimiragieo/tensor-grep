@@ -164,6 +164,68 @@ def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _alternative_targets(
+    payload: dict[str, Any],
+    target: dict[str, Any],
+    *,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    primary_file = str(target.get("file") or "")
+    candidate_targets = _as_dict(payload.get("candidate_edit_targets"))
+    file_matches = {
+        str(match.get("path") or ""): match
+        for match in _as_list_of_dicts(payload.get("file_matches"))
+        if match.get("path")
+    }
+    alternatives: list[dict[str, Any]] = []
+    seen: set[tuple[str, str | None]] = set()
+
+    for symbol in _as_list_of_dicts(candidate_targets.get("symbols")):
+        file_path = str(symbol.get("file") or "")
+        if not file_path or file_path == primary_file:
+            continue
+        symbol_name = str(symbol.get("name") or "")
+        key = (file_path, symbol_name or None)
+        if key in seen:
+            continue
+        seen.add(key)
+        match = file_matches.get(file_path, {})
+        score = max(int(symbol.get("score", 0) or 0), int(match.get("score", 0) or 0))
+        line = symbol.get("line") or symbol.get("start_line") or 1
+        alternatives.append({
+            "file": file_path,
+            "symbol": symbol_name or None,
+            "kind": symbol.get("kind") or "unknown",
+            "line": int(line) if isinstance(line, int) or str(line).isdigit() else 1,
+            "language": repo_map._target_language_for_path(file_path),
+            "confidence": repo_map._confidence_from_score(score),
+            "reasons": list(match.get("reasons") or []),
+            "evidence": list(match.get("provenance") or ["heuristic"]),
+        })
+
+    for file_path in _as_list_of_strings(candidate_targets.get("files")):
+        if file_path == primary_file:
+            continue
+        key = (file_path, None)
+        if key in seen or any(item.get("file") == file_path for item in alternatives):
+            continue
+        seen.add(key)
+        match = file_matches.get(file_path, {})
+        score = int(match.get("score", 0) or 0)
+        alternatives.append({
+            "file": file_path,
+            "symbol": None,
+            "kind": "file",
+            "line": 1,
+            "language": repo_map._target_language_for_path(file_path),
+            "confidence": repo_map._confidence_from_score(score),
+            "reasons": list(match.get("reasons") or []),
+            "evidence": list(match.get("provenance") or ["heuristic"]),
+        })
+
+    return alternatives[:limit]
+
+
 def _line_map(source: str, start_line: object) -> list[dict[str, Any]]:
     try:
         current_line = int(str(start_line))
@@ -463,6 +525,7 @@ def build_agent_capsule(
         render_profile="full",
     )
     target = _primary_target(payload)
+    alternatives = _alternative_targets(payload, target)
     snippets, omitted_sources, _used_tokens = _build_snippets(
         payload,
         query=query,
@@ -563,6 +626,7 @@ def build_agent_capsule(
         "query": query,
         "path": resolved_path,
         "primary_target": target,
+        "alternative_targets": alternatives,
         "route_rationale": [
             {
                 "strategy": "context-render",

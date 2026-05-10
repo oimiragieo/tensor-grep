@@ -9,13 +9,15 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 release_docs_current_tag: v1.9.4
 
-As of 2026-05-09, the current released version is `v1.9.2`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, and capsule validation-trust fixes are released and publicly dogfooded.
+As of 2026-05-09, the current released version is `v1.9.4`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, capsule validation-trust fixes, explicit language/file-name ranking, quoted Windows validation commands, docs governance, and `$file` / `{file}` validation placeholder substitution are released and publicly dogfooded.
 
 Current release facts:
 
-- Release commit: `8143ccb chore(release): v1.9.2 [skip ci]`
-- Latest merged fix commit: `faf67ed fix: harden edit JSON and capsule validation trust`
+- Release commit: `adde778 chore(release): v1.9.4 [skip ci]`
+- Latest merged fix commit: `646b089 fix: harden docs governance and validation placeholders`
 - Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
+- PR #82 `fix: harden docs governance and validation placeholders` merged and released
+- PR #81 `fix: harden agent ranking docs and validation quoting` merged and released
 - PR #80 `fix: harden edit JSON and capsule validation trust` merged and released
 - PR #78 `fix: harden agent capsule trust alignment` merged and released
 - PR #76 `feat: add actionable agent context capsule` merged and released
@@ -26,15 +28,16 @@ Current release facts:
 - Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
-- Main CI run `25609611007` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25609610737` passed
-- PyPI latest and pinned public install both resolve `tensor-grep==1.9.2`
-- GitHub release assets for `v1.9.2` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public update dogfood: `tg update` from `v1.9.1` installed sidecar `tensor-grep==1.9.2`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.2`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolve `tg 1.9.2`; `tg doctor --json` reports `version = 1.9.2`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH. Public readiness passed 15/16 before this follow-up, failing only docs claim hygiene.
+- Main CI run `25614464124` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25614464010` and `25614702928` passed
+- PyPI latest and pinned public install both resolve `tensor-grep==1.9.4`
+- GitHub release assets for `v1.9.4` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public update dogfood: `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.4`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolve `tg 1.9.4`; `tg doctor --json` reports `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH. Public readiness rerun passed 16/16 after transient `uv run` rebuild timeout noise on the first post-release attempt.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
 - Public native CLI dogfood: `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` all accept the advertised public shape on the installed front door.
 - Public Windows launcher dogfood: `cmd /c tg`, direct managed `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...])` all return exit `1` with empty stdout for fresh quoted no-match phrases.
 - Fast gate before PR #76: `python scripts/agent_readiness.py --output artifacts/agent_readiness_agent_capsule.json` passed all checks.
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
+- Post-`v1.9.4` local dogfood: native CUDA debug search now passes 1GB/5GB exact correctness but remains slower than both `rg` and `tg_cpu`; GPU benchmark sidecar rows are marked unsupported for native CUDA scale gates; ambiguous capsules expose `alternative_targets`; root `tg --help` advertises current agent/GPU/launcher/validation contracts; and `tg doctor --json` classifies unrelated first-PATH `tg` commands such as Together CLI as `foreign` with explicit remediation while keeping readiness failing.
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
@@ -45,7 +48,7 @@ Current product read:
 - The native front door must accept advertised public flags or intentionally route them to the sidecar. The current release line covers `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, `tg classify --format json`, Windows `.cmd` quoted multi-word no-match patterns, native-first Windows PATH ordering for fresh managed shells, and launcher-route observability for current-process versus fresh-shell PATH drift.
 - The quoted multi-word no-match pattern case from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` is a public Windows launcher contract. A split pattern can become a shorter false-positive search plus bogus paths, so keep `public-windows-launcher-quoted-patterns` in the fast agent-readiness gate.
 - Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. On Windows, the managed native front-door directory should be ahead of compatibility `.cmd` shim directories on PATH so `cmd`, unprofiled PowerShell, and Python subprocess calls resolve `~/.tensor-grep/bin/tg.exe` before the slower argv-safe bridge. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path, and managed native front doors must be refreshed when the verified sidecar version moves ahead of `tg.exe`.
-- `tg doctor --json` is the first check for launcher drift. Inspect `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, and `path_tg_launcher_warning` before trusting Windows benchmark timings; existing shells can retain the slower compatibility shim even after fresh User PATH resolves the native front door.
+- `tg doctor --json` is the first check for launcher drift. Inspect `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, `path_tg_launcher_warning`, and any `*_is_foreign` / `*_foreign_remediation` fields before trusting Windows benchmark timings; existing shells can retain the slower compatibility shim even after fresh User PATH resolves the native front door, and unrelated tools can own a different `tg` command.
 - Cold-path benchmark artifacts should separate configured launcher mode from actual timed command kind. Use `environment.tg_launcher_mode` for the experiment and `environment.tg_launcher_command_kind` to distinguish native-exe, `.cmd` shim, `uv`, and Python-module routes. Treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons.
 - Explicit `--gpu-device-ids` routing should only probe selected CUDA ordinals. Selecting GPU 0 must not initialize or warn about unrelated unsupported devices such as GPU 1.
 - GPU benchmark auto-recommendation must stay false unless required 1GB/5GB correctness checks pass and a selected GPU beats both `rg` and `tg_cpu` at required scale. Unsupported-device inventory warnings should stay top-level or on the unsupported device row, not on unrelated selected-GPU timing rows.
@@ -64,7 +67,7 @@ Current product read:
 Known current weak spots:
 
 - Broad `tg search --files ...` over generated artifact trees can still be expensive; the managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
-- Windows command resolution must be checked across profiled PowerShell, `pwsh -NoProfile`, and `cmd`. Old tensor-grep-owned `Python*\Scripts\tg.exe` launchers should now be removed or uninstalled by the Windows installer; any recurrence is release-regression evidence.
+- Windows command resolution must be checked across profiled PowerShell, `pwsh -NoProfile`, and `cmd`. Old tensor-grep-owned `Python*\Scripts\tg.exe` launchers should now be removed or uninstalled by the Windows installer; any recurrence is release-regression evidence. A `Python*\Scripts\tg.exe` that reports another product's version is a foreign PATH-shadow blocker instead: report/remediate it, but do not delete it automatically.
 - WSL and Git Bash no-extension shims are part of the Windows installer contract. Verify WSL with `wsl bash -lc 'tg --version'` after shim changes.
 - In PowerShell, invoke `tg` or `tg.ps1` for regex metacharacters. Direct `tg.cmd` invocation with unescaped `|` is parsed by `cmd.exe` before the batch file receives argv.
 - `tg --version` is one-line by default for scripts; use `tg --version --verbose` for feature/SIMD/Arrow details.
@@ -77,6 +80,7 @@ Known current weak spots:
 - Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are regression-covered rg parity edges.
 - Stable managed install scripts and `tg upgrade` must not trust stale package metadata immediately after publish and must not delete a working managed install before the replacement environment and front-door files have installed successfully. PowerShell native installer steps must check `$LASTEXITCODE` before the staged swap. `tg upgrade` must skip yanked PyPI releases, must not report "latest PyPI version" from unchanged local metadata without post-upgrade import/version verification, and must refresh or schedule refresh of the managed native front door when the sidecar package version changes. A PyPI-only publish is not enough when installers point at GitHub assets; release assets must be uploaded and verified first.
 - GPU is not production-ready from device detection alone. The latest public dogfood still shows GPU losing badly or timing out at 100MB, 1GB, and 5GB; keep GPU claims behind accepted end-to-end artifacts.
+- Edit validation supports `$file` and `{file}` placeholders in validation command templates. Quote the placeholder for Windows paths with spaces, for example `--lint-cmd 'python -m py_compile "$file"'`.
 
 ## Release Completion Contract
 
@@ -189,7 +193,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.2` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.4` positioning, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

@@ -394,6 +394,55 @@ def run_correctness_check(
     }
 
 
+def probe_tg_gpu_runtime_backend(
+    *,
+    tg_binary: Path,
+    device_id: int,
+    env: dict[str, str],
+    bench_dir: Path,
+) -> dict[str, object]:
+    probe_dir = bench_dir / "_runtime_probe"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    probe_file = probe_dir / "gpu_runtime_probe.log"
+    probe_file.write_text("tg gpu runtime probe\n", encoding="utf-8")
+    try:
+        probe_path = str(probe_file.relative_to(ROOT_DIR))
+    except ValueError:
+        probe_path = str(probe_file)
+    command = [
+        str(tg_binary),
+        "search",
+        "--gpu-device-ids",
+        str(device_id),
+        "--no-ignore",
+        "--json",
+        "tg gpu runtime probe",
+        probe_path,
+    ]
+    result = _run_command(command, env=env, capture_output=True)
+    if result.returncode != 0:
+        return {
+            "status": "FAIL",
+            "error": (result.stderr or "").strip() or "GPU runtime probe failed.",
+            "command": _command_display(command),
+        }
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "FAIL",
+            "error": f"GPU runtime probe returned invalid JSON: {exc}",
+            "command": _command_display(command),
+        }
+    return {
+        "status": "PASS",
+        "routing_backend": payload.get("routing_backend"),
+        "routing_reason": payload.get("routing_reason"),
+        "sidecar_used": bool(payload.get("sidecar_used", False)),
+        "command": _command_display(command),
+    }
+
+
 def probe_gpu_devices(sidecar_python: Path | None) -> dict[str, object]:
     if sidecar_python is None or not sidecar_python.exists():
         return {
@@ -681,6 +730,27 @@ def run_gpu_scale_benchmarks(
         }
 
     command_env = _build_command_env(sidecar_python)
+    runtime_probes: dict[int, dict[str, object]] = {}
+    for device in devices:
+        if not device.get("operational", False):
+            continue
+        device_id = int(device["device_id"])
+        runtime_probe = probe_tg_gpu_runtime_backend(
+            tg_binary=tg_binary,
+            device_id=device_id,
+            env=command_env,
+            bench_dir=bench_dir,
+        )
+        runtime_probes[device_id] = runtime_probe
+        device["tg_runtime_backend"] = runtime_probe.get("routing_backend")
+        device["tg_runtime_reason"] = runtime_probe.get("routing_reason")
+        device["tg_runtime_sidecar_used"] = runtime_probe.get("sidecar_used")
+        if runtime_probe.get("routing_backend") != "NativeGpuBackend":
+            warnings.append(
+                "GPU scale benchmark requires a CUDA-enabled native tg binary; "
+                f"device {device_id} routed to "
+                f"{runtime_probe.get('routing_backend') or 'unknown'}."
+            )
     rows: list[dict[str, object]] = []
     generated_corpora: dict[int, Path] = {}
 
@@ -714,6 +784,9 @@ def run_gpu_scale_benchmarks(
                 "name": device.get("name"),
                 "vram_capacity_mb": device.get("vram_capacity_mb"),
                 "capability": device.get("capability"),
+                "tg_runtime_backend": device.get("tg_runtime_backend"),
+                "tg_runtime_reason": device.get("tg_runtime_reason"),
+                "tg_runtime_sidecar_used": device.get("tg_runtime_sidecar_used"),
             }
             if not device.get("operational", False):
                 entry.update({
@@ -721,6 +794,19 @@ def run_gpu_scale_benchmarks(
                     "median_s": None,
                     "samples_s": [],
                     "stderr": device.get("error", "device probe failed"),
+                })
+            elif device.get("tg_runtime_backend") != "NativeGpuBackend":
+                runtime_probe = runtime_probes.get(int(device["device_id"]), {})
+                entry.update({
+                    "status": "UNSUPPORTED",
+                    "median_s": None,
+                    "samples_s": [],
+                    "stderr": (
+                        "GPU scale benchmark requires a CUDA-enabled native tg binary; "
+                        f"runtime probe routed to "
+                        f"{runtime_probe.get('routing_backend') or 'unknown'}."
+                    ),
+                    "command": runtime_probe.get("command"),
                 })
             else:
                 result = benchmark_search_command(
@@ -797,6 +883,8 @@ def run_gpu_scale_benchmarks(
         correctness_corpus_dir = generated_corpora[correctness_corpus_size]
         for device in devices:
             if not device.get("operational", False):
+                continue
+            if device.get("tg_runtime_backend") != "NativeGpuBackend":
                 continue
             for pattern in correctness_patterns:
                 check = run_correctness_check(

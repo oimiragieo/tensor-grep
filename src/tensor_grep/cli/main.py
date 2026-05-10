@@ -110,6 +110,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg PATTERN [PATH ...]`
 - `tg search [OPTIONS] PATTERN [PATH ...]`
 - `tg run PATTERN [PATH]`
+- `tg agent PATH --query "change invoice tax"`
 - `tg scan --config sgconfig.yml`
 - `tg doctor --with-lsp`
 - `tg mcp`
@@ -118,20 +119,33 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg map PATH`
 - `tg context-render PATH --query "invoice flow"`
 - `tg edit-plan PATH --query "add retry with tests"`
+- `tg agent PATH --query "change behavior" --json`
 - `tg blast-radius-render PATH --symbol create_invoice`
 - `tg session open PATH`
 - `tg session daemon start PATH`
+
+**Agent contracts**
+- `tg agent` emits primary targets, alternative targets, snippets, validation_commands, rollback metadata, confidence, and ask-before-editing guidance.
+- `context-render` and `edit-plan` also expose top-level validation_commands.
+- Validation command templates can quote `$file` or `{file}` placeholders for target paths with spaces.
+
+**Search and safety**
+- Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
+- Broad generated-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
+- `--gpu-device-ids` pins selected GPUs for explicit benchmark probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
+- `classify` is local by default; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into CyBERT/Triton.
 
 **Notes**
 - Bare patterns are treated as `tg search`.
 - Use `tg search --help` for ripgrep-compatible flags.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
-- Use `tg doctor --json` for system, GPU, cache, and daemon diagnostics.
+- Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
 - Use `tg session --help` for cached edit-loop and daemon commands.
 
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
+- `TG_NATIVE_TG_BINARY`: Path to the native front door used by Python-backed commands.
 - `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.""",
     no_args_is_help=True,
     add_completion=True,
@@ -727,6 +741,13 @@ def _doctor_rust_binary_version_matches(
     return _native_tg_version_matches(expected_version, rust_binary_version)
 
 
+def _doctor_tg_version_looks_like_tensor_grep(version_text: str | None) -> bool:
+    if not version_text:
+        return False
+    stripped = version_text.strip().lower()
+    return stripped.startswith("tg ") or stripped.startswith("tensor-grep ")
+
+
 def _doctor_native_tg_binary_kind(native_tg_binary: Path | None) -> str:
     if native_tg_binary is None:
         return "missing"
@@ -859,9 +880,11 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     return None
 
 
-def _doctor_tg_launcher_kind(path: str | None) -> str | None:
+def _doctor_tg_launcher_kind(path: str | None, version_text: str | None = None) -> str | None:
     if not path:
         return None
+    if version_text is not None and not _doctor_tg_version_looks_like_tensor_grep(version_text):
+        return "foreign"
 
     candidate = Path(path)
     suffix = candidate.suffix.lower()
@@ -992,6 +1015,46 @@ def _doctor_path_tg_launcher_warning(
     return None
 
 
+def _doctor_tg_foreign_warning(
+    *,
+    label: str,
+    path: str | None,
+    version: str | None,
+    expected_version: str,
+) -> str | None:
+    if not path or _doctor_tg_version_looks_like_tensor_grep(version):
+        return None
+    return (
+        f"first {label} tg is not tensor-grep: {path} reports "
+        f"{version or 'no recognizable --version output'}; expected tg {expected_version}."
+    )
+
+
+def _doctor_tg_foreign_remediation(
+    *,
+    foreign_path: str | None,
+    candidates: list[dict[str, str | None]],
+) -> str | None:
+    if not foreign_path:
+        return None
+    managed_candidate = next(
+        (
+            candidate
+            for candidate in candidates
+            if _doctor_tg_launcher_kind(candidate.get("path"), candidate.get("version"))
+            == "managed-native"
+        ),
+        None,
+    )
+    managed_path = managed_candidate.get("path") if managed_candidate else None
+    managed_dir = str(Path(managed_path).parent) if managed_path else "~/.tensor-grep/bin"
+    foreign_dir = str(Path(foreign_path).parent)
+    return (
+        f"Move {managed_dir} earlier in PATH than {foreign_dir}, or rename the foreign tg "
+        "command outside tensor-grep. Do not remove unrelated launchers unless you own them."
+    )
+
+
 def _doctor_gpu_status() -> dict[str, Any]:
     status: dict[str, Any] = {"available": False, "devices": [], "error": None}
     try:
@@ -1114,7 +1177,10 @@ def _build_doctor_payload(
         str(path_tg_candidates[0].get("version")) if path_tg_candidates else None
     )
     path_tg_first_path = str(path_tg_candidates[0].get("path")) if path_tg_candidates else None
-    path_tg_first_launcher_kind = _doctor_tg_launcher_kind(path_tg_first_path)
+    path_tg_first_launcher_kind = _doctor_tg_launcher_kind(
+        path_tg_first_path,
+        path_tg_first_version,
+    )
     fresh_shell_path_tg_candidates = _doctor_fresh_shell_path_tg_candidates()
     fresh_shell_path_tg_first_version = (
         str(fresh_shell_path_tg_candidates[0].get("version"))
@@ -1127,7 +1193,20 @@ def _build_doctor_payload(
         else None
     )
     fresh_shell_path_tg_first_launcher_kind = _doctor_tg_launcher_kind(
-        fresh_shell_path_tg_first_path
+        fresh_shell_path_tg_first_path,
+        fresh_shell_path_tg_first_version,
+    )
+    path_tg_foreign_warning = _doctor_tg_foreign_warning(
+        label="PATH",
+        path=path_tg_first_path,
+        version=path_tg_first_version,
+        expected_version=installed_version,
+    )
+    fresh_shell_path_tg_foreign_warning = _doctor_tg_foreign_warning(
+        label="fresh-shell PATH",
+        path=fresh_shell_path_tg_first_path,
+        version=fresh_shell_path_tg_first_version,
+        expected_version=installed_version,
     )
     payload: dict[str, Any] = {
         "version": installed_version,
@@ -1170,12 +1249,28 @@ def _build_doctor_payload(
             installed_version,
             path_tg_first_version,
         ),
+        "path_tg_first_is_foreign": path_tg_first_launcher_kind == "foreign",
+        "path_tg_foreign_warning": path_tg_foreign_warning,
+        "path_tg_foreign_remediation": _doctor_tg_foreign_remediation(
+            foreign_path=path_tg_first_path if path_tg_foreign_warning else None,
+            candidates=path_tg_candidates,
+        ),
         "fresh_shell_path_tg_candidates": fresh_shell_path_tg_candidates,
         "fresh_shell_path_tg_first_version": fresh_shell_path_tg_first_version,
         "fresh_shell_path_tg_first_launcher_kind": fresh_shell_path_tg_first_launcher_kind,
         "fresh_shell_path_tg_first_version_matches": _doctor_rust_binary_version_matches(
             installed_version,
             fresh_shell_path_tg_first_version,
+        ),
+        "fresh_shell_path_tg_first_is_foreign": (
+            fresh_shell_path_tg_first_launcher_kind == "foreign"
+        ),
+        "fresh_shell_path_tg_foreign_warning": fresh_shell_path_tg_foreign_warning,
+        "fresh_shell_path_tg_foreign_remediation": _doctor_tg_foreign_remediation(
+            foreign_path=(
+                fresh_shell_path_tg_first_path if fresh_shell_path_tg_foreign_warning else None
+            ),
+            candidates=fresh_shell_path_tg_candidates,
         ),
         "path_tg_launcher_warning": _doctor_path_tg_launcher_warning(
             current_kind=path_tg_first_launcher_kind,

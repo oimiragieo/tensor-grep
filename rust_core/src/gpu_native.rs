@@ -706,6 +706,7 @@ struct SearchPipelineSlot {
     data_buffer: CudaSlice<u8>,
     match_positions_buffer: CudaSlice<u32>,
     match_pattern_ids_buffer: CudaSlice<u32>,
+    match_buffer_capacity: usize,
     match_count_buffer: CudaSlice<u32>,
     pattern_batches: Vec<DevicePatternBatch>,
     current_batch: Option<LoadedFileBatch>,
@@ -2035,20 +2036,8 @@ fn run_search_pipeline(
     all_patterns: &[String],
     options: SearchExecutionOptions,
 ) -> Result<SearchPipelineOutcome> {
-    let max_patterns_per_dispatch = pattern_batches
-        .iter()
-        .map(|batch| batch.global_pattern_ids.len())
-        .max()
-        .unwrap_or(1);
     let mut slots = (0..PIPELINE_SLOT_COUNT)
-        .map(|_| {
-            create_search_pipeline_slot(
-                runtime,
-                slot_capacity,
-                max_patterns_per_dispatch,
-                pattern_batches,
-            )
-        })
+        .map(|_| create_search_pipeline_slot(runtime, slot_capacity, pattern_batches))
         .collect::<Result<Vec<_>>>()?;
     let coordinator_stream = runtime
         .context
@@ -2183,7 +2172,6 @@ fn run_search_pipeline(
 fn create_search_pipeline_slot(
     runtime: &KernelRuntime,
     capacity: usize,
-    max_pattern_count: usize,
     pattern_batches: &[PatternBatchPlan],
 ) -> Result<SearchPipelineSlot> {
     let stream = runtime
@@ -2196,7 +2184,7 @@ fn create_search_pipeline_slot(
     let data_buffer = unsafe { stream.alloc::<u8>(capacity) }
         .map_err(anyhow::Error::new)
         .context("failed to allocate device data buffer for GPU search pipeline")?;
-    let match_buffer_capacity = resolve_max_match_capacity(capacity, max_pattern_count)?;
+    let match_buffer_capacity = 1usize;
     let match_positions_buffer = unsafe { stream.alloc::<u32>(match_buffer_capacity) }
         .map_err(anyhow::Error::new)
         .context("failed to allocate device match position buffer for GPU search pipeline")?;
@@ -2215,6 +2203,7 @@ fn create_search_pipeline_slot(
         data_buffer,
         match_positions_buffer,
         match_pattern_ids_buffer,
+        match_buffer_capacity,
         match_count_buffer,
         pattern_batches,
         current_batch: None,
@@ -2600,12 +2589,10 @@ fn launch_slot_search(
         .host
         .global_pattern_ids
         .len();
-    let max_matches = u32::try_from(
-        total_lines
-            .checked_mul(pattern_count)
-            .context("GPU search batch match capacity overflow")?,
-    )
-    .context("GPU search batch exceeds u32 match capacity")?;
+    let max_matches_usize = resolve_adaptive_match_capacity(total_lines, pattern_count)?;
+    ensure_slot_match_capacity(slot, max_matches_usize)?;
+    let max_matches =
+        u32::try_from(max_matches_usize).context("GPU search batch exceeds u32 match capacity")?;
     slot.adaptive_dispatch = Some(adaptive_dispatch);
     if total_lines == 0 {
         slot.current_launch_mode = Some(SearchLaunchMode::Standard);
@@ -3007,6 +2994,22 @@ fn launch_slot_search_graph(
     Ok(())
 }
 
+fn ensure_slot_match_capacity(slot: &mut SearchPipelineSlot, required: usize) -> Result<()> {
+    let required = required.max(1);
+    if slot.match_buffer_capacity >= required {
+        return Ok(());
+    }
+
+    slot.match_positions_buffer = unsafe { slot.stream.alloc::<u32>(required) }
+        .map_err(anyhow::Error::new)
+        .context("failed to grow device match position buffer for GPU search pipeline")?;
+    slot.match_pattern_ids_buffer = unsafe { slot.stream.alloc::<u32>(required) }
+        .map_err(anyhow::Error::new)
+        .context("failed to grow device match pattern id buffer for GPU search pipeline")?;
+    slot.match_buffer_capacity = required;
+    Ok(())
+}
+
 fn launch_slot_search_kernels(
     slot: &mut SearchPipelineSlot,
     runtime: &KernelRuntime,
@@ -3230,6 +3233,13 @@ fn resolve_max_match_capacity(bytes_used: usize, pattern_count: usize) -> Result
     bytes_used
         .checked_mul(pattern_count.max(1))
         .context("GPU native search match capacity overflow")
+}
+
+fn resolve_adaptive_match_capacity(line_count: usize, pattern_count: usize) -> Result<usize> {
+    line_count
+        .checked_mul(pattern_count.max(1))
+        .map(|capacity| capacity.max(1))
+        .context("GPU native adaptive line match capacity overflow")
 }
 
 fn plan_pattern_batches(patterns: &[String]) -> Result<Vec<PatternBatchPlan>> {
@@ -3907,7 +3917,10 @@ fn ensure_cuda_library_path() {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_requested_cuda_device_ids;
+    use super::{
+        resolve_adaptive_match_capacity, resolve_max_match_capacity,
+        validate_requested_cuda_device_ids,
+    };
 
     #[test]
     fn validate_requested_cuda_device_ids_preserves_selected_subset_without_expanding() {
@@ -3923,6 +3936,18 @@ mod tests {
 
         assert!(message.contains("invalid CUDA device id 3"));
         assert!(message.contains("available CUDA devices: 0, 1"));
+    }
+
+    #[test]
+    fn adaptive_line_match_capacity_scales_with_lines_not_batch_bytes() {
+        let five_gb_shard_bytes = 671_088_644usize;
+        let generated_line_count = 182_324usize;
+
+        let byte_capacity = resolve_max_match_capacity(five_gb_shard_bytes, 1).unwrap();
+        let adaptive_capacity = resolve_adaptive_match_capacity(generated_line_count, 1).unwrap();
+
+        assert_eq!(adaptive_capacity, generated_line_count);
+        assert!(byte_capacity > adaptive_capacity * 1_000);
     }
 }
 

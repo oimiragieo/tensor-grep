@@ -912,6 +912,63 @@ def test_doctor_json_reports_path_tg_candidates(monkeypatch, tmp_path: Path) -> 
     assert payload["path_tg_first_launcher_kind"] == "python-entrypoint"
 
 
+def test_doctor_json_reports_foreign_first_path_tg_remediation(monkeypatch, tmp_path: Path) -> None:
+    foreign_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
+    managed_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    foreign_tg.parent.mkdir(parents=True)
+    managed_tg.parent.mkdir(parents=True)
+    foreign_tg.write_text("foreign\n", encoding="utf-8")
+    managed_tg.write_text("managed\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.9.4")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: managed_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.9.4",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_lsp_provider_statuses",
+        lambda path: [],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [
+            {"path": str(foreign_tg), "version": "Together CLI (v2.12.0)"},
+            {"path": str(managed_tg), "version": "tg 1.9.4"},
+        ],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [
+            {"path": str(foreign_tg), "version": "Together CLI (v2.12.0)"},
+            {"path": str(managed_tg), "version": "tg 1.9.4"},
+        ],
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["path_tg_first_launcher_kind"] == "foreign"
+    assert payload["fresh_shell_path_tg_first_launcher_kind"] == "foreign"
+    assert payload["path_tg_first_is_foreign"] is True
+    assert payload["fresh_shell_path_tg_first_is_foreign"] is True
+    assert "Together CLI" in payload["path_tg_foreign_warning"]
+    assert str(foreign_tg) in payload["path_tg_foreign_warning"]
+    assert str(managed_tg.parent) in payload["path_tg_foreign_remediation"]
+    assert "delete" not in payload["path_tg_foreign_remediation"].lower()
+
+
 def test_doctor_launcher_kind_classifies_virtualenv_console_entrypoint(tmp_path: Path) -> None:
     from tensor_grep.cli import main as cli_main
 
@@ -2686,6 +2743,24 @@ def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tm
         for command in payload["validation_commands"]
     )
     assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_agent_capsule_ambiguous_invoice_tax_query_surfaces_cross_language_alternatives(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path)
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "change invoice tax calculation",
+    )
+
+    alternatives = payload["alternative_targets"]
+    assert any(
+        item["file"] == str(paths["typescript"].resolve())
+        and item["symbol"] == "createInvoice"
+        and item["language"] == "typescript"
+        for item in alternatives
+    )
+    assert all(item["file"] != payload["primary_target"]["file"] for item in alternatives)
 
 
 def test_agent_capsule_exact_camel_symbol_stays_above_snake_case_bridge(tmp_path):

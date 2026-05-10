@@ -43,7 +43,7 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.9.4
 
-Latest stable PyPI release: [`v1.9.2`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.2).
+Latest stable PyPI release: [`v1.9.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.4).
 
 Current positioning:
 
@@ -52,8 +52,28 @@ Current positioning:
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
-- `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
+- `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.9.4` closed:
+
+- docs-governance tests now track the current project release tag instead of pinning stale v1.9.2 language
+- edit validation commands substitute `$file` and `{file}` placeholders with the target path before execution
+- quoted validation placeholders work on Windows paths with spaces; quote placeholders in docs and examples when paths may contain spaces
+
+Unreleased post-`v1.9.4` local fixes under validation:
+
+- native CUDA search no longer sizes adaptive match buffers from shard bytes; 1GB and 5GB CUDA-feature debug artifacts now pass exact match/file-set correctness, but GPU remains slower than `rg` and `tg_cpu`
+- GPU scale benchmarks now probe and record the runtime backend used for `--gpu-device-ids` and skip sidecar-routed rows instead of timing Python/Torch sidecar work as native CUDA
+- ambiguous `tg agent` capsules now expose `alternative_targets` so cross-language candidates remain visible when the primary target is still only one ranked choice
+- root `tg --help` now surfaces the current agent capsule, validation placeholder, generated-root guardrail, GPU experimental, classify-provider, launcher, and environment-override contracts instead of hiding them in docs only
+- `tg doctor --json` and agent-readiness now classify first-PATH `tg` commands from unrelated tools as `foreign`, report explicit remediation, and keep readiness failing until PATH is fixed; they do not delete or overwrite unrelated launchers
+
+What `v1.9.3` closed:
+
+- explicit language/file-name intent now routes `python invoice tax calculation` to `src/payments.py:create_invoice` with aligned Python validation evidence
+- quoted Windows validation commands are parsed argv-safely instead of treating quotes as literal filename characters
+- docs/readiness hygiene was brought green for the 1.9.3 release line
 
 What `v1.9.2` closed:
 
@@ -88,29 +108,37 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.2` follow-up:
+Active post-`v1.9.4` follow-up:
 
-- harden `tg agent` / Actionable Context Capsule ranking, language-intent weighting, token economy, follow-up reads, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
-- keep edit validation command parsing argv-safe for quoted Windows paths with spaces
+- continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output; local post-`v1.9.4` work now surfaces plausible cross-language alternatives instead of hiding them behind a single primary target
+- keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
 - preserve the mixed-language capsule trust contract: explicit language intent, exact symbol intent, primary target language, `validation_alignment`, and `ask_user_before_editing` must agree or confidence must drop
 - the capsule output is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when warranted. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected.
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
 - keep launcher-route diagnostics in `tg doctor --json` visible in dogfood before trusting Windows benchmark results
 - keep both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim; treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons
-- keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings.
-- this release is observability and benchmark-attribution correctness for the public front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
+- keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
+- keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
+- this release is docs-governance and validation-placeholder correctness; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 
 Managed native-upgrade dogfood:
 
-- `tg update` from `v1.9.1` installed sidecar `tensor-grep==1.9.2` and refreshed the managed native front door to `tg 1.9.2`
-- `tg doctor --json` now reports `version = 1.9.2`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route
-- profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` all resolve `tg 1.9.2`
+- `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
+- `tg doctor --json` now reports `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route
+- profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` all resolve `tg 1.9.4`
 - prior `scripts/install.ps1` dogfood for `v1.8.31` updated User PATH so fresh shells resolve `C:\Users\oimir\.tensor-grep\bin\tg.exe` before compatibility shim directories
 - this is installer correctness and release-readiness work; benchmark docs should not claim a cold-search speed win from it
 
 Release proof:
 
+- PR #82 merged and released from `646b089 fix: harden docs governance and validation placeholders`
+- release commit `adde778 chore(release): v1.9.4 [skip ci]`
+- main CI run `25614464124` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL run `25614464010` and release-commit CodeQL run `25614702928` passed
+- GitHub release assets for `v1.9.4` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI reports `tensor-grep 1.9.4`; `tensor-grep==1.9.4` resolves from PyPI
+- PR #81 merged and released from `73c5f91 fix: harden agent ranking docs and validation quoting`
 - PR #80 merged and released from `faf67ed fix: harden edit JSON and capsule validation trust`
 - release commit `8143ccb chore(release): v1.9.2 [skip ci]`
 - main CI run `25609611007` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
@@ -155,7 +183,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.9.2` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.9.4` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -176,7 +204,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.9.2` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
+- `v1.9.4` release state and managed-native upgrade verification are summarized in [Current Release State](#current-release-state)
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
@@ -312,10 +340,10 @@ Important constraint:
 - **Repeated-query acceleration.** The trigram index gives warm-query wins on unchanged corpora without changing the public search contract.
 - **Harness-first machine interfaces.** JSON, NDJSON, diff, batch rewrite, and MCP are documented and regression-tested. Start with [docs/harness_api.md](docs/harness_api.md) and [docs/harness_cookbook.md](docs/harness_cookbook.md).
 - **Lexical-first repo-map retrieval for AI planning.** Exact symbol queries stay anchored to definition files, camelCase queries bridge to snake_case symbols, and source-body evidence helps natural-language queries find the code that must be edited instead of unrelated service/test graph noise.
-- **Smart routing with measured calibration.** `tg calibrate` writes the current CPU/GPU routing contract. The active routing rules are documented in [docs/routing_policy.md](docs/routing_policy.md).
-- **Benchmark-governed GPU path.** Native CUDA support exists, but route selection stays tied to measured crossover data. The current GPU story is documented in [docs/gpu_crossover.md](docs/gpu_crossover.md).
-- **Multi-pattern GPU search.** Pass multiple patterns with `-e pattern1 -e pattern2` for GPU-accelerated multi-pattern matching in a single pass.
-- **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
+- **Smart routing with measured calibration.** `tg calibrate` writes routing evidence, but public claims still follow accepted benchmark artifacts. The active routing rules are documented in [docs/routing_policy.md](docs/routing_policy.md).
+- **Benchmark-governed GPU path.** Native CUDA support exists, but current public dogfood keeps GPU experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`. The current GPU story is documented in [docs/gpu_crossover.md](docs/gpu_crossover.md).
+- **Experimental multi-pattern GPU search.** Pass multiple patterns with `-e pattern1 -e pattern2` when intentionally probing GPU-backed multi-pattern matching; do not treat this as a default speed claim.
+- **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation and scoped probing, but selected devices still need benchmark proof before promotion.
 - **It has a validated compatibility set for common ripgrep use.** `tg search` has a benchmarked compatibility contract for the day-to-day flags that matter most in code and log search, with the currently validated rows documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 - **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
 - **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag.

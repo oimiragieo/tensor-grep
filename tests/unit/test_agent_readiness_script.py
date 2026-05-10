@@ -216,6 +216,46 @@ def test_agent_readiness_should_reject_doctor_native_version_drift() -> None:
         raise AssertionError("expected native version drift to fail")
 
 
+def test_agent_readiness_should_report_foreign_path_tg_remediation() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.9.4",
+        "path_tg_first_version_matches": False,
+        "path_tg_first_launcher_kind": "foreign",
+        "path_tg_foreign_warning": (
+            "first PATH tg is not tensor-grep: C:/Python314/Scripts/tg.exe reports "
+            "Together CLI (v2.12.0)"
+        ),
+        "path_tg_foreign_remediation": (
+            "Move C:/Users/oimir/.tensor-grep/bin earlier in PATH than "
+            "C:/Python314/Scripts or rename the foreign tg command outside tensor-grep."
+        ),
+        "fresh_shell_path_tg_first_launcher_kind": "foreign",
+        "fresh_shell_path_tg_first_version_matches": False,
+        "fresh_shell_path_tg_foreign_warning": (
+            "first fresh-shell PATH tg is not tensor-grep: "
+            "C:/Python314/Scripts/tg.exe reports Together CLI (v2.12.0)"
+        ),
+        "fresh_shell_path_tg_foreign_remediation": (
+            "Move C:/Users/oimir/.tensor-grep/bin earlier in PATH than "
+            "C:/Python314/Scripts or rename the foreign tg command outside tensor-grep."
+        ),
+        "search_acceleration_backend": "standalone-native-tg",
+        "rust_binary_version_matches": True,
+        "rust_binary_version_status": "matches",
+    }
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.9.4")
+    except module.ReadinessError as exc:
+        message = str(exc)
+        assert "not tensor-grep" in message
+        assert "Together CLI" in message
+        assert "Move C:/Users/oimir/.tensor-grep/bin earlier in PATH" in message
+    else:
+        raise AssertionError("expected foreign PATH tg to fail with remediation")
+
+
 def test_agent_readiness_should_accept_stale_skipped_in_tree_native_binary() -> None:
     module = _load_script_module()
     payload = {
