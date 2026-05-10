@@ -4,7 +4,7 @@ Last updated: 2026-05-10
 
 ## Current Release State
 
-release_docs_current_tag: v1.9.5
+release_docs_current_tag: v1.9.6
 
 - Latest released version: `v1.9.5`
 - Latest release commit: `db9cb98 chore(release): v1.9.5 [skip ci]`

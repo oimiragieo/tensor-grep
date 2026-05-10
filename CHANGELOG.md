@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.9.6 (2026-05-10)
+
+### Bug Fixes
+
+- Harden v1.9.5 dogfood blockers
+  ([`05ea29e`](https://github.com/oimiragieo/tensor-grep/commit/05ea29e7728ef05fd2f8dd420421ef5e2c9e4441))
+
+
 ## v1.9.5 (2026-05-10)
 
 ### Bug Fixes

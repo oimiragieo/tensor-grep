@@ -8,9 +8,122 @@ python-source = "src"
 module-name = "tensor_grep.rust_core"
 manifest-path = "rust_core/Cargo.toml"
 
+[tool.uv]
+constraint-dependencies = [
+    "aiohttp>=3.13.4",
+    "cryptography>=46.0.7",
+    "pygments>=2.20.0",
+    "python-multipart>=0.0.27",
+    "python-dotenv>=1.2.2",
+    "requests>=2.33.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "gpu: requires NVIDIA CUDA GPU",
+  "slow: takes >10 seconds",
+  "integration: requires real GPU + cuDF",
+  "acceptance: outer-loop E2E tests",
+  "property: hypothesis property-based tests",
+  "characterization: ripgrep parity tests",
+  "snapshot: output format regression tests",
+  "performance: performance benchmarks",
+]
+addopts = [
+  "--import-mode=importlib",
+  "--strict-markers",
+  "-x",
+  "--tb=short",
+]
+filterwarnings = [
+  "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning:pytest_asyncio",
+  "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning:pygls",
+  "ignore:.*asyncio\\.get_event_loop_policy.*:DeprecationWarning:pytest_asyncio",
+]
+
+
+[tool.coverage.run]
+source = ["src/tensor_grep"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 60
+
+
+[tool.mutmut]
+paths_to_mutate = "src/tensor_grep/"
+tests_dir = "tests/unit/"
+runner = "python -m pytest tests/unit/ -x --no-header -q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    "bench_data",
+    "bench_ast_data",
+    "gpu_bench_data",
+    "benchmarks/bench_data",
+    "benchmarks/bench_ast_data",
+    "benchmarks/gpu_bench_data",
+    "benchmarks/external_repos",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+    "RUF" # Ruff-specific rules
+]
+ignore = [
+    "E501", # line too long, handled by black
+    "B008", # Do not perform function call in argument defaults (normal for Typer CLI commands)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tensor_grep"]
+
+
+[tool.mypy]
+warn_unused_ignores = false
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.semantic_release]
+version_toml = [
+    "pyproject.toml:project.version",
+    "rust_core/Cargo.toml:package.version",
+]
+branch = "main"
+build_command = "python scripts/stamp_release_assets.py && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default stable && pip install uv && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
+upload_to_pypi = false
+upload_to_release = true
+commit_message = "chore(release): v{version} [skip ci]"
+version_variables = [
+    "src/tensor_grep/cli/main.py:pkg_version",
+    "npm/package.json:version",
+    "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
+    "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
+    "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
+    "AGENTS.md:release_docs_current_tag:tf",
+    "README.md:release_docs_current_tag:tf",
+    "SKILL.md:release_docs_current_tag:tf",
+    "docs/SESSION_HANDOFF.md:release_docs_current_tag:tf",
+    "docs/CONTINUATION_PLAN.md:release_docs_current_tag:tf",
+    "docs/CONTRACTS.md:release_docs_current_tag:tf",
+]
+
 [project]
 name = "tensor-grep"
-version = "1.9.5"
+version = "1.9.6"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -62,112 +175,3 @@ bench = [
 [project.scripts]
 tg = "tensor_grep.cli.bootstrap:main_entry"
 
-[tool.uv]
-constraint-dependencies = [
-    "aiohttp>=3.13.4",
-    "cryptography>=46.0.7",
-    "pygments>=2.20.0",
-    "python-multipart>=0.0.27",
-    "python-dotenv>=1.2.2",
-    "requests>=2.33.0",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-  "gpu: requires NVIDIA CUDA GPU",
-  "slow: takes >10 seconds",
-  "integration: requires real GPU + cuDF",
-  "acceptance: outer-loop E2E tests",
-  "property: hypothesis property-based tests",
-  "characterization: ripgrep parity tests",
-  "snapshot: output format regression tests",
-  "performance: performance benchmarks",
-]
-addopts = [
-  "--import-mode=importlib",
-  "--strict-markers",
-  "-x",
-  "--tb=short",
-]
-filterwarnings = [
-  "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning:pytest_asyncio",
-  "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning:pygls",
-  "ignore:.*asyncio\\.get_event_loop_policy.*:DeprecationWarning:pytest_asyncio",
-]
-
-[tool.coverage.run]
-source = ["src/tensor_grep"]
-branch = true
-
-[tool.coverage.report]
-fail_under = 60
-
-[tool.mutmut]
-paths_to_mutate = "src/tensor_grep/"
-tests_dir = "tests/unit/"
-runner = "python -m pytest tests/unit/ -x --no-header -q"
-
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-extend-exclude = [
-    "bench_data",
-    "bench_ast_data",
-    "gpu_bench_data",
-    "benchmarks/bench_data",
-    "benchmarks/bench_ast_data",
-    "benchmarks/gpu_bench_data",
-    "benchmarks/external_repos",
-]
-
-[tool.ruff.lint]
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-    "RUF" # Ruff-specific rules
-]
-ignore = [
-    "E501", # line too long, handled by black
-    "B008", # Do not perform function call in argument defaults (normal for Typer CLI commands)
-]
-
-[tool.ruff.lint.isort]
-known-first-party = ["tensor_grep"]
-
-[tool.mypy]
-warn_unused_ignores = false
-python_version = "3.11"
-strict = true
-ignore_missing_imports = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-
-[tool.semantic_release]
-version_toml = [
-    "pyproject.toml:project.version",
-    "rust_core/Cargo.toml:package.version",
-]
-branch = "main"
-build_command = "python scripts/stamp_release_assets.py && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default stable && pip install uv && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
-upload_to_pypi = false
-upload_to_release = true
-commit_message = "chore(release): v{version} [skip ci]"
-version_variables = [
-    "src/tensor_grep/cli/main.py:pkg_version",
-    "npm/package.json:version",
-    "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
-    "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
-    "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
-    "AGENTS.md:release_docs_current_tag:tf",
-    "README.md:release_docs_current_tag:tf",
-    "SKILL.md:release_docs_current_tag:tf",
-    "docs/SESSION_HANDOFF.md:release_docs_current_tag:tf",
-    "docs/CONTINUATION_PLAN.md:release_docs_current_tag:tf",
-    "docs/CONTRACTS.md:release_docs_current_tag:tf",
-]

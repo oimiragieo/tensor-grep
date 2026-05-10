@@ -41,7 +41,7 @@ These documents define the operating and governance surface for teams running `t
 
 ## Current Release State
 
-release_docs_current_tag: v1.9.5
+release_docs_current_tag: v1.9.6
 
 Latest stable PyPI release: [`v1.9.5`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.5).
 
