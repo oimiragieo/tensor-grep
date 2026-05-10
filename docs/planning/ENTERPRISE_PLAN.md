@@ -2,6 +2,8 @@
 
 To elevate `tensor-grep` from a standard Python package to a universally distributable enterprise binary similar to `ripgrep`, we need to implement standalone binaries, native package managers, an `npm` wrapper, comprehensive documentation, and automated CI/CD releases.
 
+Status note (2026-05-09): this is a historical planning document. The current release state is tracked in `docs/SESSION_HANDOFF.md`; public positioning keeps `rg` as the cold exact-text baseline, keeps GPU experimental, and treats `tg` as the agent-native code-intelligence layer.
+
 ## Phase 1: Standalone Binary Compilation (Nuitka)
 Our priority is allowing users to run `tg` without requiring a Python environment.
 - [ ] Install and configure **Nuitka** (`pip install nuitka`) in the development environment.
@@ -26,7 +28,7 @@ Professional projects require professional documentation.
 - [ ] Scaffold the `docs/` directory with:
   - `index.md`: Hero page, "What is tensor-grep?"
   - `installation.md`: Showing `npm`, `pip`, and direct binary downloads.
-  - `benchmarks.md`: Detailing the 3x speedup vs Ripgrep on semantic parsing.
+  - `benchmarks.md`: Detailing workload-specific benchmark evidence without claiming a blanket speedup vs ripgrep.
   - `architecture.md`: Explaining the Multi-Pass Query Analyzer and dual CPU/GPU paths.
 - [ ] Set up a `.github/workflows/docs.yml` to automatically publish to GitHub Pages on pushes to `main`.
 

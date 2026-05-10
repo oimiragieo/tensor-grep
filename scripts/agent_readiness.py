@@ -121,7 +121,12 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
         )
     first_matches = payload.get("path_tg_first_version_matches")
     if first_matches is False:
-        raise ReadinessError("doctor reports PATH first tg version does not match")
+        message = "doctor reports PATH first tg version does not match"
+        if warning := payload.get("path_tg_foreign_warning"):
+            message = f"{message}: {warning}"
+        if remediation := payload.get("path_tg_foreign_remediation"):
+            message = f"{message} Remediation: {remediation}"
+        raise ReadinessError(message)
     backend = payload.get("search_acceleration_backend")
     if backend not in {
         "rust-core-extension",
@@ -136,7 +141,12 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
         raise ReadinessError("doctor JSON missing launcher route diagnostics")
     fresh_matches = payload.get("fresh_shell_path_tg_first_version_matches")
     if fresh_matches is not True:
-        raise ReadinessError("doctor reports fresh-shell tg version does not match")
+        message = "doctor reports fresh-shell tg version does not match"
+        if warning := payload.get("fresh_shell_path_tg_foreign_warning"):
+            message = f"{message}: {warning}"
+        if remediation := payload.get("fresh_shell_path_tg_foreign_remediation"):
+            message = f"{message} Remediation: {remediation}"
+        raise ReadinessError(message)
     rust_matches = payload.get("rust_binary_version_matches")
     rust_status = payload.get("rust_binary_version_status")
     rust_version_ok = rust_status == "matches" and rust_matches is True

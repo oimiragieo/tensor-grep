@@ -528,6 +528,32 @@ def test_root_cli_should_generate_powershell_completion_script(monkeypatch) -> N
     )
 
 
+def test_root_help_should_surface_current_agent_gpu_launcher_and_validation_contracts() -> None:
+    result = CliRunner().invoke(app, ["--help"], prog_name="tg")
+
+    assert result.exit_code == 0
+    help_text = result.stdout
+    for expected in [
+        "tg agent PATH --query",
+        "alternative targets",
+        "validation_commands",
+        "$file",
+        "--format rg --sort path",
+        "--allow-broad-generated-scan",
+        "--gpu-device-ids",
+        "GPU",
+        "remains experimental",
+        "TENSOR_GREP_CLASSIFY_PROVIDER=cybert",
+        "TG_NATIVE_TG_BINARY",
+        "TG_SIDECAR_PYTHON",
+        "TG_RG_PATH",
+        "tg doctor --json",
+        "path_tg_first_launcher_kind",
+        "fresh_shell_path_tg_first_launcher_kind",
+    ]:
+        assert expected in help_text
+
+
 def test_main_entry_should_fallback_to_full_cli_for_show_completion(monkeypatch) -> None:
     called = {"full_cli": False}
 

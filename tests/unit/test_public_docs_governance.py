@@ -13,16 +13,17 @@ SESSION_HANDOFF_PATH = Path("docs/SESSION_HANDOFF.md")
 CONTINUATION_PLAN_PATH = Path("docs/CONTINUATION_PLAN.md")
 CONTRACTS_DOC_PATH = Path("docs/CONTRACTS.md")
 
-CURRENT_RELEASE_TAG = "v1.9.2"
-CURRENT_RELEASE_COMMIT = "8143ccb chore(release): v1.9.2 [skip ci]"
-CURRENT_FIX_COMMIT = "faf67ed fix: harden edit JSON and capsule validation trust"
-CURRENT_MAIN_CI = "25609611007"
-CURRENT_CODEQL = "25609610737"
-
 
 def _project_release_tag() -> str:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     return f"v{pyproject['project']['version']}"
+
+
+CURRENT_RELEASE_TAG = _project_release_tag()
+CURRENT_RELEASE_COMMIT = "adde778 chore(release): v1.9.4 [skip ci]"
+CURRENT_FIX_COMMIT = "646b089 fix: harden docs governance and validation placeholders"
+CURRENT_MAIN_CI = "25614464124"
+CURRENT_CODEQL = "25614464010"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -77,7 +78,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "skip yanked PyPI releases" in contracts
     assert "refresh the managed release-native front door" in contracts
     assert "Windows native-front-door retry helper" in contracts
-    assert "current `v1.9.2` release line" in contracts
+    assert f"current `{CURRENT_RELEASE_TAG}` release line" in contracts
     assert "managed native-upgrade contract" in contracts
     assert "path_tg_first_launcher_kind" in contracts
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
@@ -88,7 +89,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "GPU auto-recommendation must remain false" in contracts
 
 
-def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -115,7 +116,9 @@ def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert CURRENT_MAIN_CI in handoff
     assert CURRENT_CODEQL in handoff
-    assert "tensor-grep==1.9.2" in handoff
+    assert "tensor-grep==1.9.4" in handoff
+    assert "Closed docs/version governance and validation placeholder gap" in handoff
+    assert "Closed explicit ranking and validation quoting gap" in handoff
     assert "Closed edit automation safety gap" in handoff
     assert "Closed capsule trust-alignment gap" in handoff
     assert "Prior GPU probe and benchmark-warning gaps" in handoff
@@ -155,6 +158,8 @@ def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
+    assert "v1.9.4` release fixes stale docs-governance expectations" in handoff
+    assert "v1.9.3` release hardens explicit language/file-name agent ranking" in handoff
     assert "v1.9.2` release hardens edit JSON" in handoff
     assert "v1.9.1` release hardens mixed-language capsule confidence" in handoff
 
@@ -165,8 +170,8 @@ def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.9.2`" in readme
-    assert "sidecar `tensor-grep==1.9.2`" in readme
+    assert "GitHub release assets for `v1.9.4`" in readme
+    assert "sidecar `tensor-grep==1.9.4`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -181,12 +186,17 @@ def test_handoff_docs_should_record_current_v192_release_state_and_fast_gate() -
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    closed_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.9.2` follow-up:"
-    closed_block = readme.split(closed_heading, 1)[1].split(follow_up_heading, 1)[0]
+    current_closed_heading = "What `v1.9.4` closed:"
+    v193_heading = "What `v1.9.3` closed:"
+    v192_heading = "What `v1.9.2` closed:"
+    follow_up_heading = "Active post-`v1.9.4` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v193_heading, 1)[0]
+    v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "--diff --json" in closed_block
-    assert "rolls changed files back" in closed_block
+    assert "$file" in current_closed_block
+    assert "docs-governance tests" in current_closed_block
+    assert "--diff --json" in v192_closed_block
+    assert "rolls changed files back" in v192_closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
 
 
@@ -201,7 +211,9 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.9.2`" in skill
+    assert "current released version is `v1.9.4`" in skill
+    assert "PR #82 `fix: harden docs governance and validation placeholders` merged" in skill
+    assert "PR #81 `fix: harden agent ranking docs and validation quoting` merged" in skill
     assert "PR #80 `fix: harden edit JSON and capsule validation trust` merged" in skill
     assert "PR #78 `fix: harden agent capsule trust alignment` merged" in skill
     assert "PR #76 `feat: add actionable agent context capsule` merged" in skill
@@ -220,6 +232,7 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "tg_agent_capsule" in skill
     assert "agent-capsule-mixed-language" in skill
     assert "validation_alignment" in skill
+    assert "$file" in skill
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

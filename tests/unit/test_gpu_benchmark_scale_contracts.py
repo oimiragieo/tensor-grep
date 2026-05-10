@@ -66,6 +66,16 @@ def test_run_gpu_benchmarks_should_check_every_gb_scale_corpus(monkeypatch, tmp_
         "benchmark_search_command",
         lambda *_args, **_kwargs: {"status": "PASS", "median_s": 0.1, "samples_s": [0.1]},
     )
+    monkeypatch.setattr(
+        module,
+        "probe_tg_gpu_runtime_backend",
+        lambda **_kwargs: {
+            "status": "PASS",
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit-native",
+            "sidecar_used": False,
+        },
+    )
 
     def _fake_correctness_check(**kwargs):
         checked_sizes.append(Path(kwargs["corpus_dir"]).name)
@@ -175,6 +185,16 @@ def test_run_gpu_benchmarks_should_not_attach_unsupported_inventory_warning_to_g
     monkeypatch.setattr(module, "benchmark_search_command", _fake_benchmark_search_command)
     monkeypatch.setattr(
         module,
+        "probe_tg_gpu_runtime_backend",
+        lambda **_kwargs: {
+            "status": "PASS",
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit-native",
+            "sidecar_used": False,
+        },
+    )
+    monkeypatch.setattr(
+        module,
         "run_correctness_check",
         lambda **kwargs: {
             "device_id": kwargs["device_id"],
@@ -207,6 +227,84 @@ def test_run_gpu_benchmarks_should_not_attach_unsupported_inventory_warning_to_g
     assert "unsupported" not in gpu0["stderr"]
     assert gpu1["status"] == "UNSUPPORTED"
     assert gpu1["stderr"] == unsupported_error
+
+
+def test_run_gpu_benchmarks_should_skip_sidecar_gpu_runtime_for_scale_gates(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_benchmarks_sidecar_runtime_skip",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    sidecar_python = tmp_path / "python.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    sidecar_python.write_text("python", encoding="utf-8")
+    correctness_called = False
+    commands: list[str] = []
+
+    monkeypatch.setattr(
+        module,
+        "probe_gpu_devices",
+        lambda _sidecar_python: {
+            "available": True,
+            "torch_version": "2.6.0",
+            "devices": [{"device_id": 0, "name": "RTX", "operational": True}],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "probe_tg_gpu_runtime_backend",
+        lambda **_kwargs: {
+            "status": "PASS",
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "generate_gpu_scale_corpus",
+        lambda output_dir, target_bytes, shard_count: {
+            "corpus_dir": output_dir,
+            "actual_bytes": target_bytes,
+            "total_lines": 10,
+            "file_count": shard_count,
+            "pattern_counts": {"gpu benchmark sentinel": 1},
+        },
+    )
+
+    def _fake_benchmark_search_command(command, **_kwargs):
+        commands.append(" ".join(str(part) for part in command))
+        return {"status": "PASS", "median_s": 1.0, "samples_s": [1.0], "stderr": ""}
+
+    def _fake_correctness_check(**_kwargs):
+        nonlocal correctness_called
+        correctness_called = True
+        return {"status": "PASS", "matches_equal": True, "files_equal": True}
+
+    monkeypatch.setattr(module, "benchmark_search_command", _fake_benchmark_search_command)
+    monkeypatch.setattr(module, "run_correctness_check", _fake_correctness_check)
+
+    payload = module.run_gpu_scale_benchmarks(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        bench_dir=module.ROOT_DIR / "artifacts" / "unit_gpu_bench_data",
+        corpus_sizes=(module.GB,),
+        runs=1,
+        warmup=0,
+        sidecar_python=sidecar_python,
+        benchmark_pattern="gpu benchmark sentinel",
+        correctness_patterns=("gpu benchmark sentinel",),
+        shard_count=2,
+    )
+
+    gpu0 = payload["rows"][0]["gpu"][0]
+    assert gpu0["status"] == "UNSUPPORTED"
+    assert gpu0["tg_runtime_backend"] == "GpuSidecar"
+    assert "requires a CUDA-enabled native tg binary" in gpu0["stderr"]
+    assert all("--gpu-device-ids" not in command for command in commands)
+    assert correctness_called is False
+    assert payload["correctness_checks"] == []
 
 
 def test_run_gpu_benchmarks_should_sanitize_correctness_error_for_selected_gpu(
@@ -267,6 +365,16 @@ def test_run_gpu_benchmarks_should_sanitize_correctness_error_for_selected_gpu(
             "median_s": 1.0,
             "samples_s": [1.0],
             "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "probe_tg_gpu_runtime_backend",
+        lambda **_kwargs: {
+            "status": "PASS",
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit-native",
+            "sidecar_used": False,
         },
     )
 
