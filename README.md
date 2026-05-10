@@ -43,7 +43,7 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.9.7
 
-Latest stable PyPI release: [`v1.9.6`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.6).
+Latest stable PyPI release: [`v1.9.7`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.7).
 
 Current positioning:
 
@@ -54,6 +54,12 @@ Current positioning:
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.9.7` closed:
+
+- Python GPU scale rows are unsupported for native CUDA promotion, and benchmark artifacts now separate them from native CUDA rows where correctness passed but speed/promotion failed
+- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates, but the accepted story remains no crossover: GPU is still slower than `rg` and `tg_cpu`
+- public benchmark and README positioning now say `tg` is an agent-native code intelligence layer with rg-compatible search; `rg` remains the cold exact text baseline
 
 What `v1.9.6` closed:
 
@@ -114,7 +120,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.6` follow-up:
+Active post-`v1.9.7` follow-up:
 
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
 - keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
@@ -131,8 +137,8 @@ Active post-`v1.9.6` follow-up:
 
 Managed native-upgrade dogfood:
 
-- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.6`
-- PyPI latest and pinned public install resolve `tensor-grep==1.9.6`
+- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.7`
+- PyPI latest and pinned public install resolve `tensor-grep==1.9.7`
 - `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation; this is a PATH-shadow environment blocker, not a tensor-grep-owned stale launcher cleanup target
 
 - `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
@@ -143,12 +149,13 @@ Managed native-upgrade dogfood:
 
 Release proof:
 
-- PR from `05ea29e fix: harden v1.9.5 dogfood blockers` merged and released
-- release commit `e06d5de chore(release): v1.9.6 [skip ci]`
-- main CI run `25631800575` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- main CodeQL run `25632107771` passed
-- GitHub release assets for `v1.9.6` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- PyPI reports `tensor-grep 1.9.6`; `tensor-grep==1.9.6` resolves from PyPI
+- PR #86 from `4ff7a77 fix: clarify GPU benchmark promotion gates` merged and released
+- release commit `524a724 chore(release): v1.9.7 [skip ci]`
+- main CI run `25635877849` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL runs `25635877677` and `25636164492` passed
+- GitHub release assets for `v1.9.7` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI reports `tensor-grep 1.9.7`; `tensor-grep==1.9.7` resolves from PyPI
+- PR #84 from `05ea29e fix: harden v1.9.5 dogfood blockers` merged and released as `v1.9.6`
 - PR #82 merged and released from `646b089 fix: harden docs governance and validation placeholders`
 - release commit `adde778 chore(release): v1.9.4 [skip ci]`
 - main CI run `25614464124` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`

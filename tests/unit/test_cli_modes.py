@@ -923,6 +923,67 @@ def test_doctor_json_reports_path_tg_candidates(monkeypatch, tmp_path: Path) -> 
     assert payload["path_tg_first_launcher_kind"] == "python-entrypoint"
 
 
+def test_doctor_path_tg_candidates_splits_windows_pathext_on_semicolon(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli import main as cli_main
+
+    monkeypatch.chdir(tmp_path)
+    bridge_tg = Path("Python314") / "Scripts" / "tg.com"
+    bridge_tg.parent.mkdir(parents=True)
+    bridge_tg.write_text("tensor-grep bridge\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+    monkeypatch.setattr(cli_main.os, "pathsep", ":")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_tg_candidate_version",
+        lambda _candidate: "tg 1.9.7",
+    )
+
+    candidates = cli_main._doctor_path_tg_candidates(str(bridge_tg.parent))
+
+    assert candidates == [{"path": str(bridge_tg.resolve()), "version": "tg 1.9.7"}]
+
+
+def test_doctor_fresh_shell_path_uses_windows_registry_separator(monkeypatch) -> None:
+    import types
+
+    from tensor_grep.cli import main as cli_main
+
+    fake_winreg = types.SimpleNamespace()
+    fake_winreg.HKEY_LOCAL_MACHINE = object()
+    fake_winreg.HKEY_CURRENT_USER = object()
+
+    class _FakeKey:
+        def __init__(self, root: object) -> None:
+            self.root = root
+
+        def __enter__(self) -> "_FakeKey":
+            return self
+
+        def __exit__(self, *_exc_info: object) -> bool:
+            return False
+
+    def _open_key(root: object, _subkey: str) -> _FakeKey:
+        return _FakeKey(root)
+
+    def _query_value_ex(key: _FakeKey, _value_name: str) -> tuple[str, int]:
+        if key.root is fake_winreg.HKEY_LOCAL_MACHINE:
+            return (r"C:\MachineA;C:\MachineB", 0)
+        return (r"C:\UserBin", 0)
+
+    fake_winreg.OpenKey = _open_key
+    fake_winreg.QueryValueEx = _query_value_ex
+
+    monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+    monkeypatch.setattr(cli_main.os, "pathsep", ":")
+
+    assert cli_main._doctor_fresh_shell_path_value() == r"C:\MachineA;C:\MachineB;C:\UserBin"
+
+
 def test_doctor_json_reports_foreign_first_path_tg_remediation(monkeypatch, tmp_path: Path) -> None:
     foreign_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
     managed_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
@@ -5279,6 +5340,134 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     assert "Native tg front door refreshed to 0.33.0." in result.stdout
 
 
+def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
+    foreign_tg = tmp_path / "ForeignPython" / "Scripts" / "tg.com"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    bridge_tg.parent.mkdir(parents=True)
+    foreign_tg.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    bridge_tg.write_text("old native", encoding="utf-8")
+    foreign_tg.write_text("foreign", encoding="utf-8")
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] in {str(native_binary), str(bridge_tg)}:
+            version = (
+                "0.33.0"
+                if Path(command[0]).read_text(encoding="utf-8") == "new native"
+                else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        if command[0] == str(foreign_tg):
+            return subprocess.CompletedProcess(cmd, 0, stdout="2.12.0\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        Path(filename).write_text("new native", encoding="utf-8")
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bridge_tg.parent), str(foreign_tg.parent)]))
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_value",
+        lambda: str(bridge_tg.parent),
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert native_binary.read_text(encoding="utf-8") == "new native"
+    assert bridge_tg.read_text(encoding="utf-8") == "new native"
+    assert foreign_tg.read_text(encoding="utf-8") == "foreign"
+    assert "Refreshed 1 PATH tg.com bridge to 0.33.0." in result.stdout
+    assert str(bridge_tg) in result.stdout
+
+
+def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    bridge_tg.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("new native", encoding="utf-8")
+    bridge_tg.write_text("old native", encoding="utf-8")
+    downloads: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] in {str(native_binary), str(bridge_tg)}:
+            version = (
+                "0.33.0"
+                if Path(command[0]).read_text(encoding="utf-8") == "new native"
+                else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        downloads.append(str(url))
+        Path(filename).write_text("new native", encoding="utf-8")
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", str(bridge_tg.parent))
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_value",
+        lambda: str(bridge_tg.parent),
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert downloads == []
+    assert native_binary.read_text(encoding="utf-8") == "new native"
+    assert bridge_tg.read_text(encoding="utf-8") == "new native"
+    assert "tensor-grep is already at the latest PyPI version (0.33.0)." in result.stdout
+    assert "Refreshed 1 PATH tg.com bridge to 0.33.0." in result.stdout
+
+
 def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     monkeypatch, tmp_path
 ):
@@ -5339,22 +5528,27 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     install_dir = tmp_path / ".tensor-grep"
     python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
     native_binary = install_dir / "bin" / "tg.exe"
+    bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
     python_executable.parent.mkdir(parents=True)
     native_binary.parent.mkdir(parents=True)
+    bridge_tg.parent.mkdir(parents=True)
     python_executable.write_text("", encoding="utf-8")
     native_binary.write_text("old native", encoding="utf-8")
+    bridge_tg.write_text("old native", encoding="utf-8")
     popen_calls: list[list[str]] = []
 
     class _LockedExeError(PermissionError):
         winerror = 32
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
         if command[0] == str(native_binary):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
+        if command[0] == str(bridge_tg):
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
         if command[0].endswith(".tmp"):
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
@@ -5383,6 +5577,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", str(bridge_tg.parent))
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
@@ -5394,6 +5589,11 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
         lambda: "0.33.0",
         raising=False,
     )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_value",
+        lambda: str(bridge_tg.parent),
+        raising=False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -5403,6 +5603,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     assert popen_calls
     assert "urlretrieve" in popen_calls[0][2]
     assert "0.33.0" in popen_calls[0]
+    assert json.loads(popen_calls[0][8]) == [str(bridge_tg)]
     assert "Native tg front door refresh scheduled for 0.33.0." in result.stdout
 
 
