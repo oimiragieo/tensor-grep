@@ -283,15 +283,12 @@ try {
     $indexUrl = ""
 
     if ($gpuQuery.Name -match "NVIDIA") {
-        Write-Host "      Detected NVIDIA GPU. Configuring for CUDA 12.4."
+        Write-Host "      Detected NVIDIA GPU. Configuring for CUDA 12.8."
         $hardwareFlag = "nvidia"
         $indexArg = "--index-url"
-        $indexUrl = "https://download.pytorch.org/whl/cu124"
+        $indexUrl = "https://download.pytorch.org/whl/cu128"
     } elseif ($gpuQuery.Name -match "AMD" -or $gpuQuery.Name -match "Radeon") {
-        Write-Host "      Detected AMD GPU. Configuring for ROCm."
-        $hardwareFlag = "amd"
-        $indexArg = "--index-url"
-        $indexUrl = "https://download.pytorch.org/whl/rocm6.0"
+        Write-Host "      Detected AMD GPU. Windows ROCm support is selected/experimental; configuring CPU fallback."
     } else {
         Write-Host "      No compatible GPU detected. Configuring for CPU-only execution."
     }

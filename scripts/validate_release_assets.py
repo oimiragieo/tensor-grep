@@ -1919,7 +1919,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             ),
             "Install dependencies (NVIDIA)": (
                 "uv venv",
-                "uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124",
+                "uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128",
                 'uv pip install -e ".[gpu-win,nlp,ast,dev]"',
                 "uv pip install nuitka",
             ),

@@ -7,7 +7,7 @@ use hmac::{Hmac, Mac};
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 #[cfg(feature = "cuda")]
@@ -44,7 +44,7 @@ use tensor_grep_rs::routing::{
     SearchRoutingConfig,
 };
 
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON                 Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH                        Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                      Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS             Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS            Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -4124,7 +4124,7 @@ fn validation_template_file_path(path: &str) -> String {
 }
 
 fn expand_validation_command_template(command: &str, path: &str) -> String {
-    if !command.contains("$file") && !command.contains("{file}") {
+    if !validation_command_uses_file_placeholder(command) {
         return command.to_string();
     }
     let file_path = validation_template_file_path(path);
@@ -4133,17 +4133,52 @@ fn expand_validation_command_template(command: &str, path: &str) -> String {
         .replace("{file}", &file_path)
 }
 
-fn run_post_apply_validation(args: &RunArgs, path: &str) -> Option<ValidationSummary> {
+fn validation_command_uses_file_placeholder(command: &str) -> bool {
+    command.contains("$file") || command.contains("{file}")
+}
+
+fn validation_template_targets_for_command(
+    command: &str,
+    path: &str,
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+) -> Vec<String> {
+    if !validation_command_uses_file_placeholder(command) {
+        return vec![path.to_string()];
+    }
+
+    let edited_files: Vec<String> = edits
+        .iter()
+        .map(|edit| edit.file.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|file| file.to_string_lossy().to_string())
+        .collect();
+    if edited_files.is_empty() {
+        vec![path.to_string()]
+    } else {
+        edited_files
+    }
+}
+
+fn run_post_apply_validation(
+    args: &RunArgs,
+    path: &str,
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+) -> Option<ValidationSummary> {
     let mut commands = Vec::new();
     let working_dir = validation_working_dir(path);
 
     if let Some(command) = &args.lint_cmd {
-        let expanded = expand_validation_command_template(command, path);
-        commands.push(run_validation_command("lint", &expanded, &working_dir));
+        for target in validation_template_targets_for_command(command, path, edits) {
+            let expanded = expand_validation_command_template(command, &target);
+            commands.push(run_validation_command("lint", &expanded, &working_dir));
+        }
     }
     if let Some(command) = &args.test_cmd {
-        let expanded = expand_validation_command_template(command, path);
-        commands.push(run_validation_command("test", &expanded, &working_dir));
+        for target in validation_template_targets_for_command(command, path, edits) {
+            let expanded = expand_validation_command_template(command, &target);
+            commands.push(run_validation_command("test", &expanded, &working_dir));
+        }
     }
 
     if commands.is_empty() {
@@ -4773,7 +4808,7 @@ fn handle_ast_rewrite_apply(
         None
     };
 
-    let validation = run_post_apply_validation(args, path);
+    let validation = run_post_apply_validation(args, path, &plan.edits);
     if !args.json {
         if let Some(summary) = &validation {
             emit_validation_status(summary);
@@ -5021,7 +5056,7 @@ fn handle_ast_batch_rewrite_apply(
         None
     };
 
-    let validation = run_post_apply_validation(args, path);
+    let validation = run_post_apply_validation(args, path, &plan.edits);
     if !args.json {
         if let Some(summary) = &validation {
             emit_validation_status(summary);

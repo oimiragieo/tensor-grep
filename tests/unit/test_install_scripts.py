@@ -229,6 +229,16 @@ def test_install_ps1_should_place_extras_before_pinned_version_specifier():
     assert '"$pkgSpec[ast,nlp]"' not in content
 
 
+def test_install_ps1_should_use_current_gpu_wheel_indexes():
+    content = _read_script("scripts/install.ps1")
+
+    assert "https://download.pytorch.org/whl/cu128" in content
+    assert "Windows ROCm support is selected/experimental; configuring CPU fallback" in content
+    assert "https://download.pytorch.org/whl/cu124" not in content
+    assert "https://download.pytorch.org/whl/rocm6.0" not in content
+    assert "https://download.pytorch.org/whl/rocm7.2" not in content
+
+
 def test_install_ps1_should_refresh_tensor_grep_uv_cache_before_stable_install():
     content = _read_script("scripts/install.ps1")
 
@@ -286,6 +296,15 @@ def test_install_sh_should_download_release_native_frontdoor_and_configure_sidec
     assert 'export TG_SIDECAR_PYTHON="$INSTALL_DIR/.venv/bin/python"' in content
     assert 'export TG_NATIVE_TG_BINARY="\\$NATIVE_BINARY"' in content
     assert 'exec "\\$NATIVE_BINARY" "\\$@"' in content
+
+
+def test_install_sh_should_use_current_gpu_wheel_indexes():
+    content = _read_script("scripts/install.sh")
+
+    assert "https://download.pytorch.org/whl/cu128" in content
+    assert "https://download.pytorch.org/whl/rocm7.2" in content
+    assert "https://download.pytorch.org/whl/cu124" not in content
+    assert "https://download.pytorch.org/whl/rocm6.0" not in content
 
 
 def test_install_sh_should_write_frontdoor_inside_staging_before_swap():

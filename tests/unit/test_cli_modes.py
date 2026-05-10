@@ -39,11 +39,20 @@ def _strip_ansi(text: str) -> str:
 TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "Fast text, AST, indexed, and GPU-aware search CLI",
     "Common usage",
+    "Environment overrides",
     "tg PATTERN [PATH ...]",
     "upgrade",
     "update",
     "lsp-setup",
     "checkpoint",
+    "TG_SIDECAR_PYTHON",
+    "TG_NATIVE_TG_BINARY",
+    "TG_RG_PATH",
+    "TG_FORCE_CPU",
+    "TG_SIDECAR_TIMEOUT_MS",
+    "TENSOR_GREP_DEVICE_IDS",
+    "TENSOR_GREP_CLASSIFY_PROVIDER",
+    "TENSOR_GREP_TRITON_TIMEOUT_SECONDS",
 )
 
 
@@ -51,6 +60,8 @@ SEARCH_HELP_REQUIRED_SNIPPETS = (
     "Usage:",
     "search [OPTIONS]",
     "PATTERN",
+    "local heuristics by default",
+    "--gpu-device-ids",
 )
 
 
@@ -969,12 +980,111 @@ def test_doctor_json_reports_foreign_first_path_tg_remediation(monkeypatch, tmp_
     assert "delete" not in payload["path_tg_foreign_remediation"].lower()
 
 
+def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from tensor_grep.cli import main as cli_main
+
+    candidate = tmp_path / "Python314" / "Scripts" / "tg.exe"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("foreign\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def _fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        seen["command"] = command
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command, 0, stdout="2.12.0\n", stderr="")
+
+    monkeypatch.setenv("PYTHONHOME", r"C:\managed-sidecar-python")
+    monkeypatch.setenv("PYTHONPATH", r"C:\managed-sidecar-python\Lib")
+    monkeypatch.setenv("VIRTUAL_ENV", r"C:\managed-sidecar")
+    monkeypatch.setenv("__PYVENV_LAUNCHER__", r"C:\managed-sidecar\python.exe")
+    monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+
+    assert cli_main._doctor_tg_candidate_version(candidate) == "2.12.0"
+    assert seen["command"] == [str(candidate), "--version"]
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert "PYTHONHOME" not in env
+    assert "PYTHONPATH" not in env
+    assert "VIRTUAL_ENV" not in env
+    assert "__PYVENV_LAUNCHER__" not in env
+
+
 def test_doctor_launcher_kind_classifies_virtualenv_console_entrypoint(tmp_path: Path) -> None:
     from tensor_grep.cli import main as cli_main
 
     venv_tg = tmp_path / ".venv" / "Scripts" / "tg.exe"
 
     assert cli_main._doctor_tg_launcher_kind(str(venv_tg)) == "python-entrypoint"
+
+
+def test_doctor_launcher_kind_classifies_windows_com_bridge(tmp_path: Path) -> None:
+    from tensor_grep.cli import main as cli_main
+
+    bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
+
+    assert cli_main._doctor_tg_launcher_kind(str(bridge_tg), "tg 1.9.5") == "native-exe"
+    assert cli_main._doctor_tg_launcher_kind(str(bridge_tg), "2.12.0") == "foreign"
+    assert cli_main._doctor_tg_launcher_kind(str(bridge_tg), None) == "foreign"
+
+
+def test_doctor_json_with_unversioned_bridge_emits_foreign_warning(
+    monkeypatch, tmp_path: Path
+) -> None:
+    foreign_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
+    managed_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    foreign_tg.parent.mkdir(parents=True)
+    managed_tg.parent.mkdir(parents=True)
+    foreign_tg.write_text("bridge\n", encoding="utf-8")
+    managed_tg.write_text("managed\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.9.4")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: managed_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.9.4",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_lsp_provider_statuses",
+        lambda path: [],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [
+            {"path": str(foreign_tg), "version": None},
+            {"path": str(managed_tg), "version": "tg 1.9.4"},
+        ],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [
+            {"path": str(managed_tg), "version": "tg 1.9.4"},
+        ],
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["path_tg_first_launcher_kind"] == "foreign"
+    assert payload["path_tg_first_version"] is None
+    assert payload["path_tg_first_is_foreign"] is True
+    assert payload["path_tg_first_version_matches"] is None
+    assert "not tensor-grep" in payload["path_tg_foreign_warning"]
+    assert "no recognizable --version output" in payload["path_tg_foreign_warning"]
+    assert payload["path_tg_foreign_remediation"] is not None
+    assert str(managed_tg.parent) in payload["path_tg_foreign_remediation"]
 
 
 def test_doctor_json_warns_when_current_path_hits_compat_shim_before_fresh_native(

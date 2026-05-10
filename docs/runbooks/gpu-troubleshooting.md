@@ -27,6 +27,7 @@ This guide helps administrators diagnose and resolve GPU-related issues in tenso
   ```
 - **Resolution:**
   - Use a PyTorch build compiled for CUDA 12.8+ (`cu128` or newer) for RTX 50-series / Blackwell `sm_120` compatibility.
+  - For managed installs, rerun the current installer or refresh the sidecar so it uses `https://download.pytorch.org/whl/cu128` instead of an older `cu124` wheel index.
   - Keep routing pinned to a working GPU such as RTX 4070 / `sm_89` until the `sm_120` environment is upgraded and benchmarked.
   - Do not promote RTX 50-series device discovery into a performance claim without a passing `benchmarks/run_gpu_benchmarks.py` artifact.
 
@@ -45,7 +46,20 @@ tg search "pattern" ./logs
 tg search --force-cpu "pattern" ./logs
 ```
 
-### 5. Device Pinning and Inventory
+### 5. AMD ROCm / HIP Hosts
+- **Symptom:** An AMD Radeon host is detected, but GPU search or PyTorch setup is unavailable.
+- **Diagnosis:** Check whether the platform is Linux ROCm, Windows PyTorch ROCm, or CPU-only:
+  ```bash
+  rocm-smi
+  rocminfo
+  python -c "import torch; print(torch.__version__); print(getattr(torch.version, 'hip', None)); print(torch.cuda.is_available())"
+  ```
+- **Resolution:**
+  - Treat Linux ROCm as the primary AMD GPU-compute path and verify the exact ROCm/PyTorch compatibility matrix before installing.
+  - On Windows, AMD's current Radeon/Ryzen ROCm support is selected PyTorch ROCm wheels for selected Windows 11 GPUs, not full Linux ROCm parity. The Windows installer therefore defaults AMD hosts to CPU fallback unless explicit device, correctness, and timing checks are performed outside the default install path.
+  - Keep `rg`/CPU fallback as the public search path until a target AMD host passes the same result-set correctness and speed gates required for NVIDIA GPUs.
+
+### 6. Device Pinning and Inventory
 Use `tg devices --json` to inspect routable device IDs before pinning a workload:
 
 ```bash
