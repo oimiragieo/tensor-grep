@@ -330,7 +330,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
         },
     },
     "secrets-basic": {
-        "description": "Preview rules for obvious hardcoded secret assignments.",
+        "description": "Preview rules for obvious hardcoded secret assignments and provider tokens.",
         "category": "security",
         "status": "preview",
         "default_language": "python",
@@ -364,6 +364,14 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
                 },
+                {
+                    "id": "python-hardcoded-provider-token",
+                    "pattern": r"\bsk_(?:live|test)_[A-Za-z0-9_=-]{8,}\b",
+                    "engine": "regex",
+                    "language": "python",
+                    "severity": "high",
+                    "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
+                },
             ],
             "javascript": [
                 {
@@ -386,6 +394,14 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "javascript",
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
+                },
+                {
+                    "id": "javascript-hardcoded-provider-token",
+                    "pattern": r"\bsk_(?:live|test)_[A-Za-z0-9_=-]{8,}\b",
+                    "engine": "regex",
+                    "language": "javascript",
+                    "severity": "high",
+                    "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
                 },
             ],
             "typescript": [
@@ -410,6 +426,14 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
                 },
+                {
+                    "id": "typescript-hardcoded-provider-token",
+                    "pattern": r"\bsk_(?:live|test)_[A-Za-z0-9_=-]{8,}\b",
+                    "engine": "regex",
+                    "language": "typescript",
+                    "severity": "high",
+                    "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
+                },
             ],
             "rust": [
                 {
@@ -432,6 +456,14 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "rust",
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
+                },
+                {
+                    "id": "rust-hardcoded-provider-token",
+                    "pattern": r"\bsk_(?:live|test)_[A-Za-z0-9_=-]{8,}\b",
+                    "engine": "regex",
+                    "language": "rust",
+                    "severity": "high",
+                    "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
                 },
             ],
         },
@@ -977,16 +1009,18 @@ def resolve_rule_pack(
             f"Supported languages: {supported}."
         )
 
-    rules = [
-        {
+    rules = []
+    for rule in raw_rules:
+        resolved_rule = {
             "id": str(rule["id"]),
             "pattern": str(rule["pattern"]),
             "language": str(rule["language"]),
             "severity": str(rule["severity"]),
             "message": str(rule["message"]),
         }
-        for rule in raw_rules
-    ]
+        if rule.get("engine"):
+            resolved_rule["engine"] = str(rule["engine"])
+        rules.append(resolved_rule)
     metadata = {
         "name": normalized_name,
         "description": spec["description"],

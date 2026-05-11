@@ -20,7 +20,7 @@
     },
     {
       "name": "secrets-basic",
-      "description": "Preview rules for obvious hardcoded secret assignments.",
+      "description": "Preview rules for obvious hardcoded secret assignments and provider tokens.",
       "category": "security",
       "status": "preview",
       "default_language": "python",
@@ -30,7 +30,7 @@
         "rust",
         "typescript"
       ],
-      "rule_count": 12
+      "rule_count": 16
     },
     {
       "name": "tls-safe",
