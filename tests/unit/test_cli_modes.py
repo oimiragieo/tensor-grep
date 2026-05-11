@@ -2938,6 +2938,27 @@ def test_agent_capsule_ambiguous_invoice_tax_query_surfaces_cross_language_alter
     assert all(item["file"] != payload["primary_target"]["file"] for item in alternatives)
 
 
+def test_agent_capsule_alternative_confidence_does_not_exceed_selected_primary(tmp_path):
+    paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
+    paths["typescript"].write_text(
+        "export function createInvoice(subtotal: number): number {\n"
+        "  const taxCalculation = subtotal * 0.0825;\n"
+        "  const invoiceTaxCalculation = subtotal + taxCalculation;\n"
+        "  return invoiceTaxCalculation;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "change invoice tax calculation",
+    )
+
+    assert payload["alternative_targets"]
+    primary_confidence = payload["primary_target"]["confidence"]
+    assert all(item["confidence"] <= primary_confidence for item in payload["alternative_targets"])
+
+
 def test_agent_capsule_exact_camel_symbol_stays_above_snake_case_bridge(tmp_path):
     paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
 
@@ -7113,7 +7134,10 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
         in result.output
     )
     assert "[scan] rule=python-hardcoded-token lang=python matches=0 files=0" in result.output
-    assert "Scan completed. rules=4 matched_rules=1 total_matches=1" in result.output
+    assert (
+        "[scan] rule=python-hardcoded-provider-token lang=python matches=0 files=0" in result.output
+    )
+    assert "Scan completed. rules=5 matched_rules=1 total_matches=1" in result.output
 
 
 def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
@@ -7159,6 +7183,28 @@ def test_scan_executes_secrets_ruleset_api_key_pattern(monkeypatch):
     assert (
         "[scan] rule=javascript-hardcoded-api-key lang=javascript matches=1 files=1"
         in result.output
+    )
+
+
+def test_scan_executes_secrets_ruleset_generic_provider_token_regex(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text('stripe_secret = "sk_live_1234567890abcdef"\n', encoding="utf-8")
+        Path("b.py").write_text("# leaked token sk_live_abcdef1234567890\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert (
+        "[scan] rule=python-hardcoded-provider-token lang=python matches=2 files=2" in result.output
     )
 
 

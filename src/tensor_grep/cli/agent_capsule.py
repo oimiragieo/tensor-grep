@@ -37,6 +37,18 @@ def _cap_primary_target_confidence(target: dict[str, Any], cap: float) -> None:
     target["confidence"] = round(min(_numeric_confidence(target.get("confidence")), cap), 3)
 
 
+def _cap_alternative_target_confidences(
+    alternatives: list[dict[str, Any]],
+    primary_target: dict[str, Any],
+) -> None:
+    primary_confidence = _numeric_confidence(primary_target.get("confidence"))
+    for alternative in alternatives:
+        alternative["confidence"] = round(
+            min(_numeric_confidence(alternative.get("confidence")), primary_confidence),
+            3,
+        )
+
+
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
@@ -585,6 +597,7 @@ def build_agent_capsule(
     if confidence_cap < 1.0:
         confidence["overall"] = round(min(float(confidence["overall"]), confidence_cap), 3)
         _cap_primary_target_confidence(target, confidence_cap)
+    _cap_alternative_target_confidences(alternatives, target)
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
     if not validation_commands:

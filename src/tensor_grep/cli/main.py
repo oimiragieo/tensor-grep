@@ -2823,9 +2823,13 @@ def _run_ast_scan_payload(
             ]
 
     wrapper_rules: list[tuple[dict[str, str], SearchConfig]] = []
+    regex_rules: list[dict[str, str]] = []
     other_resolved: list[tuple[dict[str, str], SearchConfig, ComputeBackend]] = []
     wrapper_backend: object | None = None
     for rule in rules:
+        if rule.get("engine") == "regex":
+            regex_rules.append(rule)
+            continue
         rule_cfg = replace(cfg, lang=rule["language"])
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
         if (
@@ -2953,6 +2957,60 @@ def _run_ast_scan_payload(
             match_counts_by_file=resolved_match_counts_by_file,
             snippets_by_file=resolved_snippets_by_file,
             rule_occurrences=resolved_rule_occurrences,
+        )
+
+    for rule in regex_rules:
+        backend_names_used.add("RegexRulesetBackend")
+        if scanner is None:
+            scanner = DirectoryScanner(cfg)
+        if resolved_candidate_files is None:
+            resolved_candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+
+        pattern = re.compile(rule["pattern"])
+        regex_matched_files: set[str] = set()
+        regex_match_counts_by_file: dict[str, int] = {}
+        regex_snippets_by_file: dict[str, list[dict[str, object]]] = {}
+        regex_rule_occurrences: list[dict[str, object]] = []
+        rule_matches = 0
+        for current_file in resolved_candidate_files:
+            try:
+                lines = (
+                    Path(current_file).read_text(encoding="utf-8", errors="replace").splitlines()
+                )
+            except OSError:
+                continue
+            for line_number, line_text in enumerate(lines, start=1):
+                line_matches = list(pattern.finditer(line_text))
+                if not line_matches:
+                    continue
+                match_count = len(line_matches)
+                rule_matches += match_count
+                regex_matched_files.add(current_file)
+                regex_match_counts_by_file[current_file] = (
+                    regex_match_counts_by_file.get(current_file, 0) + match_count
+                )
+                regex_rule_occurrences.append({
+                    "file": current_file,
+                    "line": line_number,
+                })
+                if include_evidence_snippets:
+                    file_snippets = regex_snippets_by_file.setdefault(current_file, [])
+                    for regex_match in line_matches:
+                        if len(file_snippets) >= max_evidence_snippets_per_file:
+                            break
+                        file_snippets.append(
+                            _truncate_evidence_snippet(
+                                regex_match.group(0), max_evidence_snippet_chars
+                            )
+                        )
+
+        _append_finding(
+            rule=rule,
+            rule_matches=rule_matches,
+            matched_files=regex_matched_files,
+            match_counts_by_file=regex_match_counts_by_file,
+            snippets_by_file=regex_snippets_by_file,
+            rule_occurrences=regex_rule_occurrences,
         )
 
     payload = {
