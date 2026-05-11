@@ -541,6 +541,8 @@ def test_root_help_should_surface_current_agent_gpu_launcher_and_validation_cont
         "--format rg --sort path",
         "--allow-broad-generated-scan",
         "--gpu-device-ids",
+        "gpu_acceleration",
+        "sidecar-routed GPU results",
         "GPU",
         "remains experimental",
         "TENSOR_GREP_CLASSIFY_PROVIDER=cybert",

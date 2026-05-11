@@ -166,6 +166,25 @@ def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> No
         raise AssertionError("expected docs claim validation to fail")
 
 
+def test_agent_readiness_docs_claims_reject_stale_current_release_prose(tmp_path) -> None:
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path, version="1.9.12")
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text(
+        readme_path.read_text(encoding="utf-8")
+        + "\nThis checks the current `v1.9.10` shell/version resolution.\n",
+        encoding="utf-8",
+    )
+
+    try:
+        module.validate_docs_claims("", tmp_path, "1.9.12")
+    except module.ReadinessError as exc:
+        assert "stale current release prose" in str(exc)
+        assert "v1.9.10" in str(exc)
+    else:
+        raise AssertionError("expected stale current release prose to fail")
+
+
 def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypatch) -> None:
     module = _load_script_module()
     monkeypatch.setattr(module, "IS_WINDOWS", True)

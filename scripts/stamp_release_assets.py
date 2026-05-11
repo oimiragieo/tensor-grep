@@ -6,6 +6,14 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_DOC_PATHS = (
+    "AGENTS.md",
+    "README.md",
+    "SKILL.md",
+    "docs/SESSION_HANDOFF.md",
+    "docs/CONTINUATION_PLAN.md",
+    "docs/CONTRACTS.md",
+)
 
 
 def _read(path: Path) -> str:
@@ -19,6 +27,28 @@ def _write(path: Path, content: str) -> None:
 def _version_from_pyproject() -> str:
     data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     return str(data["project"]["version"])
+
+
+def _stamp_release_doc(content: str, *, version: str) -> str:
+    tag = f"v{version}"
+    replacements = [
+        (
+            r"(?m)^(release_docs_current_tag:\s*)v\d+\.\d+\.\d+\b",
+            rf"\g<1>{tag}",
+        ),
+        (
+            r"current `v\d+\.\d+\.\d+` (shell/version resolution|positioning|release line)",
+            rf"current `{tag}` \1",
+        ),
+        (
+            r"current tagged (version|release state) is `v\d+\.\d+\.\d+`",
+            rf"current tagged \1 is `{tag}`",
+        ),
+    ]
+    stamped = content
+    for pattern, replacement in replacements:
+        stamped = re.sub(pattern, replacement, stamped)
+    return stamped
 
 
 def stamp_assets(*, check_only: bool) -> int:
@@ -74,6 +104,17 @@ def stamp_assets(*, check_only: bool) -> int:
         changed = True
         if not check_only:
             _write(winget_path, winget_after)
+
+    for relative in RELEASE_DOC_PATHS:
+        doc_path = ROOT / relative
+        if not doc_path.exists():
+            continue
+        before = _read(doc_path)
+        after = _stamp_release_doc(before, version=version)
+        if after != before:
+            changed = True
+            if not check_only:
+                _write(doc_path, after)
 
     if check_only and changed:
         print("Release assets are not stamped to current pyproject version.")

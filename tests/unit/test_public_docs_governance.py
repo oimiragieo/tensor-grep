@@ -240,7 +240,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
 
 
-def test_gpu_docs_should_record_current_v196_no_crossover_story() -> None:
+def test_gpu_docs_should_record_current_v1911_no_crossover_story() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
     benchmarks = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
     gpu_doc = GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8")
@@ -248,6 +248,7 @@ def test_gpu_docs_should_record_current_v196_no_crossover_story() -> None:
 
     for doc in (readme, benchmarks, gpu_doc, paper):
         assert "post-`v1.9.6`" in doc
+        assert "`v1.9.11` GPU dogfood" in doc
         assert "1GB and 5GB correctness" in doc
         assert "RTX 4070" in doc
         assert "RTX 5070" in doc
@@ -258,8 +259,8 @@ def test_gpu_docs_should_record_current_v196_no_crossover_story() -> None:
         assert "Python GPU scale rows are unsupported for native CUDA promotion" in doc
         assert "Native CUDA correctness passed, but speed/promotion failed" in doc
 
-    assert "22.9183x" in gpu_doc
-    assert "24.1120x" in gpu_doc
+    assert "35.46x" in gpu_doc
+    assert "29.91x" in gpu_doc
 
 
 def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:
@@ -274,6 +275,8 @@ def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() ->
         "0ms interpreter lag",
         "peak theoretical throughput",
         "further buries",
+        "designed to win on larger files",
+        "GPU-ready",
     ]
 
     for path, doc in docs.items():
@@ -317,6 +320,9 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "path_tg_first_launcher_kind" in skill
     assert "tg_launcher_command_kind" in skill
     assert "tg_agent_capsule" in skill
+    assert "Feature or tool changes must update" in skill
+    assert "MCP signatures/docs when agent-facing" in skill
+    assert "this skill when repo operating practice changes" in skill
     assert "agent-capsule-mixed-language" in skill
     assert "validation_alignment" in skill
     assert "$file" in skill

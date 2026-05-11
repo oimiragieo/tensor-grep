@@ -1332,7 +1332,7 @@ Current tool set:
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
-- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=512, model=None)`
+- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=512, model=None, gpu_device_ids=None, gpu_timeout_s=5.0)`
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".")`
@@ -1400,7 +1400,7 @@ Response mapping:
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
 - `tg_edit_plan(...)` returns the same v1 envelope and payload shape as [`examples/edit_plan.json`](examples/edit_plan.json)
 - `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)
-- `tg_agent_capsule(...)` returns the same v1 capsule contract as `tg.exe agent --query ... --json ...`, with `routing_reason = "agent-context-capsule"`
+- `tg_agent_capsule(...)` returns the same v1 capsule contract as `tg.exe agent --query ... --json ...`, with `routing_reason = "agent-context-capsule"`. Optional `gpu_device_ids` request native GPU evidence and populate `gpu_acceleration`; sidecar-routed GPU evidence is reported as unsupported.
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
 - `tg_symbol_source(...)` returns the same v1 envelope and payload shape as [`examples/source.json`](examples/source.json)
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)

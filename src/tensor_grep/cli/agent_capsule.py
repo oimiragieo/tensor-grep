@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -254,6 +255,296 @@ def _command_ref(argv: list[object]) -> dict[str, Any]:
     return {
         "argv": args,
         "command": subprocess.list2cmdline(args),
+    }
+
+
+def _normalize_gpu_device_ids(device_ids: list[int] | None) -> list[int]:
+    if not device_ids:
+        return []
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for raw_device_id in device_ids:
+        try:
+            device_id = int(raw_device_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid GPU device id: {raw_device_id!r}") from exc
+        if device_id < 0:
+            raise ValueError(
+                f"Invalid GPU device id: {device_id}. Device IDs must be non-negative."
+            )
+        if device_id in seen:
+            continue
+        seen.add(device_id)
+        normalized.append(device_id)
+    return normalized
+
+
+def _agent_gpu_query_terms(query: str, *, limit: int = 8) -> list[str]:
+    terms: list[str] = []
+    for term in repo_map._symbol_query_terms(query):
+        cleaned = str(term).strip()
+        if len(cleaned) < 3:
+            continue
+        terms.append(cleaned)
+    return _dedupe(terms)[:limit]
+
+
+def _run_agent_gpu_json_command(
+    argv: list[object],
+    *,
+    timeout_s: float,
+    valid_return_codes: tuple[int, ...] = (0,),
+) -> dict[str, Any]:
+    ref = _command_ref(argv)
+    args = [str(arg) for arg in argv]
+    try:
+        completed = subprocess.run(
+            args,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=max(float(timeout_s), 0.1),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "timeout",
+            "reason": f"GPU evidence command timed out after {timeout_s:g}s.",
+            "command": ref["command"],
+            "argv": ref["argv"],
+            "exit_code": None,
+            "stderr": str(exc),
+        }
+    except OSError as exc:
+        return {
+            "status": "failed",
+            "reason": str(exc),
+            "command": ref["command"],
+            "argv": ref["argv"],
+            "exit_code": None,
+            "stderr": str(exc),
+        }
+
+    stdout = completed.stdout or ""
+    stderr = (completed.stderr or "").strip()
+    result: dict[str, Any] = {
+        "status": "ok",
+        "command": ref["command"],
+        "argv": ref["argv"],
+        "exit_code": completed.returncode,
+    }
+    if stderr:
+        result["stderr"] = stderr
+    if completed.returncode not in valid_return_codes:
+        result["status"] = "failed"
+        result["reason"] = f"GPU evidence command exited with code {completed.returncode}."
+        return result
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        result["status"] = "malformed"
+        result["reason"] = f"GPU evidence command did not return JSON: {exc}"
+        if stdout.strip():
+            result["stdout_preview"] = stdout.strip()[:400]
+        return result
+    if not isinstance(payload, dict):
+        result["status"] = "malformed"
+        result["reason"] = "GPU evidence command returned a non-object JSON payload."
+        return result
+    result["payload"] = payload
+    return result
+
+
+def _native_gpu_route_rejection(payload: dict[str, Any]) -> str | None:
+    backend = str(payload.get("routing_backend") or "")
+    sidecar_used = bool(payload.get("sidecar_used"))
+    if backend == "NativeGpuBackend" and not sidecar_used:
+        return None
+    if sidecar_used or "Sidecar" in backend:
+        return (
+            "sidecar-routed GPU result is unsupported for agent evidence; "
+            "use a CUDA-enabled native tg route."
+        )
+    return (
+        "GPU evidence command did not use NativeGpuBackend "
+        f"(routing_backend={backend or 'unknown'})."
+    )
+
+
+def _gpu_route_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "routing_backend": str(payload.get("routing_backend") or "unknown"),
+        "routing_reason": str(payload.get("routing_reason") or "unknown"),
+        "sidecar_used": bool(payload.get("sidecar_used")),
+    }
+
+
+def _resolve_match_file(file_value: object, search_root: Path) -> str | None:
+    raw_file = str(file_value or "").strip()
+    if not raw_file:
+        return None
+    candidate = Path(raw_file)
+    if not candidate.is_absolute():
+        candidate = search_root / candidate
+    try:
+        return str(candidate.resolve())
+    except OSError:
+        return str(candidate)
+
+
+def _agent_gpu_evidence(
+    query: str,
+    path: str,
+    *,
+    gpu_device_ids: list[int] | None,
+    max_files: int,
+    timeout_s: float,
+) -> dict[str, Any]:
+    requested_device_ids = _normalize_gpu_device_ids(gpu_device_ids)
+    if not requested_device_ids:
+        return {
+            "status": "not_requested",
+            "requested_device_ids": [],
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": "No GPU evidence scan requested.",
+        }
+
+    device_arg = ",".join(str(device_id) for device_id in requested_device_ids)
+    with tempfile.TemporaryDirectory(prefix="tg-agent-gpu-probe-") as probe_tmp:
+        probe_dir = Path(probe_tmp)
+        (probe_dir / "probe.log").write_text(
+            "tg agent gpu probe sentinel\n",
+            encoding="utf-8",
+        )
+        probe_command: list[object] = [
+            "tg",
+            "search",
+            "--gpu-device-ids",
+            device_arg,
+            "--json",
+            "-F",
+            "tg agent gpu probe sentinel",
+            str(probe_dir),
+        ]
+        probe = _run_agent_gpu_json_command(probe_command, timeout_s=timeout_s)
+
+    if probe["status"] != "ok":
+        return {
+            "status": str(probe["status"]),
+            "requested_device_ids": requested_device_ids,
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": str(probe.get("reason") or "GPU route probe failed."),
+            "probe": probe,
+        }
+
+    probe_payload = _as_dict(probe.get("payload"))
+    route_rejection = _native_gpu_route_rejection(probe_payload)
+    route_fields = _gpu_route_fields(probe_payload)
+    if route_rejection is not None:
+        return {
+            "status": "unsupported",
+            "requested_device_ids": requested_device_ids,
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": route_rejection,
+            "probe": probe,
+            **route_fields,
+        }
+
+    query_terms = _agent_gpu_query_terms(query)
+    if not query_terms:
+        return {
+            "status": "ready",
+            "requested_device_ids": requested_device_ids,
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": "Native GPU route passed, but the query produced no evidence terms.",
+            "probe": probe,
+            **route_fields,
+        }
+
+    evidence_command: list[object] = [
+        "tg",
+        "search",
+        "--gpu-device-ids",
+        device_arg,
+        "--json",
+        "-F",
+    ]
+    for term in query_terms:
+        evidence_command.extend(["-e", term])
+    evidence_command.append(path)
+    evidence = _run_agent_gpu_json_command(
+        evidence_command,
+        timeout_s=timeout_s,
+        valid_return_codes=(0, 1),
+    )
+    if evidence["status"] != "ok":
+        return {
+            "status": str(evidence["status"]),
+            "requested_device_ids": requested_device_ids,
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": str(evidence.get("reason") or "GPU evidence scan failed."),
+            "probe": probe,
+            "evidence": evidence,
+            **route_fields,
+        }
+
+    evidence_payload = _as_dict(evidence.get("payload"))
+    evidence_route_rejection = _native_gpu_route_rejection(evidence_payload)
+    evidence_route_fields = _gpu_route_fields(evidence_payload)
+    if evidence_route_rejection is not None:
+        return {
+            "status": "unsupported",
+            "requested_device_ids": requested_device_ids,
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": evidence_route_rejection,
+            "probe": probe,
+            "evidence": evidence,
+            **evidence_route_fields,
+        }
+
+    search_root = Path(path)
+    matched_files: list[str] = []
+    evidence_matches: list[dict[str, Any]] = []
+    for match in _as_list_of_dicts(evidence_payload.get("matches")):
+        matched_file = _resolve_match_file(match.get("file") or match.get("path"), search_root)
+        if matched_file is None:
+            continue
+        if matched_file not in matched_files:
+            matched_files.append(matched_file)
+        if len(evidence_matches) < max_files:
+            evidence_matches.append({
+                "file": matched_file,
+                "line": match.get("line") or match.get("line_number"),
+                "pattern_text": match.get("pattern_text") or match.get("pattern"),
+            })
+
+    total_matches = int(evidence_payload.get("total_matches", len(evidence_matches)) or 0)
+    status = "used" if matched_files else "ready_no_matches"
+    reason = (
+        "Native GPU route produced batched query-term evidence."
+        if matched_files
+        else "Native GPU route ran, but no query-term evidence matched."
+    )
+    return {
+        "status": status,
+        "requested_device_ids": requested_device_ids,
+        "used_for_evidence": bool(matched_files),
+        "promotion_claim": False,
+        "reason": reason,
+        "query_terms": query_terms,
+        "matched_files": matched_files[:max_files],
+        "total_matches": total_matches,
+        "matches": evidence_matches,
+        "probe": probe,
+        "evidence": evidence,
+        **evidence_route_fields,
     }
 
 
@@ -523,6 +814,8 @@ def build_agent_capsule(
     max_repo_files: int | None = None,
     model: str | None = None,
     include_blast_radius: bool = True,
+    gpu_device_ids: list[int] | None = None,
+    gpu_timeout_s: float = 5.0,
 ) -> dict[str, Any]:
     resolved_path = str(Path(path).resolve())
     payload = repo_map.build_context_render(
@@ -629,6 +922,43 @@ def build_agent_capsule(
         "reason": "capsule v1 does not run blast-radius automatically",
     }
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
+    route_rationale: list[dict[str, Any]] = [
+        {
+            "strategy": "context-render",
+            "evidence": "heuristic",
+            "reason": "highest ranked edit target from context-render",
+        }
+    ]
+    gpu_acceleration = _agent_gpu_evidence(
+        query,
+        resolved_path,
+        gpu_device_ids=gpu_device_ids,
+        max_files=max_files,
+        timeout_s=gpu_timeout_s,
+    )
+    if gpu_acceleration["status"] != "not_requested":
+        matched_files = {
+            str(Path(file_path).resolve())
+            for file_path in _as_list_of_strings(gpu_acceleration.get("matched_files"))
+        }
+        primary_file = str(target.get("file") or "")
+        primary_matched = bool(primary_file and str(Path(primary_file).resolve()) in matched_files)
+        consistency["gpu_evidence_primary_file_matched"] = primary_matched
+        consistency["gpu_evidence_matched_files"] = list(matched_files)
+        if gpu_acceleration["status"] == "used":
+            route_rationale.append({
+                "strategy": "gpu-native-evidence",
+                "evidence": gpu_acceleration.get("routing_backend", "NativeGpuBackend"),
+                "reason": "batched query terms matched via explicit native GPU route",
+            })
+        else:
+            route_rationale.append({
+                "strategy": "gpu-evidence-probe",
+                "evidence": str(
+                    gpu_acceleration.get("routing_backend") or gpu_acceleration.get("status")
+                ),
+                "reason": str(gpu_acceleration.get("reason") or ""),
+            })
 
     return {
         "version": 1,
@@ -640,16 +970,11 @@ def build_agent_capsule(
         "path": resolved_path,
         "primary_target": target,
         "alternative_targets": alternatives,
-        "route_rationale": [
-            {
-                "strategy": "context-render",
-                "evidence": "heuristic",
-                "reason": "highest ranked edit target from context-render",
-            }
-        ],
+        "route_rationale": route_rationale,
         "snippets": snippets,
         "related_call_sites": [],
         "call_site_evidence": call_site_evidence,
+        "gpu_acceleration": gpu_acceleration,
         "validation_plan": validation_plan,
         "validation_commands": validation_commands,
         "edit_order": edit_order,
@@ -687,6 +1012,8 @@ def build_agent_capsule_json(
     max_repo_files: int | None = None,
     model: str | None = None,
     include_blast_radius: bool = True,
+    gpu_device_ids: list[int] | None = None,
+    gpu_timeout_s: float = 5.0,
 ) -> str:
     return json.dumps(
         build_agent_capsule(
@@ -698,6 +1025,8 @@ def build_agent_capsule_json(
             max_repo_files=max_repo_files,
             model=model,
             include_blast_radius=include_blast_radius,
+            gpu_device_ids=gpu_device_ids,
+            gpu_timeout_s=gpu_timeout_s,
         ),
         ensure_ascii=False,
         indent=2,

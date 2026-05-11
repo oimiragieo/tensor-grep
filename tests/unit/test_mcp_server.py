@@ -924,6 +924,8 @@ def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeyp
 
     tools = {tool["name"]: tool for tool in payload["tools"]}
     assert tools["tg_mcp_capabilities"]["mode"] == "python-local"
+    assert "gpu_device_ids" in tools["tg_agent_capsule"]["notes"]
+    assert "unsupported" in tools["tg_agent_capsule"]["notes"]
     assert tools["tg_rewrite_plan"]["mode"] == "embedded-safe"
     assert tools["tg_rewrite_apply"]["mode"] == "embedded-safe"
     assert tools["tg_rewrite_apply"]["native_required_options"] == [
@@ -2817,6 +2819,44 @@ def test_tg_agent_capsule_returns_actionable_context_capsule(tmp_path: Path):
     assert "follow_up_reads" in payload["omissions"]
     assert payload["raw_context_ref"]["command"].startswith("tg context-render")
     assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_tg_agent_capsule_accepts_gpu_evidence_options(monkeypatch, tmp_path: Path):
+    from tensor_grep.cli import agent_capsule, mcp_server
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "def create_invoice(total):\n    return total\n",
+        encoding="utf-8",
+    )
+
+    def _fake_gpu_run(command, **_kwargs):
+        payload = {
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "total_matches": 1,
+            "matches": [{"file": "probe.log", "line": 1, "text": "probe"}],
+        }
+        return CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = json.loads(
+        mcp_server.tg_agent_capsule(
+            "change invoice tax calculation",
+            str(project),
+            gpu_device_ids=[0, 1],
+            gpu_timeout_s=1,
+        )
+    )
+
+    acceleration = payload["gpu_acceleration"]
+    assert acceleration["requested_device_ids"] == [0, 1]
+    assert acceleration["status"] == "unsupported"
+    assert acceleration["routing_backend"] == "GpuSidecar"
+    assert acceleration["sidecar_used"] is True
 
 
 def test_tg_agent_capsule_returns_invalid_input_for_missing_path(tmp_path: Path):

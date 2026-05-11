@@ -130,6 +130,11 @@ _MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
         for name in _NATIVE_REQUIRED_MCP_TOOLS
     },
 }
+_MCP_TOOL_CAPABILITIES["tg_agent_capsule"]["notes"] = (
+    "Runs without a standalone native tg binary for normal capsules; optional "
+    "gpu_device_ids run a selected GPU evidence probe and report sidecar-routed "
+    "GPU as unsupported."
+)
 
 
 def _repo_root() -> Path:
@@ -1171,6 +1176,8 @@ def tg_agent_capsule(
     max_tokens: int | None = 1200,
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     model: str | None = None,
+    gpu_device_ids: list[int] | None = None,
+    gpu_timeout_s: float = 5.0,
 ) -> str:
     """
     Return an Actionable Context Capsule for agent edit planning.
@@ -1183,6 +1190,8 @@ def tg_agent_capsule(
         max_tokens: Token budget for bounded capsule output.
         max_repo_files: Maximum repository files to scan.
         model: Optional model name used for token estimation.
+        gpu_device_ids: Optional selected GPU IDs for native route evidence.
+        gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command.
     """
     if not Path(path).expanduser().exists():
         return _agent_capsule_error(
@@ -1204,6 +1213,8 @@ def tg_agent_capsule(
                 max_tokens=max_tokens,
                 max_repo_files=max_repo_files,
                 model=model,
+                gpu_device_ids=gpu_device_ids,
+                gpu_timeout_s=gpu_timeout_s,
             ),
             indent=2,
         )

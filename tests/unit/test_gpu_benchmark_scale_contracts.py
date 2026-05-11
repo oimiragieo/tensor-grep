@@ -530,6 +530,250 @@ def test_run_gpu_native_benchmarks_should_default_to_1gb_and_5gb_scale():
     assert module.DEFAULT_CORPUS_SIZES[-2:] == (module.GB, 5 * module.GB)
 
 
+def test_run_gpu_native_correctness_should_reject_sidecar_routed_gpu_json(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_sidecar_correctness",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    corpus_dir = tmp_path / "corpus"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir.mkdir()
+
+    def _fake_run_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--cpu" in command_text:
+            stdout = (
+                '{"routing_backend":"CpuBackend","routing_reason":"cpu-native",'
+                '"sidecar_used":false,"total_matches":2,"total_files":1,'
+                '"matches":[{"file":"sample.log"}]}'
+            )
+        else:
+            stdout = (
+                '{"routing_backend":"GpuSidecar","routing_reason":"python-sidecar",'
+                '"sidecar_used":true,"total_matches":2,"total_files":1,'
+                '"matches":[{"file":"sample.log"}]}'
+            )
+        return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    result = module.run_correctness_check(
+        tg_binary=tg_binary,
+        corpus_dir=corpus_dir,
+        pattern="gpu benchmark sentinel",
+        device_id=0,
+        env={},
+        timeout_s=5,
+    )
+
+    assert result["status"] == "UNSUPPORTED"
+    assert result["routing_backend"] == "GpuSidecar"
+    assert result["sidecar_used"] is True
+    assert "not native CUDA scale proof" in result["error"]
+
+
+def test_run_gpu_native_benchmarks_should_not_time_sidecar_routed_gpu_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_sidecar_rows",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    gpu_timing_commands: list[str] = []
+
+    monkeypatch.setattr(
+        module,
+        "generate_gpu_scale_corpus",
+        lambda output_dir, target_bytes, shard_count: {
+            "corpus_dir": output_dir,
+            "actual_bytes": target_bytes,
+            "total_lines": 10,
+            "file_count": shard_count,
+            "pattern_counts": {"gpu benchmark sentinel": 1},
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_gpu_error_tests",
+        lambda **_kwargs: {
+            "invalid_device": {"status": "PASS", "exit_code": 2},
+            "nvrtc_failure": {"status": "PASS", "exit_code": 2},
+            "timeout": {"status": "PASS", "exit_code": 2, "simulated": True},
+            "malformed_inputs": {"status": "PASS", "exit_code": 0},
+        },
+    )
+
+    def _fake_run_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--json" not in command_text:
+            return module.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if "--cpu" in command_text:
+            stdout = (
+                '{"routing_backend":"CpuBackend","routing_reason":"cpu-native",'
+                '"sidecar_used":false,"total_matches":2,"total_files":1,'
+                '"matches":[{"file":"sample.log"}]}'
+            )
+        else:
+            stdout = (
+                '{"routing_backend":"GpuSidecar","routing_reason":"python-sidecar",'
+                '"sidecar_used":true,"total_matches":2,"total_files":1,'
+                '"matches":[{"file":"sample.log"}]}'
+            )
+        return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    def _fake_benchmark_search_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--gpu-device-ids" in command_text:
+            gpu_timing_commands.append(command_text)
+        return {
+            "status": "PASS",
+            "median_s": 1.0,
+            "samples_s": [1.0],
+            "stderr": "",
+            "command": command_text,
+            "throughput_bytes_s": 1.0,
+        }
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+    monkeypatch.setattr(module, "benchmark_search_command", _fake_benchmark_search_command)
+
+    payload = module.run_gpu_native_benchmarks(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        bench_dir=tmp_path / "gpu_native_bench_data",
+        corpus_sizes=(module.GB,),
+        runs=1,
+        warmup=0,
+        device_id=0,
+        command_timeout_s=5,
+        shard_count=2,
+        benchmark_pattern="gpu benchmark sentinel",
+        timeout_simulation_ms=300,
+        advanced=False,
+    )
+
+    tg_gpu = payload["rows"][0]["tg_gpu"]
+    assert gpu_timing_commands == []
+    assert tg_gpu["status"] == "UNSUPPORTED"
+    assert tg_gpu["routing_backend"] == "GpuSidecar"
+    assert tg_gpu["sidecar_used"] is True
+    assert "not native CUDA scale proof" in tg_gpu["stderr"]
+    assert payload["scale_gate_summary"]["native_cuda_runtime_gate"] == {
+        "status": "UNSUPPORTED",
+        "required_backend": "NativeGpuBackend",
+        "observed_backends": ["GpuSidecar"],
+        "sidecar_observed": True,
+        "reason": (
+            "GPU rows routed outside the native CUDA backend; sidecar-routed rows are not "
+            "native CUDA speed proof."
+        ),
+    }
+    assert payload["scale_gate_summary"]["correctness_gate"]["status"] == "UNSUPPORTED"
+    assert payload["scale_gate_summary"]["speed_gate"]["status"] == "NOT_RUN"
+
+
+def test_run_gpu_native_runtime_probe_should_preserve_pipeline_metrics(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_probe_pipeline",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    corpus_dir = tmp_path / "corpus"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir.mkdir()
+
+    def _fake_run_command(command, **_kwargs):
+        stdout = (
+            '{"routing_backend":"NativeGpuBackend",'
+            '"routing_reason":"gpu-device-ids-explicit-native",'
+            '"sidecar_used":false,'
+            '"pipeline":{'
+            '"cpu_staging_bytes":1234,'
+            '"pageable_host_staging_bytes":0,'
+            '"host_file_read_time_ms":1.25,'
+            '"host_preprocess_time_ms":0.5,'
+            '"host_to_pinned_copy_time_ms":0.0,'
+            '"transfer_time_ms":2.0,'
+            '"kernel_time_ms":3.0'
+            "}}"
+        )
+        return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    result = module.probe_native_gpu_runtime_backend(
+        tg_binary=tg_binary,
+        corpus_dir=corpus_dir,
+        pattern="gpu benchmark sentinel",
+        device_id=0,
+        env={},
+        timeout_s=5,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["routing_backend"] == "NativeGpuBackend"
+    assert result["sidecar_used"] is False
+    assert result["pipeline"]["cpu_staging_bytes"] == 1234
+    assert result["pipeline"]["host_to_pinned_copy_time_ms"] == 0.0
+
+
+def test_run_gpu_native_error_tests_should_report_malformed_timeout(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_error_timeout",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    corpus_dir = tmp_path / "corpus"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir.mkdir()
+
+    def _fake_run_command(command, **kwargs):
+        command_text = " ".join(str(part) for part in command)
+        env = kwargs.get("env", {})
+        behavior = env.get("TG_TEST_CUDA_BEHAVIOR", "") if isinstance(env, dict) else ""
+        if "--json" in command_text:
+            return module.subprocess.TimeoutExpired(command, timeout=7)
+        if "99" in command_text:
+            return module.subprocess.CompletedProcess(
+                command,
+                2,
+                stdout="",
+                stderr="GPU device 99 unavailable; available CUDA devices: 0",
+            )
+        if behavior.startswith("nvrtc-failure:"):
+            return module.subprocess.CompletedProcess(
+                command,
+                2,
+                stdout="",
+                stderr="CUDA kernel compilation failed: simulated NVRTC compile error",
+            )
+        if behavior.startswith("timeout:"):
+            return module.subprocess.CompletedProcess(
+                command,
+                2,
+                stdout="",
+                stderr="GPU search timed out after simulated delay",
+            )
+        return module.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    payload = module.run_gpu_error_tests(
+        tg_binary=tg_binary,
+        corpus_dir=corpus_dir,
+        device_id=0,
+        timeout_s=7,
+        timeout_simulation_ms=300,
+    )
+
+    malformed = payload["malformed_inputs"]
+    assert malformed["status"] == "FAIL"
+    assert malformed["exit_code"] is None
+    assert malformed["stderr"] == "command timed out after 7s"
+    assert malformed["simulated"] is False
+
+
 def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_failure():
     module = _load_script_module(
         "run_gpu_native_benchmarks_scale_gate_summary",
@@ -541,14 +785,24 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
             "size_bytes": module.GB,
             "rg": {"status": "PASS", "median_s": 0.25},
             "tg_cpu": {"status": "PASS", "median_s": 0.24},
-            "tg_gpu": {"status": "PASS", "median_s": 9.2},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 9.2,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
         },
         {
             "size_label": "5GB",
             "size_bytes": 5 * module.GB,
             "rg": {"status": "PASS", "median_s": 0.28},
             "tg_cpu": {"status": "PASS", "median_s": 0.23},
-            "tg_gpu": {"status": "PASS", "median_s": 9.4},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 9.4,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
         },
     ]
     correctness_checks = [
@@ -568,6 +822,13 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
     )
 
     assert summary["benchmark_surface"] == "native-cuda-scale"
+    assert summary["native_cuda_runtime_gate"] == {
+        "status": "PASS",
+        "required_backend": "NativeGpuBackend",
+        "observed_backends": ["NativeGpuBackend"],
+        "sidecar_observed": False,
+        "reason": "Native CUDA runtime route was observed.",
+    }
     assert summary["correctness_gate"] == {
         "status": "PASS",
         "required_sizes": ["1GB", "5GB"],

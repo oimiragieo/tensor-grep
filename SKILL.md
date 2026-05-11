@@ -62,6 +62,8 @@ Current product read:
 - GPU benchmark auto-recommendation must stay false unless required 1GB/5GB correctness checks pass and a selected GPU beats both `rg` and `tg_cpu` at required scale. Unsupported-device inventory warnings should stay top-level or on the unsupported device row, not on unrelated selected-GPU timing rows.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
 - `tg agent` / Actionable Context Capsule is the product wedge: an opt-in workflow packet with primary file/function, route rationale, bounded snippets with line maps, validation evidence, edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when evidence is weak. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected. Evidence labels should distinguish `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, and `stale/uncertain` conclusions.
+- `tg agent --gpu-device-ids ... --json` and MCP `tg_agent_capsule(..., gpu_device_ids=[...])` are opt-in GPU evidence paths. They should expose `gpu_acceleration`, require `NativeGpuBackend` with `sidecar_used = false` before using the evidence, and report sidecar-routed GPU as unsupported.
+- Feature or tool changes must update the matching implementation, tests, docs/contracts, README, CLI help (`tg --help` and command-specific help), native front-door help when applicable, MCP signatures/docs when agent-facing, and this skill when repo operating practice changes.
 - Capsule confidence must be honest when query language hints, exact symbol intent, primary target language, selected snippets, and validation commands disagree. In mismatch cases, cap both `confidence.overall` and `primary_target.confidence`, expose `query_language_hints`, `primary_target_language`, `validation_alignment`, and `validation_filtered_count`, and require ask-before-editing.
 - Product-roadmap docs are current through PR #66, and capsule v1 shipped in PR #76. Future sessions should harden capsule behavior behind explicit contracts and regression tests, not reinterpret the roadmap as permission to alter raw search output.
 - `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
@@ -180,7 +182,7 @@ Useful MCP tools include:
 - `tg_rewrite_plan`
 - `tg_rewrite_apply`
 - `tg_rewrite_diff`
-- `tg_agent_capsule`
+- `tg_agent_capsule` (`gpu_device_ids` / `gpu_timeout_s` are optional native GPU evidence knobs; sidecar-routed GPU is unsupported evidence)
 
 Call `tg_mcp_capabilities` first in PyPI wheels, sandboxes, and agent hosts so the client knows whether a standalone native `tg` binary is available.
 
@@ -201,7 +203,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.9` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.9.11` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
@@ -228,6 +230,7 @@ GPU benchmark `SKIP` is valid infrastructure state when dependencies such as Tor
 | Trusting invented validation commands | Check `validation_plan[].detection`; package-manager commands require `package.json`, Python commands require Python/test/project evidence, and absent evidence should mean no command. |
 | Claiming GPU wins from device detection | Run the GPU benchmark and record the accepted artifact. |
 | Updating docs from memory | Update docs only from repo evidence, CI evidence, or benchmark artifacts. |
+| Adding a feature/tool without public-surface updates | Update README, docs/contracts, root and command help, native help, MCP docs/signatures when relevant, and this skill when operating practice changes. |
 
 ## Exit Codes
 

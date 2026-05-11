@@ -613,14 +613,14 @@ The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails
 
 ### Native GPU crossover / throughput (`run_gpu_native_benchmarks.py`)
 
-The post-`v1.9.6` native CUDA dogfood split the GPU story into two separate facts: 1GB and 5GB correctness now passes on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`), but there is still no crossover. GPU remains slower than `rg` and `tg_cpu`, so keep explicit GPU search manual-only.
+The post-`v1.9.6` native CUDA dogfood, refreshed by the latest `v1.9.11` GPU dogfood, split the GPU story into two separate facts: 1GB and 5GB correctness now passes on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`), but there is still no crossover. GPU remains slower than `rg` and `tg_cpu`, so keep explicit GPU search manual-only.
 
 | Device | Required correctness | Speed read | Result |
 | --- | --- | --- | --- |
-| RTX 4070 (`sm_89`) | 1GB and 5GB correctness passed | latest 5GB row: `rg 0.282s`, `tg_cpu 0.238s`, `tg_gpu 9.259s`; best recorded GPU/rg no-crossover ratio `22.9183x` slower | no crossover |
-| RTX 5070 (`sm_120`) | 1GB and 5GB correctness passed | latest 5GB row: `rg 0.260s`, `tg_cpu 0.254s`, `tg_gpu 9.117s`; best recorded GPU/rg no-crossover ratio `24.1120x` slower | no crossover |
+| RTX 4070 (`sm_89`) | 1GB and 5GB correctness passed | latest `v1.9.11` 5GB dogfood read: best GPU/rg no-crossover ratio `35.46x` slower | no crossover |
+| RTX 5070 (`sm_120`) | 1GB and 5GB correctness passed | latest `v1.9.11` 5GB dogfood read: best GPU/rg no-crossover ratio `29.91x` slower | no crossover |
 
-Native CUDA correctness passed, but speed/promotion failed. The native benchmark now exposes `scale_gate_summary.benchmark_surface = "native-cuda-scale"`, a separate `correctness_gate`, a separate `speed_gate`, and `promotion_ready = false` when correctness is good but speed does not beat both baselines.
+Native CUDA correctness passed, but speed/promotion failed. In the CUDA-feature dogfood lane this means correctness is real but not enough for promotion. A 2026-05-11 managed-front-door route audit also confirmed that the public Windows `tg.exe --gpu-device-ids 0 --json ...` path currently reports `routing_backend = "GpuSidecar"` and `sidecar_used = true`, so those rows are sidecar-contaminated and unsupported as native CUDA speed proof. The native benchmark now exposes `scale_gate_summary.native_cuda_runtime_gate`, a separate `correctness_gate`, a separate `speed_gate`, and `promotion_ready = false`; sidecar-routed rows produce `native_cuda_runtime_gate.status = "UNSUPPORTED"` and do not run the native speed gate.
 
 ### Python GPU/NLP sidecar benchmark (`run_gpu_benchmarks.py`)
 
