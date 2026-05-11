@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.2 (2026-05-11)
+
+### Bug Fixes
+
+- Harden GPU route evidence and dogfood blockers
+  ([`a1de502`](https://github.com/oimiragieo/tensor-grep/commit/a1de502b6dcfb9ea1c4fb19d464fafc2a61904dd))
+
+Harden agent GPU route evidence, GPU readiness gates, classify JSON enrichment, capsule tie
+  handling, and update urllib3 to clear the dependency audit.
+
+
 ## v1.10.1 (2026-05-11)
 
 ### Bug Fixes

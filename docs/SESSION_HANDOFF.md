@@ -4,7 +4,7 @@ Last updated: 2026-05-11
 
 ## Current Release State
 
-release_docs_current_tag: v1.10.1
+release_docs_current_tag: v1.10.2
 
 - Latest tagged version before this bridge follow-up: `v1.10.0`
 - Latest complete PyPI version before this bridge follow-up: `v1.10.0`
