@@ -43,7 +43,8 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.9.10
 
-Latest stable PyPI release: [`v1.9.9`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.9).
+Latest tagged GitHub release: [`v1.9.10`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.10).
+Latest complete PyPI release: [`v1.9.9`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.9).
 
 Current positioning:
 
@@ -54,6 +55,12 @@ Current positioning:
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.9.10` closed:
+
+- dogfood follow-ups now cap capsule alternative target confidence at the selected primary target confidence
+- `secrets-basic` scans now include regex-backed generic provider tokens such as `sk_live...` in Python, JavaScript, TypeScript, and Rust files
+- stale v1.9.9 docs-governance text was synchronized to the release line; GitHub native CPU assets were published for `v1.9.10`, while PyPI publication is being retried in the release-wheel retry follow-up after a transient crates.io DNS failure cancelled the wheel matrix
 
 What `v1.9.9` closed:
 
@@ -132,7 +139,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.9` follow-up:
+Active post-`v1.9.10` follow-up:
 
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
 - keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
@@ -161,6 +168,11 @@ Managed native-upgrade dogfood:
 
 Release proof:
 
+- PR #90 from `ca9df12 fix: harden v1.9.9 dogfood followups` merged and released
+- release commit `6d04ad2 chore(release): v1.9.10 [skip ci]`
+- main CI run `25645819170` passed the pre-release test/benchmark matrix, semantic-release, and `publish-github-release-assets`; PyPI publish was blocked by a transient crates.io DNS failure in the macOS wheel build and is being retried through the release-wheel retry follow-up
+- main CodeQL run `25646156907` passed on the v1.9.10 release commit
+- GitHub release assets for `v1.9.10` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
 - PR #89 from `21449bf fix: add agent workflow benchmark governance` merged and released
 - release commit `efa83e2 chore(release): v1.9.9 [skip ci]`
 - main CI run `25643115892` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`

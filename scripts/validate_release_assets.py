@@ -113,6 +113,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "Upload package-manager bundle artifact",
         "package-manager-bundle-${{ matrix.os }}",
         "validate-pypi-artifacts:",
+        "Prefetch Rust dependencies for PyPI artifacts",
+        'CARGO_NET_RETRY: "10"',
+        "cargo fetch --manifest-path rust_core/Cargo.toml",
+        "Cargo dependency prefetch failed after 5 attempts.",
         "Validate built PyPI artifact set",
         "Smoke-test install from built PyPI artifacts",
         "Install Dependencies (Unix with retry)",
@@ -296,6 +300,67 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     if required_step not in step_names:
                         errors.append(
                             f"CI workflow test-gpu-linux job must include step `{required_step}`"
+                        )
+
+            for job_name in ("build-wheels-pypi", "build-sdist-pypi"):
+                pypi_build_job = jobs.get(job_name)
+                if not isinstance(pypi_build_job, dict):
+                    errors.append(f"CI workflow must define `{job_name}` for PyPI artifacts")
+                    continue
+                pypi_steps = pypi_build_job.get("steps", [])
+                pypi_step_by_name: dict[str, dict[str, object]] = {}
+                maturin_steps: list[dict[str, object]] = []
+                if isinstance(pypi_steps, list):
+                    for step in pypi_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        if isinstance(name, str):
+                            pypi_step_by_name[name] = step
+                        if step.get("uses") == "PyO3/maturin-action@v1":
+                            maturin_steps.append(step)
+                prefetch_step = pypi_step_by_name.get(
+                    "Prefetch Rust dependencies for PyPI artifacts"
+                )
+                if prefetch_step is None:
+                    errors.append(
+                        f"CI workflow {job_name} job must prefetch Rust dependencies with retry before maturin"
+                    )
+                else:
+                    prefetch_env = prefetch_step.get("env", {})
+                    if not isinstance(prefetch_env, dict):
+                        prefetch_env = {}
+                    if str(prefetch_env.get("CARGO_NET_RETRY")) != "10":
+                        errors.append(
+                            f'CI workflow {job_name} prefetch step must set `CARGO_NET_RETRY: "10"`'
+                        )
+                    if str(prefetch_env.get("CARGO_HTTP_TIMEOUT")) != "60":
+                        errors.append(
+                            f'CI workflow {job_name} prefetch step must set `CARGO_HTTP_TIMEOUT: "60"`'
+                        )
+                    prefetch_run = str(prefetch_step.get("run", ""))
+                    for required in (
+                        "for attempt in 1 2 3 4 5",
+                        "cargo fetch --manifest-path rust_core/Cargo.toml",
+                        "Cargo dependency prefetch failed after 5 attempts.",
+                    ):
+                        if required not in prefetch_run:
+                            errors.append(
+                                f"CI workflow {job_name} prefetch step missing retry contract: `{required}`"
+                            )
+                if not maturin_steps:
+                    errors.append(f"CI workflow {job_name} job must run PyO3/maturin-action@v1")
+                for maturin_step in maturin_steps:
+                    maturin_env = maturin_step.get("env", {})
+                    if not isinstance(maturin_env, dict):
+                        maturin_env = {}
+                    if str(maturin_env.get("CARGO_NET_RETRY")) != "10":
+                        errors.append(
+                            f'CI workflow {job_name} maturin step must set `CARGO_NET_RETRY: "10"`'
+                        )
+                    if str(maturin_env.get("CARGO_HTTP_TIMEOUT")) != "60":
+                        errors.append(
+                            f'CI workflow {job_name} maturin step must set `CARGO_HTTP_TIMEOUT: "60"`'
                         )
 
             benchmark_job = jobs.get("benchmark-regression")
