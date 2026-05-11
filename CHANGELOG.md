@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.10.0 (2026-05-11)
+
+### Documentation
+
+- Sync v1.9.11 release governance
+  ([`1223b70`](https://github.com/oimiragieo/tensor-grep/commit/1223b709db8fd1fadbe3c823c2b5a7a5eec8d8d4))
+
+### Features
+
+- Add agentic GPU evidence capsule
+  ([`34fd556`](https://github.com/oimiragieo/tensor-grep/commit/34fd556e963f75c676826e57b061dc682fd2cb49))
+
+Add opt-in agent/MCP GPU evidence routing with explicit sidecar rejection, native GPU route metrics,
+  docs/help/README/skill updates, and release governance coverage.
+
+
 ## v1.9.11 (2026-05-11)
 
 ### Bug Fixes
