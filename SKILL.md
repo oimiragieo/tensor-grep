@@ -7,9 +7,9 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-release_docs_current_tag: v1.10.2
+release_docs_current_tag: v1.10.3
 
-As of 2026-05-11, the current tagged version is `v1.10.2`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, capsule validation-trust fixes, explicit language/file-name ranking, quoted Windows validation commands, docs governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternatives, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, and release wheel Cargo prefetch retries are in the public GitHub asset and PyPI release line.
+As of 2026-05-11, the current tagged version is `v1.10.3`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, capsule validation-trust fixes, explicit language/file-name ranking, quoted Windows validation commands, docs governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternatives, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, and release wheel Cargo prefetch retries are in the public GitHub asset and PyPI release line.
 
 Current release facts:
 
@@ -207,7 +207,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.10.2` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.10.3` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

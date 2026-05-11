@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.3 (2026-05-11)
+
+### Bug Fixes
+
+- Refresh tg.com bridges after scheduled upgrade
+  ([`a53d5fe`](https://github.com/oimiragieo/tensor-grep/commit/a53d5fe42afd55ee1800b6651474400afbb4ba1a))
+
+Ensure the Windows scheduled self-upgrade helper refreshes the managed native front door and stale
+  PATH tg.com bridge copies after package verification.
+
+
 ## v1.10.2 (2026-05-11)
 
 ### Bug Fixes
