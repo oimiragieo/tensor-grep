@@ -43,8 +43,8 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.9.11
 
-Latest tagged GitHub release: [`v1.9.10`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.10).
-Latest complete PyPI release: [`v1.9.9`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.9).
+Latest tagged GitHub release: [`v1.9.11`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.11).
+Latest complete PyPI release: [`v1.9.11`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.11).
 
 Current positioning:
 
@@ -56,11 +56,17 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 
+What `v1.9.11` closed:
+
+- release wheel retry hardening now adds Cargo dependency prefetch with retry/timeout settings before PyPI wheel and sdist builds, so transient crates.io DNS failures are retried before maturin runs
+- `v1.9.11` published Linux, macOS, and Windows wheels plus the sdist to PyPI; `uvx --from tensor-grep==1.9.11 tg --version` reports `tensor-grep 1.9.11`
+- main CI run `25647256985` passed semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+
 What `v1.9.10` closed:
 
 - dogfood follow-ups now cap capsule alternative target confidence at the selected primary target confidence
 - `secrets-basic` scans now include regex-backed generic provider tokens such as `sk_live...` in Python, JavaScript, TypeScript, and Rust files
-- stale v1.9.9 docs-governance text was synchronized to the release line; GitHub native CPU assets were published for `v1.9.10`, while PyPI publication is being retried in the release-wheel retry follow-up after a transient crates.io DNS failure cancelled the wheel matrix
+- stale v1.9.9 docs-governance text was synchronized to the release line; GitHub native CPU assets were published for `v1.9.10`, while PyPI publication failed because a transient crates.io DNS failure cancelled the wheel matrix. `v1.9.11` closes that release-wheel retry follow-up.
 
 What `v1.9.9` closed:
 
@@ -139,7 +145,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.10` follow-up:
+Active post-`v1.9.11` follow-up:
 
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
 - keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
@@ -156,8 +162,8 @@ Active post-`v1.9.10` follow-up:
 
 Managed native-upgrade dogfood:
 
-- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.9`
-- PyPI latest and pinned public install resolve `tensor-grep==1.9.9`
+- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.11` after `tg update`
+- PyPI pinned public install resolves `tensor-grep==1.9.11`; PyPI project-level caches may lag immediately after publish
 - `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation; this is a PATH-shadow environment blocker, not a tensor-grep-owned stale launcher cleanup target
 
 - `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
@@ -168,6 +174,12 @@ Managed native-upgrade dogfood:
 
 Release proof:
 
+- PR #91 from `8aecfea fix: harden release wheel retries` merged and released
+- release commit `2cde253 chore(release): v1.9.11 [skip ci]`
+- main CI run `25647256985` passed the pre-release test/benchmark matrix, semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL run `25647635021` passed on the v1.9.11 release commit
+- GitHub release assets for `v1.9.11` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI package-specific release metadata lists all `tensor-grep 1.9.11` distributions; `tensor-grep==1.9.11` resolves from PyPI
 - PR #90 from `ca9df12 fix: harden v1.9.9 dogfood followups` merged and released
 - release commit `6d04ad2 chore(release): v1.9.10 [skip ci]`
 - main CI run `25645819170` passed the pre-release test/benchmark matrix, semantic-release, and `publish-github-release-assets`; PyPI publish was blocked by a transient crates.io DNS failure in the macOS wheel build and is being retried through the release-wheel retry follow-up
