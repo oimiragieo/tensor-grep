@@ -11,6 +11,9 @@
       "text": "ERROR database failed"
     }
   ],
+  "requested_gpu_device_ids": [
+    0
+  ],
   "routing_backend": "GpuSidecar",
   "routing_gpu_device_ids": [
     0

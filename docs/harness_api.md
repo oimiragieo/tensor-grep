@@ -64,6 +64,7 @@ Example: [`examples/search.json`](examples/search.json)
 | `routing_backend` | `string` | `CpuBackend` for the committed example. |
 | `routing_reason` | `string` | `cpu-native` for the committed example. |
 | `sidecar_used` | `boolean` | `false` for native CPU search. |
+| `requested_gpu_device_ids` | `array<integer>` | Explicit GPU IDs requested by the caller; empty for CPU search. |
 | `query` | `string` | Search pattern exactly as passed on the command line. |
 | `path` | `string` | Search root passed to the command. |
 | `total_matches` | `integer` | Number of materialized matches in `matches`. |
@@ -837,6 +838,7 @@ This is a hybrid contract:
 | `sidecar_used` | `boolean` | `true`, added by Rust. |
 | `total_matches` | `integer` | Preserved from sidecar payload. |
 | `total_files` | `integer` | Preserved from sidecar payload. |
+| `requested_gpu_device_ids` | `array<integer>` | GPU IDs requested by the caller, added by the Rust front door. |
 | `routing_gpu_device_ids` | `array<integer>` | Device IDs reported by the sidecar payload. |
 | `matches` | `array<object>` | Sidecar match rows. |
 
@@ -1454,8 +1456,8 @@ The current codebase still exposes a few shape differences between native Rust J
 | Area | Native Rust output | Python-originated output |
 | --- | --- | --- |
 | Match line field | `line` | `line_number` |
-| Search metadata | `query`, `path`, `total_matches` | Python CLI/search sidecar payloads may also include `total_files`, `matched_file_paths`, `match_counts_by_file`, and GPU worker metadata |
-| GPU search envelope | Rust adds `version`, `routing_backend`, `routing_reason`, `sidecar_used` | Python provides the nested match payload that Rust augments rather than reshaping |
+| Search metadata | `query`, `path`, `total_matches`, `requested_gpu_device_ids` | Python CLI/search sidecar payloads may also include `total_files`, `matched_file_paths`, `match_counts_by_file`, and GPU worker metadata |
+| GPU search envelope | Rust adds `version`, `routing_backend`, `routing_reason`, `sidecar_used`, and caller-requested GPU IDs | Python provides the nested match payload and routed GPU IDs that Rust augments rather than reshaping |
 
 In practice:
 

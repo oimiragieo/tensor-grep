@@ -28,8 +28,22 @@ def test_sidecar_classify_defaults_to_fast_local_heuristics(monkeypatch):
     assert exit_code == 0
     payload = json.loads(stdout)
     assert payload["classifications"] == [
-        {"label": "info", "confidence": 0.8},
-        {"label": "error", "confidence": 0.95},
+        {
+            "label": "info",
+            "confidence": 0.8,
+            "file": None,
+            "path": None,
+            "line": 1,
+            "snippet": "INFO startup ok",
+        },
+        {
+            "label": "error",
+            "confidence": 0.95,
+            "file": None,
+            "path": None,
+            "line": 2,
+            "snippet": "ERROR database failed",
+        },
     ]
 
 
@@ -57,7 +71,16 @@ def test_sidecar_classify_file_path_uses_fast_local_heuristics_by_default(monkey
     assert stderr == ""
     assert exit_code == 0
     payload = json.loads(stdout)
-    assert payload["classifications"] == [{"label": "warn", "confidence": 0.85}]
+    assert payload["classifications"] == [
+        {
+            "label": "warn",
+            "confidence": 0.85,
+            "file": str(log_path.resolve()),
+            "path": str(log_path.resolve()),
+            "line": 1,
+            "snippet": "WARNING latency is high",
+        }
+    ]
 
 
 def test_python_cli_classify_defaults_to_fast_local_heuristics(monkeypatch, tmp_path):
@@ -80,7 +103,16 @@ def test_python_cli_classify_defaults_to_fast_local_heuristics(monkeypatch, tmp_
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["classifications"] == [{"label": "error", "confidence": 0.95}]
+    assert payload["classifications"] == [
+        {
+            "label": "error",
+            "confidence": 0.95,
+            "file": str(log_path.resolve()),
+            "path": str(log_path.resolve()),
+            "line": 1,
+            "snippet": "fatal exception: cannot allocate memory",
+        }
+    ]
 
 
 def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch):
@@ -105,4 +137,13 @@ def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch
     assert stderr == ""
     assert exit_code == 0
     payload = json.loads(stdout)
-    assert payload["classifications"] == [{"label": "warn", "confidence": 0.77}]
+    assert payload["classifications"] == [
+        {
+            "label": "warn",
+            "confidence": 0.77,
+            "file": None,
+            "path": None,
+            "line": 1,
+            "snippet": "WARNING latency is high",
+        }
+    ]

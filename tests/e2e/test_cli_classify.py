@@ -28,3 +28,8 @@ class TestCLIClassify:
         assert any(
             c["label"] in ["error", "info", "warn", "warning"] for c in data["classifications"]
         )
+        first = data["classifications"][0]
+        assert first["file"] == str(sample_log_file.resolve())
+        assert first["path"] == str(sample_log_file.resolve())
+        assert first["line"] == 1
+        assert "snippet" in first

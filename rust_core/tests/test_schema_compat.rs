@@ -50,6 +50,8 @@ struct SearchExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    #[serde(default)]
+    requested_gpu_device_ids: Vec<u32>,
     query: String,
     path: String,
     total_matches: usize,
@@ -451,6 +453,8 @@ struct GpuSidecarExample {
     sidecar_used: bool,
     total_matches: usize,
     total_files: usize,
+    #[serde(default)]
+    requested_gpu_device_ids: Vec<u32>,
     routing_gpu_device_ids: Vec<u32>,
     matches: Vec<GpuSearchMatch>,
 }
@@ -2524,6 +2528,11 @@ fn assert_gpu_sidecar_example(path: &Path) {
     assert!(
         example.total_matches > 0,
         "{} should report total_matches > 0",
+        path.display()
+    );
+    assert!(
+        !example.requested_gpu_device_ids.is_empty(),
+        "{} should list the caller-requested GPU device ids",
         path.display()
     );
     assert_eq!(

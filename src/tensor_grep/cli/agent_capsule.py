@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import repo_map
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
 
 def _as_dict(value: object) -> dict[str, Any]:
@@ -48,6 +49,42 @@ def _cap_alternative_target_confidences(
             min(_numeric_confidence(alternative.get("confidence")), primary_confidence),
             3,
         )
+
+
+def _tied_alternative_targets(
+    query: str,
+    alternatives: list[dict[str, Any]],
+    primary_target: dict[str, Any],
+) -> list[dict[str, Any]]:
+    query_language_hints = repo_map._query_language_hints(query)
+    primary_file = str(primary_target.get("file") or "")
+    primary_language = repo_map._target_language_for_path(primary_file)
+    primary_name = Path(primary_file).name.lower()
+    query_lower = query.lower()
+    primary_confidence = _numeric_confidence(primary_target.get("confidence"))
+    tied: list[dict[str, Any]] = []
+    for alternative in alternatives:
+        alternative_confidence = _numeric_confidence(alternative.get("confidence"), 0.0)
+        if alternative_confidence < primary_confidence:
+            continue
+        alternative_file = str(alternative.get("file") or "")
+        alternative_language = repo_map._target_language_for_path(alternative_file)
+        if (
+            query_language_hints
+            and primary_language in query_language_hints
+            and alternative_language not in query_language_hints
+        ):
+            continue
+        alternative_name = Path(alternative_file).name.lower()
+        if primary_name and primary_name in query_lower and alternative_name not in query_lower:
+            continue
+        tied.append({
+            "file": alternative_file,
+            "symbol": alternative.get("symbol"),
+            "language": alternative.get("language") or alternative_language,
+            "confidence": round(alternative_confidence, 3),
+        })
+    return tied
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -303,6 +340,8 @@ def _run_agent_gpu_json_command(
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=max(float(timeout_s), 0.1),
         )
@@ -354,6 +393,71 @@ def _run_agent_gpu_json_command(
         return result
     result["payload"] = payload
     return result
+
+
+def _summarize_agent_gpu_json_result(
+    result: dict[str, Any],
+    *,
+    match_preview_limit: int = 3,
+) -> dict[str, Any]:
+    payload = _as_dict(result.get("payload"))
+    if not payload:
+        return result
+
+    summary = {key: value for key, value in result.items() if key != "payload"}
+    payload_summary: dict[str, Any] = {}
+    for key in (
+        "version",
+        "routing_backend",
+        "routing_reason",
+        "sidecar_used",
+        "query",
+        "path",
+        "total_matches",
+        "total_files",
+        "requested_gpu_device_ids",
+        "routing_gpu_device_ids",
+    ):
+        if key in payload:
+            payload_summary[key] = payload[key]
+
+    pipeline = _as_dict(payload.get("pipeline"))
+    if pipeline:
+        payload_summary["pipeline"] = {
+            key: pipeline[key]
+            for key in (
+                "pattern_count",
+                "pattern_batch_count",
+                "single_dispatch",
+                "cpu_staging_bytes",
+                "transfer_time_ms",
+                "kernel_time_ms",
+                "wall_time_ms",
+                "transfer_throughput_bytes_s",
+            )
+            if key in pipeline
+        }
+
+    matches = _as_list_of_dicts(payload.get("matches"))
+    preview: list[dict[str, Any]] = []
+    for match in matches[:match_preview_limit]:
+        text = str(match.get("text") or "")
+        preview.append({
+            "file": match.get("file") or match.get("path"),
+            "line": match.get("line") or match.get("line_number"),
+            "pattern_id": match.get("pattern_id"),
+            "pattern_text": match.get("pattern_text") or match.get("pattern"),
+            "text_preview": text[:160] if text else None,
+        })
+    payload_summary["matches_preview"] = preview
+    payload_summary["matches_omitted"] = max(0, len(matches) - len(preview))
+    summary["payload"] = payload_summary
+    return summary
+
+
+def _agent_gpu_tg_command() -> str:
+    native_tg = resolve_native_tg_binary()
+    return str(native_tg) if native_tg is not None else "tg"
 
 
 def _native_gpu_route_rejection(payload: dict[str, Any]) -> str | None:
@@ -411,6 +515,17 @@ def _agent_gpu_evidence(
             "reason": "No GPU evidence scan requested.",
         }
 
+    try:
+        tg_command = _agent_gpu_tg_command()
+    except FileNotFoundError as exc:
+        return {
+            "status": "failed",
+            "requested_device_ids": requested_device_ids,
+            "used_for_evidence": False,
+            "promotion_claim": False,
+            "reason": str(exc),
+        }
+
     device_arg = ",".join(str(device_id) for device_id in requested_device_ids)
     with tempfile.TemporaryDirectory(prefix="tg-agent-gpu-probe-") as probe_tmp:
         probe_dir = Path(probe_tmp)
@@ -419,7 +534,7 @@ def _agent_gpu_evidence(
             encoding="utf-8",
         )
         probe_command: list[object] = [
-            "tg",
+            tg_command,
             "search",
             "--gpu-device-ids",
             device_arg,
@@ -437,7 +552,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": str(probe.get("reason") or "GPU route probe failed."),
-            "probe": probe,
+            "probe": _summarize_agent_gpu_json_result(probe),
         }
 
     probe_payload = _as_dict(probe.get("payload"))
@@ -450,7 +565,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": route_rejection,
-            "probe": probe,
+            "probe": _summarize_agent_gpu_json_result(probe),
             **route_fields,
         }
 
@@ -462,12 +577,12 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": "Native GPU route passed, but the query produced no evidence terms.",
-            "probe": probe,
+            "probe": _summarize_agent_gpu_json_result(probe),
             **route_fields,
         }
 
     evidence_command: list[object] = [
-        "tg",
+        tg_command,
         "search",
         "--gpu-device-ids",
         device_arg,
@@ -489,8 +604,8 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": str(evidence.get("reason") or "GPU evidence scan failed."),
-            "probe": probe,
-            "evidence": evidence,
+            "probe": _summarize_agent_gpu_json_result(probe),
+            "evidence": _summarize_agent_gpu_json_result(evidence),
             **route_fields,
         }
 
@@ -504,8 +619,8 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": evidence_route_rejection,
-            "probe": probe,
-            "evidence": evidence,
+            "probe": _summarize_agent_gpu_json_result(probe),
+            "evidence": _summarize_agent_gpu_json_result(evidence),
             **evidence_route_fields,
         }
 
@@ -542,8 +657,8 @@ def _agent_gpu_evidence(
         "matched_files": matched_files[:max_files],
         "total_matches": total_matches,
         "matches": evidence_matches,
-        "probe": probe,
-        "evidence": evidence,
+        "probe": _summarize_agent_gpu_json_result(probe),
+        "evidence": _summarize_agent_gpu_json_result(evidence),
         **evidence_route_fields,
     }
 
@@ -891,8 +1006,36 @@ def build_agent_capsule(
         confidence["overall"] = round(min(float(confidence["overall"]), confidence_cap), 3)
         _cap_primary_target_confidence(target, confidence_cap)
     _cap_alternative_target_confidences(alternatives, target)
+    tied_alternatives = _tied_alternative_targets(query, alternatives, target)
+    tie_resolved_by_validation = (
+        bool(tied_alternatives)
+        and bool(validation_commands)
+        and str(validation_alignment.get("status") or "") == "aligned"
+    )
+    if tied_alternatives and tie_resolved_by_validation:
+        consistency["alternative_confidence_tie_resolved_by"] = "validation"
+        tied_alternatives = []
+    if tied_alternatives:
+        confidence["overall"] = round(min(float(confidence["overall"]), 0.74), 3)
+        confidence["downgrade_reasons"] = _dedupe([
+            *list(confidence.get("downgrade_reasons") or []),
+            "alternative target confidence tie",
+        ])
+        consistency["confidence_downgraded"] = True
+        consistency["downgrade_reasons"] = _dedupe([
+            *list(consistency.get("downgrade_reasons") or []),
+            "alternative target confidence tie",
+        ])
+        _cap_primary_target_confidence(target, 0.74)
+        _cap_alternative_target_confidences(alternatives, target)
+        tied_alternatives = _tied_alternative_targets(query, alternatives, target)
+    consistency["alternative_confidence_tie"] = bool(tied_alternatives)
+    consistency["alternative_confidence_tie_count"] = len(tied_alternatives)
+    consistency["tied_alternative_targets"] = tied_alternatives
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
+    if tied_alternatives:
+        ask_reasons.append("alternative target confidence ties primary target")
     if not validation_commands:
         ask_reasons.append("no validation command evidence")
     if not snippets:

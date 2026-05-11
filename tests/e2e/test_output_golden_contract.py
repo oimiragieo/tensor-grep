@@ -131,6 +131,7 @@ def run_tg(launcher, args, cwd):
                     "routing_distributed",
                     "routing_worker_count",
                     "routing_gpu_chunk_plan_mb",
+                    "requested_gpu_device_ids",
                     "routing_gpu_device_ids",
                     "sidecar_used",
                 ):

@@ -625,6 +625,7 @@ def analyze_gpu_auto_recommendation(
         }
 
     winners: list[dict[str, object]] = []
+    skipped_non_native_route = False
     for row in rows:
         if row.get("size_bytes") not in required_size_bytes:
             continue
@@ -642,6 +643,12 @@ def analyze_gpu_auto_recommendation(
         for gpu_result in row.get("gpu", []):
             device_id = gpu_result.get("device_id")
             if str(device_id) not in correctness_passing_device_ids:
+                continue
+            if not (
+                gpu_result.get("tg_runtime_backend") == "NativeGpuBackend"
+                and gpu_result.get("tg_runtime_sidecar_used") is False
+            ):
+                skipped_non_native_route = True
                 continue
             gpu_median = gpu_result.get("median_s")
             if gpu_result.get("status") != "PASS" or not isinstance(gpu_median, (int, float)):
@@ -663,12 +670,20 @@ def analyze_gpu_auto_recommendation(
                 })
 
     if not winners:
-        return {
-            "should_add_flag": False,
-            "reason": (
+        if skipped_non_native_route:
+            reason = (
+                "No correctness-passing GPU row used NativeGpuBackend with sidecar_used=false "
+                f"and beat both rg and tg_cpu by at least {min_speedup_pct:.0f}% at the "
+                f"required {required_size_labels} scale."
+            )
+        else:
+            reason = (
                 "No correctness-passing GPU row beat both rg and tg_cpu by at least "
                 f"{min_speedup_pct:.0f}% at the required {required_size_labels} scale."
-            ),
+            )
+        return {
+            "should_add_flag": False,
+            "reason": reason,
             "winning_rows": [],
         }
 
@@ -695,6 +710,14 @@ def _observed_operational_backends(devices: list[dict[str, object]]) -> list[str
     return sorted(observed)
 
 
+def _uses_native_cuda_runtime(device: dict[str, object]) -> bool:
+    return (
+        bool(device.get("operational", False))
+        and device.get("tg_runtime_backend") == "NativeGpuBackend"
+        and device.get("tg_runtime_sidecar_used") is False
+    )
+
+
 def build_scale_gate_summary(
     *,
     devices: list[dict[str, object]],
@@ -705,7 +728,11 @@ def build_scale_gate_summary(
 ) -> dict[str, object]:
     required_labels = _required_size_labels(required_corpus_sizes)
     observed_backends = _observed_operational_backends(devices)
-    has_native_cuda_backend = "NativeGpuBackend" in observed_backends
+    sidecar_observed = any(
+        bool(device.get("operational", False)) and bool(device.get("tg_runtime_sidecar_used"))
+        for device in devices
+    )
+    has_native_cuda_backend = any(_uses_native_cuda_runtime(device) for device in devices)
     passing_device_ids = sorted(
         _passing_required_correctness_device_ids(
             correctness_checks=correctness_checks,
@@ -719,19 +746,28 @@ def build_scale_gate_summary(
             "status": "SUPPORTED",
             "required_backend": "NativeGpuBackend",
             "observed_backends": observed_backends,
+            "sidecar_observed": sidecar_observed,
             "reason": "At least one operational device routed through the native CUDA backend.",
         }
     else:
+        if sidecar_observed and "NativeGpuBackend" in observed_backends:
+            reason = (
+                "Operational GPU devices used sidecar-contaminated routing; "
+                "NativeGpuBackend is only promotion evidence when sidecar_used is false."
+            )
+        elif observed_backends:
+            reason = (
+                "Operational GPU devices routed outside the native CUDA backend; "
+                "Python/Torch sidecar rows are not native CUDA scale proof."
+            )
+        else:
+            reason = "No operational GPU devices were available for native CUDA scale proof."
         native_gate = {
             "status": "UNSUPPORTED",
             "required_backend": "NativeGpuBackend",
             "observed_backends": observed_backends,
-            "reason": (
-                "Operational GPU devices routed outside the native CUDA backend; "
-                "Python/Torch sidecar rows are not native CUDA scale proof."
-            )
-            if observed_backends
-            else "No operational GPU devices were available for native CUDA scale proof.",
+            "sidecar_observed": sidecar_observed,
+            "reason": reason,
         }
 
     if correctness_checks:
@@ -783,7 +819,8 @@ def build_scale_gate_summary(
         "native_cuda_scale_gate": native_gate,
         "correctness_gate": correctness_gate,
         "speed_gate": speed_gate,
-        "promotion_ready": bool(gpu_auto_recommendation.get("should_add_flag", False)),
+        "promotion_ready": has_native_cuda_backend
+        and bool(gpu_auto_recommendation.get("should_add_flag", False)),
         "summary": summary,
     }
 
@@ -858,11 +895,12 @@ def run_gpu_scale_benchmarks(
         device["tg_runtime_backend"] = runtime_probe.get("routing_backend")
         device["tg_runtime_reason"] = runtime_probe.get("routing_reason")
         device["tg_runtime_sidecar_used"] = runtime_probe.get("sidecar_used")
-        if runtime_probe.get("routing_backend") != "NativeGpuBackend":
+        if not _uses_native_cuda_runtime(device):
             warnings.append(
                 "GPU scale benchmark requires a CUDA-enabled native tg binary; "
                 f"device {device_id} routed to "
-                f"{runtime_probe.get('routing_backend') or 'unknown'}."
+                f"{runtime_probe.get('routing_backend') or 'unknown'} "
+                f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
             )
     rows: list[dict[str, object]] = []
     generated_corpora: dict[int, Path] = {}
@@ -908,7 +946,7 @@ def run_gpu_scale_benchmarks(
                     "samples_s": [],
                     "stderr": device.get("error", "device probe failed"),
                 })
-            elif device.get("tg_runtime_backend") != "NativeGpuBackend":
+            elif not _uses_native_cuda_runtime(device):
                 runtime_probe = runtime_probes.get(int(device["device_id"]), {})
                 entry.update({
                     "status": "UNSUPPORTED",
@@ -917,7 +955,8 @@ def run_gpu_scale_benchmarks(
                     "stderr": (
                         "GPU scale benchmark requires a CUDA-enabled native tg binary; "
                         f"runtime probe routed to "
-                        f"{runtime_probe.get('routing_backend') or 'unknown'}."
+                        f"{runtime_probe.get('routing_backend') or 'unknown'} "
+                        f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
                     ),
                     "command": runtime_probe.get("command"),
                 })
@@ -997,7 +1036,7 @@ def run_gpu_scale_benchmarks(
         for device in devices:
             if not device.get("operational", False):
                 continue
-            if device.get("tg_runtime_backend") != "NativeGpuBackend":
+            if not _uses_native_cuda_runtime(device):
                 continue
             for pattern in correctness_patterns:
                 check = run_correctness_check(
