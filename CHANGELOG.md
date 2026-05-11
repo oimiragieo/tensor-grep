@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.9.10 (2026-05-11)
+
+### Bug Fixes
+
+- Harden v1.9.9 dogfood followups
+  ([`ca9df12`](https://github.com/oimiragieo/tensor-grep/commit/ca9df12caa3f6f7477f5813c8fab311ff32c49b3))
+
+
 ## v1.9.9 (2026-05-10)
 
 ### Bug Fixes
