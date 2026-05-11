@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.1 (2026-05-11)
+
+### Bug Fixes
+
+- Harden Windows tg.com sidecar fallback
+  ([`3628560`](https://github.com/oimiragieo/tensor-grep/commit/3628560f36ebe8a917c37456cce2d145b2622838))
+
+Fix copied tensor-grep tg.com bridges so sidecar-backed public commands resolve the managed sidecar
+  and native front door. Adds agent-readiness public doctor probes and updates docs/governance.
+
+
 ## v1.10.0 (2026-05-11)
 
 ### Documentation
