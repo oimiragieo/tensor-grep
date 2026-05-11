@@ -1225,6 +1225,94 @@ def _doctor_gpu_status() -> dict[str, Any]:
     return status
 
 
+def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str, Any]:
+    requested_gpu_device_ids = [0]
+    base: dict[str, Any] = {
+        "status": "not_run",
+        "requested_gpu_device_ids": requested_gpu_device_ids,
+        "command": None,
+        "exit_code": None,
+        "routing_backend": None,
+        "routing_reason": None,
+        "sidecar_used": None,
+        "routing_gpu_device_ids": [],
+        "error": None,
+    }
+    if native_tg_binary is None:
+        base["error"] = "native tg binary was not resolved"
+        return base
+    if not native_tg_binary.exists():
+        base["error"] = f"native tg binary does not exist: {native_tg_binary}"
+        return base
+
+    sentinel = "tg doctor gpu runtime probe"
+    with TemporaryDirectory(prefix="tg-doctor-gpu-probe-") as temp_dir:
+        probe_file = Path(temp_dir) / "probe.log"
+        probe_file.write_text(f"{sentinel}\n", encoding="utf-8")
+        command = [
+            str(native_tg_binary),
+            "search",
+            "--gpu-device-ids",
+            ",".join(str(device_id) for device_id in requested_gpu_device_ids),
+            "--json",
+            "--no-ignore",
+            "-F",
+            sentinel,
+            str(probe_file),
+        ]
+        base["command"] = " ".join(command)
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=2.0,
+            )
+        except subprocess.TimeoutExpired:
+            base["status"] = "failed"
+            base["error"] = "GPU runtime probe timed out after 2.0 seconds"
+            return base
+        except OSError as exc:
+            base["status"] = "failed"
+            base["error"] = str(exc)
+            return base
+
+    base["exit_code"] = result.returncode
+    if result.returncode != 0:
+        base["status"] = "failed"
+        base["error"] = (result.stderr or "").strip() or "GPU runtime probe failed"
+        return base
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        base["status"] = "failed"
+        base["error"] = f"GPU runtime probe returned invalid JSON: {exc}"
+        return base
+
+    routing_backend = str(payload.get("routing_backend") or "")
+    sidecar_used = bool(payload.get("sidecar_used", False))
+    base.update({
+        "routing_backend": routing_backend or None,
+        "routing_reason": payload.get("routing_reason"),
+        "sidecar_used": sidecar_used,
+        "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
+    })
+    if routing_backend == "NativeGpuBackend" and not sidecar_used:
+        base["status"] = "supported"
+        return base
+
+    base["status"] = "unsupported"
+    base["error"] = (
+        "GPU route did not use NativeGpuBackend "
+        f"(routing_backend={routing_backend or 'unknown'}, sidecar_used={sidecar_used})."
+    )
+    return base
+
+
 def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]:
     root = Path(root_path).resolve()
     cache_file = root / ".tg_cache" / "ast" / "project_data_v6.json"
@@ -1362,6 +1450,8 @@ def _build_doctor_payload(
         version=fresh_shell_path_tg_first_version,
         expected_version=installed_version,
     )
+    gpu_status = _doctor_gpu_status()
+    gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
     payload: dict[str, Any] = {
         "version": installed_version,
         "platform": sys.platform,
@@ -1432,7 +1522,7 @@ def _build_doctor_payload(
             fresh_kind=fresh_shell_path_tg_first_launcher_kind,
             fresh_path=fresh_shell_path_tg_first_path,
         ),
-        "gpu": _doctor_gpu_status(),
+        "gpu": gpu_status,
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
         "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
@@ -3881,6 +3971,7 @@ def search_command(
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
     all_results.routing_backend = selected_backend_name
     all_results.routing_reason = selected_backend_reason
+    all_results.requested_gpu_device_ids = list(parsed_gpu_device_ids or [])
     all_results.routing_gpu_device_ids = selected_gpu_device_ids
     all_results.routing_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
     search_start = time.perf_counter()
@@ -5692,7 +5783,7 @@ def classify(
     import json
 
     from tensor_grep.io.reader_fallback import FallbackReader
-    from tensor_grep.sidecar import _classify_lines
+    from tensor_grep.sidecar import _classify_lines, _enrich_classifications
 
     reader = FallbackReader()
     lines = list(reader.read_lines(file_path))
@@ -5702,7 +5793,13 @@ def classify(
     results = _classify_lines(lines)
 
     if format_type == "json":
-        data = {"classifications": results}
+        data = {
+            "classifications": _enrich_classifications(
+                results,
+                lines,
+                source_path=file_path,
+            )
+        }
         print(json.dumps(data))
     else:
         for r in results:

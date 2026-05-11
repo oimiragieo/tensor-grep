@@ -188,5 +188,7 @@ class TestSidecarGpuSearchDispatch:
         payload = json.loads(stdout)
         assert payload["total_files"] == 1
         assert payload["total_matches"] == 1
+        assert payload["requested_gpu_device_ids"] == [0]
+        assert payload["routing_gpu_device_ids"] == [0]
         assert payload["matches"][0]["file"].endswith("keep.txt")
         assert captured_configs[0].glob == ["*.txt"]

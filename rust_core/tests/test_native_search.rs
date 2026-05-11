@@ -445,6 +445,7 @@ fn test_native_search_json_output_is_valid() {
     let mut config = base_config("ERROR", &file_path, target);
     config.fixed_strings = true;
     config.json = true;
+    config.requested_gpu_device_ids = vec![7, 3];
 
     let stats = run_native_search(config).unwrap();
     let payload: Value = serde_json::from_str(&read_buffer(&buffer)).unwrap();
@@ -454,6 +455,10 @@ fn test_native_search_json_output_is_valid() {
     assert_eq!(payload["routing_backend"], "NativeCpuBackend");
     assert_eq!(payload["routing_reason"], "native_search");
     assert_eq!(payload["sidecar_used"], false);
+    assert_eq!(
+        payload["requested_gpu_device_ids"],
+        serde_json::json!([7, 3])
+    );
     assert_eq!(payload["query"], "ERROR");
     assert_eq!(payload["path"], file_path.display().to_string());
     assert_eq!(payload["total_matches"], 2);
@@ -470,6 +475,7 @@ fn test_native_search_ndjson_output_is_valid() {
     let mut config = base_config("ERROR", &file_path, target);
     config.fixed_strings = true;
     config.ndjson = true;
+    config.requested_gpu_device_ids = vec![7, 3];
 
     let stats = run_native_search(config).unwrap();
     let output = read_buffer(&buffer);
@@ -487,6 +493,10 @@ fn test_native_search_ndjson_output_is_valid() {
         assert_eq!(payload["routing_backend"], "NativeCpuBackend");
         assert_eq!(payload["routing_reason"], "native_search");
         assert_eq!(payload["sidecar_used"], false);
+        assert_eq!(
+            payload["requested_gpu_device_ids"],
+            serde_json::json!([7, 3])
+        );
         assert_eq!(payload["query"], "ERROR");
         assert_eq!(payload["path"], file_path.display().to_string());
         assert!(payload["file"].is_string());

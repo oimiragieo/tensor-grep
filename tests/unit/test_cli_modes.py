@@ -799,6 +799,44 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
 
 
+def test_doctor_json_includes_gpu_search_runtime_probe(monkeypatch, tmp_path: Path) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_gpu_search_runtime_probe",
+        lambda binary: {
+            "status": "unsupported",
+            "requested_gpu_device_ids": [0],
+            "command": f"{binary} search --gpu-device-ids 0 --json -F tg doctor gpu runtime probe",
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "routing_gpu_device_ids": [],
+            "error": (
+                "GPU route did not use NativeGpuBackend "
+                "(routing_backend=GpuSidecar, sidecar_used=True)."
+            ),
+        },
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    probe = payload["gpu"]["search_runtime_probe"]
+    assert probe["status"] == "unsupported"
+    assert probe["requested_gpu_device_ids"] == [0]
+    assert probe["routing_backend"] == "GpuSidecar"
+    assert probe["sidecar_used"] is True
+    assert "NativeGpuBackend" in probe["error"]
+
+
 def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.1")
     monkeypatch.setattr(
@@ -2834,6 +2872,134 @@ def test_agent_capsule_gpu_evidence_uses_native_route(monkeypatch, tmp_path):
     assert any("-e" in call for call in calls)
 
 
+def test_agent_capsule_gpu_evidence_reads_native_output_as_utf8(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("def create_invoice():\n    return 'é'\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    kwargs_seen: list[dict[str, object]] = []
+
+    def _fake_gpu_run(command, **kwargs):
+        calls.append([str(part) for part in command])
+        kwargs_seen.append(dict(kwargs))
+        payload = {
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit-native",
+            "sidecar_used": False,
+            "total_matches": 0,
+            "matches": [],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        gpu_device_ids=[0],
+        gpu_timeout_s=1,
+    )
+
+    assert payload["gpu_acceleration"]["status"] == "ready_no_matches"
+    gpu_kwargs = [
+        kwargs
+        for kwargs, command in zip(kwargs_seen, calls, strict=True)
+        if "--gpu-device-ids" in [str(part) for part in command]
+    ]
+    assert gpu_kwargs
+    assert all(kwargs["encoding"] == "utf-8" for kwargs in gpu_kwargs)
+    assert all(kwargs["errors"] == "replace" for kwargs in gpu_kwargs)
+
+
+def test_agent_capsule_gpu_evidence_payload_is_bounded(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    target_path = project / "payments.py"
+    target_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    calls = 0
+
+    def _fake_gpu_run(command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        matches = [
+            {
+                "file": str(target_path.resolve()),
+                "line": index + 1,
+                "text": f"def create_invoice_{index}():",
+                "pattern_text": "invoice",
+            }
+            for index in range(12)
+        ]
+        payload = {
+            "version": 1,
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit-native",
+            "sidecar_used": False,
+            "total_matches": len(matches),
+            "total_files": 1,
+            "requested_gpu_device_ids": [0],
+            "routing_gpu_device_ids": [0],
+            "pipeline": {"pattern_count": 1, "kernel_time_ms": 0.1},
+            "matches": matches if calls > 1 else matches[:1],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        gpu_device_ids=[0],
+        gpu_timeout_s=1,
+    )
+
+    acceleration = payload["gpu_acceleration"]
+    assert acceleration["status"] == "used"
+    evidence_payload = acceleration["evidence"]["payload"]
+    assert "matches" not in evidence_payload
+    assert len(evidence_payload["matches_preview"]) == 3
+    assert evidence_payload["matches_omitted"] == 9
+    assert evidence_payload["total_matches"] == 12
+
+
+def test_agent_capsule_gpu_probe_uses_resolved_native_tg(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "def create_invoice(total):\n    return total\n",
+        encoding="utf-8",
+    )
+    native_tg = tmp_path / "managed" / "tg.exe"
+    native_tg.parent.mkdir()
+    native_tg.write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_gpu_run(command, **_kwargs):
+        calls.append([str(part) for part in command])
+        payload = {
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "total_matches": 1,
+            "matches": [{"file": "probe.log", "line": 1, "text": "probe"}],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule, "resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        gpu_device_ids=[0],
+        gpu_timeout_s=1,
+    )
+
+    assert calls
+    assert calls[0][0] == str(native_tg)
+    assert payload["gpu_acceleration"]["status"] == "unsupported"
+
+
 def test_agent_capsule_gpu_evidence_rejects_sidecar_route(monkeypatch, tmp_path):
     project = tmp_path / "project"
     project.mkdir()
@@ -3093,6 +3259,99 @@ def test_agent_capsule_alternative_confidence_does_not_exceed_selected_primary(t
     assert payload["alternative_targets"]
     primary_confidence = payload["primary_target"]["confidence"]
     assert all(item["confidence"] <= primary_confidence for item in payload["alternative_targets"])
+
+
+def test_agent_capsule_equal_confidence_alternative_requires_confirmation(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    python_path = src_dir / "payments.py"
+    python_path.write_text(
+        "def create_invoice(subtotal):\n    tax = subtotal * 0.0825\n    return subtotal + tax\n",
+        encoding="utf-8",
+    )
+    typescript_path = src_dir / "app.ts"
+    typescript_path.write_text(
+        "export function createInvoice(subtotal: number): number {\n"
+        "  const taxCalculation = subtotal * 0.0825;\n"
+        "  const invoiceTaxCalculation = subtotal + taxCalculation;\n"
+        "  return invoiceTaxCalculation;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    def _fake_context_render(*_args, **_kwargs):
+        return {
+            "navigation_pack": {
+                "primary_target": {
+                    "file": str(python_path),
+                    "symbol": "create_invoice",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 3,
+                },
+                "follow_up_reads": [],
+                "validation_commands": [],
+            },
+            "edit_plan_seed": {
+                "primary_file": str(python_path),
+                "primary_symbol": {"name": "create_invoice", "kind": "function"},
+                "primary_span": {"start_line": 1, "end_line": 3},
+                "confidence": {"overall": 0.9},
+                "validation_plan": [],
+                "validation_commands": [],
+                "edit_ordering": [str(python_path)],
+            },
+            "candidate_edit_targets": {
+                "symbols": [
+                    {
+                        "file": str(typescript_path),
+                        "name": "createInvoice",
+                        "kind": "function",
+                        "line": 1,
+                        "score": 90,
+                    }
+                ]
+            },
+            "file_matches": [
+                {
+                    "path": str(typescript_path),
+                    "score": 90,
+                    "reasons": ["source"],
+                    "provenance": ["heuristic"],
+                }
+            ],
+            "validation_commands": [],
+            "sources": [
+                {
+                    "file": str(python_path),
+                    "symbol": "create_invoice",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "source": python_path.read_text(encoding="utf-8"),
+                }
+            ],
+            "context_consistency": {"primary_file_included": True},
+        }
+
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        max_tokens=400,
+    )
+
+    assert payload["alternative_targets"]
+    assert payload["context_consistency"]["alternative_confidence_tie"] is True
+    assert payload["context_consistency"]["tied_alternative_targets"]
+    assert payload["confidence"]["overall"] <= 0.74
+    assert payload["primary_target"]["confidence"] <= 0.74
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert (
+        "alternative target confidence ties primary target"
+        in payload["ask_user_before_editing"]["reasons"]
+    )
 
 
 def test_agent_capsule_exact_camel_symbol_stays_above_snake_case_bridge(tmp_path):
@@ -6168,7 +6427,10 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
+    result = runner.invoke(
+        app,
+        ["search", "ERROR", ".", "--gpu-device-ids", "7,3", "--ltl", "--format", "json"],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -6176,6 +6438,7 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
     assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
     assert payload["routing_reason"] == "unit_test_fake_pipeline"
+    assert payload["requested_gpu_device_ids"] == [7, 3]
     assert payload["routing_gpu_device_ids"] == [7, 3]
     assert payload["routing_gpu_chunk_plan_mb"] == [
         {"device_id": 7, "chunk_mb": 256},

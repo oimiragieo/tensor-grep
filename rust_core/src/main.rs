@@ -2514,6 +2514,7 @@ fn native_search_config_for_positional(
         routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used(),
+        requested_gpu_device_ids: Vec::new(),
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
         word_boundary: cli.word_regexp,
@@ -2543,6 +2544,7 @@ fn native_search_config_for_command(
         routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used(),
+        requested_gpu_device_ids: Vec::new(),
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
         word_boundary: args.word_regexp,
@@ -2575,6 +2577,7 @@ fn native_search_config_for_gpu_params(
         routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used(),
+        requested_gpu_device_ids: params.gpu_device_ids.to_vec(),
         ignore_case: params.ignore_case,
         fixed_strings: params.fixed_strings,
         word_boundary: params.word_regexp,
@@ -2630,24 +2633,41 @@ fn collect_native_multi_pattern_matches(
     Ok(matches)
 }
 
-fn emit_multi_pattern_native_results(
+struct NativeSearchOutputOptions<'a> {
     decision: RoutingDecision,
-    query: &str,
-    path: &str,
+    query: &'a str,
+    path: &'a str,
+    requested_gpu_device_ids: &'a [i32],
     json: bool,
     ndjson: bool,
     count: bool,
+}
+
+fn emit_multi_pattern_native_results(
+    options: NativeSearchOutputOptions<'_>,
     matches: Vec<SearchMatchJson>,
 ) -> anyhow::Result<()> {
     let has_matches = !matches.is_empty();
-    if json {
-        emit_json_search_results(decision, query, path, matches)?;
-    } else if ndjson {
-        emit_ndjson_search_results(decision, query, path, matches)?;
-    } else if count {
-        emit_count_search_matches(path, &matches);
+    if options.json {
+        emit_json_search_results(
+            options.decision,
+            options.query,
+            options.path,
+            options.requested_gpu_device_ids,
+            matches,
+        )?;
+    } else if options.ndjson {
+        emit_ndjson_search_results(
+            options.decision,
+            options.query,
+            options.path,
+            options.requested_gpu_device_ids,
+            matches,
+        )?;
+    } else if options.count {
+        emit_count_search_matches(options.path, &matches);
     } else {
-        emit_plain_search_matches(path, &matches);
+        emit_plain_search_matches(options.path, &matches);
     }
 
     if !has_matches {
@@ -2853,12 +2873,15 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                     ),
                 )?;
                 return emit_multi_pattern_native_results(
-                    decision,
-                    &query,
-                    &path_display,
-                    args.json,
-                    args.ndjson,
-                    args.count,
+                    NativeSearchOutputOptions {
+                        decision,
+                        query: &query,
+                        path: &path_display,
+                        requested_gpu_device_ids: &[],
+                        json: args.json,
+                        ndjson: args.ndjson,
+                        count: args.count,
+                    },
                     matches,
                 );
             }
@@ -3028,6 +3051,7 @@ fn run_index_query(
             RoutingDecision::warm_index(),
             query,
             request.primary_path(),
+            &[],
             matches,
         );
     }
@@ -3037,6 +3061,7 @@ fn run_index_query(
             RoutingDecision::warm_index(),
             query,
             request.primary_path(),
+            &[],
             matches,
         );
     }
@@ -3057,6 +3082,7 @@ struct SearchResultJson<'a> {
     routing_backend: &'static str,
     routing_reason: &'static str,
     sidecar_used: bool,
+    requested_gpu_device_ids: Vec<i32>,
     query: &'a str,
     path: &'a str,
     total_matches: usize,
@@ -3074,6 +3100,7 @@ struct GpuNativeSearchResultJson<'a> {
     path: &'a str,
     total_matches: usize,
     total_files: usize,
+    requested_gpu_device_ids: Vec<i32>,
     routing_gpu_device_ids: Vec<i32>,
     pipeline: &'a GpuPipelineStats,
     matches: Vec<SearchMatchJson>,
@@ -3331,6 +3358,7 @@ struct SearchMatchNdjson<'a> {
     routing_backend: &'static str,
     routing_reason: &'static str,
     sidecar_used: bool,
+    requested_gpu_device_ids: Vec<i32>,
     query: &'a str,
     path: &'a str,
     file: &'a str,
@@ -4602,6 +4630,7 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
             RoutingDecision::ast(),
             pattern,
             path,
+            &[],
             matches
                 .iter()
                 .map(|matched| ast_match_to_search_json(matched, &mut source_contexts))
@@ -5481,6 +5510,7 @@ fn execute_gpu_native_route(
             decision,
             params.query,
             params.path,
+            params.gpu_device_ids,
             gpu_native_match_json_entries(&stats),
         )?;
     } else if params.count {
@@ -5529,15 +5559,18 @@ fn handle_auto_gpu_search(
                             cpu_fallback_config,
                         )?;
                         return emit_multi_pattern_native_results(
-                            RoutingDecision::native_cpu_gpu_fallback(
-                                ripgrep_is_available(),
-                                params.json || params.ndjson,
-                            ),
-                            params.query,
-                            params.path,
-                            params.json,
-                            params.ndjson,
-                            params.count,
+                            NativeSearchOutputOptions {
+                                decision: RoutingDecision::native_cpu_gpu_fallback(
+                                    ripgrep_is_available(),
+                                    params.json || params.ndjson,
+                                ),
+                                query: params.query,
+                                path: params.path,
+                                requested_gpu_device_ids: params.gpu_device_ids,
+                                json: params.json,
+                                ndjson: params.ndjson,
+                                count: params.count,
+                            },
                             matches,
                         );
                     }
@@ -5631,12 +5664,15 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                         let matches =
                             collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
                         return emit_multi_pattern_native_results(
-                            fallback_decision,
-                            params.query,
-                            params.path,
-                            params.json,
-                            params.ndjson,
-                            params.count,
+                            NativeSearchOutputOptions {
+                                decision: fallback_decision,
+                                query: params.query,
+                                path: params.path,
+                                requested_gpu_device_ids: params.gpu_device_ids,
+                                json: params.json,
+                                ndjson: params.ndjson,
+                                count: params.count,
+                            },
                             matches,
                         );
                     }
@@ -5694,10 +5730,12 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                         RoutingDecision::gpu_sidecar(),
                         params.query,
                         params.path,
+                        params.gpu_device_ids,
                         matches,
                     )?;
                 } else if params.json {
-                    let normalized = normalize_gpu_sidecar_json(&result.stdout)?;
+                    let normalized =
+                        normalize_gpu_sidecar_json(&result.stdout, params.gpu_device_ids)?;
                     println!("{}", serde_json::to_string_pretty(&normalized)?);
                 } else {
                     print!("{}", result.stdout);
@@ -5758,6 +5796,7 @@ fn emit_json_search_results(
     decision: RoutingDecision,
     pattern: &str,
     path: &str,
+    requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
 ) -> anyhow::Result<()> {
     let payload = SearchResultJson {
@@ -5765,6 +5804,7 @@ fn emit_json_search_results(
         routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used(),
+        requested_gpu_device_ids: requested_gpu_device_ids.to_vec(),
         query: pattern,
         path,
         total_matches: matches.len(),
@@ -5863,6 +5903,7 @@ fn emit_gpu_native_json_results(
         path: params.path,
         total_matches: stats.total_matches,
         total_files: stats.matched_files,
+        requested_gpu_device_ids: params.gpu_device_ids.to_vec(),
         routing_gpu_device_ids: stats
             .selected_devices
             .iter()
@@ -5980,6 +6021,7 @@ fn emit_ndjson_search_results(
     decision: RoutingDecision,
     pattern: &str,
     path: &str,
+    requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
 ) -> anyhow::Result<()> {
     for matched in matches {
@@ -5988,6 +6030,7 @@ fn emit_ndjson_search_results(
             routing_backend: decision.routing_backend(),
             routing_reason: decision.reason,
             sidecar_used: decision.sidecar_used(),
+            requested_gpu_device_ids: requested_gpu_device_ids.to_vec(),
             query: pattern,
             path,
             file: &matched.file,
@@ -6010,8 +6053,17 @@ fn parse_gpu_sidecar_search_payload(stdout: &str) -> anyhow::Result<GpuSidecarSe
     })
 }
 
-fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value> {
+fn normalize_gpu_sidecar_json(
+    stdout: &str,
+    requested_gpu_device_ids: &[i32],
+) -> anyhow::Result<serde_json::Value> {
     let payload = parse_gpu_sidecar_search_payload(stdout)?;
+    let requested_gpu_device_ids = requested_gpu_device_ids
+        .iter()
+        .copied()
+        .filter(|device_id| *device_id >= 0)
+        .map(|device_id| device_id as u32)
+        .collect::<Vec<_>>();
 
     let normalized_matches = payload
         .matches
@@ -6039,6 +6091,7 @@ fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value>
         "sidecar_used": RoutingDecision::gpu_sidecar().sidecar_used(),
         "total_matches": payload.total_matches,
         "total_files": payload.total_files,
+        "requested_gpu_device_ids": requested_gpu_device_ids,
         "routing_gpu_device_ids": payload.routing_gpu_device_ids,
         "matches": normalized_matches,
     }))

@@ -302,7 +302,7 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current tagged version is `v1.10.0`" in skill
+    assert f"current tagged version is `{CURRENT_RELEASE_TAG}`" in skill
     assert "PR #91 `fix: harden release wheel retries` merged" in skill
     assert "PR #90 `fix: harden v1.9.9 dogfood followups` merged" in skill
     assert "PR #89 `fix: add agent workflow benchmark governance` merged" in skill

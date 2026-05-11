@@ -43,4 +43,4 @@ def test_json_output_snapshot(sample_log_file, snapshot):
 
         output_stable = re.sub(r'"[A-Za-z]:\\[^"]+"', '"<FILE>"', output_stable)
 
-    snapshot.assert_match(output_stable, "json_output.json")
+    snapshot.assert_match(output_stable + "\n", "json_output.json")

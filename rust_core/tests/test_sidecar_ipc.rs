@@ -277,7 +277,7 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
     fs::write(
         &mock_script,
         format!(
-            "import json\nimport os\nimport sys\nrequest = json.loads(sys.stdin.buffer.read())\nresponse = {{\"stdout\": json.dumps({{\"total_matches\": 1, \"total_files\": 1, \"matches\": [{{\"file\": {:?}, \"line_number\": 2, \"text\": \"ERROR database failed\"}}]}}) + \'\\n\', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}}\nsys.stdout.write(json.dumps(response))\n",
+            "import json\nimport os\nimport sys\nrequest = json.loads(sys.stdin.buffer.read())\nassert request[\"payload\"].get(\"gpu_device_ids\") == [0]\nresponse = {{\"stdout\": json.dumps({{\"total_matches\": 1, \"total_files\": 1, \"requested_gpu_device_ids\": [9], \"routing_gpu_device_ids\": [], \"matches\": [{{\"file\": {:?}, \"line_number\": 2, \"text\": \"ERROR database failed\"}}]}}) + \'\\n\', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}}\nsys.stdout.write(json.dumps(response))\n",
             file_path.display().to_string()
         ),
     )
@@ -310,11 +310,13 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
         assert_eq!(payload["routing_backend"], "NativeGpuBackend");
         assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit-native");
         assert_eq!(payload["sidecar_used"], false);
+        assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
         assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([0]));
     } else {
         assert_eq!(payload["routing_backend"], "GpuSidecar");
         assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
         assert_eq!(payload["sidecar_used"], true);
+        assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
     }
     assert_eq!(payload["total_matches"], 1);
 }

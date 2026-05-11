@@ -229,7 +229,9 @@ def test_run_gpu_benchmarks_should_not_attach_unsupported_inventory_warning_to_g
     assert gpu1["stderr"] == unsupported_error
 
 
-def test_run_gpu_benchmarks_should_skip_sidecar_gpu_runtime_for_scale_gates(monkeypatch, tmp_path):
+def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_scale_gates(
+    monkeypatch, tmp_path
+):
     module = _load_script_module(
         "run_gpu_benchmarks_sidecar_runtime_skip",
         "benchmarks/run_gpu_benchmarks.py",
@@ -256,7 +258,7 @@ def test_run_gpu_benchmarks_should_skip_sidecar_gpu_runtime_for_scale_gates(monk
         "probe_tg_gpu_runtime_backend",
         lambda **_kwargs: {
             "status": "PASS",
-            "routing_backend": "GpuSidecar",
+            "routing_backend": "NativeGpuBackend",
             "routing_reason": "gpu-device-ids-explicit",
             "sidecar_used": True,
         },
@@ -300,17 +302,19 @@ def test_run_gpu_benchmarks_should_skip_sidecar_gpu_runtime_for_scale_gates(monk
 
     gpu0 = payload["rows"][0]["gpu"][0]
     assert gpu0["status"] == "UNSUPPORTED"
-    assert gpu0["tg_runtime_backend"] == "GpuSidecar"
+    assert gpu0["tg_runtime_backend"] == "NativeGpuBackend"
+    assert gpu0["tg_runtime_sidecar_used"] is True
     assert "requires a CUDA-enabled native tg binary" in gpu0["stderr"]
     assert payload["scale_gate_summary"] == {
         "benchmark_surface": "python-gpu-scale",
         "native_cuda_scale_gate": {
             "status": "UNSUPPORTED",
             "required_backend": "NativeGpuBackend",
-            "observed_backends": ["GpuSidecar"],
+            "observed_backends": ["NativeGpuBackend"],
+            "sidecar_observed": True,
             "reason": (
-                "Operational GPU devices routed outside the native CUDA backend; "
-                "Python/Torch sidecar rows are not native CUDA scale proof."
+                "Operational GPU devices used sidecar-contaminated routing; "
+                "NativeGpuBackend is only promotion evidence when sidecar_used is false."
             ),
         },
         "correctness_gate": {
@@ -457,7 +461,15 @@ def test_gpu_auto_recommendation_should_not_recommend_for_small_winning_row_only
                 "size_bytes": 100 * module.MB,
                 "rg": {"status": "PASS", "median_s": 10.0},
                 "tg_cpu": {"status": "PASS", "median_s": 9.0},
-                "gpu": [{"device_id": 0, "status": "PASS", "median_s": 1.0}],
+                "gpu": [
+                    {
+                        "device_id": 0,
+                        "status": "PASS",
+                        "median_s": 1.0,
+                        "tg_runtime_backend": "NativeGpuBackend",
+                        "tg_runtime_sidecar_used": False,
+                    }
+                ],
             }
         ],
         correctness_checks=[],
@@ -467,6 +479,66 @@ def test_gpu_auto_recommendation_should_not_recommend_for_small_winning_row_only
     assert recommendation["should_add_flag"] is False
     assert recommendation["winning_rows"] == []
     assert "1GB/5GB correctness" in recommendation["reason"]
+
+
+def test_gpu_auto_recommendation_should_reject_sidecar_contaminated_native_rows():
+    module = _load_script_module(
+        "run_gpu_benchmarks_sidecar_recommendation",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 10.0},
+            "tg_cpu": {"status": "PASS", "median_s": 12.0},
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 1.0,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": True,
+                }
+            ],
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 60.0},
+            "tg_cpu": {"status": "PASS", "median_s": 70.0},
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 1.0,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": True,
+                }
+            ],
+        },
+    ]
+    correctness_checks = [
+        {
+            "device_id": 0,
+            "corpus_size_label": size_label,
+            "pattern": "gpu benchmark sentinel",
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+    ]
+
+    recommendation = module.analyze_gpu_auto_recommendation(
+        rows,
+        correctness_checks=correctness_checks,
+        correctness_patterns=("gpu benchmark sentinel",),
+    )
+
+    assert recommendation["should_add_flag"] is False
+    assert recommendation["winning_rows"] == []
+    assert "NativeGpuBackend with sidecar_used=false" in recommendation["reason"]
 
 
 def test_gpu_auto_recommendation_should_recommend_required_scale_win_with_correctness():
@@ -480,14 +552,30 @@ def test_gpu_auto_recommendation_should_recommend_required_scale_win_with_correc
             "size_bytes": module.GB,
             "rg": {"status": "PASS", "median_s": 10.0},
             "tg_cpu": {"status": "PASS", "median_s": 12.0},
-            "gpu": [{"device_id": 0, "status": "PASS", "median_s": 5.0}],
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 5.0,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": False,
+                }
+            ],
         },
         {
             "size_label": "5GB",
             "size_bytes": 5 * module.GB,
             "rg": {"status": "PASS", "median_s": 60.0},
             "tg_cpu": {"status": "PASS", "median_s": 70.0},
-            "gpu": [{"device_id": 0, "status": "PASS", "median_s": 55.0}],
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 55.0,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": False,
+                }
+            ],
         },
     ]
     correctness_checks = [

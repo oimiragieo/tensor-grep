@@ -61,6 +61,34 @@ def _classify_lines(lines: list[str]) -> list[dict[str, Any]]:
         return _heuristic_classify_lines(lines)
 
 
+def _resolved_source_path(source_path: str | None) -> str | None:
+    if not source_path:
+        return None
+    try:
+        return str(Path(source_path).resolve())
+    except OSError:
+        return str(Path(source_path))
+
+
+def _enrich_classifications(
+    results: list[dict[str, Any]],
+    lines: list[str],
+    *,
+    source_path: str | None = None,
+) -> list[dict[str, Any]]:
+    resolved_path = _resolved_source_path(source_path)
+    enriched: list[dict[str, Any]] = []
+    for index, result in enumerate(results):
+        snippet = lines[index] if index < len(lines) else ""
+        item = dict(result)
+        item["file"] = resolved_path
+        item["path"] = resolved_path
+        item["line"] = index + 1
+        item["snippet"] = snippet.rstrip("\r\n")
+        enriched.append(item)
+    return enriched
+
+
 def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tuple[str, str, int]:
     format_type = "json"
     positional_args: list[str] = []
@@ -79,14 +107,19 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
         index += 1
 
     content = None
+    source_path = None
     if payload is not None:
         content = payload.get("content")
+        raw_source_path = payload.get("file") or payload.get("path")
+        if isinstance(raw_source_path, str):
+            source_path = raw_source_path
 
     if not isinstance(content, str):
         if len(positional_args) != 1:
             return _dispatch_cli("classify", list(args))
+        source_path = positional_args[0]
         try:
-            content = Path(positional_args[0]).read_text(encoding="utf-8", errors="replace")
+            content = Path(source_path).read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             return "", f"failed to read classify input: {exc}\n", 1
 
@@ -98,7 +131,18 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
 
     results = _classify_lines(lines)
     if format_type == "json":
-        return json.dumps({"classifications": results}) + "\n", "", 0
+        return (
+            json.dumps({
+                "classifications": _enrich_classifications(
+                    results,
+                    lines,
+                    source_path=source_path,
+                )
+            })
+            + "\n",
+            "",
+            0,
+        )
 
     rendered = "".join(f"{item['label']} ({item['confidence']:.2f})\n" for item in results)
     return rendered, "", 0
@@ -267,6 +311,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         candidate_files = list(scanner.walk(path))
 
         all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+        all_results.requested_gpu_device_ids = list(requested_gpu_device_ids)
         all_results.routing_backend = getattr(
             pipeline, "selected_backend_name", backend.__class__.__name__
         )
@@ -312,6 +357,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
             "total_files": all_results.total_files,
             "routing_backend": all_results.routing_backend,
             "routing_reason": all_results.routing_reason,
+            "requested_gpu_device_ids": all_results.requested_gpu_device_ids,
             "routing_gpu_device_ids": all_results.routing_gpu_device_ids,
             "matches": serialized_matches,
         }
