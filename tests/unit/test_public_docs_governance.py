@@ -21,10 +21,11 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "2cde253 chore(release): v1.9.11 [skip ci]"
+CURRENT_RELEASE_COMMIT = "0d0cbaa chore(release): v1.10.0 [skip ci]"
 CURRENT_FIX_COMMIT = "8aecfea fix: harden release wheel retries"
-CURRENT_MAIN_CI = "25647256985"
-CURRENT_CODEQL = "25647635021"
+CURRENT_FEATURE_COMMIT = "34fd556 feat: add agentic GPU evidence capsule"
+CURRENT_MAIN_CI = "25670325770"
+CURRENT_CODEQL = "25670325881"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -112,12 +113,13 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     ):
         assert CURRENT_RELEASE_COMMIT in content
         assert CURRENT_FIX_COMMIT in content
-        assert "95bfd81 feat: add actionable agent context capsule" in content
+        assert CURRENT_FEATURE_COMMIT in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert CURRENT_MAIN_CI in handoff
     assert CURRENT_CODEQL in handoff
-    assert "tensor-grep==1.9.11" in handoff
+    assert "tensor-grep==1.10.0" in handoff
+    assert "sidecar-backed public commands" in handoff
     assert "Closed GPU gates and launcher diagnostics gap" in handoff
     assert "Closed docs/version governance and validation placeholder gap" in handoff
     assert "Closed explicit ranking and validation quoting gap" in handoff
@@ -174,12 +176,12 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     readme = docs["README.md"]
     assert "## Current Release State" in readme
     assert CURRENT_FIX_COMMIT in readme
-    assert "95bfd81 feat: add actionable agent context capsule" in readme
+    assert CURRENT_FEATURE_COMMIT in readme
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.9.11`" in readme
-    assert "tensor-grep==1.9.11" in readme
+    assert "GitHub release assets for `v1.10.0`" in readme
+    assert "tensor-grep==1.10.0" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -194,7 +196,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.9.11` closed:"
+    current_closed_heading = "What `v1.10.0` closed:"
+    v1911_heading = "What `v1.9.11` closed:"
     v1910_heading = "What `v1.9.10` closed:"
     v199_heading = "What `v1.9.9` closed:"
     v198_heading = "What `v1.9.8` closed:"
@@ -204,8 +207,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.9.11` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1910_heading, 1)[0]
+    follow_up_heading = "Active post-`v1.10.0` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1911_heading, 1)[0]
+    v1911_closed_block = readme.split(v1911_heading, 1)[1].split(v1910_heading, 1)[0]
     v1910_closed_block = readme.split(v1910_heading, 1)[1].split(v199_heading, 1)[0]
     v199_closed_block = readme.split(v199_heading, 1)[1].split(v198_heading, 1)[0]
     v198_closed_block = readme.split(v198_heading, 1)[1].split(v197_heading, 1)[0]
@@ -215,9 +219,11 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "release wheel retry" in current_closed_block
-    assert "Cargo dependency prefetch" in current_closed_block
+    assert "agentic GPU route evidence" in current_closed_block
+    assert "sidecar-routed GPU evidence is reported as unsupported" in current_closed_block
     assert "publish-success-gate" in current_closed_block
+    assert "release wheel retry" in v1911_closed_block
+    assert "Cargo dependency prefetch" in v1911_closed_block
     assert "capsule alternative target confidence" in v1910_closed_block
     assert "provider tokens" in v1910_closed_block
     assert "transient crates.io DNS failure" in v1910_closed_block
@@ -238,6 +244,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "--diff --json" in v192_closed_block
     assert "rolls changed files back" in v192_closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
+    assert "sidecar-backed commands" in follow_up_block
 
 
 def test_gpu_docs_should_record_current_v1911_no_crossover_story() -> None:
@@ -295,7 +302,7 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current tagged version is `v1.9.11`" in skill
+    assert "current tagged version is `v1.10.0`" in skill
     assert "PR #91 `fix: harden release wheel retries` merged" in skill
     assert "PR #90 `fix: harden v1.9.9 dogfood followups` merged" in skill
     assert "PR #89 `fix: add agent workflow benchmark governance` merged" in skill

@@ -1,6 +1,4 @@
-use crate::runtime_paths::{
-    resolve_existing_relative_to_current_exe, resolve_explicit_file_override,
-};
+use crate::runtime_paths::{resolve_existing_relative_to_exe, resolve_explicit_file_override};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
@@ -498,26 +496,96 @@ fn resolve_python_command() -> OsString {
         return explicit.into_os_string();
     }
 
-    if let Some(runtime_relative_python) = resolve_existing_relative_to_current_exe(&[
-        &[if cfg!(windows) {
-            "python.exe"
-        } else {
-            "python"
-        }],
-        &[
-            ".venv",
-            if cfg!(windows) { "Scripts" } else { "bin" },
-            if cfg!(windows) {
-                "python.exe"
-            } else {
-                "python"
-            },
-        ],
-    ]) {
-        return runtime_relative_python.into_os_string();
+    let current_exe = env::current_exe().ok();
+    resolve_python_command_for_context(current_exe.as_deref(), &managed_home_dirs_from_env())
+}
+
+fn resolve_python_command_for_context(
+    current_exe: Option<&Path>,
+    home_dirs: &[PathBuf],
+) -> OsString {
+    if current_exe.is_some_and(is_windows_com_bridge) {
+        for home_dir in home_dirs {
+            if let Some(managed_python) = managed_install_python_from_home(home_dir) {
+                return managed_python.into_os_string();
+            }
+        }
+    }
+
+    if let Some(current_exe) = current_exe {
+        if let Some(runtime_relative_python) = resolve_existing_relative_to_exe(
+            current_exe,
+            &[
+                &[if cfg!(windows) {
+                    "python.exe"
+                } else {
+                    "python"
+                }],
+                &[
+                    ".venv",
+                    if cfg!(windows) { "Scripts" } else { "bin" },
+                    if cfg!(windows) {
+                        "python.exe"
+                    } else {
+                        "python"
+                    },
+                ],
+            ],
+        ) {
+            return runtime_relative_python.into_os_string();
+        }
     }
 
     OsString::from("python")
+}
+
+fn is_windows_com_bridge(path: &Path) -> bool {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| name.eq_ignore_ascii_case("tg.com"))
+}
+
+fn managed_home_dirs_from_env() -> Vec<PathBuf> {
+    let env_names = if cfg!(windows) {
+        ["USERPROFILE", "HOME"]
+    } else {
+        ["HOME", "USERPROFILE"]
+    };
+    let mut dirs = Vec::new();
+    for env_name in env_names {
+        let Some(value) = env::var_os(env_name) else {
+            continue;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        let dir = PathBuf::from(value);
+        if !dirs.iter().any(|existing| existing == &dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+fn managed_install_python_from_home(home_dir: &Path) -> Option<PathBuf> {
+    let candidate = home_dir
+        .join(".tensor-grep")
+        .join(".venv")
+        .join(if cfg!(windows) { "Scripts" } else { "bin" })
+        .join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+    candidate.is_file().then_some(candidate)
+}
+
+fn managed_install_native_binary_from_home(home_dir: &Path) -> Option<PathBuf> {
+    let candidate = home_dir
+        .join(".tensor-grep")
+        .join("bin")
+        .join(if cfg!(windows) { "tg.exe" } else { "tg-native" });
+    candidate.is_file().then_some(candidate)
 }
 
 fn configure_python_module_path(command: &mut Command) {
@@ -545,8 +613,26 @@ fn native_tg_binary_env_override(
     existing: Option<OsString>,
     current_exe: Option<PathBuf>,
 ) -> Option<OsString> {
+    native_tg_binary_env_override_for_context(existing, current_exe, &managed_home_dirs_from_env())
+}
+
+fn native_tg_binary_env_override_for_context(
+    existing: Option<OsString>,
+    current_exe: Option<PathBuf>,
+    home_dirs: &[PathBuf],
+) -> Option<OsString> {
     if existing.is_some() {
         return None;
+    }
+    if current_exe
+        .as_ref()
+        .is_some_and(|path| is_windows_com_bridge(path))
+    {
+        for home_dir in home_dirs {
+            if let Some(managed_native) = managed_install_native_binary_from_home(home_dir) {
+                return Some(managed_native.into_os_string());
+            }
+        }
     }
     current_exe.map(Into::into)
 }
@@ -652,7 +738,9 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
 #[cfg(test)]
 mod tests {
     use super::{
-        gpu_device_ids_env_value, merged_pythonpath, native_tg_binary_env_override,
+        gpu_device_ids_env_value, managed_install_native_binary_from_home,
+        managed_install_python_from_home, merged_pythonpath, native_tg_binary_env_override,
+        native_tg_binary_env_override_for_context, resolve_python_command_for_context,
         resolve_repo_source_root_relative_to_exe, SidecarRequest,
     };
     use serde_json::json;
@@ -742,5 +830,68 @@ mod tests {
             None
         );
         assert_eq!(native_tg_binary_env_override(None, None), None);
+    }
+
+    #[test]
+    fn resolves_managed_home_python_for_external_windows_bridge() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let python = home
+            .join(".tensor-grep")
+            .join(".venv")
+            .join(if cfg!(windows) { "Scripts" } else { "bin" })
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            });
+        let bridge = dir.path().join("Python314").join("Scripts").join("tg.com");
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        fs::write(&python, b"python").unwrap();
+        fs::write(&bridge, b"native").unwrap();
+        fs::write(
+            bridge
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("python.exe"),
+            b"ambient",
+        )
+        .unwrap();
+
+        assert_eq!(
+            managed_install_python_from_home(&home).as_deref(),
+            Some(python.as_path())
+        );
+        assert_eq!(
+            resolve_python_command_for_context(Some(&bridge), &[home]).as_os_str(),
+            python.as_os_str()
+        );
+    }
+
+    #[test]
+    fn external_com_bridge_points_sidecar_back_to_managed_native_frontdoor() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let managed_native = home
+            .join(".tensor-grep")
+            .join("bin")
+            .join(if cfg!(windows) { "tg.exe" } else { "tg-native" });
+        let bridge = dir.path().join("Python314").join("Scripts").join("tg.com");
+        fs::create_dir_all(managed_native.parent().unwrap()).unwrap();
+        fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        fs::write(&managed_native, b"native").unwrap();
+        fs::write(&bridge, b"bridge").unwrap();
+
+        assert_eq!(
+            managed_install_native_binary_from_home(&home).as_deref(),
+            Some(managed_native.as_path())
+        );
+        assert_eq!(
+            native_tg_binary_env_override_for_context(None, Some(bridge), &[home]).as_deref(),
+            Some(managed_native.as_os_str())
+        );
     }
 }
