@@ -13,9 +13,9 @@ As of 2026-05-11, the current tagged version is `v1.10.0`. Stable installer, PyP
 
 Current release facts:
 
-- Release commit: `2cde253 chore(release): v1.9.11 [skip ci]`
+- Release commit before this bridge follow-up: `0d0cbaa chore(release): v1.10.0 [skip ci]`
 - Latest merged fix commit: `8aecfea fix: harden release wheel retries`
-- Latest merged feature commit: `95bfd81 feat: add actionable agent context capsule`
+- Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
 - PR #91 `fix: harden release wheel retries` merged and released as `v1.9.11`
 - PR #90 `fix: harden v1.9.9 dogfood followups` merged and released as `v1.9.10` on GitHub assets; PyPI publication was completed by the v1.9.11 release-wheel retry follow-up
 - PR #89 `fix: add agent workflow benchmark governance` merged and released as `v1.9.9`
@@ -35,9 +35,10 @@ Current release facts:
 - Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
-- Main CI run `25647256985` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25647635021` passed on the `v1.9.11` release commit.
-- PyPI latest and pinned public install both resolve `tensor-grep==1.9.11`
-- GitHub release assets for `v1.9.11` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Main CI run `25670325770` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25670325881` passed on the `v1.10.0` release line.
+- PyPI pinned public install resolves with `uvx --refresh --from tensor-grep==1.10.0 tg --version`
+- GitHub release assets for `v1.10.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Post-v1.10.0 dogfood blocker under fix: a copied tensor-grep `tg.com` bridge can pass `--version` while sidecar-backed commands fall through to ambient Python. Validate public launchers with `tg doctor --json` or `tg upgrade` in addition to version probes.
 - Public `v1.9.9` dogfood: direct managed native `~/.tensor-grep/bin/tg.exe` reports `tg 1.9.9`; `uvx --from tensor-grep==1.9.9 tg --version` reports `tensor-grep 1.9.9`; `tg update` advanced `1.9.8` to `1.9.9`, refreshed the managed native front door, and fresh `cmd` plus unprofiled `pwsh` report `tg 1.9.9`.
 - Prior public update dogfood: `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.4`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolved `tg 1.9.4`; `tg doctor --json` reported `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
@@ -55,7 +56,7 @@ Current product read:
 - `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
 - The native front door must accept advertised public flags or intentionally route them to the sidecar. The current release line covers `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, `tg classify --format json`, Windows `.cmd` quoted multi-word no-match patterns, native-first Windows PATH ordering for fresh managed shells, and launcher-route observability for current-process versus fresh-shell PATH drift.
 - The quoted multi-word no-match pattern case from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` is a public Windows launcher contract. A split pattern can become a shorter false-positive search plus bogus paths, so keep `public-windows-launcher-quoted-patterns` in the fast agent-readiness gate.
-- Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. On Windows, the managed native front-door directory should be ahead of compatibility `.cmd` shim directories on PATH so `cmd`, unprofiled PowerShell, and Python subprocess calls resolve `~/.tensor-grep/bin/tg.exe` before the slower argv-safe bridge. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path, and managed native front doors must be refreshed when the verified sidecar version moves ahead of `tg.exe`.
+- Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. On Windows, the managed native front-door directory should be ahead of compatibility `.cmd` shim directories on PATH so `cmd`, unprofiled PowerShell, and Python subprocess calls resolve `~/.tensor-grep/bin/tg.exe` before the slower argv-safe bridge. If a copied tensor-grep `tg.com` bridge is used to outrank a foreign same-directory `tg.exe`, it must still discover `~/.tensor-grep/.venv` for sidecar commands and point `TG_NATIVE_TG_BINARY` back to the managed native front door. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path, and managed native front doors must be refreshed when the verified sidecar version moves ahead of `tg.exe`.
 - `tg doctor --json` is the first check for launcher drift. Inspect `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, `path_tg_launcher_warning`, and any `*_is_foreign` / `*_foreign_remediation` fields before trusting Windows benchmark timings; existing shells can retain the slower compatibility shim even after fresh User PATH resolves the native front door, and unrelated tools can own a different `tg` command.
 - Cold-path benchmark artifacts should separate configured launcher mode from actual timed command kind. Use `environment.tg_launcher_mode` for the experiment and `environment.tg_launcher_command_kind` to distinguish native-exe, `.cmd` shim, `uv`, and Python-module routes. Treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons.
 - Explicit `--gpu-device-ids` routing should only probe selected CUDA ordinals. Selecting GPU 0 must not initialize or warn about unrelated unsupported devices such as GPU 1.
@@ -89,6 +90,7 @@ Known current weak spots:
 - Implicit native resolution should ignore stale in-tree standalone binaries. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep searches on the Rust extension or Python path unless `TG_NATIVE_TG_BINARY` explicitly pins a standalone binary.
 - Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are regression-covered rg parity edges.
 - Stable managed install scripts and `tg upgrade` must not trust stale package metadata immediately after publish and must not delete a working managed install before the replacement environment and front-door files have installed successfully. PowerShell native installer steps must check `$LASTEXITCODE` before the staged swap. `tg upgrade` must skip yanked PyPI releases, must not report "latest PyPI version" from unchanged local metadata without post-upgrade import/version verification, and must refresh or schedule refresh of the managed native front door when the sidecar package version changes. A PyPI-only publish is not enough when installers point at GitHub assets; release assets must be uploaded and verified first.
+- Public launcher dogfood must exercise at least one sidecar-backed command (`tg doctor --json` or `tg upgrade`) in addition to `tg --version`; a copied `tg.com` bridge can pass version probes while still falling through to the wrong ambient Python for sidecar commands.
 - GPU is not production-ready from device detection alone. The latest public dogfood still shows GPU losing badly or timing out at 100MB, 1GB, and 5GB; keep GPU claims behind accepted end-to-end artifacts.
 - Edit validation supports `$file` and `{file}` placeholders in validation command templates. For applied rewrites, placeholder commands run once per edited file; placeholder-free commands run once in the original target working directory. Quote the placeholder for Windows paths with spaces, for example `--lint-cmd 'python -m py_compile "$file"'`.
 
@@ -113,6 +115,8 @@ Get-Alias tg -ErrorAction SilentlyContinue | Format-List Definition,ResolvedComm
 tg --version
 cmd /c tg --version
 pwsh -NoProfile -Command "tg --version"
+cmd /c tg doctor --json
+pwsh -NoProfile -Command "tg doctor --json"
 where.exe tg
 uv run tg doctor --json
 ```

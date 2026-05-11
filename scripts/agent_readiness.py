@@ -387,7 +387,29 @@ def build_check_plan(
                 )
             )
         if IS_WINDOWS:
-            checks.append(
+            checks.extend([
+                Check(
+                    name="public-doctor-cmd",
+                    command=["cmd", "/c", "tg doctor --json --no-lsp"],
+                    description="Verify cmd.exe public tg can run sidecar-backed doctor.",
+                    timeout_s=90,
+                    validator=validate_doctor_payload,
+                ),
+                Check(
+                    name="public-doctor-pwsh-noprofile",
+                    command=[
+                        "pwsh",
+                        "-NoProfile",
+                        "-Command",
+                        "tg doctor --json --no-lsp",
+                    ],
+                    description=(
+                        "Verify unprofiled PowerShell public tg can run sidecar-backed doctor."
+                    ),
+                    timeout_s=90,
+                    validator=validate_doctor_payload,
+                    required=False,
+                ),
                 Check(
                     name="public-windows-launcher-quoted-patterns",
                     command=[],
@@ -397,8 +419,8 @@ def build_check_plan(
                     ),
                     timeout_s=30,
                     validator=validate_windows_launcher_quoted_patterns,
-                )
-            )
+                ),
+            ])
 
     checks.extend([
         Check(

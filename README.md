@@ -43,8 +43,8 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.10.0
 
-Latest tagged GitHub release: [`v1.9.11`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.11).
-Latest complete PyPI release: [`v1.9.11`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.11).
+Latest tagged GitHub release before this bridge follow-up: [`v1.10.0`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.0).
+Latest complete PyPI release before this bridge follow-up: [`v1.10.0`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.0).
 
 Current positioning:
 
@@ -56,6 +56,14 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.10.0` closed:
+
+- `tg agent --gpu-device-ids ... --json` and MCP `tg_agent_capsule(..., gpu_device_ids=[...])` now expose opt-in agentic GPU route evidence through `gpu_acceleration`
+- sidecar-routed GPU evidence is reported as unsupported and never promoted as native CUDA acceleration
+- main CI run `25670325770` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25670325881` passed
+- GitHub release assets for `v1.10.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh --from tensor-grep==1.10.0 tg --version` reports `tensor-grep 1.10.0`
+- post-release dogfood found that a copied tensor-grep `tg.com` bridge can pass `--version` while sidecar-backed public commands fall through to ambient Python; the active bridge follow-up fixes that launcher state
 
 What `v1.9.11` closed:
 
@@ -133,6 +141,7 @@ What `v1.9.0` closed:
 - main CI builds, uploads, and verifies release-native CPU assets before PyPI publish, so `v1.9.0` includes `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, and package-manager bundle assets on the GitHub release
 - stable installers clear stale `tensor-grep` package metadata, request the exact current non-yanked PyPI version when known, check native installer exit codes, and stage the managed environment plus front-door files before replacing `~/.tensor-grep`
 - `tg upgrade` skips yanked PyPI releases, refreshes stale package metadata, verifies that the target Python can still import `tensor_grep`, refreshes the managed release-native front door to the verified sidecar version, and schedules a Windows retry helper when the running native `tg.exe` is still locked
+- Windows `tg.com` bridge copies that outrank a foreign same-directory `tg.exe` must still resolve sidecar-backed commands through `~/.tensor-grep/.venv` and must point Python back at the managed native front door, so public `tg doctor` and `tg upgrade` are validated in addition to `tg --version`
 - Windows managed installs put `~/.tensor-grep/bin` ahead of compatibility shim directories on User PATH so fresh `cmd`, unprofiled PowerShell, and `subprocess.run(["tg", ...])` shells resolve the native `tg.exe` first
 - `tg doctor --json` reports current-process and fresh-shell launcher route kinds, including `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, and `path_tg_launcher_warning`, so benchmark runs can distinguish managed native execution from compatibility shim timing
 - cold-path benchmark artifacts record both configured `tg_launcher_mode` and actual `tg_launcher_command_kind`, keeping native-exe, `.cmd` shim, `uv`, and Python-module timings separate; benchmark scripts warn when the timed `tg` entrypoint is not the native executable
@@ -146,7 +155,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.9.11` follow-up:
+Active post-`v1.10.0` follow-up:
 
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
 - keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
@@ -155,6 +164,7 @@ Active post-`v1.9.11` follow-up:
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
 - keep launcher-route diagnostics in `tg doctor --json` visible in dogfood before trusting Windows benchmark results
+- validate Windows public launchers with sidecar-backed commands (`tg doctor --json`, `tg upgrade`) as well as `tg --version`; version-only checks can miss a copied `tg.com` bridge that falls through to the wrong ambient Python
 - keep both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim; treat benchmark warnings about shim/interpreter overhead as blocking for performance comparisons
 - keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
 - keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
@@ -164,8 +174,8 @@ Active post-`v1.9.11` follow-up:
 Managed native-upgrade dogfood:
 
 - direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.11` after `tg update`
-- PyPI pinned public install resolves `tensor-grep==1.9.11`; PyPI project-level caches may lag immediately after publish
-- `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation; this is a PATH-shadow environment blocker, not a tensor-grep-owned stale launcher cleanup target
+- PyPI pinned public install resolves `tensor-grep==1.10.0`; PyPI project-level caches may lag immediately after publish
+- `tg doctor --json` classifies the unrelated first-PATH Together CLI `tg.exe` as `foreign` with explicit remediation; where a tensor-grep `tg.com` bridge is needed to outrank that same-directory `.exe`, public dogfood must verify sidecar-backed commands as well as version output
 
 - `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
 - `tg doctor --json` now reports `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route
@@ -175,12 +185,13 @@ Managed native-upgrade dogfood:
 
 Release proof:
 
-- PR #91 from `8aecfea fix: harden release wheel retries` merged and released
-- release commit `2cde253 chore(release): v1.9.11 [skip ci]`
-- main CI run `25647256985` passed the pre-release test/benchmark matrix, semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- main CodeQL run `25647635021` passed on the v1.9.11 release commit
-- GitHub release assets for `v1.9.11` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- PyPI package-specific release metadata lists all `tensor-grep 1.9.11` distributions; `tensor-grep==1.9.11` resolves from PyPI
+- PR #93 from `34fd556 feat: add agentic GPU evidence capsule` merged and released
+- Prior PR #91 from `8aecfea fix: harden release wheel retries` merged and released as `v1.9.11`
+- release commit `0d0cbaa chore(release): v1.10.0 [skip ci]`
+- main CI run `25670325770` passed the pre-release test/benchmark matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- main CodeQL run `25670325881` passed on the v1.10.0 release line
+- GitHub release assets for `v1.10.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI package-specific release metadata lists all `tensor-grep 1.10.0` distributions; `tensor-grep==1.10.0` resolves from PyPI
 - PR #90 from `ca9df12 fix: harden v1.9.9 dogfood followups` merged and released
 - release commit `6d04ad2 chore(release): v1.9.10 [skip ci]`
 - main CI run `25645819170` passed the pre-release test/benchmark matrix, semantic-release, and `publish-github-release-assets`; PyPI publish was blocked by a transient crates.io DNS failure in the macOS wheel build and is being retried through the release-wheel retry follow-up
@@ -392,7 +403,7 @@ Important constraint:
 - **Validation command provenance:** Agent-facing validation hints use `validation_plan[].detection`; npm/package-manager commands require `package.json` evidence, Python commands require Python/test/project evidence, and absent runner evidence yields no command instead of a guessed one.
 - **Routing Parity:** `tensor-grep` maintains exact character-for-character parity for text search outputs across all supported launcher modes (`native`, `bootstrap`, `python-m`). The only exception is `--help` text, which differs in word-wrapping layout between Clap (Rust) and Typer (Python) but guarantees the presence of valid `Usage:` instructions.
 - **Golden-Output Scope:** The test suite snapshots exact, raw, and deterministic groupings and file path output directly from the engines. Native `tg.exe` intentionally does not support `-a` text parsing of binary fixtures; that binary-text case is handled by the Python `ripgrep` fallback and explicitly skipped in native-only contract tests.
-- **Launcher Behavior:** The native Rust binary (`tg.exe`) acts as the primary front door, embedding AST search and fast-path text search. Unimplemented complex flags fall back to the Python sidecar. The Python wrapper (`python -m tensor_grep`) delegates structural and plain search commands back down to the native binary when available to guarantee uniform performance and path resolution. On Windows, `tensor-grep` intentionally rejects `PythonXY\Scripts\tg.exe` console-entrypoint shims when resolving that native path; use a release binary, an in-tree build, or `TG_NATIVE_TG_BINARY` when you need to force a specific native executable.
+- **Launcher Behavior:** The native Rust binary (`tg.exe`) acts as the primary front door, embedding AST search and fast-path text search. Unimplemented complex flags fall back to the Python sidecar. The Python wrapper (`python -m tensor_grep`) delegates structural and plain search commands back down to the native binary when available to guarantee uniform performance and path resolution. On Windows, `tensor-grep` intentionally rejects `PythonXY\Scripts\tg.exe` console-entrypoint shims when resolving that native path; use a release binary, an in-tree build, or `TG_NATIVE_TG_BINARY` when you need to force a specific native executable. A copied tensor-grep `tg.com` bridge outside `~/.tensor-grep/bin` must still discover the managed sidecar Python and managed native binary instead of the ambient Python install beside the bridge.
 - **Non-Contract Fields:** Absolute temporary directory paths (normalized to `<TMP_DIR>` in tests), non-deterministic multi-threaded file ordering (stabilized via `-j 1` in tests or sorting where applicable), and specific help-text layouts are intentional non-contract fields.
 
 ## Why should I use `tensor-grep`?

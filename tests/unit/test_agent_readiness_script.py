@@ -80,6 +80,9 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "public-version-pwsh-noprofile" in names
     assert "public-version-git-bash" in names
     assert "public-version-wsl" in names
+    if module.IS_WINDOWS:
+        assert "public-doctor-cmd" in names
+        assert "public-doctor-pwsh-noprofile" in names
     assert "repo-doctor" in names
     assert "context-render-trust" in names
     assert "rg-parity-edges" in names
@@ -199,6 +202,9 @@ def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypat
     powershell_probe = next(check for check in checks if check.name == "public-version-powershell")
     assert powershell_probe.command[0].lower() == "powershell"
     assert "tg --version" in powershell_probe.command
+    public_doctor = next(check for check in checks if check.name == "public-doctor-cmd")
+    assert public_doctor.command == ["cmd", "/c", "tg doctor --json --no-lsp"]
+    assert public_doctor.validator is module.validate_doctor_payload
 
     quoted_probe = next(
         check for check in checks if check.name == "public-windows-launcher-quoted-patterns"

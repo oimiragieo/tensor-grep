@@ -1,21 +1,23 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-10
+Last updated: 2026-05-11
 
 ## Current Release State
 
 release_docs_current_tag: v1.10.0
 
-- Latest tagged version: `v1.9.11`
-- Latest complete PyPI version: `v1.9.11`
-- Latest release commit: `2cde253 chore(release): v1.9.11 [skip ci]`
+- Latest tagged version before this bridge follow-up: `v1.10.0`
+- Latest complete PyPI version before this bridge follow-up: `v1.10.0`
+- Latest release commit before this bridge follow-up: `0d0cbaa chore(release): v1.10.0 [skip ci]`
 - Latest fix commit: `8aecfea fix: harden release wheel retries`
-- Latest feature commit: `95bfd81 feat: add actionable agent context capsule`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.11>
-- Main CI run `25647256985`: passed the pre-release matrix, semantic-release, `validate-pypi-artifacts`, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25647635021`: passed on the `v1.9.11` release commit
-- PyPI latest and pinned install: `tensor-grep==1.9.11` resolves from PyPI
-- GitHub release assets: `v1.9.11` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Latest feature commit: `34fd556 feat: add agentic GPU evidence capsule`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.0>
+- Main CI run `25670325770`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25670325881`: passed on the `v1.10.0` merge commit
+- PyPI pinned install: `uvx --refresh --from tensor-grep==1.10.0 tg --version` reports `tensor-grep 1.10.0`
+- GitHub release assets: `v1.10.0` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Post-`v1.10.0` bridge dogfood blocker under fix: a tensor-grep-owned `Python314\Scripts\tg.com` bridge reported `tg 1.10.0` for `--version`, but sidecar-backed public commands (`cmd /c tg doctor --json`, `cmd /c tg upgrade`) fell through to ambient Python 3.14 and failed with `No module named tensor_grep`. The accepted fix makes copied `tg.com` bridges discover `~/.tensor-grep/.venv` and point `TG_NATIVE_TG_BINARY` back to `~/.tensor-grep/bin/tg.exe`; release dogfood must include sidecar-backed public commands, not only version probes.
+- Closed v1.10.0 agentic GPU evidence gap: `v1.10.0` adds opt-in `tg agent --gpu-device-ids ... --json` / MCP GPU evidence, keeps sidecar-routed GPU unsupported for promotion, and updates help/docs/contracts for the agentic GPU surface.
 - Closed v1.9.11 release wheel retry gap: `v1.9.11` prefetches Cargo dependencies with retry/timeout settings before PyPI wheel and sdist builds, publishes all PyPI distributions, and passes `publish-success-gate`.
 - Closed v1.9.10 dogfood follow-up gap: `v1.9.10` caps capsule alternative-target confidence at the selected primary target, adds regex-backed `secrets-basic` provider-token detection for generic `sk_live...` tokens, and synchronizes stale v1.9.9 release-governance prose. Its PyPI publish did not complete because a macOS wheel runner could not resolve `index.crates.io`; the v1.9.11 release-wheel retry follow-up hardens Cargo fetch retries and publishes the replacement patch.
 - Closed v1.9.9 agent workflow benchmark governance gap: `v1.9.9` release adds `run_agent_workflow_benchmarks.py` so capsule/edit-loop confidence, alternatives, validation alignment, snippets, rollback, edit order, and phase timings are benchmarked as workflow evidence rather than raw cold exact-text speed proof.
@@ -48,13 +50,13 @@ release_docs_current_tag: v1.10.0
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.9.11 Scope
+## Current Post-v1.10.0 Scope
 
-Current release branch is publication-complete for `v1.9.11`: the latest fix merge is `8aecfea fix: harden release wheel retries`; main CI run `25647256985` passed tests/assets, PyPI artifact validation, GitHub asset upload, PyPI publish, and `publish-success-gate`; and CodeQL run `25647635021` passed on the release commit. PyPI project-level caches can lag immediately after publish, but the package-specific endpoint and pinned install resolve `tensor-grep==1.9.11`.
+Current release branch is publication-complete for `v1.10.0`: PR #93 `feat: add agentic GPU evidence capsule` was squash-merged as `34fd556`, release commit `0d0cbaa chore(release): v1.10.0 [skip ci]` exists, main CI run `25670325770` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25670325881` passed. PyPI project-level caches can lag immediately after publish, but a refreshed pinned install resolves `tensor-grep==1.10.0`. Post-release dogfood found the copied `tg.com` bridge sidecar fallback issue described above; this follow-up is release/launcher correctness, not a speed claim.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`; edit JSON/rollback safety shipped in `v1.9.2`; explicit Python ranking and quoted validation commands shipped in `v1.9.3`; docs-governance and validation placeholders shipped in `v1.9.4`; native CUDA gate hardening, capsule alternatives, help diagnostics, and foreign launcher diagnostics shipped in `v1.9.5`; directory validation, CUDA 12.8 install paths, help coverage, and release-proof governance shipped in `v1.9.6`; GPU benchmark promotion-gate taxonomy and cold-search positioning shipped in `v1.9.7`; stale tensor-grep-owned `tg.com` bridge refresh after upgrade shipped in `v1.9.8`; agent workflow benchmark governance shipped in `v1.9.9`; capsule confidence/secrets/docs dogfood follow-ups shipped in source/GitHub assets in `v1.9.10`; and release wheel Cargo prefetch retries shipped in `v1.9.11`.
 
-Active post-`v1.9.11` implementation scope:
+Active post-`v1.10.0` implementation scope:
 
 - Continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language intent, token economy, follow-up reads, call-site evidence, and workflow benchmarks without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 - Keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces.
