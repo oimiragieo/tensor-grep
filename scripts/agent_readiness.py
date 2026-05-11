@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -264,11 +265,22 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         "ast-grep",
     ]
     missing: list[str] = []
+    current_version_pattern = re.compile(
+        r"current `v(?P<version>\d+\.\d+\.\d+)` "
+        r"(?P<subject>shell/version resolution|positioning|release line)"
+    )
     for path in required_docs:
         content = path.read_text(encoding="utf-8")
         for fragment in required_fragments:
             if fragment not in content:
                 missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
+        for match in current_version_pattern.finditer(content):
+            found = match.group("version")
+            if found != expected_version:
+                missing.append(
+                    f"{path.relative_to(repo_root)} contains stale current release prose "
+                    f"`v{found}` for {match.group('subject')}; expected `v{expected_version}`"
+                )
 
     gpu_docs = [
         repo_root / "README.md",
@@ -289,6 +301,8 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         "0ms interpreter lag",
         "peak theoretical throughput",
         "further buries",
+        "designed to win on larger files",
+        "GPU-ready",
     ]
     for path in gpu_docs:
         content = path.read_text(encoding="utf-8")

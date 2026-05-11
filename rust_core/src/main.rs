@@ -26,7 +26,7 @@ use tensor_grep_rs::crossover::{run_crossover_calibration, write_crossover_confi
 use tensor_grep_rs::gpu_native::{
     benchmark_cuda_graph_search_paths, benchmark_pageable_transfer_throughput,
     benchmark_pinned_transfer_throughput, enumerate_cuda_devices, gpu_native_search_paths_multi,
-    probe_device_allocation, GpuNativeSearchConfig, GpuNativeSearchStats,
+    probe_device_allocation, GpuNativeSearchConfig, GpuNativeSearchStats, GpuPipelineStats,
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
@@ -44,7 +44,7 @@ use tensor_grep_rs::routing::{
     SearchRoutingConfig,
 };
 
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -3075,6 +3075,7 @@ struct GpuNativeSearchResultJson<'a> {
     total_matches: usize,
     total_files: usize,
     routing_gpu_device_ids: Vec<i32>,
+    pipeline: &'a GpuPipelineStats,
     matches: Vec<SearchMatchJson>,
 }
 
@@ -5867,6 +5868,7 @@ fn emit_gpu_native_json_results(
             .iter()
             .map(|device| device.device_id)
             .collect(),
+        pipeline: &stats.pipeline,
         matches: gpu_native_match_json_entries(stats),
     };
 
@@ -5890,7 +5892,7 @@ fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNative
 fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
     if stats.selected_devices.len() <= 1 {
         eprintln!(
-            "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_throughput_gbps={:.2}",
+            "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_time_ms={:.3} gpu_kernel_time_ms={:.3} gpu_host_file_read_time_ms={:.3} gpu_host_preprocess_time_ms={:.3} gpu_host_to_pinned_copy_time_ms={:.3} gpu_cpu_staging_bytes={} gpu_pageable_host_staging_bytes={} gpu_transfer_throughput_gbps={:.2}",
             stats.selected_device.device_id,
             stats.selected_device.name,
             stats.searched_files,
@@ -5903,6 +5905,13 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
             stats.pipeline.pattern_count,
             stats.pipeline.pattern_batch_count,
             stats.pipeline.single_dispatch,
+            stats.pipeline.transfer_time_ms,
+            stats.pipeline.kernel_time_ms,
+            stats.pipeline.host_file_read_time_ms,
+            stats.pipeline.host_preprocess_time_ms,
+            stats.pipeline.host_to_pinned_copy_time_ms,
+            stats.pipeline.cpu_staging_bytes,
+            stats.pipeline.pageable_host_staging_bytes,
             stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
         );
         return;
@@ -5922,7 +5931,7 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
         .join(" | ");
 
     eprintln!(
-        "[gpu-native] selected_gpu_device_ids={} selected_gpu_device_names={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_throughput_gbps={:.2}",
+        "[gpu-native] selected_gpu_device_ids={} selected_gpu_device_names={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_time_ms={:.3} gpu_kernel_time_ms={:.3} gpu_host_file_read_time_ms={:.3} gpu_host_preprocess_time_ms={:.3} gpu_host_to_pinned_copy_time_ms={:.3} gpu_cpu_staging_bytes={} gpu_pageable_host_staging_bytes={} gpu_transfer_throughput_gbps={:.2}",
         device_ids,
         device_names,
         stats.searched_files,
@@ -5935,12 +5944,19 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
         stats.pipeline.pattern_count,
         stats.pipeline.pattern_batch_count,
         stats.pipeline.single_dispatch,
+        stats.pipeline.transfer_time_ms,
+        stats.pipeline.kernel_time_ms,
+        stats.pipeline.host_file_read_time_ms,
+        stats.pipeline.host_preprocess_time_ms,
+        stats.pipeline.host_to_pinned_copy_time_ms,
+        stats.pipeline.cpu_staging_bytes,
+        stats.pipeline.pageable_host_staging_bytes,
         stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
     );
 
     for device_stats in &stats.device_stats {
         eprintln!(
-            "[gpu-native] gpu_device_id={} gpu_device_name={} gpu_device_files={} gpu_device_matches={} gpu_device_transfer_bytes={} gpu_device_streams={} gpu_device_batch_count={} gpu_device_transfer_throughput_gbps={:.2}",
+            "[gpu-native] gpu_device_id={} gpu_device_name={} gpu_device_files={} gpu_device_matches={} gpu_device_transfer_bytes={} gpu_device_streams={} gpu_device_batch_count={} gpu_device_transfer_time_ms={:.3} gpu_device_kernel_time_ms={:.3} gpu_device_host_file_read_time_ms={:.3} gpu_device_host_preprocess_time_ms={:.3} gpu_device_host_to_pinned_copy_time_ms={:.3} gpu_device_cpu_staging_bytes={} gpu_device_pageable_host_staging_bytes={} gpu_device_transfer_throughput_gbps={:.2}",
             device_stats.device.device_id,
             device_stats.device.name,
             device_stats.searched_files,
@@ -5948,6 +5964,13 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
             device_stats.transfer_bytes,
             device_stats.pipeline.stream_count,
             device_stats.pipeline.batch_count,
+            device_stats.pipeline.transfer_time_ms,
+            device_stats.pipeline.kernel_time_ms,
+            device_stats.pipeline.host_file_read_time_ms,
+            device_stats.pipeline.host_preprocess_time_ms,
+            device_stats.pipeline.host_to_pinned_copy_time_ms,
+            device_stats.pipeline.cpu_staging_bytes,
+            device_stats.pipeline.pageable_host_staging_bytes,
             device_stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
         );
     }

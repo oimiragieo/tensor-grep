@@ -53,7 +53,8 @@ Current positioning:
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
-- `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
+- `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
+- `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 
 What `v1.9.11` closed:
@@ -158,7 +159,7 @@ Active post-`v1.9.11` follow-up:
 - keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
 - keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
 - keep GPU experimental until the required 1GB/5GB correctness rows pass and a selected GPU beats both `rg` and `tg_cpu`; current RTX 4070/RTX 5070 smoke proof is correctness/compatibility evidence, not a speed claim
-- post-`v1.9.6` native CUDA scale dogfood now passes 1GB and 5GB correctness on both local GPUs, but still finds no crossover: best GPU/rg ratios are about `22.9x` slower on RTX 4070 and `24.1x` slower on RTX 5070
+- post-`v1.9.6` / latest `v1.9.11` GPU dogfood now passes 1GB and 5GB correctness on both local GPUs, but still finds no crossover: best 5GB GPU/rg ratios are `35.46x` slower on RTX 4070 and `29.91x` slower on RTX 5070
 
 Managed native-upgrade dogfood:
 
@@ -244,7 +245,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.9.6` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.9.11` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -425,7 +426,7 @@ Important constraint:
 
 I'd like to try to convince you why you *shouldn't* use `tensor-grep`. This should give you a glimpse at some important downsides.
 
-- **You only search small files.** `rg` is still the baseline for tiny cold searches, and `tensor-grep` is designed to win on larger files, repeated queries, AST workflows, and harness loops.
+- **You only search small files.** `rg` is still the baseline for tiny cold searches. `tensor-grep` is the agent-native code-intelligence layer for repeated queries, AST workflows, context capsules, and harness loops where routing, validation, rollback, and confidence matter.
 - **You want GPU to win automatically on every host.** It does not. GPU routing is benchmark-governed and hardware-specific. Read [docs/gpu_crossover.md](docs/gpu_crossover.md) before forcing a GPU claim.
 - **You need tiny standalone binaries.** The fully bundled release artifacts are still large because they carry optional Python/NLP/CUDA compatibility layers for non-native paths.
 - **You don't want heavy dependencies.** A full `tensor-grep` installation with AST and NLP capabilities requires installing `torch`, `torch-geometric`, `transformers`, and NVIDIA drivers. If you just want a 3MB fast search tool, stick to pure `ripgrep`.
@@ -499,9 +500,7 @@ If you cannot run the install scripts or prefer a managed binary rollout, use th
 
 Current release assets include:
 * `tg-windows-amd64-cpu.exe`
-* `tg-windows-amd64-nvidia.exe`
 * `tg-linux-amd64-cpu`
-* `tg-linux-amd64-nvidia`
 * `tg-macos-amd64-cpu`
 
 Operational notes:
@@ -650,7 +649,7 @@ Available MCP tools now include:
 - `tg_rewrite_plan` (dry-run AST rewrite, returns JSON edit plan)
 - `tg_rewrite_apply` (apply AST rewrite edits with optional byte-level verification)
 - `tg_rewrite_diff` (unified diff preview of planned rewrites)
-- `tg_agent_capsule` (Actionable Context Capsule JSON for pre-edit agent context, validation, omissions, and rollback guidance)
+- `tg_agent_capsule` (Actionable Context Capsule JSON for pre-edit agent context, optional native GPU evidence via `gpu_device_ids`, validation, omissions, and rollback guidance)
 
 Call `tg_mcp_capabilities` first when running from PyPI wheels or agent sandboxes. It reports whether a standalone native `tg` binary is available, whether embedded rewrite fallback is importable, and which tools require native `tg`.
 

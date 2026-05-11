@@ -11,6 +11,7 @@ use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -384,6 +385,12 @@ pub struct GpuPipelineStats {
     pub long_line_count: usize,
     pub warp_dispatch_count: usize,
     pub block_dispatch_count: usize,
+    pub cpu_staging_bytes: usize,
+    pub pageable_host_staging_bytes: usize,
+    pub host_file_read_time_ms: f64,
+    pub host_preprocess_time_ms: f64,
+    pub host_to_pinned_copy_time_ms: f64,
+    pub cpu_staging_time_ms: f64,
     pub transfer_time_ms: f32,
     pub kernel_time_ms: f32,
     pub wall_time_ms: f64,
@@ -408,6 +415,12 @@ impl Default for GpuPipelineStats {
             long_line_count: 0,
             warp_dispatch_count: 0,
             block_dispatch_count: 0,
+            cpu_staging_bytes: 0,
+            pageable_host_staging_bytes: 0,
+            host_file_read_time_ms: 0.0,
+            host_preprocess_time_ms: 0.0,
+            host_to_pinned_copy_time_ms: 0.0,
+            cpu_staging_time_ms: 0.0,
             transfer_time_ms: 0.0,
             kernel_time_ms: 0.0,
             wall_time_ms: 0.0,
@@ -529,6 +542,11 @@ struct LoadedFileBatch {
     files: Vec<BatchedFile>,
     bytes_used: usize,
     classified_lines: ClassifiedLineBatch,
+    cpu_staging_bytes: usize,
+    pageable_host_staging_bytes: usize,
+    host_file_read_time_ms: f64,
+    host_preprocess_time_ms: f64,
+    host_to_pinned_copy_time_ms: f64,
 }
 
 struct DevicePatternBatch {
@@ -1179,10 +1197,21 @@ fn run_cuda_graph_benchmark_search_paths(
     let mut kernel_time_ms = 0.0f32;
     let mut cuda_graph_captures = 0usize;
     let mut cuda_graph_replays = 0usize;
+    let mut cpu_staging_bytes = 0usize;
+    let mut pageable_host_staging_bytes = 0usize;
+    let mut host_file_read_time_ms = 0.0f64;
+    let mut host_preprocess_time_ms = 0.0f64;
+    let mut host_to_pinned_copy_time_ms = 0.0f64;
     let mut graph_state: Option<PositionGraphCaptureState> = None;
 
     for batch_plan in &batch_plans {
         let loaded = load_file_batch_into_host_buffer(&mut host_buffer, batch_plan)?;
+        cpu_staging_bytes = cpu_staging_bytes.saturating_add(loaded.cpu_staging_bytes);
+        pageable_host_staging_bytes =
+            pageable_host_staging_bytes.saturating_add(loaded.pageable_host_staging_bytes);
+        host_file_read_time_ms += loaded.host_file_read_time_ms;
+        host_preprocess_time_ms += loaded.host_preprocess_time_ms;
+        host_to_pinned_copy_time_ms += loaded.host_to_pinned_copy_time_ms;
         if loaded.bytes_used == 0 {
             continue;
         }
@@ -1393,6 +1422,14 @@ fn run_cuda_graph_benchmark_search_paths(
         long_line_count: 0,
         warp_dispatch_count: 0,
         block_dispatch_count: 0,
+        cpu_staging_bytes,
+        pageable_host_staging_bytes,
+        host_file_read_time_ms,
+        host_preprocess_time_ms,
+        host_to_pinned_copy_time_ms,
+        cpu_staging_time_ms: host_file_read_time_ms
+            + host_preprocess_time_ms
+            + host_to_pinned_copy_time_ms,
         transfer_time_ms,
         kernel_time_ms,
         wall_time_ms,
@@ -1429,28 +1466,65 @@ fn load_file_batch_into_host_buffer(
     host_buffer: &mut RawPinnedHostBuffer,
     plan: &FileBatchPlan,
 ) -> Result<LoadedFileBatch> {
-    let host = host_buffer.as_mut_slice()?;
+    load_file_batch_into_pinned_slice(host_buffer.as_mut_slice()?, plan, false)
+}
+
+fn load_file_batch_into_pinned_slice(
+    host: &mut [u8],
+    plan: &FileBatchPlan,
+    classify_lines: bool,
+) -> Result<LoadedFileBatch> {
     let mut cursor = 0usize;
     let mut batch_files = Vec::new();
+    let mut classified_lines = ClassifiedLineBatch::default();
+    let mut cpu_staging_bytes = 0usize;
+    let mut host_file_read_time_ms = 0.0f64;
+    let mut host_preprocess_time_ms = 0.0f64;
 
     for path in &plan.files {
-        let bytes = fs::read(path)
-            .with_context(|| format!("failed to read GPU native search file {}", path.display()))?;
-        if bytes.contains(&b'\0') {
+        let metadata = fs::metadata(path)
+            .with_context(|| format!("failed to stat GPU native search file {}", path.display()))?;
+        let file_len = usize::try_from(metadata.len()).with_context(|| {
+            format!(
+                "GPU native search file is too large for this platform: {}",
+                path.display()
+            )
+        })?;
+        let separator_len = usize::from(cursor > 0);
+        let start = cursor
+            .checked_add(separator_len)
+            .with_context(|| format!("GPU native batch offset overflow for {}", path.display()))?;
+        let end = start
+            .checked_add(file_len)
+            .with_context(|| format!("GPU native batch offset overflow for {}", path.display()))?;
+        ensure_capacity(host.len(), end, path)?;
+
+        let read_started_at = Instant::now();
+        let mut file = fs::File::open(path)
+            .with_context(|| format!("failed to open GPU native search file {}", path.display()))?;
+        file.read_exact(&mut host[start..end]).with_context(|| {
+            format!(
+                "failed to read GPU native search file directly into pinned host memory {}",
+                path.display()
+            )
+        })?;
+        host_file_read_time_ms += read_started_at.elapsed().as_secs_f64() * 1_000.0;
+
+        let preprocess_started_at = Instant::now();
+        if host[start..end].contains(&b'\0') {
+            host_preprocess_time_ms += preprocess_started_at.elapsed().as_secs_f64() * 1_000.0;
             continue;
         }
-
         if cursor > 0 {
-            ensure_capacity(host.len(), cursor.saturating_add(1), path)?;
             host[cursor] = 0;
-            cursor += 1;
         }
 
-        let start = cursor;
-        let end = start.saturating_add(bytes.len());
-        ensure_capacity(host.len(), end, path)?;
-        host[start..end].copy_from_slice(&bytes);
+        if classify_lines {
+            classify_file_lines(start, &host[start..end], &mut classified_lines)?;
+        }
+        host_preprocess_time_ms += preprocess_started_at.elapsed().as_secs_f64() * 1_000.0;
         cursor = end;
+        cpu_staging_bytes = cpu_staging_bytes.saturating_add(file_len);
 
         batch_files.push(BatchedFile {
             path: path.clone(),
@@ -1462,7 +1536,12 @@ fn load_file_batch_into_host_buffer(
     Ok(LoadedFileBatch {
         files: batch_files,
         bytes_used: cursor,
-        classified_lines: ClassifiedLineBatch::default(),
+        classified_lines,
+        cpu_staging_bytes,
+        pageable_host_staging_bytes: 0,
+        host_file_read_time_ms,
+        host_preprocess_time_ms,
+        host_to_pinned_copy_time_ms: 0.0,
     })
 }
 
@@ -1743,6 +1822,18 @@ fn aggregate_device_pipeline_stats(
         .iter()
         .map(|outcome| outcome.stats.pipeline.transfer_time_ms)
         .sum::<f32>();
+    let host_file_read_time_ms = device_outcomes
+        .iter()
+        .map(|outcome| outcome.stats.pipeline.host_file_read_time_ms)
+        .sum::<f64>();
+    let host_preprocess_time_ms = device_outcomes
+        .iter()
+        .map(|outcome| outcome.stats.pipeline.host_preprocess_time_ms)
+        .sum::<f64>();
+    let host_to_pinned_copy_time_ms = device_outcomes
+        .iter()
+        .map(|outcome| outcome.stats.pipeline.host_to_pinned_copy_time_ms)
+        .sum::<f64>();
     let wall_time_ms = device_outcomes
         .iter()
         .map(|outcome| outcome.stats.pipeline.wall_time_ms)
@@ -1814,6 +1905,20 @@ fn aggregate_device_pipeline_stats(
             .iter()
             .map(|outcome| outcome.stats.pipeline.block_dispatch_count)
             .sum(),
+        cpu_staging_bytes: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.cpu_staging_bytes)
+            .sum(),
+        pageable_host_staging_bytes: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.pageable_host_staging_bytes)
+            .sum(),
+        host_file_read_time_ms,
+        host_preprocess_time_ms,
+        host_to_pinned_copy_time_ms,
+        cpu_staging_time_ms: host_file_read_time_ms
+            + host_preprocess_time_ms
+            + host_to_pinned_copy_time_ms,
         transfer_time_ms,
         kernel_time_ms: device_outcomes
             .iter()
@@ -2058,6 +2163,11 @@ fn run_search_pipeline(
     let mut block_dispatch_count = 0usize;
     let mut cuda_graph_captures = 0usize;
     let mut cuda_graph_replays = 0usize;
+    let mut cpu_staging_bytes = 0usize;
+    let mut pageable_host_staging_bytes = 0usize;
+    let mut host_file_read_time_ms = 0.0f64;
+    let mut host_preprocess_time_ms = 0.0f64;
+    let mut host_to_pinned_copy_time_ms = 0.0f64;
     let active_stream_count = dispatch_plans.len().clamp(1, PIPELINE_SLOT_COUNT);
     let mut pipeline_start = None;
 
@@ -2078,6 +2188,11 @@ fn run_search_pipeline(
             &mut block_dispatch_count,
             &mut cuda_graph_captures,
             &mut cuda_graph_replays,
+            &mut cpu_staging_bytes,
+            &mut pageable_host_staging_bytes,
+            &mut host_file_read_time_ms,
+            &mut host_preprocess_time_ms,
+            &mut host_to_pinned_copy_time_ms,
         )?;
         load_file_batch_into_slot(slot, &plan.file_batch)?;
         slot.current_pattern_batch_index = Some(plan.pattern_batch_index);
@@ -2121,6 +2236,11 @@ fn run_search_pipeline(
             &mut block_dispatch_count,
             &mut cuda_graph_captures,
             &mut cuda_graph_replays,
+            &mut cpu_staging_bytes,
+            &mut pageable_host_staging_bytes,
+            &mut host_file_read_time_ms,
+            &mut host_preprocess_time_ms,
+            &mut host_to_pinned_copy_time_ms,
         )?;
     }
 
@@ -2161,6 +2281,14 @@ fn run_search_pipeline(
             long_line_count,
             warp_dispatch_count,
             block_dispatch_count,
+            cpu_staging_bytes,
+            pageable_host_staging_bytes,
+            host_file_read_time_ms,
+            host_preprocess_time_ms,
+            host_to_pinned_copy_time_ms,
+            cpu_staging_time_ms: host_file_read_time_ms
+                + host_preprocess_time_ms
+                + host_to_pinned_copy_time_ms,
             transfer_time_ms,
             kernel_time_ms,
             wall_time_ms,
@@ -2344,6 +2472,11 @@ fn finalize_search_pipeline_slot(
     block_dispatch_count: &mut usize,
     cuda_graph_captures: &mut usize,
     cuda_graph_replays: &mut usize,
+    cpu_staging_bytes: &mut usize,
+    pageable_host_staging_bytes: &mut usize,
+    host_file_read_time_ms: &mut f64,
+    host_preprocess_time_ms: &mut f64,
+    host_to_pinned_copy_time_ms: &mut f64,
 ) -> Result<()> {
     let Some(batch) = slot.current_batch.take() else {
         slot.adaptive_dispatch = None;
@@ -2385,6 +2518,12 @@ fn finalize_search_pipeline_slot(
         SearchLaunchMode::GraphReplay => *cuda_graph_replays += 1,
         SearchLaunchMode::Standard => {}
     }
+    *cpu_staging_bytes = cpu_staging_bytes.saturating_add(batch.cpu_staging_bytes);
+    *pageable_host_staging_bytes =
+        pageable_host_staging_bytes.saturating_add(batch.pageable_host_staging_bytes);
+    *host_file_read_time_ms += batch.host_file_read_time_ms;
+    *host_preprocess_time_ms += batch.host_preprocess_time_ms;
+    *host_to_pinned_copy_time_ms += batch.host_to_pinned_copy_time_ms;
 
     if batch.bytes_used == 0 || adaptive_dispatch.total_lines() == 0 {
         slot.transfer_start = None;
@@ -2511,43 +2650,11 @@ fn finalize_search_pipeline_slot(
 }
 
 fn load_file_batch_into_slot(slot: &mut SearchPipelineSlot, plan: &FileBatchPlan) -> Result<()> {
-    let host_buffer = slot.host_buffer.as_mut_slice()?;
-    let mut cursor = 0usize;
-    let mut batch_files = Vec::new();
-    let mut classified_lines = ClassifiedLineBatch::default();
-
-    for path in &plan.files {
-        let bytes = fs::read(path)
-            .with_context(|| format!("failed to read GPU native search file {}", path.display()))?;
-        if bytes.contains(&b'\0') {
-            continue;
-        }
-
-        if cursor > 0 {
-            ensure_capacity(host_buffer.len(), cursor.saturating_add(1), path)?;
-            host_buffer[cursor] = 0;
-            cursor += 1;
-        }
-
-        let start = cursor;
-        let end = start.saturating_add(bytes.len());
-        ensure_capacity(host_buffer.len(), end, path)?;
-        host_buffer[start..end].copy_from_slice(&bytes);
-        cursor = end;
-
-        batch_files.push(BatchedFile {
-            path: path.clone(),
-            start,
-            end,
-        });
-        classify_file_lines(start, &bytes, &mut classified_lines)?;
-    }
-
-    slot.current_batch = Some(LoadedFileBatch {
-        files: batch_files,
-        bytes_used: cursor,
-        classified_lines,
-    });
+    slot.current_batch = Some(load_file_batch_into_pinned_slice(
+        slot.host_buffer.as_mut_slice()?,
+        plan,
+        true,
+    )?);
     slot.adaptive_dispatch = None;
     slot.current_launch_mode = None;
     slot.graph_launch_started_at = None;

@@ -121,6 +121,7 @@ def test_should_require_semantic_release_build_to_refresh_uv_lock():
         in joined_errors
     )
     assert "semantic_release.build_command must stage `uv.lock`" in joined_errors
+    assert "semantic_release.build_command must stage release docs after stamping" in joined_errors
 
 
 def test_should_accept_readme_when_public_contract_markers_exist():
@@ -153,6 +154,82 @@ def test_should_accept_readme_when_public_contract_markers_exist():
     """
     errors = module.validate_readme_contract(readme_content=readme)
     assert errors == []
+
+
+def test_should_reject_readme_current_release_asset_list_with_gpu_binaries():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    readme = """
+    # tensor-grep
+
+    `tensor-grep` has first class support on Windows, macOS and Linux.
+
+    Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md).
+
+    ## Canonical Docs
+
+    - [docs/benchmarks.md](docs/benchmarks.md)
+    - [docs/tool_comparison.md](docs/tool_comparison.md)
+    - [docs/gpu_crossover.md](docs/gpu_crossover.md)
+    - [docs/routing_policy.md](docs/routing_policy.md)
+    - [docs/harness_api.md](docs/harness_api.md)
+    - [docs/harness_cookbook.md](docs/harness_cookbook.md)
+    - [docs/installation.md](docs/installation.md)
+    - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+
+    Current release assets include:
+    * `tg-windows-amd64-cpu.exe`
+    * `tg-windows-amd64-nvidia.exe`
+    * `tg-linux-amd64-cpu`
+    * `tg-linux-amd64-nvidia`
+    * `tg-macos-amd64-cpu`
+    """
+    errors = module.validate_readme_contract(readme_content=readme)
+    assert any(
+        "README current release asset list must only advertise CPU front doors" in err
+        for err in errors
+    )
+
+
+def test_should_reject_readme_faster_than_rg_positioning():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    readme = """
+    # tensor-grep
+
+    `tensor-grep` has first class support on Windows, macOS and Linux.
+
+    Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md).
+
+    ## Canonical Docs
+
+    - [docs/benchmarks.md](docs/benchmarks.md)
+    - [docs/tool_comparison.md](docs/tool_comparison.md)
+    - [docs/gpu_crossover.md](docs/gpu_crossover.md)
+    - [docs/routing_policy.md](docs/routing_policy.md)
+    - [docs/harness_api.md](docs/harness_api.md)
+    - [docs/harness_cookbook.md](docs/harness_cookbook.md)
+    - [docs/installation.md](docs/installation.md)
+    - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+
+    `tensor-grep` is designed to win on larger files, repeated queries, AST workflows,
+    and harness loops.
+    """
+
+    errors = module.validate_readme_contract(readme_content=readme)
+    assert any("README must position tg as agent-native code intelligence" in err for err in errors)
 
 
 def test_should_require_benchmarks_doc_canonical_matrix_and_rules():

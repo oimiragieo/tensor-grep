@@ -326,6 +326,88 @@ def _parse_json_payload(stdout: str) -> dict[str, object]:
     return payload
 
 
+def _timeout_stderr(timeout_s: int) -> str:
+    return f"command timed out after {timeout_s}s"
+
+
+def _native_gpu_route_failure(payload: dict[str, object]) -> dict[str, object] | None:
+    routing_backend = str(payload.get("routing_backend") or "unknown")
+    routing_reason = payload.get("routing_reason")
+    sidecar_used = bool(payload.get("sidecar_used", False))
+    if routing_backend == "NativeGpuBackend" and not sidecar_used:
+        return None
+    return {
+        "status": "UNSUPPORTED",
+        "routing_backend": routing_backend,
+        "routing_reason": routing_reason,
+        "sidecar_used": sidecar_used,
+        "error": (
+            "GPU route did not use NativeGpuBackend "
+            f"(routing_backend={routing_backend}, sidecar_used={sidecar_used}); "
+            "sidecar-routed GPU rows are not native CUDA scale proof."
+        ),
+    }
+
+
+def probe_native_gpu_runtime_backend(
+    *,
+    tg_binary: Path,
+    corpus_dir: Path,
+    pattern: str,
+    device_id: int,
+    env: dict[str, str],
+    timeout_s: int,
+) -> dict[str, object]:
+    command = build_tg_json_command(tg_binary, pattern, corpus_dir, device_id=device_id)
+    result = _run_command(command, env=env, capture_output=True, timeout_s=timeout_s)
+    command_display = _command_display(command)
+    if isinstance(result, subprocess.TimeoutExpired):
+        return {
+            "status": "FAIL",
+            "routing_backend": "unknown",
+            "routing_reason": None,
+            "sidecar_used": None,
+            "error": _timeout_stderr(timeout_s),
+            "command": command_display,
+        }
+    if result.returncode != 0:
+        return {
+            "status": "FAIL",
+            "routing_backend": "unknown",
+            "routing_reason": None,
+            "sidecar_used": None,
+            "error": (result.stderr or "").strip(),
+            "command": command_display,
+        }
+    try:
+        payload = _parse_json_payload(result.stdout or "{}")
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "FAIL",
+            "routing_backend": "unknown",
+            "routing_reason": None,
+            "sidecar_used": None,
+            "error": f"failed to parse GPU runtime JSON: {exc}",
+            "command": command_display,
+        }
+    route_failure = _native_gpu_route_failure(payload)
+    if route_failure is not None:
+        route_failure["command"] = command_display
+        if isinstance(payload.get("pipeline"), dict):
+            route_failure["pipeline"] = payload["pipeline"]
+        return route_failure
+    probe: dict[str, object] = {
+        "status": "PASS",
+        "routing_backend": str(payload.get("routing_backend") or "NativeGpuBackend"),
+        "routing_reason": payload.get("routing_reason"),
+        "sidecar_used": bool(payload.get("sidecar_used", False)),
+        "command": command_display,
+    }
+    if isinstance(payload.get("pipeline"), dict):
+        probe["pipeline"] = payload["pipeline"]
+    return probe
+
+
 def _run_json_command(
     command: list[str],
     *,
@@ -561,13 +643,13 @@ def run_correctness_check(
     if isinstance(cpu_result, subprocess.TimeoutExpired):
         return {
             "status": "FAIL",
-            "error": f"CPU correctness command timed out after {timeout_s}s",
+            "error": f"CPU correctness {_timeout_stderr(timeout_s)}",
             "matches_equal": False,
         }
     if isinstance(gpu_result, subprocess.TimeoutExpired):
         return {
             "status": "FAIL",
-            "error": f"GPU correctness command timed out after {timeout_s}s",
+            "error": f"GPU correctness {_timeout_stderr(timeout_s)}",
             "matches_equal": False,
         }
     if cpu_result.returncode != 0:
@@ -585,6 +667,13 @@ def run_correctness_check(
 
     cpu_payload = _parse_json_payload(cpu_result.stdout or "{}")
     gpu_payload = _parse_json_payload(gpu_result.stdout or "{}")
+    route_failure = _native_gpu_route_failure(gpu_payload)
+    if route_failure is not None:
+        return {
+            **route_failure,
+            "matches_equal": False,
+            "files_equal": False,
+        }
     cpu_total_matches = int(cpu_payload.get("total_matches", 0))
     gpu_total_matches = int(gpu_payload.get("total_matches", 0))
     cpu_total_files = _infer_total_files(cpu_payload)
@@ -612,6 +701,15 @@ def create_error_fixture(error_dir: Path) -> Path:
     return error_dir
 
 
+def create_runtime_probe_fixture(probe_dir: Path) -> Path:
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    (probe_dir / "probe.log").write_text(
+        "INFO boot\nERROR gpu benchmark sentinel\n",
+        encoding="utf-8",
+    )
+    return probe_dir
+
+
 def run_gpu_error_tests(
     *,
     tg_binary: Path,
@@ -630,7 +728,7 @@ def run_gpu_error_tests(
         timeout_s=timeout_s,
     )
     invalid_device_status = "FAIL"
-    invalid_device_stderr = "command timed out"
+    invalid_device_stderr = _timeout_stderr(timeout_s)
     invalid_device_code = None
     if not isinstance(invalid_device, subprocess.TimeoutExpired):
         invalid_device_stderr = (invalid_device.stderr or "").strip()
@@ -653,7 +751,7 @@ def run_gpu_error_tests(
         timeout_s=timeout_s,
     )
     nvrtc_status = "FAIL"
-    nvrtc_stderr = "command timed out"
+    nvrtc_stderr = _timeout_stderr(timeout_s)
     nvrtc_code = None
     if not isinstance(nvrtc_failure, subprocess.TimeoutExpired):
         nvrtc_stderr = (nvrtc_failure.stderr or "").strip()
@@ -676,7 +774,7 @@ def run_gpu_error_tests(
         timeout_s=timeout_s,
     )
     timeout_status = "FAIL"
-    timeout_stderr = "command timed out"
+    timeout_stderr = _timeout_stderr(timeout_s)
     timeout_code = None
     if not isinstance(timeout_result, subprocess.TimeoutExpired):
         timeout_stderr = (timeout_result.stderr or "").strip()
@@ -716,6 +814,13 @@ def run_gpu_error_tests(
                 "simulated": False,
                 "stderr": (malformed_gpu.stderr or "").strip(),
             }
+    else:
+        malformed_payload = {
+            "status": "FAIL",
+            "exit_code": None,
+            "simulated": False,
+            "stderr": _timeout_stderr(timeout_s),
+        }
 
     return {
         "invalid_device": {
@@ -883,6 +988,52 @@ def _native_speed_gate(
     }
 
 
+def _native_runtime_gate(rows: list[dict[str, object]]) -> dict[str, object]:
+    observed_backends: set[str] = set()
+    observed_sidecar = False
+    observed_unsupported = False
+    observed_native_pass = False
+
+    for row in rows:
+        tg_gpu = row.get("tg_gpu")
+        if not isinstance(tg_gpu, dict):
+            continue
+        backend = tg_gpu.get("routing_backend")
+        if backend:
+            observed_backends.add(str(backend))
+        sidecar_used = bool(tg_gpu.get("sidecar_used", False))
+        observed_sidecar = observed_sidecar or sidecar_used
+        observed_unsupported = observed_unsupported or tg_gpu.get("status") == "UNSUPPORTED"
+        observed_native_pass = observed_native_pass or (
+            tg_gpu.get("status") == "PASS" and backend == "NativeGpuBackend" and not sidecar_used
+        )
+
+    if observed_native_pass:
+        status = "PASS"
+        reason = "Native CUDA runtime route was observed."
+    elif (
+        observed_unsupported
+        or observed_sidecar
+        or (observed_backends and observed_backends != {"NativeGpuBackend"})
+    ):
+        status = "UNSUPPORTED"
+        reason = (
+            "GPU rows routed outside the native CUDA backend; sidecar-routed rows are not "
+            "native CUDA speed proof."
+        )
+    else:
+        status = "NOT_RUN"
+        reason = "Native CUDA runtime route was not observed."
+
+    return {
+        "status": status,
+        "required_backend": "NativeGpuBackend",
+        "observed_backends": sorted(observed_backends),
+        "sidecar_observed": observed_sidecar,
+        "reason": reason,
+    }
+
+
 def build_native_scale_gate_summary(
     rows: list[dict[str, object]],
     *,
@@ -890,11 +1041,19 @@ def build_native_scale_gate_summary(
     required_corpus_sizes: tuple[int, ...] = (1 * GB, 5 * GB),
 ) -> dict[str, object]:
     required_labels = _required_size_labels(required_corpus_sizes)
+    runtime_gate = _native_runtime_gate(rows)
     passing_sizes = _passing_correctness_size_labels(
         correctness_checks,
         required_corpus_sizes=required_corpus_sizes,
     )
-    correctness_status = "PASS" if passing_sizes == required_labels else "FAIL"
+    runtime_unsupported = runtime_gate["status"] in {"UNSUPPORTED", "NOT_RUN"}
+    correctness_status = (
+        "UNSUPPORTED"
+        if runtime_unsupported
+        else "PASS"
+        if passing_sizes == required_labels
+        else "FAIL"
+    )
     correctness_gate = {
         "status": correctness_status,
         "required_sizes": required_labels,
@@ -902,10 +1061,24 @@ def build_native_scale_gate_summary(
         "reason": (
             "Native CUDA correctness passed at every required scale."
             if correctness_status == "PASS"
+            else "Native CUDA correctness did not run on a native CUDA backend."
+            if correctness_status == "UNSUPPORTED"
             else "Native CUDA correctness did not pass every required scale."
         ),
     }
-    speed_gate = _native_speed_gate(rows, required_corpus_sizes=required_corpus_sizes)
+    speed_gate = (
+        {
+            "status": "NOT_RUN",
+            "required_baselines": ["rg", "tg_cpu"],
+            "winning_sizes": [],
+            "best_attempt": None,
+            "reason": (
+                "Native CUDA speed gate did not run because the runtime route was unsupported."
+            ),
+        }
+        if runtime_unsupported
+        else _native_speed_gate(rows, required_corpus_sizes=required_corpus_sizes)
+    )
     promotion_ready = correctness_status == "PASS" and speed_gate["status"] == "PASS"
     if promotion_ready:
         summary = (
@@ -915,11 +1088,16 @@ def build_native_scale_gate_summary(
         summary = (
             "Native CUDA correctness passed, but speed/promotion failed; keep GPU experimental."
         )
+    elif runtime_unsupported:
+        summary = (
+            "Native CUDA runtime route is unsupported; sidecar rows are not GPU promotion evidence."
+        )
     else:
         summary = "Native CUDA promotion is blocked by correctness and speed gate evidence."
 
     return {
         "benchmark_surface": "native-cuda-scale",
+        "native_cuda_runtime_gate": runtime_gate,
         "correctness_gate": correctness_gate,
         "speed_gate": speed_gate,
         "promotion_ready": promotion_ready,
@@ -947,6 +1125,18 @@ def run_gpu_native_benchmarks(
     correctness_checks: list[dict[str, object]] = []
     warnings: list[str] = [f"Timeout validation is {DEFAULT_TIMEOUT_DESCRIPTION}."]
     errors: list[str] = []
+    runtime_probe_dir = create_runtime_probe_fixture(bench_dir / "runtime_probe")
+    runtime_probe = probe_native_gpu_runtime_backend(
+        tg_binary=tg_binary,
+        corpus_dir=runtime_probe_dir,
+        pattern=benchmark_pattern,
+        device_id=device_id,
+        env=env,
+        timeout_s=command_timeout_s,
+    )
+    if runtime_probe.get("status") != "PASS":
+        diagnostic = str(runtime_probe.get("error") or "native GPU runtime probe failed")
+        warnings.append(f"GPU native runtime unsupported before timing: {diagnostic}")
 
     for size_bytes in corpus_sizes:
         size_label = _format_size_label(size_bytes)
@@ -974,14 +1164,36 @@ def run_gpu_native_benchmarks(
             timeout_s=command_timeout_s,
             corpus_bytes=actual_bytes,
         )
-        tg_gpu_result = benchmark_search_command(
-            build_tg_gpu_search_command(tg_binary, benchmark_pattern, corpus_dir, device_id),
-            env=env,
-            runs=runs,
-            warmup=warmup,
-            timeout_s=command_timeout_s,
-            corpus_bytes=actual_bytes,
-        )
+        if runtime_probe.get("status") == "PASS":
+            tg_gpu_result = benchmark_search_command(
+                build_tg_gpu_search_command(tg_binary, benchmark_pattern, corpus_dir, device_id),
+                env=env,
+                runs=runs,
+                warmup=warmup,
+                timeout_s=command_timeout_s,
+                corpus_bytes=actual_bytes,
+            )
+            tg_gpu_result["routing_backend"] = runtime_probe.get("routing_backend")
+            tg_gpu_result["routing_reason"] = runtime_probe.get("routing_reason")
+            tg_gpu_result["sidecar_used"] = runtime_probe.get("sidecar_used")
+            if isinstance(runtime_probe.get("pipeline"), dict):
+                tg_gpu_result["runtime_probe_pipeline"] = runtime_probe["pipeline"]
+        else:
+            diagnostic = str(runtime_probe.get("error") or "native GPU runtime probe failed")
+            warnings.append(f"GPU native runtime unsupported at {size_label}: {diagnostic}")
+            tg_gpu_result = {
+                "status": runtime_probe.get("status", "FAIL"),
+                "median_s": None,
+                "samples_s": [],
+                "stderr": diagnostic,
+                "command": runtime_probe.get("command"),
+                "throughput_bytes_s": None,
+                "routing_backend": runtime_probe.get("routing_backend"),
+                "routing_reason": runtime_probe.get("routing_reason"),
+                "sidecar_used": runtime_probe.get("sidecar_used"),
+            }
+            if isinstance(runtime_probe.get("pipeline"), dict):
+                tg_gpu_result["runtime_probe_pipeline"] = runtime_probe["pipeline"]
         if (
             isinstance(rg_result.get("median_s"), (float, int))
             and isinstance(tg_gpu_result.get("median_s"), (float, int))
@@ -1012,17 +1224,32 @@ def run_gpu_native_benchmarks(
         }
         rows.append(row)
 
-        correctness = run_correctness_check(
-            tg_binary=tg_binary,
-            corpus_dir=corpus_dir,
-            pattern=benchmark_pattern,
-            device_id=device_id,
-            env=env,
-            timeout_s=command_timeout_s,
-        )
+        if runtime_probe.get("status") == "PASS":
+            correctness = run_correctness_check(
+                tg_binary=tg_binary,
+                corpus_dir=corpus_dir,
+                pattern=benchmark_pattern,
+                device_id=device_id,
+                env=env,
+                timeout_s=command_timeout_s,
+            )
+        else:
+            correctness = {
+                "status": runtime_probe.get("status", "FAIL"),
+                "error": str(runtime_probe.get("error") or "native GPU runtime probe failed"),
+                "matches_equal": False,
+                "files_equal": False,
+                "routing_backend": runtime_probe.get("routing_backend"),
+                "routing_reason": runtime_probe.get("routing_reason"),
+                "sidecar_used": runtime_probe.get("sidecar_used"),
+            }
         correctness["size_label"] = size_label
         correctness["size_bytes"] = size_bytes
-        if not correctness.get("matches_equal"):
+        if correctness.get("status") == "UNSUPPORTED":
+            errors.append(
+                f"GPU correctness unsupported at {size_label}: {correctness.get('error', '')}"
+            )
+        elif not correctness.get("matches_equal"):
             errors.append(f"GPU correctness mismatch at {size_label}.")
         correctness_checks.append(correctness)
 
@@ -1045,7 +1272,8 @@ def run_gpu_native_benchmarks(
     )
     for name, payload in error_tests.items():
         if payload.get("status") != "PASS":
-            errors.append(f"GPU error test {name} failed: {payload.get('stderr', '')}")
+            diagnostic = payload.get("stderr") or payload.get("error") or "no diagnostic"
+            errors.append(f"GPU error test {name} failed: {diagnostic}")
 
     advanced_payload: dict[str, object] = {"enabled": False}
     if advanced:

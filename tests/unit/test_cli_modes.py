@@ -53,6 +53,8 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "TENSOR_GREP_DEVICE_IDS",
     "TENSOR_GREP_CLASSIFY_PROVIDER",
     "TENSOR_GREP_TRITON_TIMEOUT_SECONDS",
+    "gpu_acceleration",
+    "sidecar-routed GPU results",
 )
 
 
@@ -2772,6 +2774,140 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     assert "follow_up_reads" in payload["omissions"]
     assert payload["raw_context_ref"]["command"].startswith("tg context-render")
     assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_agent_capsule_gpu_evidence_uses_native_route(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    target_path = src_dir / "payments.py"
+    target_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def _fake_gpu_run(command, **_kwargs):
+        calls.append([str(part) for part in command])
+        if len(calls) == 1:
+            payload = {
+                "routing_backend": "NativeGpuBackend",
+                "routing_reason": "gpu-device-ids-explicit-native",
+                "sidecar_used": False,
+                "total_matches": 1,
+                "matches": [{"file": "probe.log", "line": 1, "text": "probe"}],
+            }
+        else:
+            payload = {
+                "routing_backend": "NativeGpuBackend",
+                "routing_reason": "gpu-device-ids-explicit-native",
+                "sidecar_used": False,
+                "total_matches": 2,
+                "matches": [
+                    {
+                        "file": str(target_path.resolve()),
+                        "line": 1,
+                        "text": "def create_invoice(total, tax):",
+                        "pattern_text": "invoice",
+                    }
+                ],
+            }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        gpu_device_ids=[0],
+        gpu_timeout_s=1,
+    )
+
+    acceleration = payload["gpu_acceleration"]
+    assert acceleration["status"] == "used"
+    assert acceleration["requested_device_ids"] == [0]
+    assert acceleration["routing_backend"] == "NativeGpuBackend"
+    assert acceleration["sidecar_used"] is False
+    assert acceleration["matched_files"] == [str(target_path.resolve())]
+    assert payload["context_consistency"]["gpu_evidence_primary_file_matched"] is True
+    assert any(item["strategy"] == "gpu-native-evidence" for item in payload["route_rationale"])
+    assert any("-e" in call for call in calls)
+
+
+def test_agent_capsule_gpu_evidence_rejects_sidecar_route(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "def create_invoice(total):\n    return total\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def _fake_gpu_run(command, **_kwargs):
+        calls.append([str(part) for part in command])
+        payload = {
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "total_matches": 1,
+            "matches": [{"file": "probe.log", "line": 1, "text": "probe"}],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        gpu_device_ids=[0],
+        gpu_timeout_s=1,
+    )
+
+    acceleration = payload["gpu_acceleration"]
+    assert acceleration["status"] == "unsupported"
+    assert acceleration["routing_backend"] == "GpuSidecar"
+    assert acceleration["sidecar_used"] is True
+    assert "sidecar-routed" in acceleration["reason"]
+    assert len(calls) == 1
+
+
+def test_agent_capsule_cli_accepts_gpu_device_ids(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "def create_invoice(total):\n    return total\n",
+        encoding="utf-8",
+    )
+
+    def _fake_gpu_run(command, **_kwargs):
+        payload = {
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "total_matches": 1,
+            "matches": [{"file": "probe.log", "line": 1, "text": "probe"}],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "change invoice tax calculation",
+            "--gpu-device-ids",
+            "0,1",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["gpu_acceleration"]["requested_device_ids"] == [0, 1]
+    assert payload["gpu_acceleration"]["status"] == "unsupported"
 
 
 def _write_mixed_invoice_fixture(tmp_path: Path, *, package_json: bool = False) -> dict[str, Path]:

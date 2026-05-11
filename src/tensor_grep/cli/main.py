@@ -126,14 +126,15 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg session daemon start PATH`
 
 **Agent contracts**
-- `tg agent` emits primary targets, alternative targets, snippets, validation_commands, rollback metadata, confidence, and ask-before-editing guidance.
+- `tg agent` emits primary targets, alternative targets, snippets, validation_commands, rollback metadata, confidence, optional gpu_acceleration route evidence, and ask-before-editing guidance.
+- `tg agent --gpu-device-ids 0,1 --json` runs an opt-in native GPU evidence scan; sidecar-routed GPU results are reported as unsupported.
 - `context-render` and `edit-plan` also expose top-level validation_commands.
 - Validation command templates can quote `$file` or `{file}` placeholders; applied rewrites run placeholder commands once per edited file.
 
 **Search and safety**
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
 - Broad generated-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
-- `--gpu-device-ids` pins selected GPUs for explicit benchmark probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
+- `--gpu-device-ids` pins selected GPUs for explicit search, benchmark, and agent evidence probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
 - `classify` is local by default; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into CyBERT/Triton.
 
 **Notes**
@@ -4387,12 +4388,27 @@ def agent(
     model: str | None = typer.Option(
         None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
     ),
+    gpu_device_ids: str | None = typer.Option(
+        None,
+        "--gpu-device-ids",
+        help=(
+            "Comma-separated GPU IDs for an opt-in native evidence scan. "
+            "Sidecar routes are reported as unsupported."
+        ),
+    ),
+    gpu_timeout_s: float = typer.Option(
+        5.0,
+        "--gpu-timeout-s",
+        min=0.1,
+        help="Maximum seconds for each opt-in agent GPU evidence command.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
     from tensor_grep.cli.agent_capsule import build_agent_capsule, build_agent_capsule_json
 
     try:
+        parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
         if json_output:
             typer.echo(
                 build_agent_capsule_json(
@@ -4403,6 +4419,8 @@ def agent(
                     max_tokens=max_tokens,
                     max_repo_files=max_repo_files,
                     model=model,
+                    gpu_device_ids=parsed_gpu_device_ids,
+                    gpu_timeout_s=gpu_timeout_s,
                 )
             )
             return
@@ -4415,6 +4433,8 @@ def agent(
             max_tokens=max_tokens,
             max_repo_files=max_repo_files,
             model=model,
+            gpu_device_ids=parsed_gpu_device_ids,
+            gpu_timeout_s=gpu_timeout_s,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -4426,11 +4446,14 @@ def agent(
     primary_symbol = primary.get("symbol") or "<unknown>"
     validation_commands = payload.get("validation_commands", [])
     confidence = payload.get("confidence", {}).get("overall", 0)
+    gpu_acceleration = payload.get("gpu_acceleration", {})
     typer.echo(f"Agent capsule for {payload['path']}")
     typer.echo(f"query={payload['query']}")
     typer.echo(f"primary={primary_file}#L{primary_line} {primary_symbol}")
     typer.echo(f"validation={len(validation_commands)} commands")
     typer.echo(f"confidence={confidence}")
+    if gpu_device_ids:
+        typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
 
 
 @app.command(name="edit-plan")

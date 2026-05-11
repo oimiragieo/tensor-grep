@@ -123,6 +123,9 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_edit_plan" in doc
     assert "tg_context_render" in doc
     assert "tg_agent_capsule" in doc
+    assert "gpu_device_ids" in doc
+    assert "gpu_acceleration" in doc
+    assert "sidecar-routed GPU evidence is reported as unsupported" in doc
     assert "capsule_version" in doc
     assert "alternative_targets" in doc
     assert "call_site_evidence" in doc

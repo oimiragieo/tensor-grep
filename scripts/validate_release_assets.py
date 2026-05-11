@@ -9,6 +9,14 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_DOC_PATHS = (
+    "AGENTS.md",
+    "README.md",
+    "SKILL.md",
+    "docs/SESSION_HANDOFF.md",
+    "docs/CONTINUATION_PLAN.md",
+    "docs/CONTRACTS.md",
+)
 
 
 def _read(path: Path) -> str:
@@ -1818,6 +1826,66 @@ def validate_readme_contract(*, readme_content: str) -> list[str]:
     if "public contracts in [docs/harness_api.md](docs/harness_api.md)" not in readme_content:
         errors.append("README must direct harness consumers to docs/harness_api.md")
 
+    banned_positioning = [
+        "designed to win on larger files",
+        "faster than rg",
+        "faster than `rg`",
+        "GPU-ready",
+    ]
+    for fragment in banned_positioning:
+        if fragment in readme_content:
+            errors.append(
+                "README must position tg as agent-native code intelligence with rg as "
+                f"the cold exact-text baseline; found `{fragment}`"
+            )
+
+    if "Current release assets include:" in readme_content:
+        asset_block = readme_content.split("Current release assets include:", 1)[1].split(
+            "Operational notes:", 1
+        )[0]
+        gpu_asset_names = {
+            "tg-linux-amd64-nvidia",
+            "tg-windows-amd64-nvidia.exe",
+        }
+        advertised_gpu_assets = sorted(
+            asset_name for asset_name in gpu_asset_names if asset_name in asset_block
+        )
+        if advertised_gpu_assets:
+            errors.append(
+                "README current release asset list must only advertise CPU front doors; "
+                "unexpected GPU asset names: " + ", ".join(advertised_gpu_assets)
+            )
+
+    return errors
+
+
+def validate_release_docs_current_prose(
+    *, documents: dict[str, str], expected_version: str
+) -> list[str]:
+    errors: list[str] = []
+    expected_tag = f"v{expected_version}"
+    current_patterns = [
+        re.compile(
+            r"current `(?P<tag>v\d+\.\d+\.\d+)` "
+            r"(?P<subject>shell/version resolution|positioning|release line)"
+        ),
+        re.compile(
+            r"current tagged (?P<subject>version|release state) is "
+            r"`(?P<tag>v\d+\.\d+\.\d+)`"
+        ),
+    ]
+    for path, content in documents.items():
+        marker = f"release_docs_current_tag: {expected_tag}"
+        if "release_docs_current_tag:" in content and marker not in content:
+            errors.append(f"{path} release_docs_current_tag must be {expected_tag}")
+        for pattern in current_patterns:
+            for match in pattern.finditer(content):
+                found = match.group("tag")
+                if found != expected_tag:
+                    errors.append(
+                        f"{path} contains stale current release prose `{found}` for "
+                        f"{match.group('subject')}; expected `{expected_tag}`"
+                    )
     return errors
 
 
@@ -2870,10 +2938,20 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
 
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
-    if "scripts/stamp_release_assets.py" not in build_command:
+    stamp_position = build_command.find("scripts/stamp_release_assets.py")
+    if stamp_position < 0:
         errors.append(
             "semantic_release.build_command must run scripts/stamp_release_assets.py before build"
         )
+    release_docs_add_command = "git add " + " ".join(RELEASE_DOC_PATHS)
+    release_docs_add_position = build_command.find(release_docs_add_command)
+    if release_docs_add_position < 0:
+        errors.append(
+            "semantic_release.build_command must stage release docs after stamping: "
+            f"`{release_docs_add_command}`"
+        )
+    elif stamp_position >= 0 and release_docs_add_position < stamp_position:
+        errors.append("semantic_release.build_command must stage release docs after stamping")
 
     lock_command = "uv lock --upgrade-package tensor-grep"
     lock_position = build_command.find(lock_command)
@@ -2889,6 +2967,12 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
         errors.append("semantic_release.build_command must stage `uv.lock` after refreshing it")
     if build_position >= 0 and git_add_position >= 0 and build_position < git_add_position:
         errors.append("semantic_release.build_command must stage `uv.lock` before `uv build`")
+    if (
+        build_position >= 0
+        and release_docs_add_position >= 0
+        and build_position < release_docs_add_position
+    ):
+        errors.append("semantic_release.build_command must stage release docs before `uv build`")
 
     version_toml = semantic_release.get("version_toml", [])
     version_variables = semantic_release.get("version_variables", [])
@@ -2994,6 +3078,11 @@ def validate_all() -> list[str]:
     installation_docs = _read(ROOT / "docs" / "installation.md")
     benchmarks_docs = _read(ROOT / "docs" / "benchmarks.md")
     readme = _read(ROOT / "README.md")
+    release_docs = {
+        relative: _read(ROOT / relative)
+        for relative in RELEASE_DOC_PATHS
+        if (ROOT / relative).exists()
+    }
     errors.extend(
         validate_package_manager_docs(
             runbook_content=package_manager_runbook,
@@ -3003,6 +3092,12 @@ def validate_all() -> list[str]:
     errors.extend(validate_installation_docs(installation_content=installation_docs))
     errors.extend(validate_benchmarks_docs(benchmarks_content=benchmarks_docs))
     errors.extend(validate_readme_contract(readme_content=readme))
+    errors.extend(
+        validate_release_docs_current_prose(
+            documents=release_docs,
+            expected_version=py_version,
+        )
+    )
     errors.extend(
         validate_native_cli_contract(
             main_rs_content=_read(ROOT / "rust_core" / "src" / "main.rs"),

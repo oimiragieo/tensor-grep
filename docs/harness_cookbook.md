@@ -231,10 +231,11 @@ Use this as the canonical MCP chain for the same task shape:
 2. `tg_repo_map`
 3. `tg_context_pack`
 4. `tg_symbol_defs` or `tg_symbol_callers`
-5. `tg_edit_plan`
-6. `tg_rewrite_diff` when `native_tg.available = true`
-7. `tg_rewrite_apply`
-8. `tg_audit_manifest_verify`
+5. `tg_agent_capsule`
+6. `tg_edit_plan`
+7. `tg_rewrite_diff` when `native_tg.available = true`
+8. `tg_rewrite_apply`
+9. `tg_audit_manifest_verify`
 
 Minimal MCP chain:
 
@@ -244,6 +245,7 @@ tg_repo_map(path=".")
 tg_context_pack(query="invoice payment", path=".")
 tg_symbol_defs(symbol="create_invoice", path=".")
 tg_symbol_callers(symbol="create_invoice", path=".")
+tg_agent_capsule(query="invoice payment", path=".")
 tg_edit_plan(query="invoice payment", path=".")
 tg_rewrite_diff(pattern="def $F($$$ARGS): return $EXPR", replacement="lambda $$$ARGS: $EXPR", lang="python", path=".")
 tg_rewrite_apply(pattern="def $F($$$ARGS): return $EXPR", replacement="lambda $$$ARGS: $EXPR", lang="python", path=".", verify=True, checkpoint=True)
@@ -558,6 +560,7 @@ Available workflow tools:
 - `tg_session_show`
 - `tg_session_refresh`
 - `tg_session_context`
+- `tg_agent_capsule`
 - `tg_checkpoint_create`
 - `tg_checkpoint_list`
 - `tg_checkpoint_undo`
@@ -570,10 +573,12 @@ Example flow:
 
 1. call `tg_mcp_capabilities()`
 2. call `tg_index_search("ERROR", path=".")` only if it is `native-required` and native `tg` is available
-3. call `tg_rewrite_plan(...)`
-4. call `tg_rewrite_diff(...)` only when native `tg` is available
-5. call `tg_checkpoint_create(path=".")` if rollback is required
-6. call `tg_rewrite_apply(..., verify=True, checkpoint=True)` only when native `tg` is available; otherwise use simple embedded-safe apply without verify/checkpoint
+3. call `tg_agent_capsule(...)` when the agent needs primary target, validation, rollback, confidence, or optional GPU evidence before editing
+4. pass `gpu_device_ids=[...]` to `tg_agent_capsule` only for explicit native GPU evidence probes; sidecar-routed GPU evidence is returned as unsupported
+5. call `tg_rewrite_plan(...)`
+6. call `tg_rewrite_diff(...)` only when native `tg` is available
+7. call `tg_checkpoint_create(path=".")` if rollback is required
+8. call `tg_rewrite_apply(..., verify=True, checkpoint=True)` only when native `tg` is available; otherwise use simple embedded-safe apply without verify/checkpoint
 
 The MCP tool payloads mirror the CLI contract envelopes. Consumers should still inspect:
 
