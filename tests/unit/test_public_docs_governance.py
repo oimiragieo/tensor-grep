@@ -21,10 +21,10 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "efa83e2 chore(release): v1.9.9 [skip ci]"
-CURRENT_FIX_COMMIT = "21449bf fix: add agent workflow benchmark governance"
-CURRENT_MAIN_CI = "25643115892"
-CURRENT_CODEQL = "25643115694"
+CURRENT_RELEASE_COMMIT = "6d04ad2 chore(release): v1.9.10 [skip ci]"
+CURRENT_FIX_COMMIT = "ca9df12 fix: harden v1.9.9 dogfood followups"
+CURRENT_MAIN_CI = "25645819170"
+CURRENT_CODEQL = "25646156907"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -160,6 +160,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
     assert "v1.9.0` release adds `tg agent`" in handoff
+    assert "v1.9.10` caps capsule alternative-target confidence" in handoff
     assert "v1.9.9` release adds `run_agent_workflow_benchmarks.py`" in handoff
     assert "v1.9.8` release refreshes stale tensor-grep-owned `tg.com`" in handoff
     assert "v1.9.7` release clarifies GPU benchmark promotion gates" in handoff
@@ -177,7 +178,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.9.9`" in readme
+    assert "GitHub release assets for `v1.9.10`" in readme
     assert "tensor-grep==1.9.9" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
@@ -193,7 +194,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.9.9` closed:"
+    current_closed_heading = "What `v1.9.10` closed:"
+    v199_heading = "What `v1.9.9` closed:"
     v198_heading = "What `v1.9.8` closed:"
     v197_heading = "What `v1.9.7` closed:"
     v196_heading = "What `v1.9.6` closed:"
@@ -201,8 +203,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.9.9` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v198_heading, 1)[0]
+    follow_up_heading = "Active post-`v1.9.10` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v199_heading, 1)[0]
+    v199_closed_block = readme.split(v199_heading, 1)[1].split(v198_heading, 1)[0]
     v198_closed_block = readme.split(v198_heading, 1)[1].split(v197_heading, 1)[0]
     v197_closed_block = readme.split(v197_heading, 1)[1].split(v196_heading, 1)[0]
     v196_closed_block = readme.split(v196_heading, 1)[1].split(v195_heading, 1)[0]
@@ -210,9 +213,12 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "agent workflow benchmark governance" in current_closed_block
-    assert "run_agent_workflow_benchmarks.py" in current_closed_block
-    assert "tensor-grep 1.9.9" in current_closed_block
+    assert "capsule alternative target confidence" in current_closed_block
+    assert "provider tokens" in current_closed_block
+    assert "transient crates.io DNS failure" in current_closed_block
+    assert "agent workflow benchmark governance" in v199_closed_block
+    assert "run_agent_workflow_benchmarks.py" in v199_closed_block
+    assert "tensor-grep 1.9.9" in v199_closed_block
     assert "stale tensor-grep-owned `tg.com`" in v198_closed_block
     assert "Windows `PATHEXT`" in v198_closed_block
     assert "fresh `cmd` and unprofiled `pwsh` report `tg 1.9.8`" in v198_closed_block
@@ -281,7 +287,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "current released version is `v1.9.9`" in skill
+    assert "current tagged version is `v1.9.10`" in skill
+    assert "PR #90 `fix: harden v1.9.9 dogfood followups` merged" in skill
     assert "PR #89 `fix: add agent workflow benchmark governance` merged" in skill
     assert "PR #87 `fix: refresh stale tg.com bridge after upgrade` merged" in skill
     assert "PR #86 `fix: clarify GPU benchmark promotion gates` merged" in skill

@@ -24,7 +24,7 @@ Primary responsibilities:
 - `Semantic Release`: semantic-release on `main`
 - `build-release-native-assets`: builds release-native CPU front doors from the semantic-release tag when `steps.release.outputs.released == 'true'`; the macOS amd64 asset is built on an Intel macOS runner label
 - `publish-github-release-assets`: uploads and verifies GitHub release assets for the semantic-release tag when `steps.release.outputs.released == 'true'`
-- PyPI build, validation, and publish jobs when semantic-release emits a new version
+- PyPI build, validation, and publish jobs when semantic-release emits a new version. Wheel and sdist jobs prefetch Rust dependencies with a longer Cargo retry window before `maturin` so transient crates.io DNS failures do not prematurely cancel publication.
 
 Release behavior:
 
