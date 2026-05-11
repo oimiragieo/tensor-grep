@@ -6214,6 +6214,86 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     assert "Upgrade log:" in result.output
 
 
+def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    bridge_tg.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("new native", encoding="utf-8")
+    bridge_tg.write_text("old native", encoding="utf-8")
+    popen_calls: list[list[str]] = []
+
+    locked_error = (
+        "failed to remove file `C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
+        "The process cannot access the file because it is being used by another process. "
+        "(os error 32)"
+    )
+
+    def _fake_run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=None,
+        env=None,
+    ):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        if command[:3] == [str(python_executable), "-m", "pip"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        if command[0] == str(bridge_tg):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
+        if command[0] == str(native_binary):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    class _FakePopen:
+        def __init__(
+            self,
+            cmd,
+            stdout=None,
+            stderr=None,
+            stdin=None,
+            close_fds=None,
+            creationflags=0,
+        ):
+            popen_calls.append([str(part) for part in cmd])
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", str(bridge_tg.parent))
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_value",
+        lambda: str(bridge_tg.parent),
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert popen_calls
+    helper_code = popen_calls[0][2]
+    assert "refresh native front door and stale PATH tg.com bridges" in helper_code
+    assert popen_calls[0][7] == str(native_binary)
+    assert popen_calls[0][8].endswith("/v0.33.0/tg-windows-amd64-cpu.exe")
+    assert json.loads(popen_calls[0][9]) == [str(bridge_tg)]
+
+
 def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
     monkeypatch, tmp_path
 ):

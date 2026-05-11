@@ -6261,21 +6261,34 @@ def upgrade() -> None:
     def _schedule_windows_self_upgrade(
         attempts: list[tuple[str, list[str]]],
         expected_version: str,
+        *,
+        native_path: Path | None = None,
+        native_url: str | None = None,
+        bridge_paths: list[Path] | None = None,
     ) -> Path:
         import textwrap
 
+        bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
         helper_code = textwrap.dedent(
             """
             import json
+            import os
+            import shutil
             import subprocess
             import sys
             import time
+            import urllib.request
             from pathlib import Path
+            from uuid import uuid4
 
             parent_pid = int(sys.argv[1])
             log_path = Path(sys.argv[2])
             attempts = json.loads(sys.argv[3])
             expected_version = sys.argv[4]
+            native_path_arg = sys.argv[5]
+            native_url = sys.argv[6]
+            bridge_paths = [Path(path) for path in json.loads(sys.argv[7])]
+            native_path = Path(native_path_arg) if native_path_arg else None
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
             for _ in range(300):
@@ -6383,6 +6396,89 @@ def upgrade() -> None:
                     )
                 return True, installed_version
 
+            def _version(path: Path) -> str:
+                result = subprocess.run([str(path), "--version"], capture_output=True, text=True)
+                if result.returncode != 0:
+                    return ""
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if line:
+                        return line
+                return ""
+
+            def _version_matches(version_text: str) -> bool:
+                return bool(expected_version and expected_version in version_text)
+
+            def _refresh_native_frontdoor_and_bridges() -> str:
+                # refresh native front door and stale PATH tg.com bridges after locked self-upgrade
+                if not expected_version or native_path is None:
+                    return ""
+
+                messages: list[str] = []
+                native_path.parent.mkdir(parents=True, exist_ok=True)
+                current_native_version = _version(native_path) if native_path.is_file() else ""
+                if not _version_matches(current_native_version):
+                    if not native_url:
+                        raise RuntimeError(
+                            "no release-native front-door asset is available for this platform"
+                        )
+                    errors: list[str] = []
+                    for _ in range(120):
+                        temp_path = native_path.with_name(
+                            native_path.name + ".download-" + uuid4().hex
+                        )
+                        try:
+                            urllib.request.urlretrieve(native_url, temp_path)
+                            temp_version = _version(temp_path)
+                            if not _version_matches(temp_version):
+                                raise RuntimeError(
+                                    "downloaded native tg front door reported "
+                                    + (temp_version or "no version")
+                                )
+                            os.replace(temp_path, native_path)
+                            installed_native_version = _version(native_path)
+                            if not _version_matches(installed_native_version):
+                                raise RuntimeError(
+                                    "installed native tg front door reported "
+                                    + (installed_native_version or "no version")
+                                )
+                            messages.append(
+                                "Native tg front-door refresh completed.\\n"
+                                + "Verified "
+                                + installed_native_version
+                                + "."
+                            )
+                            break
+                        except Exception as exc:
+                            errors.append(str(exc))
+                            try:
+                                temp_path.unlink()
+                            except FileNotFoundError:
+                                pass
+                            time.sleep(0.5)
+                    else:
+                        raise RuntimeError(
+                            "native tg front-door refresh failed: " + "; ".join(errors[-10:])
+                        )
+
+                refreshed_bridges: list[str] = []
+                for bridge_path in bridge_paths:
+                    shutil.copy2(native_path, bridge_path)
+                    bridge_version = _version(bridge_path)
+                    if not _version_matches(bridge_version):
+                        raise RuntimeError(
+                            "refreshed PATH tg.com bridge reported "
+                            + (bridge_version or "no version")
+                            + " for "
+                            + str(bridge_path)
+                        )
+                    refreshed_bridges.append(str(bridge_path))
+                if refreshed_bridges:
+                    messages.append(
+                        "Refreshed PATH tg.com bridges:\\n" + "\\n".join(refreshed_bridges)
+                    )
+                return "\\n".join(messages)
+
             ok, method, payload = _run_attempts()
             if ok:
                 verified, version = _verify_installed_version(expected_version)
@@ -6392,8 +6488,20 @@ def upgrade() -> None:
                         encoding="utf-8",
                     )
                     raise SystemExit(1)
+                try:
+                    native_payload = _refresh_native_frontdoor_and_bridges()
+                except Exception as exc:
+                    log_path.write_text(
+                        "Scheduled tensor-grep upgrade failed.\\n"
+                        + "post-upgrade native front-door refresh failed: "
+                        + str(exc),
+                        encoding="utf-8",
+                    )
+                    raise SystemExit(1)
                 text = "Scheduled tensor-grep upgrade completed via " + method + "."
                 text += "\\nVerified tensor-grep " + version + "."
+                if native_payload:
+                    text += "\\n" + native_payload
                 if payload:
                     text += "\\n" + payload
                 log_path.write_text(text, encoding="utf-8")
@@ -6420,6 +6528,9 @@ def upgrade() -> None:
                 str(log_path),
                 json.dumps(attempts),
                 expected_version,
+                str(native_path) if native_path is not None else "",
+                native_url or "",
+                bridge_payload,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -6508,9 +6619,21 @@ def upgrade() -> None:
                 expected_version = latest_version
             else:
                 package_spec = "tensor-grep"
+            native_path = _managed_native_frontdoor_path_from_env()
+            native_url = (
+                _native_frontdoor_download_url(expected_version) if expected_version else None
+            )
+            bridge_paths = (
+                _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
+                if expected_version and native_path is not None
+                else []
+            )
             log_path = _schedule_windows_self_upgrade(
                 _upgrade_attempts(package_spec),
                 expected_version,
+                native_path=native_path,
+                native_url=native_url,
+                bridge_paths=bridge_paths,
             )
             typer.echo(
                 "Windows is still using tg.exe, so the upgrade was scheduled in the background."
