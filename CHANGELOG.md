@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.9.11 (2026-05-11)
+
+### Bug Fixes
+
+- Harden release wheel retries
+  ([`8aecfea`](https://github.com/oimiragieo/tensor-grep/commit/8aecfea64f57760bb830e5307d69f72ca587c35d))
+
+
 ## v1.9.10 (2026-05-11)
 
 ### Bug Fixes
