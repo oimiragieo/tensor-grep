@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.4 (2026-05-12)
+
+### Bug Fixes
+
+- Add GPU readiness telemetry and native asset gating
+  ([`1ac493a`](https://github.com/oimiragieo/tensor-grep/commit/1ac493a69e35b3ad883957e300b8ffdbef55d44f))
+
+Add advisory GPU readiness bottleneck telemetry, keep GPU promotion gated by correctness and speed
+  evidence, and keep NVIDIA release-native front-door assets opt-in with CPU fallback.
+
+
 ## v1.10.3 (2026-05-11)
 
 ### Bug Fixes
