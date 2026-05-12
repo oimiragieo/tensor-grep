@@ -7,6 +7,7 @@ The post-`v1.9.6` native CUDA dogfood, refreshed by the latest `v1.9.11` GPU dog
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
 - There is still no crossover for literal search: GPU remains slower than `rg` and `tg_cpu`.
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary.
+- The public managed binary in `v1.10.4` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a special native CUDA dogfood build. That is not public GPU readiness.
 - Native CUDA correctness passed, but speed/promotion failed; keep GPU experimental and opt-in.
 
 Current benchmark taxonomy:

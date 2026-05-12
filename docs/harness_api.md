@@ -494,6 +494,7 @@ Use this shape when an agent needs the smallest actionable work packet before ed
 | `capsule_kind` | `string` | `actionable_context`. |
 | `query` | `string` | Natural-language task or symbol query used for ranking. |
 | `path` | `string` | Absolute root path inventoried. |
+| `ambiguity` | `object` | Equal-confidence routing state with `status`, `requires_confirmation`, `tie_count`, and `tied_alternative_targets`; resolved ties also include `resolved_by`. |
 | `primary_target` | `object` | Selected edit target with `file`, `symbol`, `kind`, `line`, `confidence`, and evidence labels. |
 | `alternative_targets` | `array<object>` | Plausible non-primary targets surfaced when routing is ambiguous; entries include file/symbol/language evidence and do not raise primary confidence. |
 | `route_rationale` | `array<object>` | Deterministic explanation of which route selected the target and why. |
@@ -511,6 +512,8 @@ Use this shape when an agent needs the smallest actionable work packet before ed
 | `raw_context_ref` | `object` | Reproduction reference for the underlying context-render payload. Includes both shell-display `command` and machine-safe `argv`. |
 
 Capsule-level `context_consistency` extends the Context Render JSON contract with `capsule_primary_file_in_snippets`, `capsule_primary_file_in_follow_up_reads`, and `capsule_primary_file_omitted`. When a token budget omits the primary file from `snippets`, the capsule must report the omission reason, include a follow-up read when available, downgrade `confidence`, and set `ask_user_before_editing.required = true`.
+
+Equal-confidence target ties are exposed twice: `context_consistency` keeps machine-checkable tie details, while top-level `ambiguity` gives agents a compact edit-safety decision. Unresolved ties use `ambiguity.status = "tie_requires_confirmation"` and force `requires_confirmation = true`; ties resolved by aligned validation evidence use `status = "tie_resolved"` with `resolved_by = "validation"`.
 
 Recovery references such as `raw_context_ref` and `omissions.follow_up_reads[]` include:
 

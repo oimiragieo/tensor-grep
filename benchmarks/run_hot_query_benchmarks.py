@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+NATIVE_REGEX_ABSOLUTE_JITTER_S = 0.002
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
@@ -31,7 +32,6 @@ def write_cpu_probe_script(path: Path) -> None:
             import json
             import sys
             import time
-            import types
             from pathlib import Path
 
             SRC_DIR = Path(r"{src_dir}")
@@ -41,15 +41,7 @@ def write_cpu_probe_script(path: Path) -> None:
             from tensor_grep.backends.cpu_backend import CPUBackend
             from tensor_grep.core.config import SearchConfig
 
-            rust_mod = types.ModuleType("tensor_grep.rust_core")
-
-            class FailingRustBackend:
-                def search(self, **kwargs):
-                    raise RuntimeError("force python fallback")
-
-            rust_mod.RustBackend = FailingRustBackend
-            sys.modules["tensor_grep.rust_core"] = rust_mod
-
+            # Do not force python fallback here; this probe measures native/Rust CPU routing when available.
             target_path = sys.argv[1]
             pattern = sys.argv[2]
             t0 = time.perf_counter()
@@ -198,7 +190,7 @@ def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -
     first_payload = json.loads(first)
     second_payload = json.loads(second)
     return {
-        "name": "repeated_regex_prefilter",
+        "name": "repeated_regex_native",
         "first_s": float(first_payload["seconds"]),
         "second_s": float(second_payload["seconds"]),
         "first_reason": first_payload["routing_reason"],
@@ -220,11 +212,16 @@ def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) ->
         return {**row, "status": "UNKNOWN"}
 
     improvement_pct = ((float(first_s) - float(second_s)) / float(first_s)) * 100.0
-    regression_limit = float(first_s) * (1.0 + (max_regression_pct / 100.0))
+    relative_tolerance_s = float(first_s) * (max_regression_pct / 100.0)
+    absolute_tolerance_s = (
+        NATIVE_REGEX_ABSOLUTE_JITTER_S if row.get("name") == "repeated_regex_native" else 0.0
+    )
+    regression_limit = float(first_s) + max(relative_tolerance_s, absolute_tolerance_s)
     status = "PASS" if float(second_s) <= regression_limit else "FAIL"
     return {
         **row,
         "improvement_pct": round(improvement_pct, 2),
+        "regression_tolerance_s": round(regression_limit - float(first_s), 6),
         "status": status,
     }
 

@@ -270,6 +270,19 @@ def test_gpu_docs_should_record_current_v1911_no_crossover_story() -> None:
     assert "29.91x" in gpu_doc
 
 
+def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogfood() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+    benchmarks = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
+    gpu_doc = GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8")
+
+    for doc in (readme, benchmarks, gpu_doc):
+        assert "public managed binary" in doc
+        assert "special native CUDA dogfood build" in doc
+        assert "GpuSidecar" in doc
+        assert "NativeGpuBackend" in doc
+        assert "not public GPU readiness" in doc
+
+
 def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:
     docs = {
         "README.md": README_PATH.read_text(encoding="utf-8"),

@@ -3220,6 +3220,12 @@ def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tm
         for command in payload["validation_commands"]
     )
     assert payload["ask_user_before_editing"]["required"] is False
+    ambiguity = payload["ambiguity"]
+    assert ambiguity["status"] == "tie_resolved"
+    assert ambiguity["resolved_by"] == "validation"
+    assert ambiguity["requires_confirmation"] is False
+    assert ambiguity["tie_count"] == 1
+    assert ambiguity["tied_alternative_targets"][0]["file"] == str(paths["typescript"].resolve())
 
 
 def test_agent_capsule_ambiguous_invoice_tax_query_surfaces_cross_language_alternatives(tmp_path):
@@ -3345,6 +3351,11 @@ def test_agent_capsule_equal_confidence_alternative_requires_confirmation(monkey
     assert payload["alternative_targets"]
     assert payload["context_consistency"]["alternative_confidence_tie"] is True
     assert payload["context_consistency"]["tied_alternative_targets"]
+    ambiguity = payload["ambiguity"]
+    assert ambiguity["status"] == "tie_requires_confirmation"
+    assert ambiguity["requires_confirmation"] is True
+    assert ambiguity["tie_count"] == 1
+    assert ambiguity["tied_alternative_targets"]
     assert payload["confidence"]["overall"] <= 0.74
     assert payload["primary_target"]["confidence"] <= 0.74
     assert payload["ask_user_before_editing"]["required"] is True
