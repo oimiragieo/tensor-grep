@@ -1007,6 +1007,7 @@ def build_agent_capsule(
         _cap_primary_target_confidence(target, confidence_cap)
     _cap_alternative_target_confidences(alternatives, target)
     tied_alternatives = _tied_alternative_targets(query, alternatives, target)
+    tie_candidates = list(tied_alternatives)
     tie_resolved_by_validation = (
         bool(tied_alternatives)
         and bool(validation_commands)
@@ -1029,9 +1030,33 @@ def build_agent_capsule(
         _cap_primary_target_confidence(target, 0.74)
         _cap_alternative_target_confidences(alternatives, target)
         tied_alternatives = _tied_alternative_targets(query, alternatives, target)
+        tie_candidates = list(tied_alternatives)
     consistency["alternative_confidence_tie"] = bool(tied_alternatives)
     consistency["alternative_confidence_tie_count"] = len(tied_alternatives)
     consistency["tied_alternative_targets"] = tied_alternatives
+    consistency["alternative_confidence_tie_candidate_count"] = len(tie_candidates)
+    consistency["alternative_confidence_tie_candidates"] = tie_candidates
+    ambiguity = {
+        "status": "none",
+        "requires_confirmation": False,
+        "tie_count": 0,
+        "tied_alternative_targets": [],
+    }
+    if tied_alternatives:
+        ambiguity = {
+            "status": "tie_requires_confirmation",
+            "requires_confirmation": True,
+            "tie_count": len(tied_alternatives),
+            "tied_alternative_targets": tied_alternatives,
+        }
+    elif tie_candidates and tie_resolved_by_validation:
+        ambiguity = {
+            "status": "tie_resolved",
+            "resolved_by": "validation",
+            "requires_confirmation": False,
+            "tie_count": len(tie_candidates),
+            "tied_alternative_targets": tie_candidates,
+        }
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
     if tied_alternatives:
@@ -1111,6 +1136,7 @@ def build_agent_capsule(
         "capsule_kind": "actionable_context",
         "query": query,
         "path": resolved_path,
+        "ambiguity": ambiguity,
         "primary_target": target,
         "alternative_targets": alternatives,
         "route_rationale": route_rationale,
