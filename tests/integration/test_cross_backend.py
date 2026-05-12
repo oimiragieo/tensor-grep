@@ -227,6 +227,7 @@ def _python_search_json(corpus: Path, *, pattern: str, env: dict[str, str]) -> d
         "tensor_grep.cli.main",
         "search",
         "--json",
+        "--cpu",
         "--no-ignore",
         pattern,
         str(corpus),

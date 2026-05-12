@@ -61,38 +61,72 @@ function Invoke-CheckedNativeCommand {
     }
 }
 
+function Resolve-NativeFrontdoorAssetCandidates {
+    param(
+        [Parameter(Mandatory = $true)][string]$hardwareFlag
+    )
+
+    $requestedFlavor = $env:TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR
+    if (!$requestedFlavor) {
+        $requestedFlavor = $env:TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR
+    }
+    $requestedFlavor = if ($requestedFlavor) { $requestedFlavor.ToLowerInvariant() } else { "cpu" }
+    $candidates = @()
+    if ($requestedFlavor -eq "nvidia" -or $requestedFlavor -eq "cuda") {
+        $candidates += "tg-windows-amd64-nvidia.exe"
+    } elseif ($requestedFlavor -ne "cpu") {
+        Write-Warning "Unknown native front-door asset flavor '$requestedFlavor'; using CPU asset."
+    }
+    $candidates += "tg-windows-amd64-cpu.exe"
+    return $candidates | Select-Object -Unique
+}
+
 function Install-NativeFrontdoorBinary {
     param(
         [Parameter(Mandatory = $true)][string]$frontdoorDir,
         [Parameter(Mandatory = $true)][string]$installedVersion,
-        [Parameter(Mandatory = $true)][string]$installChannel
+        [Parameter(Mandatory = $true)][string]$installChannel,
+        [Parameter(Mandatory = $true)][string]$hardwareFlag
     )
 
     $nativeFrontdoorPath = Join-Path $frontdoorDir "tg.exe"
+    $script:TensorGrepNativeFrontdoorFlavor = "cpu"
     if ($installChannel -eq "main") {
         Write-Host "      Main-channel install: using Python front door until release-native assets exist."
         return $nativeFrontdoorPath
     }
 
-    $nativeAssetName = "tg-windows-amd64-cpu.exe"
-    $nativeDownloadUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/$nativeAssetName"
-    $nativeTempPath = "$nativeFrontdoorPath.download"
-    Write-Host "      Downloading native tg front door: $nativeAssetName"
-    try {
-        Invoke-WebRequest -Uri $nativeDownloadUrl -OutFile $nativeTempPath
-        Move-Item -LiteralPath $nativeTempPath -Destination $nativeFrontdoorPath -Force
-        & $nativeFrontdoorPath --version | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "native tg front door smoke test failed"
+    $nativeAssetCandidates = Resolve-NativeFrontdoorAssetCandidates -hardwareFlag $hardwareFlag
+    foreach ($nativeAssetName in $nativeAssetCandidates) {
+        $nativeDownloadUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/$nativeAssetName"
+        $nativeTempPath = "$nativeFrontdoorPath.download"
+        $nativeFlavor = if ($nativeAssetName -match "nvidia") { "nvidia" } else { "cpu" }
+        Write-Host "      Downloading native tg front door asset flavor ${nativeFlavor}: $nativeAssetName"
+        try {
+            Invoke-WebRequest -Uri $nativeDownloadUrl -OutFile $nativeTempPath
+            Move-Item -LiteralPath $nativeTempPath -Destination $nativeFrontdoorPath -Force
+            & $nativeFrontdoorPath --version | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "native tg front door smoke test failed"
+            }
+            $script:TensorGrepNativeFrontdoorFlavor = $nativeFlavor
+            Write-Host "      Native tg front door installed: $nativeFrontdoorPath (asset flavor: $nativeFlavor)"
+            return $nativeFrontdoorPath
+        } catch {
+            Remove-Item -LiteralPath $nativeTempPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $nativeFrontdoorPath -Force -ErrorAction SilentlyContinue
+            if ($nativeFlavor -eq "nvidia" -and ($nativeAssetCandidates -contains "tg-windows-amd64-cpu.exe")) {
+                Write-Warning (
+                    "Falling back to CPU native tg front-door asset after NVIDIA asset failed. " +
+                    "Expected asset: $nativeDownloadUrl. Error: $_"
+                )
+                continue
+            }
+            Write-Warning (
+                "Native tg front-door download failed; falling back to Python wrapper. " +
+                "Expected asset: $nativeDownloadUrl. Error: $_"
+            )
         }
-        Write-Host "      Native tg front door installed: $nativeFrontdoorPath"
-    } catch {
-        Remove-Item -LiteralPath $nativeTempPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $nativeFrontdoorPath -Force -ErrorAction SilentlyContinue
-        Write-Warning (
-            "Native tg front-door download failed; falling back to Python wrapper. " +
-            "Expected asset: $nativeDownloadUrl. Error: $_"
-        )
     }
     return $nativeFrontdoorPath
 }
@@ -370,7 +404,28 @@ try {
     $stagingNativeFrontdoorPath = Install-NativeFrontdoorBinary `
         -frontdoorDir $stagingFrontdoorDir `
         -installedVersion $installedVersion `
-        -installChannel $installChannel
+        -installChannel $installChannel `
+        -hardwareFlag $hardwareFlag
+    $nativeFrontdoorFlavor = if ($script:TensorGrepNativeFrontdoorFlavor) {
+        $script:TensorGrepNativeFrontdoorFlavor
+    } else {
+        "cpu"
+    }
+    $nativeFrontdoorRequestedFlavor = $env:TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR
+    if (!$nativeFrontdoorRequestedFlavor) {
+        $nativeFrontdoorRequestedFlavor = $env:TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR
+    }
+    $nativeFrontdoorRequestedFlavor = if ($nativeFrontdoorRequestedFlavor) {
+        $nativeFrontdoorRequestedFlavor.ToLowerInvariant()
+    } else {
+        "cpu"
+    }
+    if ($nativeFrontdoorRequestedFlavor -eq "cuda") {
+        $nativeFrontdoorRequestedFlavor = "nvidia"
+    }
+    if ($nativeFrontdoorRequestedFlavor -notin @("nvidia", "cpu")) {
+        $nativeFrontdoorRequestedFlavor = "cpu"
+    }
     $frontdoorCmdPath = Join-Path $frontdoorDir "tg.cmd"
     $frontdoorPs1Path = Join-Path $frontdoorDir "tg.ps1"
     $frontdoorBashPath = Join-Path $frontdoorDir "tg"
@@ -393,6 +448,8 @@ try {
         "set PYTHONIOENCODING=utf-8`r`n" +
         "set TG_SIDECAR_PYTHON=$installDir\.venv\Scripts\python.exe`r`n" +
         "set TG_NATIVE_TG_BINARY=$nativeFrontdoorPath`r`n" +
+        "set TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR=$nativeFrontdoorRequestedFlavor`r`n" +
+        "set TG_NATIVE_FRONTDOOR_FLAVOR=$nativeFrontdoorFlavor`r`n" +
         "set /a TG_CMD_SHIM_ARGC=0`r`n" +
         ":tg_arg_loop`r`n" +
         'if "%~1"=="" goto tg_arg_done' + "`r`n" +
@@ -407,6 +464,8 @@ try {
 `$env:PYTHONUTF8 = "1"
 `$env:PYTHONIOENCODING = "utf-8"
 `$env:TG_SIDECAR_PYTHON = "$installDir\.venv\Scripts\python.exe"
+`$env:TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR = "$nativeFrontdoorRequestedFlavor"
+`$env:TG_NATIVE_FRONTDOOR_FLAVOR = "$nativeFrontdoorFlavor"
 if (Test-Path -LiteralPath "$nativeFrontdoorPath") {
     `$env:TG_NATIVE_TG_BINARY = "$nativeFrontdoorPath"
     & "$nativeFrontdoorPath" @args
@@ -453,6 +512,8 @@ export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 export TG_SIDECAR_PYTHON="`$TG_PYTHON"
 export TG_NATIVE_TG_BINARY="`$TG_NATIVE"
+export TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="$nativeFrontdoorRequestedFlavor"
+export TG_NATIVE_FRONTDOOR_FLAVOR="$nativeFrontdoorFlavor"
 if [ -f "`$TG_NATIVE" ]; then
     exec "`$TG_NATIVE" "`$@"
 fi
@@ -494,6 +555,8 @@ exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
         "set PYTHONIOENCODING=utf-8`r`n" +
         "set TG_SIDECAR_PYTHON=$installDir\.venv\Scripts\python.exe`r`n" +
         "set TG_NATIVE_TG_BINARY=$nativeFrontdoorPath`r`n" +
+        "set TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR=$nativeFrontdoorRequestedFlavor`r`n" +
+        "set TG_NATIVE_FRONTDOOR_FLAVOR=$nativeFrontdoorFlavor`r`n" +
         "set /a TG_CMD_SHIM_ARGC=0`r`n" +
         ":tg_arg_loop`r`n" +
         'if "%~1"=="" goto tg_arg_done' + "`r`n" +

@@ -29,6 +29,94 @@ def test_run_gpu_benchmarks_should_parse_5gb_corpus_size():
     )
 
 
+def test_gpu_pipeline_helpers_should_summarize_bottleneck_stage():
+    module = _load_script_module(
+        "run_gpu_benchmarks_pipeline_summary", "benchmarks/run_gpu_benchmarks.py"
+    )
+
+    sample = module.extract_gpu_pipeline_breakdown(
+        {
+            "pipeline": {
+                "host_file_read_time_ms": 1000.0,
+                "host_preprocess_time_ms": 50.0,
+                "host_to_pinned_copy_time_ms": 100.0,
+                "transfer_time_ms": 200.0,
+                "kernel_time_ms": 180.0,
+                "cpu_staging_time_ms": 90.0,
+                "wall_time_ms": 1500.0,
+            }
+        },
+        source="scale_native_stats",
+        source_label="1GB GPU 0 native stats",
+        size_label="1GB",
+        process_median_s=3.0,
+    )
+
+    assert sample["source"] == "scale_native_stats"
+    assert sample["size_label"] == "1GB"
+    assert sample["stage_times_ms"]["host_file_read"] == 1000.0
+    assert sample["stage_times_ms"]["host_preprocess"] == 50.0
+    assert sample["stage_times_ms"]["unattributed_process_or_host_tail"] == 350.0
+
+    summary = module.summarize_gpu_pipeline_bottlenecks([sample])
+
+    assert summary["status"] == "ADVISORY"
+    assert summary["sample_count"] == 1
+    assert summary["pipeline_sample_sources"] == ["scale_native_stats"]
+    assert summary["dominant_stage"] == "host_file_read"
+    assert summary["dominant_stage_share_pct"] > 45.0
+    assert summary["stage_totals_ms"]["unattributed_process_or_host_tail"] == 350.0
+    next_steps = module.build_gpu_readiness_next_steps(summary)
+    assert next_steps[0]["target"] == "host_file_read"
+    assert "before changing CUDA kernels" in next_steps[0]["action"]
+
+
+def test_gpu_pipeline_helpers_should_report_not_available_without_samples():
+    module = _load_script_module(
+        "run_gpu_benchmarks_pipeline_missing", "benchmarks/run_gpu_benchmarks.py"
+    )
+
+    summary = module.summarize_gpu_pipeline_bottlenecks([])
+
+    assert summary == {
+        "status": "NOT_AVAILABLE",
+        "sample_count": 0,
+        "pipeline_sample_sources": [],
+        "dominant_stage": None,
+        "dominant_stage_share_pct": None,
+        "stage_totals_ms": {},
+        "samples": [],
+        "reason": "No native GPU pipeline samples were available.",
+    }
+    assert module.build_gpu_readiness_next_steps(summary) == []
+
+
+def test_gpu_pipeline_next_steps_should_not_optimize_from_runtime_probe_only():
+    module = _load_script_module(
+        "run_gpu_benchmarks_pipeline_runtime_only", "benchmarks/run_gpu_benchmarks.py"
+    )
+    sample = module.extract_gpu_pipeline_breakdown(
+        {
+            "pipeline": {
+                "host_file_read_time_ms": 1.0,
+                "transfer_time_ms": 2.0,
+                "kernel_time_ms": 10.0,
+                "wall_time_ms": 13.0,
+            }
+        },
+        source="runtime_probe",
+        source_label="small runtime probe",
+    )
+
+    summary = module.summarize_gpu_pipeline_bottlenecks([sample])
+    next_steps = module.build_gpu_readiness_next_steps(summary)
+
+    assert summary["status"] == "ADVISORY"
+    assert summary["pipeline_sample_sources"] == ["runtime_probe"]
+    assert next_steps[0]["target"] == "scale_native_stats"
+    assert "actual-scale" in next_steps[0]["action"]
+
+
 def test_run_gpu_benchmarks_should_check_every_gb_scale_corpus(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_gpu_benchmarks_scale_correctness",
@@ -227,6 +315,120 @@ def test_run_gpu_benchmarks_should_not_attach_unsupported_inventory_warning_to_g
     assert "unsupported" not in gpu0["stderr"]
     assert gpu1["status"] == "UNSUPPORTED"
     assert gpu1["stderr"] == unsupported_error
+
+
+def test_run_gpu_benchmarks_should_use_native_inventory_for_pytorch_unsupported_device(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_benchmarks_native_inventory",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    sidecar_python = tmp_path / "python.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    sidecar_python.write_text("python", encoding="utf-8")
+    commands: list[str] = []
+    correctness_devices: list[int] = []
+
+    monkeypatch.setattr(
+        module,
+        "probe_gpu_devices",
+        lambda _sidecar_python: {
+            "available": True,
+            "torch_version": "2.6.0",
+            "devices": [
+                {
+                    "device_id": 1,
+                    "name": "NVIDIA GeForce RTX 5070",
+                    "capability": [12, 0],
+                    "vram_capacity_mb": 12226,
+                    "operational": False,
+                    "error": "no kernel image is available for execution on the device",
+                }
+            ],
+            "warnings": ["PyTorch does not support sm_120"],
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "probe_native_gpu_devices",
+        lambda *, tg_binary, env: {
+            "available": True,
+            "devices": [
+                {
+                    "device_id": 1,
+                    "vram_capacity_mb": 12227,
+                    "native_operational": True,
+                    "operational": True,
+                }
+            ],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "probe_tg_gpu_runtime_backend",
+        lambda **_kwargs: {
+            "status": "PASS",
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit-native",
+            "sidecar_used": False,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "generate_gpu_scale_corpus",
+        lambda output_dir, target_bytes, shard_count: {
+            "corpus_dir": output_dir,
+            "actual_bytes": target_bytes,
+            "total_lines": 10,
+            "file_count": shard_count,
+            "pattern_counts": {"gpu benchmark sentinel": 1},
+        },
+    )
+
+    def _fake_benchmark_search_command(command, **_kwargs):
+        commands.append(" ".join(str(part) for part in command))
+        return {"status": "PASS", "median_s": 1.0, "samples_s": [1.0], "stderr": ""}
+
+    def _fake_correctness_check(**kwargs):
+        correctness_devices.append(kwargs["device_id"])
+        return {
+            "device_id": kwargs["device_id"],
+            "pattern": kwargs["pattern"],
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+
+    monkeypatch.setattr(module, "benchmark_search_command", _fake_benchmark_search_command)
+    monkeypatch.setattr(module, "run_correctness_check", _fake_correctness_check)
+
+    payload = module.run_gpu_scale_benchmarks(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        bench_dir=module.ROOT_DIR / "artifacts" / "unit_gpu_bench_data",
+        corpus_sizes=(module.GB,),
+        runs=1,
+        warmup=0,
+        sidecar_python=sidecar_python,
+        benchmark_pattern="gpu benchmark sentinel",
+        correctness_patterns=("gpu benchmark sentinel",),
+        shard_count=2,
+    )
+
+    device = payload["devices"][0]
+    gpu_row = payload["rows"][0]["gpu"][0]
+    assert device["device_id"] == 1
+    assert device["name"] == "NVIDIA GeForce RTX 5070"
+    assert device["operational"] is True
+    assert device["torch_operational"] is False
+    assert device["native_operational"] is True
+    assert gpu_row["status"] == "PASS"
+    assert gpu_row["tg_runtime_backend"] == "NativeGpuBackend"
+    assert any("--gpu-device-ids 1" in command for command in commands)
+    assert correctness_devices == [1]
 
 
 def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_scale_gates(
@@ -804,6 +1006,126 @@ def test_run_gpu_native_runtime_probe_should_preserve_pipeline_metrics(monkeypat
     assert result["sidecar_used"] is False
     assert result["pipeline"]["cpu_staging_bytes"] == 1234
     assert result["pipeline"]["host_to_pinned_copy_time_ms"] == 0.0
+
+
+def test_run_gpu_native_pipeline_collector_should_prefer_actual_scale_stats():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_pipeline_collector",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    rows = [
+        {
+            "size_label": "1GB",
+            "tg_gpu": {
+                "native_stats": {"process_median_s": 3.0},
+                "native_stats_pipeline": {
+                    "host_file_read_time_ms": 1000.0,
+                    "host_preprocess_time_ms": 50.0,
+                    "transfer_time_ms": 100.0,
+                    "kernel_time_ms": 90.0,
+                    "wall_time_ms": 1500.0,
+                },
+                "runtime_probe_pipeline": {
+                    "kernel_time_ms": 9999.0,
+                    "wall_time_ms": 9999.0,
+                },
+            },
+        }
+    ]
+    samples = module.collect_gpu_native_pipeline_samples(rows, {"enabled": False})
+    summary = module.summarize_gpu_pipeline_bottlenecks(samples)
+
+    assert len(samples) == 1
+    assert samples[0]["source"] == "scale_native_stats"
+    assert summary["pipeline_sample_sources"] == ["scale_native_stats"]
+    assert summary["dominant_stage"] == "host_file_read"
+    assert summary["stage_totals_ms"]["unattributed_process_or_host_tail"] == 450.0
+
+
+def test_gpu_bottleneck_advisory_should_not_change_promotion_summary():
+    module = _load_script_module(
+        "run_gpu_benchmarks_advisory_not_promotion",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 0.25},
+            "tg_cpu": {"status": "PASS", "median_s": 0.24},
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 9.2,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": False,
+                }
+            ],
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 0.28},
+            "tg_cpu": {"status": "PASS", "median_s": 0.23},
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 9.4,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": False,
+                }
+            ],
+        },
+    ]
+    correctness_checks = [
+        {
+            "device_id": 0,
+            "corpus_size_label": size_label,
+            "pattern": "gpu benchmark sentinel",
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+    ]
+    advisory_summary = module.summarize_gpu_pipeline_bottlenecks([
+        module.extract_gpu_pipeline_breakdown(
+            {
+                "pipeline": {
+                    "host_file_read_time_ms": 1000.0,
+                    "kernel_time_ms": 1.0,
+                    "wall_time_ms": 1001.0,
+                }
+            },
+            source="scale_native_stats",
+        )
+    ])
+
+    recommendation = module.analyze_gpu_auto_recommendation(
+        rows,
+        correctness_checks=correctness_checks,
+        correctness_patterns=("gpu benchmark sentinel",),
+    )
+    scale_summary = module.build_scale_gate_summary(
+        devices=[
+            {
+                "device_id": 0,
+                "operational": True,
+                "tg_runtime_backend": "NativeGpuBackend",
+                "tg_runtime_sidecar_used": False,
+            }
+        ],
+        correctness_checks=correctness_checks,
+        gpu_auto_recommendation=recommendation,
+        correctness_patterns=("gpu benchmark sentinel",),
+    )
+
+    assert advisory_summary["status"] == "ADVISORY"
+    assert recommendation["should_add_flag"] is False
+    assert scale_summary["promotion_ready"] is False
 
 
 def test_run_gpu_native_error_tests_should_report_malformed_timeout(monkeypatch, tmp_path):

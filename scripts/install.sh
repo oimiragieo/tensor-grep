@@ -26,6 +26,23 @@ clear_tensor_grep_uv_cache() {
     fi
 }
 
+native_frontdoor_asset_candidates() {
+    local requested_flavor="${TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR:-${TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR:-cpu}}"
+    requested_flavor="$(printf '%s' "$requested_flavor" | tr '[:upper:]' '[:lower:]')"
+    case "$requested_flavor" in
+        nvidia|cuda)
+            printf '%s\n' nvidia cpu
+            ;;
+        cpu)
+            printf '%s\n' cpu
+            ;;
+        *)
+            echo "      Unknown native front-door asset flavor '$requested_flavor'; using CPU asset." >&2
+            printf '%s\n' cpu
+            ;;
+    esac
+}
+
 restore_previous_install() {
     if [ ! -d "$BACKUP_INSTALL_DIR" ]; then
         return
@@ -140,36 +157,69 @@ mkdir -p "$STAGING_INSTALL_DIR/bin"
 INSTALLED_VERSION="$("$STAGING_INSTALL_DIR/.venv/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("tensor-grep"))')"
 NATIVE_BINARY="$INSTALL_DIR/bin/tg-native"
 STAGING_NATIVE_BINARY="$STAGING_INSTALL_DIR/bin/tg-native"
+TG_NATIVE_FRONTDOOR_FLAVOR="cpu"
+TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="${TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR:-${TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR:-cpu}}"
+TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="$(printf '%s' "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" | tr '[:upper:]' '[:lower:]')"
+case "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" in
+    nvidia|cuda)
+        TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="nvidia"
+        ;;
+    cpu)
+        TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="cpu"
+        ;;
+    *)
+        TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="cpu"
+        ;;
+esac
 if [ "$INSTALL_CHANNEL" != "main" ]; then
-    NATIVE_ASSET=""
-    case "$(uname -s):$(uname -m)" in
-        Linux:x86_64|Linux:amd64)
-            NATIVE_ASSET="tg-linux-amd64-cpu"
-            ;;
-        Darwin:x86_64|Darwin:amd64)
-            NATIVE_ASSET="tg-macos-amd64-cpu"
-            ;;
-        *)
-            echo "      No release-native tg asset for $(uname -s)/$(uname -m); using Python front door."
-            ;;
-    esac
-    if [ -n "$NATIVE_ASSET" ]; then
+    for NATIVE_FLAVOR in $(native_frontdoor_asset_candidates); do
+        NATIVE_ASSET=""
+        case "$(uname -s):$(uname -m):$NATIVE_FLAVOR" in
+            Linux:x86_64:nvidia|Linux:amd64:nvidia)
+                NATIVE_ASSET="tg-linux-amd64-nvidia"
+                ;;
+            Linux:x86_64:cpu|Linux:amd64:cpu)
+                NATIVE_ASSET="tg-linux-amd64-cpu"
+                ;;
+            Darwin:x86_64:cpu|Darwin:amd64:cpu)
+                NATIVE_ASSET="tg-macos-amd64-cpu"
+                ;;
+            Darwin:*:nvidia)
+                continue
+                ;;
+            *)
+                echo "      No release-native tg asset for $(uname -s)/$(uname -m); using Python front door."
+                ;;
+        esac
+        if [ -z "$NATIVE_ASSET" ]; then
+            continue
+        fi
         NATIVE_URL="https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}/${NATIVE_ASSET}"
-        echo "      Downloading native tg front door: $NATIVE_ASSET"
+        echo "      Downloading native tg front door asset flavor ${NATIVE_FLAVOR}: $NATIVE_ASSET"
         if curl -fL "$NATIVE_URL" -o "$STAGING_NATIVE_BINARY.tmp"; then
             mv "$STAGING_NATIVE_BINARY.tmp" "$STAGING_NATIVE_BINARY"
             chmod +x "$STAGING_NATIVE_BINARY"
             if "$STAGING_NATIVE_BINARY" --version; then
-                echo "      Native tg front door installed: $NATIVE_BINARY"
+                TG_NATIVE_FRONTDOOR_FLAVOR="$NATIVE_FLAVOR"
+                echo "      Native tg front door installed: $NATIVE_BINARY (asset flavor: $NATIVE_FLAVOR)"
+                break
             else
-                echo "      Native tg front-door smoke test failed; using Python fallback." >&2
                 rm -f "$STAGING_NATIVE_BINARY"
+                if [ "$NATIVE_FLAVOR" = "nvidia" ]; then
+                    echo "      Falling back to CPU native tg front-door asset after NVIDIA smoke test failed: $NATIVE_URL" >&2
+                    continue
+                fi
+                echo "      Native tg front-door smoke test failed; using Python fallback." >&2
             fi
         else
             rm -f "$STAGING_NATIVE_BINARY.tmp"
+            if [ "$NATIVE_FLAVOR" = "nvidia" ]; then
+                echo "      Falling back to CPU native tg front-door asset after NVIDIA asset failed: $NATIVE_URL" >&2
+                continue
+            fi
             echo "      Native tg front-door download failed; using Python fallback: $NATIVE_URL" >&2
         fi
-    fi
+    done
 else
     echo "      Main-channel install: using Python front door until release-native assets exist."
 fi
@@ -178,6 +228,8 @@ cat > "$STAGING_INSTALL_DIR/bin/tg" << EOF
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 export TG_SIDECAR_PYTHON="$INSTALL_DIR/.venv/bin/python"
+export TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR"
+export TG_NATIVE_FRONTDOOR_FLAVOR="$TG_NATIVE_FRONTDOOR_FLAVOR"
 NATIVE_BINARY="$NATIVE_BINARY"
 if [ -x "\$NATIVE_BINARY" ]; then
     export TG_NATIVE_TG_BINARY="\$NATIVE_BINARY"

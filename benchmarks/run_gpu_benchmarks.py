@@ -37,6 +37,14 @@ DEFAULT_CORRECTNESS_PATTERNS = (
 RECOMMENDATION_REQUIRED_CORPUS_SIZES = (1 * GB, 5 * GB)
 GPU_RECOMMENDATION_MIN_SPEEDUP_PCT = 20.0
 PAYLOAD_FILLER = "payload=" + ("0123456789abcdef" * 224)
+GPU_PIPELINE_STAGE_FIELDS = {
+    "host_file_read": ("host_file_read_time_ms",),
+    "host_preprocess": ("host_preprocess_time_ms",),
+    "host_to_pinned_copy": ("host_to_pinned_copy_time_ms",),
+    "transfer": ("transfer_time_ms",),
+    "kernel": ("kernel_time_ms",),
+    "cpu_staging": ("cpu_staging_time_ms",),
+}
 
 
 def _is_skippable_cybert_exception(exc: Exception) -> bool:
@@ -269,6 +277,21 @@ def build_tg_gpu_search_command(
     ]
 
 
+def build_tg_gpu_native_stats_command(
+    tg_binary: Path,
+    patterns: list[str] | tuple[str, ...],
+    corpus_dir: Path,
+    device_ids: list[int] | tuple[int, ...],
+) -> list[str]:
+    command = [str(tg_binary), "__gpu-native-stats"]
+    for pattern in patterns:
+        command.extend(["--pattern", pattern])
+    command.extend(["--path", str(corpus_dir.relative_to(ROOT_DIR))])
+    command.extend(["--gpu-device-ids", ",".join(str(device_id) for device_id in device_ids)])
+    command.extend(["--no-ignore", "--summary-only"])
+    return command
+
+
 def _run_command(
     command: list[str],
     *,
@@ -286,6 +309,186 @@ def _run_command(
         encoding="utf-8",
         check=False,
     )
+
+
+def _numeric_ms(payload: dict[str, object], key: str) -> float | None:
+    value = payload.get(key)
+    if isinstance(value, (float, int)):
+        return round(float(value), 3)
+    return None
+
+
+def extract_gpu_pipeline_breakdown(
+    payload: dict[str, object],
+    *,
+    source: str | None = None,
+    source_label: str | None = None,
+    size_label: str | None = None,
+    process_median_s: float | int | None = None,
+) -> dict[str, object]:
+    raw_pipeline = payload.get("pipeline")
+    pipeline = raw_pipeline if isinstance(raw_pipeline, dict) else payload
+    if not isinstance(pipeline, dict):
+        return {}
+
+    stage_times: dict[str, float] = {}
+    for stage, fields in GPU_PIPELINE_STAGE_FIELDS.items():
+        if stage == "cpu_staging":
+            continue
+        total_ms = 0.0
+        for field in fields:
+            value = _numeric_ms(pipeline, field)
+            if value is not None:
+                total_ms += value
+        if total_ms > 0:
+            stage_times[stage] = round(total_ms, 3)
+    cpu_staging_total = _numeric_ms(pipeline, "cpu_staging_time_ms")
+    detailed_host_total = sum(
+        stage_times.get(stage, 0.0)
+        for stage in ("host_file_read", "host_preprocess", "host_to_pinned_copy")
+    )
+    if cpu_staging_total is not None:
+        cpu_staging_residual = round(max(0.0, cpu_staging_total - detailed_host_total), 3)
+        if cpu_staging_residual > 0:
+            stage_times["cpu_staging"] = cpu_staging_residual
+
+    wall_time_ms = _numeric_ms(pipeline, "wall_time_ms")
+    if isinstance(process_median_s, (float, int)):
+        device_basis_ms = (
+            wall_time_ms
+            if wall_time_ms is not None
+            else stage_times.get("transfer", 0.0) + stage_times.get("kernel", 0.0)
+        )
+        known_host_ms = sum(
+            stage_times.get(stage, 0.0)
+            for stage in (
+                "host_file_read",
+                "host_preprocess",
+                "host_to_pinned_copy",
+                "cpu_staging",
+            )
+        )
+        basis_ms = known_host_ms + device_basis_ms
+        tail_ms = round(max(0.0, float(process_median_s) * 1000.0 - basis_ms), 3)
+        if tail_ms > 0:
+            stage_times["unattributed_process_or_host_tail"] = tail_ms
+
+    if not stage_times:
+        return {}
+
+    denominator = sum(stage_times.values())
+    stage_shares = {
+        stage: round(value / denominator * 100.0, 2) if denominator > 0 else 0.0
+        for stage, value in stage_times.items()
+    }
+    breakdown: dict[str, object] = {
+        "source": source or "unknown",
+        "source_label": source_label,
+        "size_label": size_label,
+        "stage_times_ms": stage_times,
+        "stage_shares_pct": stage_shares,
+        "wall_time_ms": wall_time_ms,
+    }
+    if isinstance(process_median_s, (float, int)):
+        breakdown["process_median_s"] = round(float(process_median_s), 6)
+        breakdown["unattributed_process_or_host_tail_ms"] = stage_times.get(
+            "unattributed_process_or_host_tail", 0.0
+        )
+    return breakdown
+
+
+def summarize_gpu_pipeline_bottlenecks(
+    samples: list[dict[str, object]],
+) -> dict[str, object]:
+    valid_samples = [
+        sample
+        for sample in samples
+        if isinstance(sample.get("stage_times_ms"), dict) and sample["stage_times_ms"]
+    ]
+    if not valid_samples:
+        return {
+            "status": "NOT_AVAILABLE",
+            "sample_count": 0,
+            "pipeline_sample_sources": [],
+            "dominant_stage": None,
+            "dominant_stage_share_pct": None,
+            "stage_totals_ms": {},
+            "samples": [],
+            "reason": "No native GPU pipeline samples were available.",
+        }
+
+    stage_totals: dict[str, float] = {}
+    sources: list[str] = []
+    for sample in valid_samples:
+        source = str(sample.get("source") or "unknown")
+        if source not in sources:
+            sources.append(source)
+        for stage, raw_value in sample["stage_times_ms"].items():
+            if not isinstance(raw_value, (float, int)):
+                continue
+            stage_totals[stage] = round(stage_totals.get(stage, 0.0) + float(raw_value), 3)
+
+    total_ms = sum(stage_totals.values())
+    dominant_stage = max(stage_totals, key=stage_totals.get) if stage_totals else None
+    dominant_share = (
+        round(stage_totals[dominant_stage] / total_ms * 100.0, 2)
+        if dominant_stage is not None and total_ms > 0
+        else None
+    )
+    return {
+        "status": "ADVISORY",
+        "sample_count": len(valid_samples),
+        "pipeline_sample_sources": sources,
+        "dominant_stage": dominant_stage,
+        "dominant_stage_share_pct": dominant_share,
+        "stage_totals_ms": stage_totals,
+        "samples": valid_samples,
+        "reason": "GPU bottleneck summary is diagnostic only and is not promotion evidence.",
+    }
+
+
+def build_gpu_readiness_next_steps(summary: dict[str, object]) -> list[dict[str, object]]:
+    if summary.get("status") != "ADVISORY":
+        return []
+    sources = summary.get("pipeline_sample_sources")
+    if sources == ["runtime_probe"]:
+        return [
+            {
+                "priority": 1,
+                "target": "scale_native_stats",
+                "action": (
+                    "Collect actual-scale native GPU pipeline samples before choosing an "
+                    "optimization target."
+                ),
+                "evidence_status": "runtime-probe-only",
+            }
+        ]
+
+    dominant_stage = summary.get("dominant_stage")
+    actions = {
+        "host_file_read": "Reduce host-side file read and batching cost before changing CUDA kernels.",
+        "host_preprocess": "Reduce host preprocessing and line-map preparation before changing CUDA kernels.",
+        "host_to_pinned_copy": "Reuse pinned host buffers and tune batch sizes before changing CUDA kernels.",
+        "transfer": "Improve transfer batching and stream overlap before changing CUDA kernels.",
+        "cpu_staging": "Reduce result materialization and CPU staging before changing CUDA kernels.",
+        "unattributed_process_or_host_tail": (
+            "Instrument host-side tail work before changing CUDA kernels."
+        ),
+        "kernel": (
+            "Investigate PFAC/Aho-Corasick or bit-parallel multi-pattern kernels only after "
+            "transfer and staging costs are not dominant."
+        ),
+    }
+    if not isinstance(dominant_stage, str) or dominant_stage not in actions:
+        return []
+    return [
+        {
+            "priority": 1,
+            "target": dominant_stage,
+            "action": actions[dominant_stage],
+            "evidence_status": "advisory",
+        }
+    ]
 
 
 def benchmark_search_command(
@@ -440,6 +643,59 @@ def probe_tg_gpu_runtime_backend(
         "routing_reason": payload.get("routing_reason"),
         "sidecar_used": bool(payload.get("sidecar_used", False)),
         "command": _command_display(command),
+        **({"pipeline": payload["pipeline"]} if isinstance(payload.get("pipeline"), dict) else {}),
+    }
+
+
+def probe_tg_gpu_native_stats_pipeline(
+    *,
+    tg_binary: Path,
+    corpus_dir: Path,
+    pattern: str,
+    device_id: int,
+    env: dict[str, str],
+) -> dict[str, object]:
+    command = build_tg_gpu_native_stats_command(tg_binary, [pattern], corpus_dir, [device_id])
+    started_at = time.perf_counter()
+    try:
+        result = _run_command(command, env=env, capture_output=True)
+    except OSError as exc:
+        return {
+            "status": "FAIL",
+            "stderr": str(exc),
+            "command": _command_display(command),
+            "process_median_s": round(time.perf_counter() - started_at, 6),
+        }
+    process_median_s = round(time.perf_counter() - started_at, 6)
+    command_display = _command_display(command)
+    if result.returncode != 0:
+        return {
+            "status": "FAIL",
+            "stderr": (result.stderr or "").strip(),
+            "command": command_display,
+            "process_median_s": process_median_s,
+        }
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "FAIL",
+            "stderr": f"native GPU stats returned invalid JSON: {exc}",
+            "command": command_display,
+            "process_median_s": process_median_s,
+        }
+    if not isinstance(payload, dict) or not isinstance(payload.get("pipeline"), dict):
+        return {
+            "status": "FAIL",
+            "stderr": "native GPU stats did not include pipeline metrics",
+            "command": command_display,
+            "process_median_s": process_median_s,
+        }
+    return {
+        "status": "PASS",
+        "pipeline": payload["pipeline"],
+        "command": command_display,
+        "process_median_s": process_median_s,
     }
 
 
@@ -514,6 +770,139 @@ print(json.dumps(payload))
             "warnings": [],
             "error": f"GPU probe returned invalid JSON: {exc}",
         }
+
+
+def probe_native_gpu_devices(*, tg_binary: Path, env: dict[str, str]) -> dict[str, object]:
+    command = [str(tg_binary), "devices", "--json"]
+    try:
+        result = _run_command(command, env=env, capture_output=True)
+    except OSError as exc:
+        return {
+            "available": False,
+            "devices": [],
+            "warnings": [f"Native GPU inventory failed: {exc}"],
+            "command": _command_display(command),
+        }
+    if result.returncode != 0:
+        return {
+            "available": False,
+            "devices": [],
+            "warnings": [
+                "Native GPU inventory failed: "
+                + ((result.stderr or "").strip() or f"exit {result.returncode}")
+            ],
+            "command": _command_display(command),
+        }
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "available": False,
+            "devices": [],
+            "warnings": [f"Native GPU inventory returned invalid JSON: {exc}"],
+            "command": _command_display(command),
+        }
+
+    raw_devices = payload.get("devices", [])
+    if not isinstance(raw_devices, list):
+        raw_devices = []
+    raw_routable_ids = payload.get("routable_device_ids")
+    routable_ids = (
+        {
+            int(device_id)
+            for device_id in raw_routable_ids
+            if isinstance(device_id, int) or str(device_id).isdigit()
+        }
+        if isinstance(raw_routable_ids, list)
+        else set()
+    )
+
+    devices: list[dict[str, object]] = []
+    for raw_device in raw_devices:
+        if not isinstance(raw_device, dict):
+            continue
+        raw_device_id = raw_device.get("device_id")
+        if not isinstance(raw_device_id, int) and not str(raw_device_id).isdigit():
+            continue
+        device_id = int(raw_device_id)
+        native_operational = (
+            device_id in routable_ids if routable_ids else bool(payload.get("has_gpu"))
+        )
+        entry: dict[str, object] = {
+            "device_id": device_id,
+            "name": raw_device.get("name") or f"CUDA device {device_id}",
+            "native_operational": native_operational,
+            "operational": native_operational,
+        }
+        for key in ("capability", "vram_capacity_mb"):
+            if key in raw_device:
+                entry[key] = raw_device[key]
+        devices.append(entry)
+
+    return {
+        "available": bool(payload.get("has_gpu")) and bool(devices),
+        "devices": devices,
+        "warnings": [],
+        "command": _command_display(command),
+    }
+
+
+def merge_gpu_device_inventory(
+    torch_devices: list[dict[str, object]],
+    native_devices: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    merged: dict[int, dict[str, object]] = {}
+    order: list[int] = []
+
+    for device in torch_devices:
+        raw_device_id = device.get("device_id")
+        if not isinstance(raw_device_id, int) and not str(raw_device_id).isdigit():
+            continue
+        device_id = int(raw_device_id)
+        merged_device = dict(device)
+        merged_device["device_id"] = device_id
+        merged_device["torch_operational"] = bool(device.get("operational", False))
+        merged_device.setdefault("native_operational", False)
+        merged[device_id] = merged_device
+        order.append(device_id)
+
+    for device in native_devices:
+        raw_device_id = device.get("device_id")
+        if not isinstance(raw_device_id, int) and not str(raw_device_id).isdigit():
+            continue
+        device_id = int(raw_device_id)
+        native_operational = bool(
+            device.get("native_operational", device.get("operational", False))
+        )
+        if device_id not in merged:
+            merged_device = dict(device)
+            merged_device["device_id"] = device_id
+            merged_device.setdefault("torch_operational", False)
+            merged_device["native_operational"] = native_operational
+            merged_device["operational"] = native_operational
+            merged[device_id] = merged_device
+            order.append(device_id)
+            continue
+
+        merged_device = merged[device_id]
+        if native_operational and merged_device.get("operational") is not True:
+            if "error" in merged_device and "torch_error" not in merged_device:
+                merged_device["torch_error"] = merged_device.pop("error")
+            merged_device["operational"] = True
+        merged_device["native_operational"] = native_operational
+        for key, value in device.items():
+            if key in {"device_id", "operational", "native_operational"}:
+                continue
+            if (
+                key == "name"
+                and str(value).startswith("CUDA device ")
+                and merged_device.get("name")
+            ):
+                continue
+            if value is not None:
+                merged_device[key] = value
+
+    return [merged[device_id] for device_id in order]
 
 
 def _clean_selected_gpu_stderr(
@@ -839,19 +1228,32 @@ def run_gpu_scale_benchmarks(
     shard_count: int,
 ) -> dict[str, object]:
     probe = probe_gpu_devices(sidecar_python)
-    devices = list(probe.get("devices", [])) if isinstance(probe.get("devices", []), list) else []
+    command_env = _build_command_env(sidecar_python)
+    torch_devices = (
+        list(probe.get("devices", [])) if isinstance(probe.get("devices", []), list) else []
+    )
     warnings = (
         list(probe.get("warnings", [])) if isinstance(probe.get("warnings", []), list) else []
     )
     errors: list[str] = []
     if probe.get("error"):
         warnings.append(str(probe["error"]))
+    native_probe = probe_native_gpu_devices(tg_binary=tg_binary, env=command_env)
+    if isinstance(native_probe.get("warnings", []), list):
+        warnings.extend(str(warning) for warning in native_probe.get("warnings", []))
+    native_devices = (
+        list(native_probe.get("devices", []))
+        if isinstance(native_probe.get("devices", []), list)
+        else []
+    )
+    devices = merge_gpu_device_inventory(torch_devices, native_devices)
     if not any(device.get("operational", False) for device in devices):
         recommendation = {
             "should_add_flag": False,
             "reason": "Skipped because no operational GPU devices were detected.",
             "winning_rows": [],
         }
+        gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks([])
         return {
             "bench_dir": str(bench_dir),
             "corpus_sizes": [
@@ -862,6 +1264,8 @@ def run_gpu_scale_benchmarks(
             "rows": [],
             "correctness_checks": [],
             "gpu_auto_recommendation": recommendation,
+            "gpu_bottleneck_summary": gpu_bottleneck_summary,
+            "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
             "scale_gate_summary": build_scale_gate_summary(
                 devices=devices,
                 correctness_checks=[],
@@ -879,8 +1283,9 @@ def run_gpu_scale_benchmarks(
             "skipped": True,
         }
 
-    command_env = _build_command_env(sidecar_python)
     runtime_probes: dict[int, dict[str, object]] = {}
+    runtime_pipeline_samples: list[dict[str, object]] = []
+    scale_pipeline_samples: list[dict[str, object]] = []
     for device in devices:
         if not device.get("operational", False):
             continue
@@ -895,6 +1300,14 @@ def run_gpu_scale_benchmarks(
         device["tg_runtime_backend"] = runtime_probe.get("routing_backend")
         device["tg_runtime_reason"] = runtime_probe.get("routing_reason")
         device["tg_runtime_sidecar_used"] = runtime_probe.get("sidecar_used")
+        if isinstance(runtime_probe.get("pipeline"), dict):
+            sample = extract_gpu_pipeline_breakdown(
+                runtime_probe,
+                source="runtime_probe",
+                source_label=f"GPU {device_id} runtime probe",
+            )
+            if sample:
+                runtime_pipeline_samples.append(sample)
         if not _uses_native_cuda_runtime(device):
             warnings.append(
                 "GPU scale benchmark requires a CUDA-enabled native tg binary; "
@@ -979,6 +1392,25 @@ def run_gpu_scale_benchmarks(
                     warnings=warnings,
                 )
                 entry.update(result)
+                native_stats_probe = probe_tg_gpu_native_stats_pipeline(
+                    tg_binary=tg_binary,
+                    corpus_dir=corpus_dir,
+                    pattern=benchmark_pattern,
+                    device_id=int(device["device_id"]),
+                    env=command_env,
+                )
+                entry["native_stats_probe"] = native_stats_probe
+                if isinstance(native_stats_probe.get("pipeline"), dict):
+                    entry["native_stats_pipeline"] = native_stats_probe["pipeline"]
+                    sample = extract_gpu_pipeline_breakdown(
+                        native_stats_probe,
+                        source="scale_native_stats",
+                        source_label=f"{size_label} GPU {device.get('device_id')} native stats",
+                        size_label=size_label,
+                        process_median_s=native_stats_probe.get("process_median_s"),
+                    )
+                    if sample:
+                        scale_pipeline_samples.append(sample)
             gpu_results.append(entry)
 
         row = {
@@ -1070,6 +1502,8 @@ def run_gpu_scale_benchmarks(
         correctness_checks=correctness_checks,
         correctness_patterns=correctness_patterns,
     )
+    pipeline_samples = scale_pipeline_samples or runtime_pipeline_samples
+    gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks(pipeline_samples)
 
     return {
         "bench_dir": str(bench_dir),
@@ -1081,6 +1515,8 @@ def run_gpu_scale_benchmarks(
         "rows": rows,
         "correctness_checks": correctness_checks,
         "gpu_auto_recommendation": gpu_auto_recommendation,
+        "gpu_bottleneck_summary": gpu_bottleneck_summary,
+        "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
         "scale_gate_summary": build_scale_gate_summary(
             devices=devices,
             correctness_checks=correctness_checks,
@@ -1171,6 +1607,7 @@ def main() -> int:
             "reason": "Benchmark did not run because the tg binary was missing.",
             "winning_rows": [],
         }
+        gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks([])
         payload.update({
             "errors": [f"tg binary not found: {tg_binary}"],
             "warnings": [],
@@ -1179,6 +1616,8 @@ def main() -> int:
             "corpus_sizes": [],
             "devices": [],
             "gpu_auto_recommendation": recommendation,
+            "gpu_bottleneck_summary": gpu_bottleneck_summary,
+            "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
             "scale_gate_summary": build_scale_gate_summary(
                 devices=[],
                 correctness_checks=[],

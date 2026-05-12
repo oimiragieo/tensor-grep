@@ -41,6 +41,19 @@ def test_should_validate_native_frontdoor_release_binary_profile(tmp_path: Path)
     assert errors == []
 
 
+def test_should_validate_gpu_ready_native_frontdoor_release_binary_profile(tmp_path: Path):
+    module = _load_module()
+    assert "native-frontdoor-gpu" in module.EXPECTED_BINARY_PROFILES
+    _touch(tmp_path / "release-native-ubuntu-latest-cpu" / "tg-linux-amd64-cpu")
+    _touch(tmp_path / "release-native-ubuntu-latest-nvidia" / "tg-linux-amd64-nvidia")
+    _touch(tmp_path / "release-native-macos-15-intel-cpu" / "tg-macos-amd64-cpu")
+    _touch(tmp_path / "release-native-windows-latest-cpu" / "tg-windows-amd64-cpu.exe")
+    _touch(tmp_path / "release-native-windows-latest-nvidia" / "tg-windows-amd64-nvidia.exe")
+
+    errors = module.validate_artifacts(tmp_path, expected_profile="native-frontdoor-gpu")
+    assert errors == []
+
+
 def test_should_fail_when_binary_is_missing(tmp_path: Path):
     module = _load_module()
     _touch(tmp_path / "binary-Linux-cpu" / "tg-linux-amd64-cpu")

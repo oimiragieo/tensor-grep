@@ -78,6 +78,17 @@ def test_validate_release_assets_payload_should_pass_for_native_frontdoor_asset_
     assert errors == []
 
 
+def test_should_expose_gpu_ready_native_frontdoor_release_asset_profile():
+    module = _load_module()
+    assert module.BINARY_ASSET_PROFILES["native-frontdoor-gpu"] == [
+        "tg-linux-amd64-cpu",
+        "tg-linux-amd64-nvidia",
+        "tg-macos-amd64-cpu",
+        "tg-windows-amd64-cpu.exe",
+        "tg-windows-amd64-nvidia.exe",
+    ]
+
+
 def test_verify_release_assets_with_retries_should_retry_transient_request_errors(monkeypatch):
     module = _load_module()
     calls = 0

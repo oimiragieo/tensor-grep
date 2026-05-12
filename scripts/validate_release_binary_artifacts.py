@@ -18,9 +18,18 @@ NATIVE_FRONTDOOR_EXPECTED_BINARIES = {
     "tg-windows-amd64-cpu.exe",
 }
 
+GPU_READY_NATIVE_FRONTDOOR_EXPECTED_BINARIES = {
+    "tg-linux-amd64-cpu",
+    "tg-linux-amd64-nvidia",
+    "tg-macos-amd64-cpu",
+    "tg-windows-amd64-cpu.exe",
+    "tg-windows-amd64-nvidia.exe",
+}
+
 EXPECTED_BINARY_PROFILES = {
     "full": FULL_EXPECTED_BINARIES,
     "native-frontdoor": NATIVE_FRONTDOOR_EXPECTED_BINARIES,
+    "native-frontdoor-gpu": GPU_READY_NATIVE_FRONTDOOR_EXPECTED_BINARIES,
 }
 
 

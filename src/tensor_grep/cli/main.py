@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -148,6 +148,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
 - `TG_NATIVE_TG_BINARY`: Path to the native front door used by Python-backed commands.
+- `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR`: Set to `nvidia` to prefer NVIDIA release-native front-door assets, with CPU fallback.
 - `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.
 - `TG_FORCE_CPU`: Force CPU routing for search commands.
 - `TG_SIDECAR_TIMEOUT_MS`: Timeout for sidecar-backed commands.
@@ -209,6 +210,20 @@ _PYPI_SIMPLE_ANCHOR_RE = re.compile(
     r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>",
     re.IGNORECASE | re.DOTALL,
 )
+_NATIVE_FRONTDOOR_FLAVOR_ENV = "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR"
+_NATIVE_FRONTDOOR_REQUESTED_FLAVOR_ENV = "TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR"
+
+
+@dataclass(frozen=True)
+class _NativeFrontdoorAssetCandidate:
+    flavor: str
+    asset_name: str
+
+
+@dataclass(frozen=True)
+class _NativeFrontdoorInstallResult:
+    url: str
+    flavor: str
 
 
 def _version_sort_key(version: str) -> tuple[tuple[int, int | str], ...]:
@@ -334,26 +349,81 @@ def _verify_target_python_tensor_grep_version(python_executable: str) -> str:
     return version[-1].strip()
 
 
-def _native_frontdoor_asset_name() -> str | None:
+def _normalize_native_frontdoor_flavor(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized in {"nvidia", "cuda"}:
+        return "nvidia"
+    if normalized == "cpu":
+        return "cpu"
+    return None
+
+
+def _requested_native_frontdoor_flavor() -> str:
+    for env_name in (
+        _NATIVE_FRONTDOOR_FLAVOR_ENV,
+        _NATIVE_FRONTDOOR_REQUESTED_FLAVOR_ENV,
+    ):
+        flavor = _normalize_native_frontdoor_flavor(os.environ.get(env_name))
+        if flavor is not None:
+            return flavor
+    return "cpu"
+
+
+def _native_frontdoor_asset_candidates() -> list[_NativeFrontdoorAssetCandidate]:
     import platform
 
     machine = platform.machine().lower()
     if machine not in {"amd64", "x86_64"}:
-        return None
+        return []
+    cpu_asset_name: str | None = None
+    nvidia_asset_name: str | None = None
     if sys.platform.startswith("win"):
-        return "tg-windows-amd64-cpu.exe"
-    if sys.platform.startswith("linux"):
-        return "tg-linux-amd64-cpu"
-    if sys.platform.startswith("darwin"):
-        return "tg-macos-amd64-cpu"
-    return None
+        cpu_asset_name = "tg-windows-amd64-cpu.exe"
+        nvidia_asset_name = "tg-windows-amd64-nvidia.exe"
+    elif sys.platform.startswith("linux"):
+        cpu_asset_name = "tg-linux-amd64-cpu"
+        nvidia_asset_name = "tg-linux-amd64-nvidia"
+    elif sys.platform.startswith("darwin"):
+        cpu_asset_name = "tg-macos-amd64-cpu"
+
+    candidates: list[_NativeFrontdoorAssetCandidate] = []
+    if _requested_native_frontdoor_flavor() == "nvidia" and nvidia_asset_name is not None:
+        candidates.append(
+            _NativeFrontdoorAssetCandidate(
+                flavor="nvidia",
+                asset_name=nvidia_asset_name,
+            )
+        )
+    if cpu_asset_name is not None:
+        candidates.append(_NativeFrontdoorAssetCandidate(flavor="cpu", asset_name=cpu_asset_name))
+    return candidates
+
+
+def _native_frontdoor_asset_name() -> str | None:
+    candidates = _native_frontdoor_asset_candidates()
+    return candidates[0].asset_name if candidates else None
+
+
+def _native_frontdoor_download_candidates(
+    version: str,
+) -> list[tuple[_NativeFrontdoorAssetCandidate, str]]:
+    return [
+        (
+            candidate,
+            "https://github.com/oimiragieo/tensor-grep/releases/download/"
+            f"v{version}/{candidate.asset_name}",
+        )
+        for candidate in _native_frontdoor_asset_candidates()
+    ]
 
 
 def _native_frontdoor_download_url(version: str) -> str | None:
-    asset_name = _native_frontdoor_asset_name()
-    if asset_name is None:
+    candidates = _native_frontdoor_download_candidates(version)
+    if not candidates:
         return None
-    return f"https://github.com/oimiragieo/tensor-grep/releases/download/v{version}/{asset_name}"
+    return candidates[0][1]
 
 
 def _managed_native_frontdoor_path_from_env() -> Path | None:
@@ -389,33 +459,52 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
     urllib.request.urlretrieve(url, destination)
 
 
-def _install_release_native_frontdoor(version: str, destination: Path) -> str:
-    url = _native_frontdoor_download_url(version)
-    if url is None:
+def _install_release_native_frontdoor(
+    version: str, destination: Path
+) -> _NativeFrontdoorInstallResult:
+    candidates = _native_frontdoor_download_candidates(version)
+    if not candidates:
         raise RuntimeError("no release-native front-door asset is available for this platform")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
-    try:
-        _download_native_frontdoor_asset(url, temp_path)
-        if not sys.platform.startswith("win"):
-            temp_path.chmod(0o755)
-        temp_version = _native_tg_version(temp_path)
-        if not _native_tg_version_matches(version, temp_version):
-            raise RuntimeError(
-                "downloaded native tg front door reported "
-                f"{temp_version or 'no version'} instead of {version}"
-            )
-        os.replace(temp_path, destination)
-        installed_version = _native_tg_version(destination)
-        if not _native_tg_version_matches(version, installed_version):
-            raise RuntimeError(
-                "installed native tg front door reported "
-                f"{installed_version or 'no version'} instead of {version}"
-            )
-    finally:
-        temp_path.unlink(missing_ok=True)
-    return url
+    download_errors: list[str] = []
+    for candidate, url in candidates:
+        temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
+        try:
+            try:
+                _download_native_frontdoor_asset(url, temp_path)
+            except Exception as exc:
+                download_errors.append(f"{candidate.flavor} asset unavailable: {exc}")
+                continue
+            if not sys.platform.startswith("win"):
+                temp_path.chmod(0o755)
+            temp_version = _native_tg_version(temp_path)
+            if not _native_tg_version_matches(version, temp_version):
+                download_errors.append(
+                    f"{candidate.flavor} asset failed smoke test: downloaded native tg "
+                    f"front door reported {temp_version or 'no version'} instead of {version}"
+                )
+                continue
+            previous_bytes = destination.read_bytes() if destination.exists() else None
+            os.replace(temp_path, destination)
+            installed_version = _native_tg_version(destination)
+            if not _native_tg_version_matches(version, installed_version):
+                if previous_bytes is not None:
+                    destination.write_bytes(previous_bytes)
+                else:
+                    destination.unlink(missing_ok=True)
+                download_errors.append(
+                    f"{candidate.flavor} asset failed install verification: installed native "
+                    f"tg front door reported {installed_version or 'no version'} instead of {version}"
+                )
+                continue
+            return _NativeFrontdoorInstallResult(url=url, flavor=candidate.flavor)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    raise RuntimeError(
+        "release-native front-door asset install failed: " + "; ".join(download_errors)
+    )
 
 
 def _same_path(left: Path, right: Path) -> bool:
@@ -508,8 +597,11 @@ def _schedule_windows_native_frontdoor_refresh(
 ) -> Path:
     import textwrap
 
-    url = _native_frontdoor_download_url(expected_version)
-    if url is None:
+    asset_payload = json.dumps([
+        {"url": url, "flavor": candidate.flavor}
+        for candidate, url in _native_frontdoor_download_candidates(expected_version)
+    ])
+    if asset_payload == "[]":
         raise RuntimeError("no release-native front-door asset is available for this platform")
     bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
 
@@ -529,7 +621,7 @@ def _schedule_windows_native_frontdoor_refresh(
         log_path = Path(sys.argv[2])
         native_path = Path(sys.argv[3])
         expected_version = sys.argv[4]
-        url = sys.argv[5]
+        asset_candidates = json.loads(sys.argv[5])
         bridge_paths = [Path(path) for path in json.loads(sys.argv[6])]
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -562,56 +654,66 @@ def _schedule_windows_native_frontdoor_refresh(
 
         errors: list[str] = []
         for attempt in range(120):
-            temp_path = native_path.with_name(native_path.name + ".download-" + uuid4().hex)
-            try:
-                urllib.request.urlretrieve(url, temp_path)
-                temp_version = _version(temp_path)
-                if expected_version not in temp_version:
-                    raise RuntimeError(
-                        "downloaded native tg front door reported "
-                        + (temp_version or "no version")
-                    )
-                os.replace(temp_path, native_path)
-                installed_version = _version(native_path)
-                if expected_version not in installed_version:
-                    raise RuntimeError(
-                        "installed native tg front door reported "
-                        + (installed_version or "no version")
-                    )
-                refreshed_bridges: list[str] = []
-                for bridge_path in bridge_paths:
-                    shutil.copy2(native_path, bridge_path)
-                    bridge_version = _version(bridge_path)
-                    if expected_version not in bridge_version:
-                        raise RuntimeError(
-                            "refreshed PATH tg.com bridge reported "
-                            + (bridge_version or "no version")
-                            + " for "
-                            + str(bridge_path)
-                        )
-                    refreshed_bridges.append(str(bridge_path))
-                bridge_text = ""
-                if refreshed_bridges:
-                    bridge_text = "\\nRefreshed PATH tg.com bridges:\\n" + "\\n".join(
-                        refreshed_bridges
-                    )
-                log_path.write_text(
-                    "Native tg front-door refresh completed.\\n"
-                    + "Verified "
-                    + installed_version
-                    + ".\\n"
-                    + url
-                    + bridge_text,
-                    encoding="utf-8",
-                )
-                raise SystemExit(0)
-            except Exception as exc:
-                errors.append(str(exc))
+            for asset_candidate in asset_candidates:
+                url = asset_candidate.get("url", "")
+                flavor = asset_candidate.get("flavor", "unknown")
+                temp_path = native_path.with_name(native_path.name + ".download-" + uuid4().hex)
                 try:
-                    temp_path.unlink()
-                except FileNotFoundError:
-                    pass
-                time.sleep(0.5)
+                    try:
+                        urllib.request.urlretrieve(url, temp_path)
+                    except Exception as exc:
+                        errors.append(f"{flavor} asset unavailable: {exc}")
+                        continue
+                    temp_version = _version(temp_path)
+                    if expected_version not in temp_version:
+                        raise RuntimeError(
+                            "downloaded native tg front door reported "
+                            + (temp_version or "no version")
+                        )
+                    os.replace(temp_path, native_path)
+                    installed_version = _version(native_path)
+                    if expected_version not in installed_version:
+                        raise RuntimeError(
+                            "installed native tg front door reported "
+                            + (installed_version or "no version")
+                        )
+                    refreshed_bridges: list[str] = []
+                    for bridge_path in bridge_paths:
+                        shutil.copy2(native_path, bridge_path)
+                        bridge_version = _version(bridge_path)
+                        if expected_version not in bridge_version:
+                            raise RuntimeError(
+                                "refreshed PATH tg.com bridge reported "
+                                + (bridge_version or "no version")
+                                + " for "
+                                + str(bridge_path)
+                            )
+                        refreshed_bridges.append(str(bridge_path))
+                    bridge_text = ""
+                    if refreshed_bridges:
+                        bridge_text = "\\nRefreshed PATH tg.com bridges:\\n" + "\\n".join(
+                            refreshed_bridges
+                        )
+                    log_path.write_text(
+                        "Native tg front-door refresh completed.\\n"
+                        + "Verified "
+                        + installed_version
+                        + ".\\nNative asset flavor: "
+                        + flavor
+                        + ".\\n"
+                        + url
+                        + bridge_text,
+                        encoding="utf-8",
+                    )
+                    raise SystemExit(0)
+                except Exception as exc:
+                    errors.append(str(exc))
+                finally:
+                    try:
+                        temp_path.unlink()
+                    except FileNotFoundError:
+                        pass
+            time.sleep(0.5)
 
         log_path.write_text(
             "Native tg front-door refresh failed.\\n" + "\\n".join(errors[-10:]),
@@ -634,7 +736,7 @@ def _schedule_windows_native_frontdoor_refresh(
             str(log_path),
             str(native_path),
             expected_version,
-            url,
+            asset_payload,
             bridge_payload,
         ],
         stdout=subprocess.DEVNULL,
@@ -656,7 +758,7 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
     current_version = _native_tg_version(native_path) if native_path.is_file() else None
     if not _native_tg_version_matches(expected_version, current_version):
         try:
-            _install_release_native_frontdoor(expected_version, native_path)
+            install_result = _install_release_native_frontdoor(expected_version, native_path)
         except OSError as exc:
             if sys.platform.startswith("win") and (
                 getattr(exc, "winerror", None) == 32
@@ -672,7 +774,10 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
             raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
         except RuntimeError as exc:
             raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
-        messages.append(f"Native tg front door refreshed to {expected_version}.")
+        messages.append(
+            f"Native tg front door refreshed to {expected_version}. "
+            f"Native asset flavor: {install_result.flavor}."
+        )
 
     try:
         refreshed_bridges = _refresh_windows_tensor_grep_com_bridges(
@@ -6263,11 +6368,12 @@ def upgrade() -> None:
         expected_version: str,
         *,
         native_path: Path | None = None,
-        native_url: str | None = None,
+        native_assets: list[dict[str, str]] | None = None,
         bridge_paths: list[Path] | None = None,
     ) -> Path:
         import textwrap
 
+        native_asset_payload = json.dumps(native_assets or [])
         bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
         helper_code = textwrap.dedent(
             """
@@ -6286,7 +6392,7 @@ def upgrade() -> None:
             attempts = json.loads(sys.argv[3])
             expected_version = sys.argv[4]
             native_path_arg = sys.argv[5]
-            native_url = sys.argv[6]
+            native_assets = json.loads(sys.argv[6])
             bridge_paths = [Path(path) for path in json.loads(sys.argv[7])]
             native_path = Path(native_path_arg) if native_path_arg else None
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -6418,44 +6524,58 @@ def upgrade() -> None:
                 native_path.parent.mkdir(parents=True, exist_ok=True)
                 current_native_version = _version(native_path) if native_path.is_file() else ""
                 if not _version_matches(current_native_version):
-                    if not native_url:
+                    if not native_assets:
                         raise RuntimeError(
                             "no release-native front-door asset is available for this platform"
                         )
                     errors: list[str] = []
                     for _ in range(120):
-                        temp_path = native_path.with_name(
-                            native_path.name + ".download-" + uuid4().hex
-                        )
-                        try:
-                            urllib.request.urlretrieve(native_url, temp_path)
-                            temp_version = _version(temp_path)
-                            if not _version_matches(temp_version):
-                                raise RuntimeError(
-                                    "downloaded native tg front door reported "
-                                    + (temp_version or "no version")
-                                )
-                            os.replace(temp_path, native_path)
-                            installed_native_version = _version(native_path)
-                            if not _version_matches(installed_native_version):
-                                raise RuntimeError(
-                                    "installed native tg front door reported "
-                                    + (installed_native_version or "no version")
-                                )
-                            messages.append(
-                                "Native tg front-door refresh completed.\\n"
-                                + "Verified "
-                                + installed_native_version
-                                + "."
+                        refreshed = False
+                        for asset in native_assets:
+                            url = asset.get("url", "")
+                            flavor = asset.get("flavor", "unknown")
+                            temp_path = native_path.with_name(
+                                native_path.name + ".download-" + uuid4().hex
                             )
-                            break
-                        except Exception as exc:
-                            errors.append(str(exc))
                             try:
-                                temp_path.unlink()
-                            except FileNotFoundError:
-                                pass
-                            time.sleep(0.5)
+                                try:
+                                    urllib.request.urlretrieve(url, temp_path)
+                                except Exception as exc:
+                                    errors.append(f"{flavor} asset unavailable: {exc}")
+                                    continue
+                                temp_version = _version(temp_path)
+                                if not _version_matches(temp_version):
+                                    raise RuntimeError(
+                                        "downloaded native tg front door reported "
+                                        + (temp_version or "no version")
+                                    )
+                                os.replace(temp_path, native_path)
+                                installed_native_version = _version(native_path)
+                                if not _version_matches(installed_native_version):
+                                    raise RuntimeError(
+                                        "installed native tg front door reported "
+                                        + (installed_native_version or "no version")
+                                    )
+                                messages.append(
+                                    "Native tg front-door refresh completed.\\n"
+                                    + "Verified "
+                                    + installed_native_version
+                                    + ".\\nNative asset flavor: "
+                                    + flavor
+                                    + "."
+                                )
+                                refreshed = True
+                                break
+                            except Exception as exc:
+                                errors.append(str(exc))
+                            finally:
+                                try:
+                                    temp_path.unlink()
+                                except FileNotFoundError:
+                                    pass
+                        if refreshed:
+                            break
+                        time.sleep(0.5)
                     else:
                         raise RuntimeError(
                             "native tg front-door refresh failed: " + "; ".join(errors[-10:])
@@ -6529,7 +6649,7 @@ def upgrade() -> None:
                 json.dumps(attempts),
                 expected_version,
                 str(native_path) if native_path is not None else "",
-                native_url or "",
+                native_asset_payload,
                 bridge_payload,
             ],
             stdout=subprocess.DEVNULL,
@@ -6620,9 +6740,14 @@ def upgrade() -> None:
             else:
                 package_spec = "tensor-grep"
             native_path = _managed_native_frontdoor_path_from_env()
-            native_url = (
-                _native_frontdoor_download_url(expected_version) if expected_version else None
-            )
+            native_assets = [
+                {"url": url, "flavor": candidate.flavor}
+                for candidate, url in (
+                    _native_frontdoor_download_candidates(expected_version)
+                    if expected_version
+                    else []
+                )
+            ]
             bridge_paths = (
                 _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
                 if expected_version and native_path is not None
@@ -6632,7 +6757,7 @@ def upgrade() -> None:
                 _upgrade_attempts(package_spec),
                 expected_version,
                 native_path=native_path,
-                native_url=native_url,
+                native_assets=native_assets,
                 bridge_paths=bridge_paths,
             )
             typer.echo(

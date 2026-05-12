@@ -5701,6 +5701,238 @@ def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_lates
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
 
 
+def test_native_frontdoor_asset_candidates_default_to_cpu_even_when_host_has_nvidia(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    def _fake_run(cmd, capture_output=True, text=True, check=False, timeout=None):
+        raise AssertionError(f"default asset selection should not probe hardware: {cmd}")
+
+    monkeypatch.delenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", raising=False)
+    monkeypatch.delenv("TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        cli_main.shutil, "which", lambda name: name if name == "nvidia-smi" else None
+    )
+    monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+
+    candidates = cli_main._native_frontdoor_asset_candidates()
+
+    assert [(candidate.flavor, candidate.asset_name) for candidate in candidates] == [
+        ("cpu", "tg-linux-amd64-cpu"),
+    ]
+
+
+def test_native_frontdoor_asset_candidates_prefer_nvidia_only_when_requested(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
+    monkeypatch.delenv("TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+
+    candidates = cli_main._native_frontdoor_asset_candidates()
+
+    assert [(candidate.flavor, candidate.asset_name) for candidate in candidates] == [
+        ("nvidia", "tg-linux-amd64-nvidia"),
+        ("cpu", "tg-linux-amd64-cpu"),
+    ]
+
+
+def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable(
+    monkeypatch, tmp_path
+):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    downloads: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            version = (
+                "0.33.0" if native_binary.read_text(encoding="utf-8") == "new native" else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        downloads.append(str(url))
+        if str(url).endswith("tg-windows-amd64-nvidia.exe"):
+            raise OSError("404 Not Found")
+        Path(filename).write_text("new native", encoding="utf-8")
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert downloads == [
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+        "tg-windows-amd64-nvidia.exe",
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+        "tg-windows-amd64-cpu.exe",
+    ]
+    assert native_binary.read_text(encoding="utf-8") == "new native"
+    assert "Native tg front door refreshed to 0.33.0." in result.stdout
+    assert "Native asset flavor: cpu." in result.stdout
+    assert "GPU promotion" not in result.stdout
+
+
+def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
+    monkeypatch, tmp_path
+):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    downloads: list[str] = []
+    temp_versions: dict[str, str] = {}
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            version = (
+                "0.33.0" if native_binary.read_text(encoding="utf-8") == "new native" else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=f"tg {temp_versions.get(command[0], '0.33.0')}\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        downloads.append(str(url))
+        path = Path(filename)
+        if str(url).endswith("tg-windows-amd64-nvidia.exe"):
+            path.write_text("wrong native", encoding="utf-8")
+            temp_versions[str(path)] = "0.32.0"
+        else:
+            path.write_text("new native", encoding="utf-8")
+            temp_versions[str(path)] = "0.33.0"
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert downloads == [
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+        "tg-windows-amd64-nvidia.exe",
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+        "tg-windows-amd64-cpu.exe",
+    ]
+    assert native_binary.read_text(encoding="utf-8") == "new native"
+    assert "Native tg front door refreshed to 0.33.0." in result.stdout
+    assert "Native asset flavor: cpu." in result.stdout
+
+
+def test_upgrade_restores_previous_native_binary_when_install_verification_fails(
+    monkeypatch, tmp_path
+):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    downloads: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            version = (
+                "0.33.0"
+                if native_binary.read_text(encoding="utf-8") == "verified native"
+                else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        downloads.append(str(url))
+        Path(filename).write_text("bad installed native", encoding="utf-8")
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 1
+    assert downloads == [
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+        "tg-windows-amd64-cpu.exe",
+    ]
+    assert native_binary.read_text(encoding="utf-8") == "old native"
+    assert "release-native front-door asset install failed" in result.stderr
+
+
 def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkeypatch, tmp_path):
     install_dir = tmp_path / ".tensor-grep"
     python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
@@ -5734,6 +5966,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
@@ -5919,6 +6152,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
@@ -5995,6 +6229,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("PATH", str(bridge_tg.parent))
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
@@ -6019,6 +6254,23 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     assert popen_calls
     assert "urlretrieve" in popen_calls[0][2]
     assert "0.33.0" in popen_calls[0]
+    helper_assets = json.loads(popen_calls[0][7])
+    assert helper_assets == [
+        {
+            "url": (
+                "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+                "tg-windows-amd64-nvidia.exe"
+            ),
+            "flavor": "nvidia",
+        },
+        {
+            "url": (
+                "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+                "tg-windows-amd64-cpu.exe"
+            ),
+            "flavor": "cpu",
+        },
+    ]
     assert json.loads(popen_calls[0][8]) == [str(bridge_tg)]
     assert "Native tg front door refresh scheduled for 0.33.0." in result.stdout
 
@@ -6271,6 +6523,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("PATH", str(bridge_tg.parent))
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -6290,7 +6543,16 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
     helper_code = popen_calls[0][2]
     assert "refresh native front door and stale PATH tg.com bridges" in helper_code
     assert popen_calls[0][7] == str(native_binary)
-    assert popen_calls[0][8].endswith("/v0.33.0/tg-windows-amd64-cpu.exe")
+    helper_assets = json.loads(popen_calls[0][8])
+    assert helper_assets == [
+        {
+            "url": (
+                "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+                "tg-windows-amd64-cpu.exe"
+            ),
+            "flavor": "cpu",
+        }
+    ]
     assert json.loads(popen_calls[0][9]) == [str(bridge_tg)]
 
 

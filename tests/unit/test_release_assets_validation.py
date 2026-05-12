@@ -1689,7 +1689,7 @@ def test_should_require_ci_release_native_assets_to_use_rust_frontdoor_not_nuitk
         in joined_errors
     )
     assert (
-        "CI workflow build-release-native-assets `Build native release front door` step must invoke `cargo build --release --no-default-features`"
+        "CI workflow build-release-native-assets `Build native release front door` step must invoke `cargo build --release ${{ matrix.cargo_args }}`"
         in joined_errors
     )
 
@@ -1753,6 +1753,76 @@ def test_should_require_ci_macos_native_frontdoor_to_use_intel_runner_label():
     assert any(
         "CI workflow build-release-native-assets matrix must use an Intel macOS runner label" in err
         for err in errors
+    )
+
+
+def test_should_configure_semantic_release_native_assets_for_optional_gpu_profile():
+    root = Path(__file__).resolve().parents[2]
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE" in ci_workflow
+    assert "vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor'" in ci_workflow
+    assert "native-frontdoor-gpu" in ci_workflow
+    assert "matrix.acceleration" in ci_workflow
+    assert (
+        "matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'"
+        in ci_workflow
+    )
+    assert "release-native-${{ matrix.os }}-${{ matrix.acceleration }}" in ci_workflow
+    assert "tg-linux-amd64-nvidia" in ci_workflow
+    assert "tg-windows-amd64-nvidia.exe" in ci_workflow
+    assert "tg-macos-amd64-nvidia" not in ci_workflow
+    assert "--features cuda" in ci_workflow
+
+
+def test_should_require_ci_release_asset_verifiers_to_use_selectable_native_profile():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace(
+        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+        "--expected-profile native-frontdoor",
+    )
+
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert (
+        "CI workflow publish-github-release-assets native asset validation and verification "
+        "steps must use selectable `$RELEASE_NATIVE_ASSET_PROFILE`" in joined_errors
+    )
+
+
+def test_should_reject_ci_release_native_macos_nvidia_asset():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace(
+        "- os: macos-15-intel\n"
+        "            acceleration: cpu\n"
+        "            cargo_args: --no-default-features\n"
+        "            asset_name: tg-macos-amd64-cpu",
+        "- os: macos-15-intel\n"
+        "            acceleration: nvidia\n"
+        "            cargo_args: --features cuda\n"
+        "            asset_name: tg-macos-amd64-nvidia",
+        1,
+    )
+
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "CI workflow build-release-native-assets must keep macOS CPU-only" in err for err in errors
     )
 
 

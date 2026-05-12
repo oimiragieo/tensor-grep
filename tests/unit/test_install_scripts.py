@@ -52,6 +52,24 @@ def test_install_ps1_should_download_release_native_frontdoor_and_configure_side
     assert "Remove-Item -LiteralPath $nativeFrontdoorPath -Force" in content
 
 
+def test_install_ps1_should_require_opt_in_nvidia_native_frontdoor_with_cpu_fallback():
+    content = _read_script("scripts/install.ps1")
+
+    assert "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR" in content
+    assert "TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" in content
+    assert "TG_NATIVE_FRONTDOOR_FLAVOR" in content
+    assert "tg-windows-amd64-nvidia.exe" in content
+    assert (
+        '$requestedFlavor = if ($requestedFlavor) { $requestedFlavor.ToLowerInvariant() } else { "cpu" }'
+        in content
+    )
+    assert '$requestedFlavor -eq "auto"' not in content
+    assert '$hardwareFlag -eq "nvidia"' not in content
+    assert "Falling back to CPU native tg front-door asset" in content
+    assert "asset flavor" in content
+    assert "GPU promotion" not in content
+
+
 def test_install_ps1_should_fail_fast_when_native_install_steps_fail():
     content = _read_script("scripts/install.ps1")
 
@@ -296,6 +314,23 @@ def test_install_sh_should_download_release_native_frontdoor_and_configure_sidec
     assert 'export TG_SIDECAR_PYTHON="$INSTALL_DIR/.venv/bin/python"' in content
     assert 'export TG_NATIVE_TG_BINARY="\\$NATIVE_BINARY"' in content
     assert 'exec "\\$NATIVE_BINARY" "\\$@"' in content
+
+
+def test_install_sh_should_require_opt_in_nvidia_native_frontdoor_with_cpu_fallback():
+    content = _read_script("scripts/install.sh")
+
+    assert "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR" in content
+    assert "TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" in content
+    assert "TG_NATIVE_FRONTDOOR_FLAVOR" in content
+    assert "tg-linux-amd64-nvidia" in content
+    assert (
+        'TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="${TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR:-${TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR:-cpu}}"'
+        in content
+    )
+    assert "auto:nvidia" not in content
+    assert "Falling back to CPU native tg front-door asset" in content
+    assert "asset flavor" in content
+    assert "GPU promotion" not in content
 
 
 def test_install_sh_should_use_current_gpu_wheel_indexes():
