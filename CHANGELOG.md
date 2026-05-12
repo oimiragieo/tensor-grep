@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.6 (2026-05-12)
+
+### Bug Fixes
+
+- Harden v1.10.5 dogfood blockers
+  ([`7a8c9cf`](https://github.com/oimiragieo/tensor-grep/commit/7a8c9cf9436de870cf971cc95ecf10e6cec2b430))
+
+Fix v1.10.5 dogfood blockers: Python subprocess launcher readiness, CWD generated-root refusal,
+  invoice implementation ranking, and refreshed v1.10.5 process docs.
+
+
 ## v1.10.5 (2026-05-12)
 
 ### Bug Fixes
