@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.5 (2026-05-12)
+
+### Bug Fixes
+
+- Harden v1.10.4 dogfood followups
+  ([`03db0ff`](https://github.com/oimiragieo/tensor-grep/commit/03db0ff6a1bbc8462767278bc9e79c8584839ceb))
+
+Harden v1.10.4 dogfood followups: explicit agent ambiguity metadata, native hot-query regex
+  benchmarking, and public GPU docs/contract clarity.
+
+
 ## v1.10.4 (2026-05-12)
 
 ### Bug Fixes
