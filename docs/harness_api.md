@@ -513,7 +513,7 @@ Use this shape when an agent needs the smallest actionable work packet before ed
 
 Capsule-level `context_consistency` extends the Context Render JSON contract with `capsule_primary_file_in_snippets`, `capsule_primary_file_in_follow_up_reads`, and `capsule_primary_file_omitted`. When a token budget omits the primary file from `snippets`, the capsule must report the omission reason, include a follow-up read when available, downgrade `confidence`, and set `ask_user_before_editing.required = true`.
 
-Equal-confidence target ties are exposed twice: `context_consistency` keeps machine-checkable tie details, while top-level `ambiguity` gives agents a compact edit-safety decision. Unresolved ties use `ambiguity.status = "tie_requires_confirmation"` and force `requires_confirmation = true`; ties resolved by aligned validation evidence use `status = "tie_resolved"` with `resolved_by = "validation"`.
+Equal-confidence target ties are exposed twice: `context_consistency` keeps machine-checkable tie details, while top-level `ambiguity` gives agents a compact edit-safety decision. Unresolved ties use `ambiguity.status = "tie_requires_confirmation"` and force `requires_confirmation = true`; this is a hard stop for autonomous edits. Ties resolved by explicit evidence use `status = "tie_resolved"` with `resolved_by` naming the evidence source, such as aligned validation imports or explicit language intent.
 
 Recovery references such as `raw_context_ref` and `omissions.follow_up_reads[]` include:
 

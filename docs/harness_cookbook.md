@@ -114,6 +114,8 @@ Recommended consumer behavior:
 
 When an agent is ready to move from discovery into editing, prefer `edit-plan` or `context-render` and read `navigation_pack.parallel_read_groups[]` first. That gives a deterministic fan-out plan: inspect the `primary` phase first, then parallelize the `related` phase, then run the `test` phase before validation. If a caller does not understand phased reads yet, `navigation_pack.follow_up_reads[]` is still the flat fallback.
 
+Before any autonomous edit, inspect the top-level `ambiguity` object. `ambiguity.status = "tie_requires_confirmation"` is a hard stop for editing without user confirmation. `ambiguity.status = "tie_resolved"` is only safe when `ambiguity.resolved_by` names explicit evidence such as exact language intent, direct validation imports, or implementation-definition ranking; otherwise treat the task as unresolved and ask.
+
 Resolve exact definitions:
 
 ```powershell

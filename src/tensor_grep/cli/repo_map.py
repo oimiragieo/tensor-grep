@@ -4856,6 +4856,36 @@ def _build_context_pack_from_map(
                     file_scores[current_path] = score + 20
                     _append_reason(file_reasons, current_path, "language")
 
+        explicit_symbol_intent = any(
+            bool(symbol.get("exact_query_match") or symbol.get("bridge_query_match"))
+            for symbol in scored_symbols
+        )
+        if not explicit_symbol_intent:
+            repo_root = Path(str(payload["path"])).resolve()
+            for symbol in scored_symbols:
+                current_path = str(symbol["file"])
+                if _is_test_file(Path(current_path)):
+                    continue
+                direct_test_count = 0
+                for test_path in payload["tests"]:
+                    test_file = Path(str(test_path))
+                    if not test_file.is_absolute():
+                        test_file = repo_root / test_file
+                    if _file_imports_symbol_from_definition(
+                        test_file,
+                        str(symbol["name"]),
+                        current_path,
+                        repo_root,
+                    ):
+                        direct_test_count += 1
+                if direct_test_count <= 0:
+                    continue
+                file_scores[current_path] = file_scores.get(current_path, 0) + min(
+                    32,
+                    20 + direct_test_count * 4,
+                )
+                _append_reason(file_reasons, current_path, "validation-direct-definition")
+
         scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
         scored_files.sort(key=lambda item: (-item[0], item[1]))
         ranked_files = [path for _, path in scored_files]

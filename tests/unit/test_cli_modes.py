@@ -411,6 +411,20 @@ def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
     assert "--allow-broad-generated-scan" in result.output
 
 
+def test_files_mode_refuses_cwd_generated_root_scan(monkeypatch, tmp_path: Path):
+    venv_root = tmp_path / ".venv"
+    package_dir = venv_root / "Lib" / "site-packages" / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "module.py").write_text("print('dep')\n", encoding="utf-8")
+    monkeypatch.chdir(venv_root)
+
+    result = CliRunner().invoke(app, ["search", "--files", ".", "--hidden", "--no-ignore"])
+
+    assert result.exit_code == 2
+    assert "broad generated-root scan refused" in result.output
+    assert ".venv" in result.output
+
+
 def test_files_mode_allows_bounded_broad_generated_root_scan(monkeypatch, tmp_path: Path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
@@ -489,6 +503,24 @@ def test_no_ignore_search_triggers_broad_generated_root_guard(
 
     assert refused is True
     assert generated_dirs == ["node_modules"]
+
+
+def test_no_ignore_search_treats_cwd_generated_root_as_broad_generated_scan(
+    monkeypatch, tmp_path: Path
+):
+    venv_root = tmp_path / ".venv"
+    venv_root.mkdir()
+    monkeypatch.chdir(venv_root)
+
+    refused, generated_dirs = _should_refuse_unbounded_generated_scan(
+        ["."],
+        SearchConfig(no_ignore=True),
+        allow_broad_generated_scan=False,
+        files_mode=False,
+    )
+
+    assert refused is True
+    assert generated_dirs == [".venv"]
 
 
 def test_glob_case_insensitive_matches_case_folded_paths(
@@ -1241,6 +1273,64 @@ def test_doctor_json_warns_when_current_path_hits_compat_shim_before_fresh_nativ
         "current process PATH resolves a compatibility shim" in payload["path_tg_launcher_warning"]
     )
     assert "restart the shell" in payload["path_tg_launcher_warning"]
+
+
+def test_doctor_json_reports_python_subprocess_foreign_tg_exe(monkeypatch, tmp_path: Path) -> None:
+    foreign_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
+    managed_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    foreign_tg.parent.mkdir(parents=True)
+    managed_tg.parent.mkdir(parents=True)
+    foreign_tg.write_text("foreign\n", encoding="utf-8")
+    managed_tg.write_text("managed\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.10.5")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: managed_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.10.5",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_lsp_provider_statuses", lambda path: [])
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda path_value=None: [
+            {"path": str(managed_tg), "version": "tg 1.10.5"},
+            {"path": str(foreign_tg), "version": "Together CLI (v2.12.0)"},
+        ],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [{"path": str(managed_tg), "version": "tg 1.10.5"}],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_python_subprocess_path_tg_candidate",
+        lambda path_value=None: {
+            "path": str(foreign_tg),
+            "version": "Together CLI (v2.12.0)",
+        },
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["python_subprocess_path_tg_first_launcher_kind"] == "foreign"
+    assert payload["python_subprocess_path_tg_first_is_foreign"] is True
+    assert payload["python_subprocess_path_tg_first_version_matches"] is False
+    assert "Python subprocess" in payload["python_subprocess_path_tg_foreign_warning"]
+    assert str(foreign_tg) in payload["python_subprocess_path_tg_foreign_warning"]
+    assert str(managed_tg.parent) in payload["python_subprocess_path_tg_foreign_remediation"]
+    assert "delete" not in payload["python_subprocess_path_tg_foreign_remediation"].lower()
 
 
 def test_lsp_setup_runs_managed_provider_installer(
@@ -3125,6 +3215,49 @@ def _write_mixed_invoice_fixture(tmp_path: Path, *, package_json: bool = False) 
     }
 
 
+def _write_invoice_service_ambiguity_fixture(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    billing_dir = src_dir / "billing"
+    tests_dir = project / "tests"
+    billing_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (src_dir / "__init__.py").write_text("", encoding="utf-8")
+    (billing_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    payments_path = src_dir / "payments.py"
+    payments_path.write_text(
+        "TAX_RATE = 0.0825\n\n"
+        "def create_invoice(subtotal):\n"
+        "    tax = subtotal * TAX_RATE\n"
+        "    total = subtotal + tax\n"
+        "    return {'subtotal': subtotal, 'tax': tax, 'total': total}\n",
+        encoding="utf-8",
+    )
+    service_path = billing_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def render_invoice_tax_summary(subtotal):\n"
+        "    invoice = create_invoice(subtotal)\n"
+        "    return f\"invoice tax calculation: {invoice['tax']}\"\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import TAX_RATE, create_invoice\n\n"
+        "def test_create_invoice_tax_calculation():\n"
+        "    invoice = create_invoice(100)\n"
+        "    assert invoice['tax'] == 100 * TAX_RATE\n",
+        encoding="utf-8",
+    )
+    return {
+        "project": project,
+        "payments": payments_path,
+        "service": service_path,
+        "test": test_path,
+    }
+
+
 def _agent_capsule_payload_for_query(project: Path, query: str) -> dict[str, object]:
     result = CliRunner().invoke(
         app,
@@ -3203,6 +3336,51 @@ def test_agent_capsule_file_name_hint_beats_cross_language_symbol_similarity(tmp
 
     assert payload["primary_target"]["file"] == str(paths["python"].resolve())
     assert payload["primary_target"]["symbol"] == "create_invoice"
+
+
+def test_agent_context_commands_prefer_invoice_implementation_over_service_mentions(tmp_path):
+    paths = _write_invoice_service_ambiguity_fixture(tmp_path)
+
+    context_result = CliRunner().invoke(
+        app,
+        [
+            "context-render",
+            "--query",
+            "change invoice tax calculation",
+            "--json",
+            str(paths["project"]),
+        ],
+    )
+    edit_result = CliRunner().invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "change invoice tax calculation",
+            "--json",
+            str(paths["project"]),
+        ],
+    )
+    agent_payload = _agent_capsule_payload_for_query(
+        paths["project"],
+        "change invoice tax calculation",
+    )
+
+    assert context_result.exit_code == 0, context_result.output
+    context_payload = json.loads(context_result.output)
+    assert context_payload["edit_plan_seed"]["primary_file"] == str(paths["payments"].resolve())
+    assert context_payload["navigation_pack"]["primary_target"]["file"] == str(
+        paths["payments"].resolve()
+    )
+    assert edit_result.exit_code == 0, edit_result.output
+    edit_payload = json.loads(edit_result.output)
+    assert edit_payload["edit_plan_seed"]["primary_file"] == str(paths["payments"].resolve())
+    assert edit_payload["navigation_pack"]["primary_target"]["file"] == str(
+        paths["payments"].resolve()
+    )
+    assert agent_payload["primary_target"]["file"] == str(paths["payments"].resolve())
+    assert agent_payload["primary_target"]["symbol"] == "create_invoice"
+    assert agent_payload["ask_user_before_editing"]["required"] is False
 
 
 def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tmp_path):

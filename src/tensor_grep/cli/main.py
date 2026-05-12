@@ -1240,6 +1240,37 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
     return candidates
 
 
+def _doctor_python_subprocess_path_tg_candidate() -> dict[str, str | None] | None:
+    path_to_scan = os.environ.get("PATH", "")
+    if sys.platform.startswith("win"):
+        names = ["tg.exe"]
+    else:
+        names = ["tg"]
+
+    seen: set[str] = set()
+    for entry in path_to_scan.split(_doctor_path_list_separator(path_to_scan)):
+        if not entry:
+            continue
+        directory = Path(entry)
+        for name in names:
+            candidate = directory / name
+            if not candidate.is_file():
+                continue
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate
+            key = str(resolved).lower() if sys.platform.startswith("win") else str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            return {
+                "path": str(resolved),
+                "version": _doctor_tg_candidate_version(resolved),
+            }
+    return None
+
+
 def _doctor_fresh_shell_path_tg_candidates() -> list[dict[str, str | None]]:
     fresh_path_value = _doctor_fresh_shell_path_value()
     if not fresh_path_value:
@@ -1543,6 +1574,24 @@ def _build_doctor_payload(
         fresh_shell_path_tg_first_path,
         fresh_shell_path_tg_first_version,
     )
+    python_subprocess_path_tg_first = _doctor_python_subprocess_path_tg_candidate()
+    python_subprocess_path_tg_first_raw_version = (
+        python_subprocess_path_tg_first.get("version") if python_subprocess_path_tg_first else None
+    )
+    python_subprocess_path_tg_first_version = (
+        str(python_subprocess_path_tg_first_raw_version)
+        if python_subprocess_path_tg_first_raw_version is not None
+        else None
+    )
+    python_subprocess_path_tg_first_path = (
+        str(python_subprocess_path_tg_first.get("path"))
+        if python_subprocess_path_tg_first
+        else None
+    )
+    python_subprocess_path_tg_first_launcher_kind = _doctor_tg_launcher_kind(
+        python_subprocess_path_tg_first_path,
+        python_subprocess_path_tg_first_version,
+    )
     path_tg_foreign_warning = _doctor_tg_foreign_warning(
         label="PATH",
         path=path_tg_first_path,
@@ -1555,6 +1604,17 @@ def _build_doctor_payload(
         version=fresh_shell_path_tg_first_version,
         expected_version=installed_version,
     )
+    python_subprocess_path_tg_foreign_warning = _doctor_tg_foreign_warning(
+        label="Python subprocess PATH",
+        path=python_subprocess_path_tg_first_path,
+        version=python_subprocess_path_tg_first_version,
+        expected_version=installed_version,
+    )
+    python_subprocess_remediation_candidates: list[dict[str, str | None]] = []
+    if python_subprocess_path_tg_first is not None:
+        python_subprocess_remediation_candidates.append(python_subprocess_path_tg_first)
+    python_subprocess_remediation_candidates.extend(path_tg_candidates)
+    python_subprocess_remediation_candidates.extend(fresh_shell_path_tg_candidates)
     gpu_status = _doctor_gpu_status()
     gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
     payload: dict[str, Any] = {
@@ -1620,6 +1680,29 @@ def _build_doctor_payload(
                 fresh_shell_path_tg_first_path if fresh_shell_path_tg_foreign_warning else None
             ),
             candidates=fresh_shell_path_tg_candidates,
+        ),
+        "python_subprocess_path_tg_first": python_subprocess_path_tg_first,
+        "python_subprocess_path_tg_first_version": python_subprocess_path_tg_first_version,
+        "python_subprocess_path_tg_first_launcher_kind": (
+            python_subprocess_path_tg_first_launcher_kind
+        ),
+        "python_subprocess_path_tg_first_version_matches": (
+            _doctor_rust_binary_version_matches(
+                installed_version,
+                python_subprocess_path_tg_first_version,
+            )
+        ),
+        "python_subprocess_path_tg_first_is_foreign": (
+            python_subprocess_path_tg_first_launcher_kind == "foreign"
+        ),
+        "python_subprocess_path_tg_foreign_warning": (python_subprocess_path_tg_foreign_warning),
+        "python_subprocess_path_tg_foreign_remediation": _doctor_tg_foreign_remediation(
+            foreign_path=(
+                python_subprocess_path_tg_first_path
+                if python_subprocess_path_tg_foreign_warning
+                else None
+            ),
+            candidates=python_subprocess_remediation_candidates,
         ),
         "path_tg_launcher_warning": _doctor_path_tg_launcher_warning(
             current_kind=path_tg_first_launcher_kind,
@@ -1706,8 +1789,27 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
             f"kind={payload.get('fresh_shell_path_tg_first_launcher_kind') or 'unknown'} "
             f"version={first_fresh.get('version') or 'unknown'}"
         )
+    python_subprocess_path_tg_first = cast(
+        dict[str, str | None] | None,
+        payload.get("python_subprocess_path_tg_first"),
+    )
+    if python_subprocess_path_tg_first:
+        lines.append(
+            "python_subprocess_path_tg_first: "
+            f"{python_subprocess_path_tg_first.get('path')} "
+            f"kind={payload.get('python_subprocess_path_tg_first_launcher_kind') or 'unknown'} "
+            f"version={python_subprocess_path_tg_first.get('version') or 'unknown'}"
+        )
     if launcher_warning := payload.get("path_tg_launcher_warning"):
         lines.append(f"path_tg_launcher_warning: {launcher_warning}")
+    if python_subprocess_warning := payload.get("python_subprocess_path_tg_foreign_warning"):
+        lines.append(f"python_subprocess_path_tg_foreign_warning: {python_subprocess_warning}")
+    if python_subprocess_remediation := payload.get(
+        "python_subprocess_path_tg_foreign_remediation"
+    ):
+        lines.append(
+            f"python_subprocess_path_tg_foreign_remediation: {python_subprocess_remediation}"
+        )
 
     gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
     lines.append(f"gpu: available={gpu_payload.get('available', False)}")
@@ -2010,10 +2112,15 @@ def _generated_scan_dir_names(paths: list[str]) -> list[str]:
             continue
         path = Path(raw_path)
         try:
-            if path.is_dir() and path.name.lower() in generated_names:
-                found.add(path.name)
             if not path.is_dir():
                 continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            for candidate_name in {path.name, resolved.name}:
+                if candidate_name and candidate_name.lower() in generated_names:
+                    found.add(candidate_name)
             for child in path.iterdir():
                 if child.is_dir() and child.name.lower() in generated_names:
                     found.add(child.name)

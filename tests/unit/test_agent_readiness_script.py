@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -83,6 +84,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     if module.IS_WINDOWS:
         assert "public-doctor-cmd" in names
         assert "public-doctor-pwsh-noprofile" in names
+        assert "public-version-python-subprocess" in names
     assert "repo-doctor" in names
     assert "context-render-trust" in names
     assert "rg-parity-edges" in names
@@ -212,6 +214,13 @@ def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypat
     assert quoted_probe.command == []
     assert quoted_probe.validator is module.validate_windows_launcher_quoted_patterns
 
+    python_subprocess_probe = next(
+        check for check in checks if check.name == "public-version-python-subprocess"
+    )
+    assert python_subprocess_probe.command[:2] == [sys.executable, "-c"]
+    assert "subprocess.run(['tg', '--version']" in python_subprocess_probe.command[2]
+    assert python_subprocess_probe.validator is module.validate_version_output
+
 
 def test_agent_readiness_windows_launcher_probe_rejects_split_quoted_patterns(
     monkeypatch, tmp_path
@@ -270,6 +279,8 @@ def test_agent_readiness_should_accept_current_doctor_backend_name() -> None:
         "path_tg_first_launcher_kind": "managed-native",
         "fresh_shell_path_tg_first_launcher_kind": "managed-native",
         "fresh_shell_path_tg_first_version_matches": True,
+        "python_subprocess_path_tg_first_launcher_kind": "managed-native",
+        "python_subprocess_path_tg_first_version_matches": True,
         "search_acceleration_backend": "standalone-native-tg",
         "rust_binary_version_matches": True,
         "rust_binary_version_status": "matches",
@@ -304,6 +315,8 @@ def test_agent_readiness_should_reject_doctor_native_version_drift() -> None:
         "path_tg_first_launcher_kind": "managed-native",
         "fresh_shell_path_tg_first_launcher_kind": "managed-native",
         "fresh_shell_path_tg_first_version_matches": True,
+        "python_subprocess_path_tg_first_launcher_kind": "managed-native",
+        "python_subprocess_path_tg_first_version_matches": True,
         "search_acceleration_backend": "standalone-native-tg",
         "rust_binary_version_matches": False,
         "rust_binary_version_status": "stale",
@@ -365,6 +378,8 @@ def test_agent_readiness_should_accept_stale_skipped_in_tree_native_binary() -> 
         "path_tg_first_launcher_kind": "python-entrypoint",
         "fresh_shell_path_tg_first_launcher_kind": "managed-native",
         "fresh_shell_path_tg_first_version_matches": True,
+        "python_subprocess_path_tg_first_launcher_kind": "managed-native",
+        "python_subprocess_path_tg_first_version_matches": True,
         "search_acceleration_backend": "rust-core-extension",
         "rust_binary_version_matches": None,
         "rust_binary_version_status": "stale-skipped",
