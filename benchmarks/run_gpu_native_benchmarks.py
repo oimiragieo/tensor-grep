@@ -24,8 +24,11 @@ from run_gpu_benchmarks import (  # noqa: E402
     DEFAULT_SHARD_COUNT,
     GB,
     MB,
+    build_gpu_readiness_next_steps,
+    extract_gpu_pipeline_breakdown,
     generate_gpu_scale_corpus,
     parse_corpus_sizes,
+    summarize_gpu_pipeline_bottlenecks,
 )
 
 DEFAULT_CORPUS_SIZES = (10 * MB, 100 * MB, 500 * MB, 1 * GB, 5 * GB)
@@ -1034,6 +1037,109 @@ def _native_runtime_gate(rows: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def collect_gpu_native_pipeline_samples(
+    rows: list[dict[str, object]],
+    advanced_payload: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    samples: list[dict[str, object]] = []
+    for row in rows:
+        size_label = row.get("size_label") if isinstance(row.get("size_label"), str) else None
+        tg_gpu = row.get("tg_gpu")
+        if not isinstance(tg_gpu, dict):
+            continue
+        native_stats = tg_gpu.get("native_stats")
+        native_stats_pipeline = tg_gpu.get("native_stats_pipeline")
+        if isinstance(native_stats_pipeline, dict):
+            sample = extract_gpu_pipeline_breakdown(
+                {"pipeline": native_stats_pipeline},
+                source="scale_native_stats",
+                source_label=f"{size_label or 'unknown'} native GPU stats",
+                size_label=size_label,
+                process_median_s=(
+                    native_stats.get("process_median_s") if isinstance(native_stats, dict) else None
+                ),
+            )
+            if sample:
+                samples.append(sample)
+            continue
+        runtime_probe_pipeline = tg_gpu.get("runtime_probe_pipeline")
+        if isinstance(runtime_probe_pipeline, dict):
+            sample = extract_gpu_pipeline_breakdown(
+                {"pipeline": runtime_probe_pipeline},
+                source="runtime_probe",
+                source_label=f"{size_label or 'unknown'} runtime probe",
+                size_label=size_label,
+            )
+            if sample:
+                samples.append(sample)
+
+    if not isinstance(advanced_payload, dict) or not advanced_payload.get("enabled", False):
+        return samples
+
+    throughput_rows = advanced_payload.get("throughput_rows")
+    if isinstance(throughput_rows, list):
+        for row in throughput_rows:
+            if not isinstance(row, dict):
+                continue
+            gpu_stats = row.get("gpu_stats")
+            tg_gpu = row.get("tg_gpu")
+            pipeline = gpu_stats.get("pipeline") if isinstance(gpu_stats, dict) else None
+            if not isinstance(pipeline, dict):
+                continue
+            sample = extract_gpu_pipeline_breakdown(
+                {"pipeline": pipeline},
+                source="throughput",
+                source_label=f"{row.get('size_label') or 'unknown'} throughput",
+                size_label=row.get("size_label")
+                if isinstance(row.get("size_label"), str)
+                else None,
+                process_median_s=(
+                    tg_gpu.get("process_median_s") if isinstance(tg_gpu, dict) else None
+                ),
+            )
+            if sample:
+                samples.append(sample)
+
+    stream_overlap = advanced_payload.get("stream_overlap")
+    if isinstance(stream_overlap, dict):
+        gpu_stats = stream_overlap.get("gpu_stats")
+        pipeline = gpu_stats.get("pipeline") if isinstance(gpu_stats, dict) else None
+        if isinstance(pipeline, dict):
+            sample = extract_gpu_pipeline_breakdown(
+                {"pipeline": pipeline},
+                source="stream_overlap",
+                source_label=f"{stream_overlap.get('size_label') or 'unknown'} stream overlap",
+                size_label=(
+                    stream_overlap.get("size_label")
+                    if isinstance(stream_overlap.get("size_label"), str)
+                    else None
+                ),
+            )
+            if sample:
+                samples.append(sample)
+
+    multi_pattern = advanced_payload.get("multi_pattern")
+    if isinstance(multi_pattern, dict):
+        gpu_stats = multi_pattern.get("gpu_stats")
+        gpu_benchmark = multi_pattern.get("gpu")
+        pipeline = gpu_stats.get("pipeline") if isinstance(gpu_stats, dict) else None
+        if isinstance(pipeline, dict):
+            sample = extract_gpu_pipeline_breakdown(
+                {"pipeline": pipeline},
+                source="multi_pattern",
+                source_label="multi-pattern native GPU stats",
+                process_median_s=(
+                    gpu_benchmark.get("process_median_s")
+                    if isinstance(gpu_benchmark, dict)
+                    else None
+                ),
+            )
+            if sample:
+                samples.append(sample)
+
+    return samples
+
+
 def build_native_scale_gate_summary(
     rows: list[dict[str, object]],
     *,
@@ -1178,6 +1284,30 @@ def run_gpu_native_benchmarks(
             tg_gpu_result["sidecar_used"] = runtime_probe.get("sidecar_used")
             if isinstance(runtime_probe.get("pipeline"), dict):
                 tg_gpu_result["runtime_probe_pipeline"] = runtime_probe["pipeline"]
+            native_stats_result = benchmark_json_metric_command(
+                build_tg_gpu_native_stats_command(
+                    tg_binary,
+                    [benchmark_pattern],
+                    corpus_dir,
+                    [device_id],
+                    summary_only=True,
+                ),
+                env=env,
+                runs=1,
+                warmup=0,
+                timeout_s=command_timeout_s,
+                corpus_bytes=actual_bytes,
+                metric_path=("pipeline", "wall_time_ms"),
+                metric_scale=0.001,
+            )
+            native_stats_payload = (
+                native_stats_result.pop("payload", {})
+                if isinstance(native_stats_result.get("payload"), dict)
+                else {}
+            )
+            tg_gpu_result["native_stats"] = native_stats_result
+            if isinstance(native_stats_payload.get("pipeline"), dict):
+                tg_gpu_result["native_stats_pipeline"] = native_stats_payload["pipeline"]
         else:
             diagnostic = str(runtime_probe.get("error") or "native GPU runtime probe failed")
             warnings.append(f"GPU native runtime unsupported at {size_label}: {diagnostic}")
@@ -1297,6 +1427,8 @@ def run_gpu_native_benchmarks(
     throughput_target = analyze_throughput_target(throughput_rows)
     if not throughput_target.get("met"):
         errors.append(str(throughput_target.get("summary", "GPU throughput target was not met.")))
+    gpu_pipeline_samples = collect_gpu_native_pipeline_samples(rows, advanced_payload)
+    gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks(gpu_pipeline_samples)
 
     return {
         "bench_dir": str(bench_dir),
@@ -1313,6 +1445,8 @@ def run_gpu_native_benchmarks(
             rows,
             correctness_checks=correctness_checks,
         ),
+        "gpu_bottleneck_summary": gpu_bottleneck_summary,
+        "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
         "advanced": advanced_payload,
         "warnings": warnings,
         "errors": errors,

@@ -22,7 +22,7 @@ Primary responsibilities:
 - `package-manager-readiness`: Homebrew/Winget/package-manager bundle validation
 - `benchmark-regression`: blocking same-runner base-vs-head regression gate plus accepted-baseline drift reporting
 - `Semantic Release`: semantic-release on `main`
-- `build-release-native-assets`: builds release-native CPU front doors from the semantic-release tag when `steps.release.outputs.released == 'true'`; the macOS amd64 asset is built on an Intel macOS runner label
+- `build-release-native-assets`: builds release-native CPU front doors from the semantic-release tag when `steps.release.outputs.released == 'true'`; the macOS amd64 asset is built on an Intel macOS runner label. The default release-native asset profile remains CPU-only `native-frontdoor`. Setting repository variable `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE=native-frontdoor-gpu` additionally enables opt-in Linux/Windows NVIDIA front-door assets built with CUDA features.
 - `publish-github-release-assets`: uploads and verifies GitHub release assets for the semantic-release tag when `steps.release.outputs.released == 'true'`
 - PyPI build, validation, and publish jobs when semantic-release emits a new version. Wheel and sdist jobs prefetch Rust dependencies with a longer Cargo retry window before `maturin` so transient crates.io DNS failures do not prematurely cancel publication.
 
@@ -151,9 +151,11 @@ manager manifests, and `uv.lock`. Operators and agents must fetch tags/main and 
 local checkout before checking version files or declaring the release complete.
 
 The same release is incomplete until `publish-github-release-assets` verifies the installer-critical
-GitHub assets (`tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, `tg-windows-amd64-cpu.exe`,
-`CHECKSUMS.txt`, and package-manager bundle files). The macOS amd64 asset must be built on an Intel
-macOS runner, currently `macos-15-intel`; `macos-latest` is arm64. PyPI visibility alone is not
-enough evidence when installer or package-manager URLs depend on GitHub release assets. Non-release
-main pushes must leave the semantic-release version output empty so these asset jobs do not mutate
-an older GitHub release.
+GitHub assets for the selected profile. The default `native-frontdoor` profile requires
+`tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, `tg-windows-amd64-cpu.exe`, `CHECKSUMS.txt`, and
+package-manager bundle files. The opt-in `native-frontdoor-gpu` profile additionally requires
+`tg-linux-amd64-nvidia` and `tg-windows-amd64-nvidia.exe`; macOS remains CPU-only. The macOS amd64
+asset must be built on an Intel macOS runner, currently `macos-15-intel`; `macos-latest` is arm64.
+PyPI visibility alone is not enough evidence when installer or package-manager URLs depend on
+GitHub release assets. Non-release main pushes must leave the semantic-release version output empty
+so these asset jobs do not mutate an older GitHub release.

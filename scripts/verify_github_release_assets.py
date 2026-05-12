@@ -200,6 +200,14 @@ NATIVE_FRONTDOOR_BINARY_ASSETS = [
     "tg-windows-amd64-cpu.exe",
 ]
 
+GPU_READY_NATIVE_FRONTDOOR_BINARY_ASSETS = [
+    "tg-linux-amd64-cpu",
+    "tg-linux-amd64-nvidia",
+    "tg-macos-amd64-cpu",
+    "tg-windows-amd64-cpu.exe",
+    "tg-windows-amd64-nvidia.exe",
+]
+
 PACKAGE_MANAGER_ASSETS = [
     "tensor-grep.rb",
     "oimiragieo.tensor-grep.yaml",
@@ -210,6 +218,7 @@ PACKAGE_MANAGER_ASSETS = [
 BINARY_ASSET_PROFILES = {
     "full": FULL_BINARY_ASSETS,
     "native-frontdoor": NATIVE_FRONTDOOR_BINARY_ASSETS,
+    "native-frontdoor-gpu": GPU_READY_NATIVE_FRONTDOOR_BINARY_ASSETS,
 }
 
 

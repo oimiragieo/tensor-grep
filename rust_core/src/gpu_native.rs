@@ -3937,22 +3937,57 @@ fn line_matches_for_file(
 }
 
 fn compile_kernel_module(context: &Arc<CudaContext>, device_id: i32) -> Result<Arc<CudaModule>> {
-    let ptx = catch_cuda("compile CUDA substring kernel via NVRTC", || {
-        compile_ptx_with_opts(
-            SEARCH_KERNEL_SOURCE,
-            CompileOptions {
-                name: Some("gpu_native_search.cu".to_string()),
-                ..Default::default()
-            },
-        )
+    let compute_capability = context
+        .compute_capability()
         .map_err(anyhow::Error::new)
-    })
-    .with_context(|| format!("failed to compile CUDA substring kernel for device {device_id}"))?;
+        .with_context(|| {
+            format!("failed to detect compute capability for CUDA device {device_id}")
+        })?;
+    let architecture_option = nvrtc_architecture_option_for_compute_capability(compute_capability)?;
+    let compile_options = kernel_compile_options_for_compute_capability(compute_capability)?;
+    let ptx = catch_cuda("compile CUDA substring kernel via NVRTC", || {
+        compile_ptx_with_opts(SEARCH_KERNEL_SOURCE, compile_options).map_err(|err| {
+            anyhow!(
+                "CUDA kernel compilation failed: NVRTC could not compile the native search kernel \
+                 for CUDA device {device_id} with {architecture_option} (compute capability {}.{}); \
+                 not falling back to a lower GPU architecture because that can produce an \
+                 incompatible kernel image. Install CUDA/NVRTC 12.8+ for Blackwell/RTX 50-series \
+                 or a toolkit that supports this compute capability. NVRTC error: {err}",
+                compute_capability.0,
+                compute_capability.1
+            )
+        })
+    })?;
 
     context
         .load_module(ptx)
         .map_err(anyhow::Error::new)
         .with_context(|| format!("failed to load compiled CUDA module for device {device_id}"))
+}
+
+fn kernel_compile_options_for_compute_capability(
+    compute_capability: (i32, i32),
+) -> Result<CompileOptions> {
+    Ok(CompileOptions {
+        name: Some("gpu_native_search.cu".to_string()),
+        options: vec![nvrtc_architecture_option_for_compute_capability(
+            compute_capability,
+        )?],
+        ..Default::default()
+    })
+}
+
+fn nvrtc_architecture_option_for_compute_capability(
+    compute_capability: (i32, i32),
+) -> Result<String> {
+    let (major, minor) = compute_capability;
+    if major <= 0 || !(0..=9).contains(&minor) {
+        return Err(anyhow!(
+            "invalid CUDA compute capability {major}.{minor}; not falling back to a lower GPU architecture"
+        ));
+    }
+
+    Ok(format!("--gpu-architecture=compute_{major}{minor}"))
 }
 
 fn open_cuda_context(device_id: i32) -> Result<Arc<CudaContext>> {
@@ -4025,8 +4060,8 @@ fn ensure_cuda_library_path() {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_adaptive_match_capacity, resolve_max_match_capacity,
-        validate_requested_cuda_device_ids,
+        kernel_compile_options_for_compute_capability, resolve_adaptive_match_capacity,
+        resolve_max_match_capacity, validate_requested_cuda_device_ids,
     };
 
     #[test]
@@ -4055,6 +4090,25 @@ mod tests {
 
         assert_eq!(adaptive_capacity, generated_line_count);
         assert!(byte_capacity > adaptive_capacity * 1_000);
+    }
+
+    #[test]
+    fn kernel_compile_options_include_selected_compute_capability_architecture() {
+        let options = kernel_compile_options_for_compute_capability((12, 0)).unwrap();
+
+        assert_eq!(options.name.as_deref(), Some("gpu_native_search.cu"));
+        assert!(options
+            .options
+            .contains(&"--gpu-architecture=compute_120".to_string()));
+    }
+
+    #[test]
+    fn kernel_compile_options_reject_invalid_capability_without_downgrade() {
+        let err = kernel_compile_options_for_compute_capability((0, 0)).unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("invalid CUDA compute capability 0.0"));
+        assert!(message.contains("not falling back"));
     }
 }
 

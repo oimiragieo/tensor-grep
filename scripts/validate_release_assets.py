@@ -671,18 +671,57 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     )
                 strategy = native_assets_job.get("strategy", {})
                 matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
+                matrix_include = matrix.get("include", []) if isinstance(matrix, dict) else []
                 matrix_os = matrix.get("os", []) if isinstance(matrix, dict) else []
-                matrix_os_list = (
-                    [str(matrix_os)]
-                    if isinstance(matrix_os, str)
-                    else [str(item) for item in matrix_os]
-                    if isinstance(matrix_os, list)
-                    else []
-                )
+                if isinstance(matrix_include, list) and matrix_include:
+                    matrix_os_list = [
+                        str(item.get("os"))
+                        for item in matrix_include
+                        if isinstance(item, dict) and item.get("os") is not None
+                    ]
+                    for item in matrix_include:
+                        if not isinstance(item, dict):
+                            continue
+                        os_name = str(item.get("os", "")).lower()
+                        acceleration = str(item.get("acceleration", "")).lower()
+                        asset_name = str(item.get("asset_name", "")).lower()
+                        if "macos" in os_name and (acceleration != "cpu" or "nvidia" in asset_name):
+                            errors.append(
+                                "CI workflow build-release-native-assets must keep macOS CPU-only"
+                            )
+                else:
+                    matrix_os_list = (
+                        [str(matrix_os)]
+                        if isinstance(matrix_os, str)
+                        else [str(item) for item in matrix_os]
+                        if isinstance(matrix_os, list)
+                        else []
+                    )
                 if "macos-15-intel" not in matrix_os_list:
                     errors.append(
                         "CI workflow build-release-native-assets matrix must use an Intel "
                         "macOS runner label (`macos-15-intel`) for `tg-macos-amd64-cpu`"
+                    )
+                if "matrix.acceleration" not in ci_workflow:
+                    errors.append(
+                        "CI workflow build-release-native-assets matrix must include selectable CPU/NVIDIA acceleration"
+                    )
+                if (
+                    "vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor'"
+                    not in ci_workflow
+                ):
+                    errors.append(
+                        "CI workflow release-native asset profile must default to CPU-only `native-frontdoor`"
+                    )
+                if "--features cuda" not in ci_workflow:
+                    errors.append(
+                        "CI workflow build-release-native-assets matrix must build NVIDIA native front doors with `--features cuda`"
+                    )
+                native_gpu_gate = "matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'"
+                if native_gpu_gate not in ci_workflow:
+                    errors.append(
+                        "CI workflow build-release-native-assets NVIDIA entries must be gated by selectable "
+                        "`RELEASE_NATIVE_ASSET_PROFILE`"
                     )
                 native_steps = native_assets_job.get("steps", [])
                 native_run_by_name: dict[str, str] = {}
@@ -725,11 +764,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "CI workflow build-release-native-assets job must include "
                         "step `Build native release front door`"
                     )
-                elif "cargo build --release --no-default-features" not in build_run:
+                elif "cargo build --release ${{ matrix.cargo_args }}" not in build_run:
                     errors.append(
                         "CI workflow build-release-native-assets "
                         "`Build native release front door` step must invoke "
-                        "`cargo build --release --no-default-features`"
+                        "`cargo build --release ${{ matrix.cargo_args }}`"
                     )
                 package_run = native_run_by_name.get("Package native release front door")
                 if package_run is None:
@@ -740,10 +779,12 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                 else:
                     for expected_asset in (
                         "tg-linux-amd64-cpu",
+                        "tg-linux-amd64-nvidia",
                         "tg-macos-amd64-cpu",
                         "tg-windows-amd64-cpu.exe",
+                        "tg-windows-amd64-nvidia.exe",
                     ):
-                        if expected_asset not in package_run:
+                        if expected_asset not in ci_workflow:
                             errors.append(
                                 "CI workflow build-release-native-assets "
                                 f"`Package native release front door` step must package `{expected_asset}`"
@@ -865,9 +906,17 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "step `Validate native release asset matrix and generate checksums`"
                     )
                 else:
+                    if (
+                        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"'
+                        not in validate_native_run
+                    ):
+                        errors.append(
+                            "CI workflow publish-github-release-assets native asset validation and verification "
+                            "steps must use selectable `$RELEASE_NATIVE_ASSET_PROFILE`"
+                        )
                     for required in (
                         "scripts/validate_release_binary_artifacts.py",
-                        "--expected-profile native-frontdoor",
+                        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
                         "--checksums-out artifacts/CHECKSUMS.txt",
                     ):
                         if required not in validate_native_run:
@@ -921,9 +970,14 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "step `Verify GitHub release native asset coverage`"
                     )
                 else:
+                    if '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"' not in verify_run:
+                        errors.append(
+                            "CI workflow publish-github-release-assets native asset validation and verification "
+                            "steps must use selectable `$RELEASE_NATIVE_ASSET_PROFILE`"
+                        )
                     for required in (
                         "scripts/verify_github_release_assets.py",
-                        "--expected-profile native-frontdoor",
+                        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
                         "--wait-seconds",
                         "--poll-interval-seconds",
                     ):
@@ -1070,9 +1124,14 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     )
                 asset_verify_run = gate_run_by_name.get(asset_verify_step)
                 if asset_verify_run is not None:
+                    if '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"' not in asset_verify_run:
+                        errors.append(
+                            "CI workflow publish-github-release-assets native asset validation and verification "
+                            "steps must use selectable `$RELEASE_NATIVE_ASSET_PROFILE`"
+                        )
                     for required in (
                         "scripts/verify_github_release_assets.py",
-                        "--expected-profile native-frontdoor",
+                        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
                         "--wait-seconds",
                         "--poll-interval-seconds",
                     ):

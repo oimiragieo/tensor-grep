@@ -761,30 +761,56 @@ jobs:
             --work-dir .tmp
 
   build-release-native-assets:
-    name: build-release-native-assets (${{ matrix.os }})
+    name: build-release-native-assets (${{ matrix.os }}, ${{ matrix.acceleration }})
     needs: release
     if: needs.release.outputs.released == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    env:
+      RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        include:
+          - os: ubuntu-latest
+            acceleration: cpu
+            cargo_args: --no-default-features
+            asset_name: tg-linux-amd64-cpu
+          - os: ubuntu-latest
+            acceleration: nvidia
+            cargo_args: --features cuda
+            asset_name: tg-linux-amd64-nvidia
+          - os: windows-latest
+            acceleration: cpu
+            cargo_args: --no-default-features
+            asset_name: tg-windows-amd64-cpu.exe
+          - os: windows-latest
+            acceleration: nvidia
+            cargo_args: --features cuda
+            asset_name: tg-windows-amd64-nvidia.exe
+          - os: macos-15-intel
+            acceleration: cpu
+            cargo_args: --no-default-features
+            asset_name: tg-macos-amd64-cpu
     steps:
       - uses: actions/checkout@v6
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
       - name: Setup Rust stable
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Python for PyO3 Linker
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Create venv for PyO3
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         shell: bash
         run: |
           python -m venv .venv
@@ -795,29 +821,30 @@ jobs:
           fi
 
       - name: Build native release front door
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         working-directory: rust_core
-        run: cargo build --release --no-default-features
+        run: cargo build --release ${{ matrix.cargo_args }}
 
       - name: Package native release front door
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.release.outputs.release_version }}
+          NATIVE_ASSET_NAME: ${{ matrix.asset_name }}
         run: |
           set -euo pipefail
           mkdir -p dist-native
           if [ "$RUNNER_OS" = "Windows" ]; then
             src="rust_core/target/release/tg.exe"
-            dest="dist-native/tg-windows-amd64-cpu.exe"
           elif [ "$RUNNER_OS" = "Linux" ]; then
             src="rust_core/target/release/tg"
-            dest="dist-native/tg-linux-amd64-cpu"
           elif [ "$RUNNER_OS" = "macOS" ]; then
             src="rust_core/target/release/tg"
-            dest="dist-native/tg-macos-amd64-cpu"
           else
             echo "Unsupported runner OS: $RUNNER_OS"
             exit 1
           fi
+          dest="dist-native/${NATIVE_ASSET_NAME}"
           cp "$src" "$dest"
           chmod +x "$dest" || true
           "$src" --version | tee version.txt
@@ -825,9 +852,10 @@ jobs:
           "$src" --help >/dev/null
 
       - name: Upload native release front door
+        if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
         uses: actions/upload-artifact@v7
         with:
-          name: release-native-${{ matrix.os }}
+          name: release-native-${{ matrix.os }}-${{ matrix.acceleration }}
           path: dist-native/
 
   publish-github-release-assets:
@@ -855,11 +883,13 @@ jobs:
           path: artifacts/native
 
       - name: Validate native release asset matrix and generate checksums
+        env:
+          RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
         run: |
           uv run python scripts/validate_release_binary_artifacts.py \
             --artifacts-dir artifacts/native \
             --checksums-out artifacts/CHECKSUMS.txt \
-            --expected-profile native-frontdoor
+            --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"
 
       - name: Build package-manager publish bundle
         run: |
@@ -891,12 +921,14 @@ jobs:
             artifacts/package-manager-bundle/BUNDLE_CHECKSUMS.txt
 
       - name: Verify GitHub release native asset coverage
+        env:
+          RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
         run: |
           uv run python scripts/verify_github_release_assets.py \
             --repo "${{ github.repository }}" \
             --tag "v${{ needs.release.outputs.release_version }}" \
             --token "${{ secrets.GITHUB_TOKEN }}" \
-            --expected-profile native-frontdoor \
+            --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" \
             --wait-seconds 120 \
             --poll-interval-seconds 5
 
@@ -991,12 +1023,14 @@ jobs:
 
       - name: Verify GitHub release native assets for semantic-release version
         if: needs.release.outputs.released == 'true'
+        env:
+          RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
         run: |
           python scripts/verify_github_release_assets.py \
             --repo "${{ github.repository }}" \
             --tag "v${{ needs.release.outputs.release_version }}" \
             --token "${{ secrets.GITHUB_TOKEN }}" \
-            --expected-profile native-frontdoor \
+            --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" \
             --wait-seconds 120 \
             --poll-interval-seconds 5
 
