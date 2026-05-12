@@ -33,6 +33,15 @@ class Check(NamedTuple):
     required: bool = True
 
 
+_PYTHON_SUBPROCESS_TG_VERSION_PROBE = (
+    "import subprocess, sys; "
+    "completed = subprocess.run(['tg', '--version'], capture_output=True, text=True); "
+    "sys.stdout.write(completed.stdout); "
+    "sys.stderr.write(completed.stderr); "
+    "raise SystemExit(completed.returncode)"
+)
+
+
 def read_project_version(repo_root: Path) -> str:
     data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
     return str(data["project"]["version"])
@@ -148,6 +157,18 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
         if remediation := payload.get("fresh_shell_path_tg_foreign_remediation"):
             message = f"{message} Remediation: {remediation}"
         raise ReadinessError(message)
+    if IS_WINDOWS:
+        python_launcher_kind = payload.get("python_subprocess_path_tg_first_launcher_kind")
+        if not isinstance(python_launcher_kind, str):
+            raise ReadinessError("doctor JSON missing Python subprocess launcher route diagnostics")
+        python_matches = payload.get("python_subprocess_path_tg_first_version_matches")
+        if python_matches is not True:
+            message = "doctor reports Python subprocess tg version does not match"
+            if warning := payload.get("python_subprocess_path_tg_foreign_warning"):
+                message = f"{message}: {warning}"
+            if remediation := payload.get("python_subprocess_path_tg_foreign_remediation"):
+                message = f"{message} Remediation: {remediation}"
+            raise ReadinessError(message)
     rust_matches = payload.get("rust_binary_version_matches")
     rust_status = payload.get("rust_binary_version_status")
     rust_version_ok = rust_status == "matches" and rust_matches is True
@@ -388,6 +409,17 @@ def build_check_plan(
             )
         if IS_WINDOWS:
             checks.extend([
+                Check(
+                    name="public-version-python-subprocess",
+                    command=[
+                        sys.executable,
+                        "-c",
+                        _PYTHON_SUBPROCESS_TG_VERSION_PROBE,
+                    ],
+                    description=("Verify Python subprocess(['tg', ...]) resolves tensor-grep."),
+                    timeout_s=30,
+                    validator=validate_version_output,
+                ),
                 Check(
                     name="public-doctor-cmd",
                     command=["cmd", "/c", "tg doctor --json --no-lsp"],
