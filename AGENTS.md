@@ -20,12 +20,13 @@ release_docs_current_tag: v1.10.9
 
 As of 2026-05-13, the current tagged release state is `v1.10.9`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, and native GPU/search accuracy hardening are released through GitHub assets and PyPI. Follow-up work should focus on Python subprocess launcher readiness, context/session latency, GPU production viability, ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Release PR: #102 `fix: harden v1.10.7 dogfood followups`
-- Merge commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
-- Release commit: `0074fd2 chore(release): v1.10.8 [skip ci]`
-- Latest merged fix commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
+- Release PR: #103 `fix: harden v1.10.8 release docs governance`
+- Merge commit: `b0df720 fix: harden v1.10.8 release docs governance`
+- Release commit: `d3812b0 chore(release): v1.10.9 [skip ci]`
+- Latest merged fix commit: `b0df720 fix: harden v1.10.8 release docs governance`
 - Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
 - Recent fix commits:
+  - `b0df720 fix: harden v1.10.8 release docs governance`
   - `6ee1d53 fix: harden v1.10.7 dogfood followups`
   - `57f9ada fix: harden gpu search accuracy contracts`
   - `03db0ff fix: harden v1.10.4 dogfood followups`
@@ -62,13 +63,14 @@ As of 2026-05-13, the current tagged release state is `v1.10.9`. The stable inst
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25796273366`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25796273431`: passed on the `v1.10.8` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.8 tg --version` reports `tensor-grep 1.10.8`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.8>
-- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.10.8`
-- Public `v1.10.8` dogfood: release CI, assets, PyPI, `uvx --refresh-package tensor-grep --from tensor-grep==1.10.8 tg --version`, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and direct managed native `tg.exe` all verified `1.10.8`. Python `subprocess.run(["tg", "--version"])` still resolves the foreign Together CLI `tg.exe` from Machine PATH on this host; `tg doctor --json` now reports the route as `foreign` with Machine PATH remediation and does not delete or overwrite unrelated launchers.
-- Public `v1.10.8` GPU evidence remains experimental: explicit managed GPU requests still report `GpuSidecar` / unsupported rather than a qualifying `NativeGpuBackend` row, so no GPU speed promotion is made.
+- Main CI run `25800094003`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25800093062`: passed on the `v1.10.9` release line
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.9 tg --version` reports `tensor-grep 1.10.9`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.9>
+- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.10.9`
+- Public `v1.10.9` dogfood: release CI, assets, PyPI, `uvx --refresh-package tensor-grep --from tensor-grep==1.10.9 tg --version`, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and direct managed native `tg.exe` all verified `1.10.9`. Python `subprocess.run(["tg", "--version"])` still resolves the foreign Together CLI `tg.exe` from Machine PATH on this host; `tg doctor --json` reports the route as `foreign` with Machine PATH remediation and does not delete or overwrite unrelated launchers.
+- Public `v1.10.9` GPU evidence remains experimental: explicit managed GPU requests still report `GpuSidecar` / unsupported rather than a qualifying `NativeGpuBackend` row, so no GPU speed promotion is made.
+- Public `v1.10.8` dogfood: release CI, assets, PyPI, `uvx --refresh-package tensor-grep --from tensor-grep==1.10.8 tg --version`, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and direct managed native `tg.exe` all verified `1.10.8`. Python `subprocess.run(["tg", "--version"])` still resolved the foreign Together CLI `tg.exe` from Machine PATH on this host; `tg doctor --json` reported the route as `foreign` with Machine PATH remediation and did not delete or overwrite unrelated launchers.
 - Public `v1.10.7` dogfood: release CI, assets, PyPI, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and managed native `tg.exe` all verified `tg 1.10.7`. The remaining public-launcher blocker was Python `subprocess.run(["tg", ...])` resolving a foreign Together CLI `tg.exe` when Windows `CreateProcess` chooses `.exe` ahead of the tensor-grep `.com` bridge in the same directory.
 - Public `v1.9.11` source/GitHub/PyPI dogfood: the release-wheel retry follow-up prefetches Cargo dependencies before PyPI artifact builds, publishes all PyPI distributions, and `uvx --from tensor-grep==1.9.11 tg --version` reports `tensor-grep 1.9.11`.
 - Public `v1.9.10` source/GitHub-asset dogfood: the release contains the v1.9.9 dogfood follow-ups, but PyPI publication was incomplete until the v1.9.11 release-wheel retry follow-up published a replacement patch.
