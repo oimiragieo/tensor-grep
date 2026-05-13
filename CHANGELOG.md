@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v1.10.10 (2026-05-13)
+
+### Bug Fixes
+
+- Add explicit Windows subprocess launcher repair
+  ([`dd995fc`](https://github.com/oimiragieo/tensor-grep/commit/dd995fc0967dc30589f4ba7214ab1d5082aaf306))
+
+Adds an explicit Windows repair command for foreign tg.exe subprocess shadows, keeps repaired native
+  front-door copies refreshed on upgrade, and documents the launcher recovery contract.
+
+### Chores
+
+- Harden v1.10.9 readiness dogfood
+  ([`ea2303a`](https://github.com/oimiragieo/tensor-grep/commit/ea2303ae4a8142f9cbb71ddaf92bfe9800f90422))
+
+Sync v1.10.9 release proof docs, add a repo-local agent-readiness warmup before uv/tg trust probes,
+  and stamp GPU dogfood post-version labels automatically.\n\nValidation: ruff, format, mypy, full
+  pytest, release asset validation, stamp check, git diff --check, and agent-readiness dogfood with
+  only the known foreign Machine PATH Python subprocess blocker remaining.
+
+
 ## v1.10.9 (2026-05-13)
 
 ### Bug Fixes
