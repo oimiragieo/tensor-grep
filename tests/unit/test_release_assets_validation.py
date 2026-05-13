@@ -139,13 +139,20 @@ def test_should_reject_release_docs_with_stale_latest_release_labels():
                 "release_docs_current_tag: v1.10.7\n"
                 "Latest tagged GitHub release: [`v1.10.6`](https://example.test/v1.10.6).\n"
                 "Latest complete PyPI release: [`v1.10.6`](https://example.test/v1.10.6).\n"
-            )
+            ),
+            "docs/SESSION_HANDOFF.md": (
+                "release_docs_current_tag: v1.10.7\n"
+                "- Latest tagged version: `v1.10.6`\n"
+                "- Latest complete PyPI version: `v1.10.6`\n"
+            ),
         },
         expected_version="1.10.7",
     )
 
     assert any("stale latest tagged GitHub release" in error for error in errors)
     assert any("stale latest complete PyPI release" in error for error in errors)
+    assert any("stale latest tagged version" in error for error in errors)
+    assert any("stale latest complete PyPI version" in error for error in errors)
 
 
 def test_should_accept_readme_when_public_contract_markers_exist():

@@ -164,13 +164,18 @@ def test_stamp_release_assets_syncs_latest_release_labels(tmp_path):
     for relative in (
         "AGENTS.md",
         "SKILL.md",
-        "docs/SESSION_HANDOFF.md",
         "docs/CONTINUATION_PLAN.md",
         "docs/CONTRACTS.md",
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("release_docs_current_tag: v1.9.12\n", encoding="utf-8")
+    (root / "docs" / "SESSION_HANDOFF.md").write_text(
+        "release_docs_current_tag: v1.9.12\n"
+        "- Latest tagged version: `v1.9.10`\n"
+        "- Latest complete PyPI version: `v1.9.10`\n",
+        encoding="utf-8",
+    )
 
     module = _load_module(Path(__file__).resolve().parents[2])
     module.ROOT = root
@@ -180,3 +185,6 @@ def test_stamp_release_assets_syncs_latest_release_labels(tmp_path):
     assert "Latest tagged GitHub release: [`v1.9.12`]" in readme
     assert "Latest complete PyPI release: [`v1.9.12`]" in readme
     assert "/releases/tag/v1.9.12" in readme
+    handoff = (root / "docs" / "SESSION_HANDOFF.md").read_text(encoding="utf-8")
+    assert "- Latest tagged version: `v1.9.12`" in handoff
+    assert "- Latest complete PyPI version: `v1.9.12`" in handoff

@@ -1,14 +1,14 @@
 # Native GPU Crossover Benchmark
 
-## Current post-`v1.10.7` GPU dogfood Read
+## Current post-`v1.10.8` GPU dogfood Read
 
-The post-`v1.10.7` native CUDA work changes the GPU read: single-pattern cold grep is still not a promotion story, but high-intensity fixed-string scans now have a credible native CUDA lane.
+The post-`v1.10.8` native CUDA work changes the GPU read: single-pattern cold grep is still not a promotion story, but high-intensity fixed-string scans now have a credible native CUDA lane.
 
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
 - There is still no crossover for single-pattern literal search: GPU remains slower than `rg` and `tg_cpu` after CUDA startup, file I/O, H2D transfer, and output materialization are counted.
 - There is a measured crossover for many fixed patterns over a large corpus through the local CUDA-enabled native binary.
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary.
-- The public managed binary in `v1.10.7` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
+- The public managed binary in `v1.10.8` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
 - Native CUDA correctness and the high-intensity multi-pattern lane are real, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
 
 Native CUDA correctness passed, but speed/promotion failed remains the current promotion summary for public managed installs.
@@ -52,7 +52,7 @@ The native ingest implementation now applies the same data-movement principles u
 - reserve future GPUDirect Storage work for platforms where direct storage-to-GPU DMA is available, because that is the correct next step to remove the remaining host I/O bounce;
 - reserve NVLink/P2P work for multi-GPU systems whose topology actually supports peer access, instead of assuming PCIe-attached developer GPUs have that path.
 
-Local CUDA-feature release measurements on 2026-05-12 show the host-tail improvement clearly. On the 1GB corpus, host preprocessing dropped from about `15195.926ms` to `71.510ms`; on the 5GB corpus it dropped from about `77161.298ms` to `359.224ms`. A warm PTX cache reduced an isolated 100MB native CUDA CLI run from about `1149.117ms` cold to `672.116ms` warm. These are implementation evidence for the local CUDA-native route, not proof that the public `v1.10.7` managed binary should be promoted.
+Local CUDA-feature release measurements on 2026-05-12 show the host-tail improvement clearly. On the 1GB corpus, host preprocessing dropped from about `15195.926ms` to `71.510ms`; on the 5GB corpus it dropped from about `77161.298ms` to `359.224ms`. A warm PTX cache reduced an isolated 100MB native CUDA CLI run from about `1149.117ms` cold to `672.116ms` warm. These are implementation evidence for the local CUDA-native route, not proof that the public `v1.10.8` managed binary should be promoted.
 
 Agent workflow GPU use follows the same rule. `tg agent --gpu-device-ids ... --json` may run a batched fixed-string evidence scan through the selected native GPU route, records the result in `gpu_acceleration`, and only marks the evidence as used when the route reports `NativeGpuBackend` with `sidecar_used = false`. Sidecar-routed output remains unsupported compatibility evidence and does not change the no-crossover positioning.
 

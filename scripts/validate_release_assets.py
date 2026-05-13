@@ -1948,6 +1948,20 @@ def validate_release_docs_current_prose(
                 re.IGNORECASE,
             ),
         ),
+        (
+            "latest tagged version",
+            re.compile(
+                r"Latest tagged version:\s*`(?P<tag>v\d+\.\d+\.\d+)`",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "latest complete PyPI version",
+            re.compile(
+                r"Latest complete PyPI version:\s*`(?P<tag>v\d+\.\d+\.\d+)`",
+                re.IGNORECASE,
+            ),
+        ),
     ]
     for path, content in documents.items():
         marker = f"release_docs_current_tag: {expected_tag}"
