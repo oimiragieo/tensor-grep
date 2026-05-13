@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.7 (2026-05-13)
+
+### Bug Fixes
+
+- Harden gpu search accuracy contracts
+  ([`57f9ada`](https://github.com/oimiragieo/tensor-grep/commit/57f9adab35468f0a1b710e7fb072216cbf2c6667))
+
+Harden native GPU search correctness and route unsupported semantics safely through CPU/sidecar
+  paths. Refresh CLI help and release/GPU docs with the current contract.
+
+
 ## v1.10.6 (2026-05-12)
 
 ### Bug Fixes
