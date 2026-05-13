@@ -849,6 +849,41 @@ def run_gpu_error_tests(
     }
 
 
+def build_unsupported_native_gpu_error_tests(
+    runtime_probe: dict[str, object],
+    *,
+    timeout_simulation_ms: int,
+) -> dict[str, object]:
+    diagnostic = str(runtime_probe.get("error") or "native GPU runtime route unsupported")
+    base_payload = {
+        "status": "UNSUPPORTED",
+        "exit_code": None,
+        "stderr": diagnostic,
+        "routing_backend": runtime_probe.get("routing_backend"),
+        "routing_reason": runtime_probe.get("routing_reason"),
+        "sidecar_used": runtime_probe.get("sidecar_used"),
+    }
+    return {
+        "invalid_device": {
+            **base_payload,
+            "simulated": False,
+        },
+        "nvrtc_failure": {
+            **base_payload,
+            "simulated": True,
+        },
+        "timeout": {
+            **base_payload,
+            "simulated": True,
+            "timeout_ms": timeout_simulation_ms,
+        },
+        "malformed_inputs": {
+            **base_payload,
+            "simulated": False,
+        },
+    }
+
+
 def analyze_crossover(rows: list[dict[str, object]]) -> dict[str, object]:
     winners = []
     best_gap = None
@@ -1393,14 +1428,24 @@ def run_gpu_native_benchmarks(
                     f"{name} benchmark failed at {size_label}: {candidate.get('stderr', '')}"
                 )
 
-    error_tests = run_gpu_error_tests(
-        tg_binary=tg_binary,
-        corpus_dir=bench_dir,
-        device_id=device_id,
-        timeout_s=command_timeout_s,
-        timeout_simulation_ms=timeout_simulation_ms,
-    )
+    if runtime_probe.get("status") == "PASS":
+        error_tests = run_gpu_error_tests(
+            tg_binary=tg_binary,
+            corpus_dir=bench_dir,
+            device_id=device_id,
+            timeout_s=command_timeout_s,
+            timeout_simulation_ms=timeout_simulation_ms,
+        )
+    else:
+        diagnostic = str(runtime_probe.get("error") or "native GPU runtime route unsupported")
+        warnings.append(f"GPU native error diagnostics unsupported before timing: {diagnostic}")
+        error_tests = build_unsupported_native_gpu_error_tests(
+            runtime_probe,
+            timeout_simulation_ms=timeout_simulation_ms,
+        )
     for name, payload in error_tests.items():
+        if payload.get("status") == "UNSUPPORTED":
+            continue
         if payload.get("status") != "PASS":
             diagnostic = payload.get("stderr") or payload.get("error") or "no diagnostic"
             errors.append(f"GPU error test {name} failed: {diagnostic}")

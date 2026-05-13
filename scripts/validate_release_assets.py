@@ -1933,6 +1933,22 @@ def validate_release_docs_current_prose(
             r"`(?P<tag>v\d+\.\d+\.\d+)`"
         ),
     ]
+    latest_release_patterns = [
+        (
+            "latest tagged GitHub release",
+            re.compile(
+                r"Latest tagged GitHub release:\s*\[`(?P<tag>v\d+\.\d+\.\d+)`\]",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "latest complete PyPI release",
+            re.compile(
+                r"Latest complete PyPI release:\s*\[`(?P<tag>v\d+\.\d+\.\d+)`\]",
+                re.IGNORECASE,
+            ),
+        ),
+    ]
     for path, content in documents.items():
         marker = f"release_docs_current_tag: {expected_tag}"
         if "release_docs_current_tag:" in content and marker not in content:
@@ -1944,6 +1960,13 @@ def validate_release_docs_current_prose(
                     errors.append(
                         f"{path} contains stale current release prose `{found}` for "
                         f"{match.group('subject')}; expected `{expected_tag}`"
+                    )
+        for subject, pattern in latest_release_patterns:
+            for match in pattern.finditer(content):
+                found = match.group("tag")
+                if found != expected_tag:
+                    errors.append(
+                        f"{path} contains stale {subject} `{found}`; expected `{expected_tag}`"
                     )
     return errors
 

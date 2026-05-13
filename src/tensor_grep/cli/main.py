@@ -643,6 +643,40 @@ def _set_windows_user_path_value(path_value: str) -> None:
         winreg.SetValueEx(key, "Path", 0, value_type, path_value)
 
 
+def _windows_python_subprocess_resolution_blocker(
+    *, managed_dir: Path, path_value: str | None
+) -> str | None:
+    if not sys.platform.startswith("win") or not path_value:
+        return None
+
+    candidate = _doctor_python_subprocess_path_tg_candidate(path_value)
+    if not candidate:
+        return None
+
+    candidate_path_text = candidate.get("path")
+    candidate_version = candidate.get("version")
+    candidate_kind = _doctor_tg_launcher_kind(candidate_path_text, candidate_version)
+    if candidate_kind == "managed-native":
+        return None
+    if candidate_kind != "foreign":
+        return None
+
+    foreign_path = Path(str(candidate_path_text))
+    foreign_dir = foreign_path.parent
+    return (
+        "Windows PATH repair could not put managed native tg.exe ahead of the first "
+        "Python subprocess tg.exe in fresh shells. Windows appends User PATH after "
+        "Machine PATH, so a Machine PATH foreign tg.exe can still win "
+        'subprocess.run(["tg", ...]) even when shell PATHEXT resolves tg.com.\n'
+        f"- managed native dir: {managed_dir}\n"
+        f"- first Python subprocess tg.exe: {foreign_path} "
+        f"({candidate_version or 'no recognizable --version output'})\n"
+        f"Remediation: move {managed_dir} earlier in Machine PATH than {foreign_dir}, "
+        f"or rename {foreign_path} if you own that command. Do not remove unrelated "
+        "launchers automatically."
+    )
+
+
 def _ensure_windows_managed_native_first_on_path(native_path: Path) -> str | None:
     if not sys.platform.startswith("win"):
         return None
@@ -670,8 +704,18 @@ def _ensure_windows_managed_native_first_on_path(native_path: Path) -> str | Non
         os.environ["PATH"] = reordered_current_path
         messages.append("current process PATH")
 
-    if not messages:
+    fresh_shell_blocker = _windows_python_subprocess_resolution_blocker(
+        managed_dir=managed_dir,
+        path_value=_doctor_fresh_shell_path_value(),
+    )
+
+    if not messages and not fresh_shell_blocker:
         return None
+    if fresh_shell_blocker:
+        update_line = (
+            f"Updated: {', '.join(messages)}." if messages else "Updated: no PATH entries."
+        )
+        return f"{fresh_shell_blocker}\n{update_line}"
     return (
         "Windows PATH now prefers managed native tg.exe for Python subprocesses.\n"
         f"- {managed_dir}\n"
@@ -1342,8 +1386,10 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
     return candidates
 
 
-def _doctor_python_subprocess_path_tg_candidate() -> dict[str, str | None] | None:
-    path_to_scan = os.environ.get("PATH", "")
+def _doctor_python_subprocess_path_tg_candidate(
+    path_value: str | None = None,
+) -> dict[str, str | None] | None:
+    path_to_scan = os.environ.get("PATH", "") if path_value is None else path_value
     if sys.platform.startswith("win"):
         names = ["tg.exe"]
     else:
@@ -1439,7 +1485,8 @@ def _doctor_tg_foreign_remediation(
     foreign_dir = str(Path(foreign_path).parent)
     return (
         f"Move {managed_dir} earlier in PATH than {foreign_dir}, or rename the foreign tg "
-        "command outside tensor-grep. Do not remove unrelated launchers unless you own them."
+        "command outside tensor-grep. If the foreign directory comes from Machine PATH, "
+        "User PATH repair cannot outrank it. Do not remove unrelated launchers unless you own them."
     )
 
 

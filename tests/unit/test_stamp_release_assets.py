@@ -124,11 +124,59 @@ def test_stamp_release_assets_syncs_release_doc_current_version_prose(tmp_path):
 
     assert module.stamp_assets(check_only=True) == 1
     assert module.stamp_assets(check_only=False) == 0
-    assert "release_docs_current_tag: v1.9.12" in (root / "README.md").read_text(encoding="utf-8")
-    assert "current `v1.9.12` shell/version resolution" in (root / "README.md").read_text(
-        encoding="utf-8"
-    )
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    assert "release_docs_current_tag: v1.9.12" in readme
+    assert "current `v1.9.12` shell/version resolution" in readme
     assert "current `v1.9.12` positioning" in (root / "SKILL.md").read_text(encoding="utf-8")
     assert "current `v1.9.12` release line" in (root / "docs" / "CONTRACTS.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_stamp_release_assets_syncs_latest_release_labels(tmp_path):
+    root = tmp_path
+    (root / "scripts").mkdir()
+    (root / "docs").mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "tensor-grep"\nversion = "1.9.12"\n', encoding="utf-8"
+    )
+    (root / "scripts" / "tensor-grep.rb").write_text(
+        (
+            "class TensorGrep < Formula\n"
+            '  TENSOR_GREP_VERSION = "1.9.12"\n'
+            "  version TENSOR_GREP_VERSION\n"
+            "end\n"
+        ),
+        encoding="utf-8",
+    )
+    (root / "scripts" / "oimiragieo.tensor-grep.yaml").write_text(
+        "# Winget Manifest for tensor-grep v1.9.12\n"
+        "PackageVersion: 1.9.12\n"
+        "InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.9.12/tg-windows-amd64-cpu.exe\n",
+        encoding="utf-8",
+    )
+    (root / "README.md").write_text(
+        "release_docs_current_tag: v1.9.12\n"
+        "Latest tagged GitHub release: [`v1.9.10`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.10).\n"
+        "Latest complete PyPI release: [`v1.9.10`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.9.10).\n",
+        encoding="utf-8",
+    )
+    for relative in (
+        "AGENTS.md",
+        "SKILL.md",
+        "docs/SESSION_HANDOFF.md",
+        "docs/CONTINUATION_PLAN.md",
+        "docs/CONTRACTS.md",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("release_docs_current_tag: v1.9.12\n", encoding="utf-8")
+
+    module = _load_module(Path(__file__).resolve().parents[2])
+    module.ROOT = root
+
+    assert module.stamp_assets(check_only=False) == 0
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    assert "Latest tagged GitHub release: [`v1.9.12`]" in readme
+    assert "Latest complete PyPI release: [`v1.9.12`]" in readme
+    assert "/releases/tag/v1.9.12" in readme
