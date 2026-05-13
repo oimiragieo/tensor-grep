@@ -963,6 +963,81 @@ def test_run_gpu_native_benchmarks_should_not_time_sidecar_routed_gpu_rows(monke
     assert payload["scale_gate_summary"]["speed_gate"]["status"] == "NOT_RUN"
 
 
+def test_run_gpu_native_benchmarks_should_skip_native_error_tests_when_route_unsupported(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_unsupported_error_tests",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        module,
+        "generate_gpu_scale_corpus",
+        lambda output_dir, target_bytes, shard_count: {
+            "corpus_dir": output_dir,
+            "actual_bytes": target_bytes,
+            "total_lines": 10,
+            "file_count": shard_count,
+            "pattern_counts": {"gpu benchmark sentinel": 1},
+        },
+    )
+
+    def _unexpected_error_tests(**_kwargs):
+        raise AssertionError("native error diagnostics require NativeGpuBackend")
+
+    def _fake_run_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--json" not in command_text:
+            return module.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if "--cpu" in command_text:
+            stdout = (
+                '{"routing_backend":"CpuBackend","routing_reason":"cpu-native",'
+                '"sidecar_used":false,"total_matches":2,"total_files":1,'
+                '"matches":[{"file":"sample.log"}]}'
+            )
+        else:
+            stdout = (
+                '{"routing_backend":"GpuSidecar","routing_reason":"python-sidecar",'
+                '"sidecar_used":true,"total_matches":2,"total_files":1,'
+                '"matches":[{"file":"sample.log"}]}'
+            )
+        return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+    monkeypatch.setattr(module, "run_gpu_error_tests", _unexpected_error_tests)
+
+    payload = module.run_gpu_native_benchmarks(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        bench_dir=tmp_path / "gpu_native_bench_data",
+        corpus_sizes=(module.GB,),
+        runs=1,
+        warmup=0,
+        device_id=0,
+        command_timeout_s=5,
+        shard_count=2,
+        benchmark_pattern="gpu benchmark sentinel",
+        timeout_simulation_ms=300,
+        advanced=False,
+    )
+
+    assert set(payload["error_tests"]) == {
+        "invalid_device",
+        "nvrtc_failure",
+        "timeout",
+        "malformed_inputs",
+    }
+    assert all(entry["status"] == "UNSUPPORTED" for entry in payload["error_tests"].values())
+    assert not any(error.startswith("GPU error test ") for error in payload["errors"])
+    assert any(
+        "GPU native error diagnostics unsupported before timing" in warning
+        for warning in payload["warnings"]
+    )
+
+
 def test_run_gpu_native_runtime_probe_should_preserve_pipeline_metrics(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_gpu_native_benchmarks_probe_pipeline",

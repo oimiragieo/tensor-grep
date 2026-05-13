@@ -290,6 +290,22 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         r"current `v(?P<version>\d+\.\d+\.\d+)` "
         r"(?P<subject>shell/version resolution|positioning|release line)"
     )
+    latest_release_patterns = [
+        (
+            "latest tagged GitHub release",
+            re.compile(
+                r"Latest tagged GitHub release:\s*\[`v(?P<version>\d+\.\d+\.\d+)`\]",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "latest complete PyPI release",
+            re.compile(
+                r"Latest complete PyPI release:\s*\[`v(?P<version>\d+\.\d+\.\d+)`\]",
+                re.IGNORECASE,
+            ),
+        ),
+    ]
     for path in required_docs:
         content = path.read_text(encoding="utf-8")
         for fragment in required_fragments:
@@ -302,6 +318,14 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
                     f"{path.relative_to(repo_root)} contains stale current release prose "
                     f"`v{found}` for {match.group('subject')}; expected `v{expected_version}`"
                 )
+        for subject, pattern in latest_release_patterns:
+            for match in pattern.finditer(content):
+                found = match.group("version")
+                if found != expected_version:
+                    missing.append(
+                        f"{path.relative_to(repo_root)} contains stale {subject} "
+                        f"`v{found}`; expected `v{expected_version}`"
+                    )
 
     gpu_docs = [
         repo_root / "README.md",
@@ -310,7 +334,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         repo_root / "docs" / "PAPER.md",
     ]
     gpu_fragments = [
-        "post-`v1.9.6`",
+        f"post-`v{expected_version}`",
         "1GB and 5GB correctness",
         "RTX 4070",
         "RTX 5070",

@@ -124,6 +124,30 @@ def test_should_require_semantic_release_build_to_refresh_uv_lock():
     assert "semantic_release.build_command must stage release docs after stamping" in joined_errors
 
 
+def test_should_reject_release_docs_with_stale_latest_release_labels():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_release_docs_current_prose(
+        documents={
+            "README.md": (
+                "release_docs_current_tag: v1.10.7\n"
+                "Latest tagged GitHub release: [`v1.10.6`](https://example.test/v1.10.6).\n"
+                "Latest complete PyPI release: [`v1.10.6`](https://example.test/v1.10.6).\n"
+            )
+        },
+        expected_version="1.10.7",
+    )
+
+    assert any("stale latest tagged GitHub release" in error for error in errors)
+    assert any("stale latest complete PyPI release" in error for error in errors)
+
+
 def test_should_accept_readme_when_public_contract_markers_exist():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

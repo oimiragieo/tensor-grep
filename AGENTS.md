@@ -18,15 +18,15 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 release_docs_current_tag: v1.10.7
 
-As of 2026-05-12, the current tagged release state is `v1.10.7`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, and release wheel Cargo prefetch retries are released through GitHub assets and PyPI. Follow-up work should focus on Python subprocess launcher readiness, context/session latency, GPU production viability, ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-05-13, the current tagged release state is `v1.10.7`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, and native GPU/search accuracy hardening are released through GitHub assets and PyPI. Follow-up work should focus on Python subprocess launcher readiness, context/session latency, GPU production viability, ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Release PR: #100 `fix: harden v1.10.5 dogfood blockers`
-- Merge commit: `7a8c9cf fix: harden v1.10.5 dogfood blockers`
-- Release commit: `b8680e8 chore(release): v1.10.6 [skip ci]`
-- Latest merged fix commit: `7a8c9cf fix: harden v1.10.5 dogfood blockers`
+- Release PR: #101 `fix: harden gpu search accuracy contracts`
+- Merge commit: `57f9ada fix: harden gpu search accuracy contracts`
+- Release commit: `f4aac39 chore(release): v1.10.7 [skip ci]`
+- Latest merged fix commit: `57f9ada fix: harden gpu search accuracy contracts`
 - Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
 - Recent fix commits:
-  - `7a8c9cf fix: harden v1.10.5 dogfood blockers`
+  - `57f9ada fix: harden gpu search accuracy contracts`
   - `03db0ff fix: harden v1.10.4 dogfood followups`
   - `8aecfea fix: harden release wheel retries`
   - `ca9df12 fix: harden v1.9.9 dogfood followups`
@@ -61,13 +61,13 @@ As of 2026-05-12, the current tagged release state is `v1.10.7`. The stable inst
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25762981815`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25762981305`: passed on the `v1.10.6` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.6 tg --version` reports `tensor-grep 1.10.6`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.6>
-- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.10.6`
-- Public `v1.10.6` dogfood: release CI, assets, PyPI, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and managed native `tg.exe` all verified `tg 1.10.6`. The remaining public-launcher blocker is Python `subprocess.run(["tg", ...])` resolving a foreign Together CLI `tg.exe` when Windows `CreateProcess` chooses `.exe` ahead of the tensor-grep `.com` bridge in the same directory.
-- Public `v1.10.6` agentic GPU evidence: `tg agent --gpu-device-ids ... --json` and MCP capsule GPU evidence are opt-in, sidecar-routed GPU evidence is marked unsupported, and no GPU speed promotion is made. Public managed GPU still reports `GpuSidecar` / unsupported rather than a qualifying `NativeGpuBackend` row.
+- Main CI run `25774742206`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25775170033`: passed on the `v1.10.7` release line
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.7 tg --version` reports `tensor-grep 1.10.7`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.7>
+- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.10.7`
+- Public `v1.10.7` dogfood: release CI, assets, PyPI, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and managed native `tg.exe` all verified `tg 1.10.7`. The remaining public-launcher blocker is Python `subprocess.run(["tg", ...])` resolving a foreign Together CLI `tg.exe` when Windows `CreateProcess` chooses `.exe` ahead of the tensor-grep `.com` bridge in the same directory.
+- Public `v1.10.7` agentic GPU evidence: `tg agent --gpu-device-ids ... --json` and MCP capsule GPU evidence are opt-in, sidecar-routed GPU evidence is marked unsupported, and no GPU speed promotion is made. Public managed GPU still reports `GpuSidecar` / unsupported rather than a qualifying `NativeGpuBackend` row.
 - Public `v1.9.11` source/GitHub/PyPI dogfood: the release-wheel retry follow-up prefetches Cargo dependencies before PyPI artifact builds, publishes all PyPI distributions, and `uvx --from tensor-grep==1.9.11 tg --version` reports `tensor-grep 1.9.11`.
 - Public `v1.9.10` source/GitHub-asset dogfood: the release contains the v1.9.9 dogfood follow-ups, but PyPI publication was incomplete until the v1.9.11 release-wheel retry follow-up published a replacement patch.
 - Public `v1.9.9` dogfood: direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.9.9`; PyPI `tensor-grep==1.9.9` resolves; `uvx --from tensor-grep==1.9.9 tg --version` reports `tensor-grep 1.9.9`; `tg update` advanced the managed sidecar and front door from `1.9.8` to `1.9.9`; fresh `cmd`, unprofiled `pwsh`, and the managed native front door report `tg 1.9.9`.

@@ -21,11 +21,11 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "b8680e8 chore(release): v1.10.6 [skip ci]"
-CURRENT_FIX_COMMIT = "7a8c9cf fix: harden v1.10.5 dogfood blockers"
+CURRENT_RELEASE_COMMIT = "f4aac39 chore(release): v1.10.7 [skip ci]"
+CURRENT_FIX_COMMIT = "57f9ada fix: harden gpu search accuracy contracts"
 CURRENT_FEATURE_COMMIT = "34fd556 feat: add agentic GPU evidence capsule"
-CURRENT_MAIN_CI = "25762981815"
-CURRENT_CODEQL = "25762981305"
+CURRENT_MAIN_CI = "25774742206"
+CURRENT_CODEQL = "25775170033"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -120,7 +120,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert CURRENT_MAIN_CI in handoff
     assert CURRENT_CODEQL in handoff
-    assert "tensor-grep==1.10.6" in handoff
+    assert "tensor-grep==1.10.7" in handoff
     assert 'subprocess.run(["tg", ...])' in handoff
     assert "Closed GPU gates and launcher diagnostics gap" in handoff
     assert "Closed docs/version governance and validation placeholder gap" in handoff
@@ -182,8 +182,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.10.6`" in readme
-    assert "tensor-grep==1.10.6" in readme
+    assert "GitHub release assets for `v1.10.7`" in readme
+    assert "tensor-grep==1.10.7" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -198,7 +198,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.10.6` closed:"
+    current_closed_heading = "What `v1.10.7` closed:"
+    v1106_heading = "What `v1.10.6` closed:"
     v1105_heading = "What `v1.10.5` closed:"
     v1100_heading = "What `v1.10.0` closed:"
     v1911_heading = "What `v1.9.11` closed:"
@@ -211,8 +212,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.10.6` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1105_heading, 1)[0]
+    follow_up_heading = "Active post-`v1.10.7` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1106_heading, 1)[0]
+    v1106_closed_block = readme.split(v1106_heading, 1)[1].split(v1105_heading, 1)[0]
     v1105_closed_block = readme.split(v1105_heading, 1)[1].split(v1100_heading, 1)[0]
     v1100_closed_block = readme.split(v1100_heading, 1)[1].split(v1911_heading, 1)[0]
     v1911_closed_block = readme.split(v1911_heading, 1)[1].split(v1910_heading, 1)[0]
@@ -225,10 +227,14 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "ambiguous invoice-task routing" in current_closed_block
-    assert "CWD-is-generated-root" in current_closed_block
+    assert "native GPU search" in current_closed_block
+    assert "smart-case" in current_closed_block
     assert "GpuSidecar" in current_closed_block
-    assert "publish-success-gate" in current_closed_block
+    assert "subprocess.run" in current_closed_block
+    assert "ambiguous invoice-task routing" in v1106_closed_block
+    assert "CWD-is-generated-root" in v1106_closed_block
+    assert "GpuSidecar" in v1106_closed_block
+    assert "publish-success-gate" in v1106_closed_block
     assert "hot-query regex repeats" in v1105_closed_block
     assert "agentic GPU route evidence" in v1100_closed_block
     assert "sidecar-routed GPU evidence is reported as unsupported" in v1100_closed_block
@@ -264,7 +270,7 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
     paper = PAPER_DOC_PATH.read_text(encoding="utf-8")
 
     for doc in (readme, benchmarks, gpu_doc, paper):
-        assert "post-`v1.10.6`" in doc or "post-`v1.10.6` dogfood" in doc
+        assert "post-`v1.10.7`" in doc or "post-`v1.10.7` dogfood" in doc
         assert "1GB and 5GB correctness" in doc
         assert "RTX 4070" in doc
         assert "RTX 5070" in doc
@@ -278,6 +284,8 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
         assert "5.55x" in doc
         assert "2.68x" in doc
 
+    assert "diagnostic probes" in benchmarks
+    assert "UNSUPPORTED" in benchmarks
     assert "35.46x" in gpu_doc
     assert "29.91x" in gpu_doc
 
@@ -328,6 +336,7 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
     assert f"current tagged version is `{CURRENT_RELEASE_TAG}`" in skill
+    assert "PR #101 `fix: harden gpu search accuracy contracts` merged" in skill
     assert "PR #100 `fix: harden v1.10.5 dogfood blockers` merged" in skill
     assert CURRENT_RELEASE_COMMIT in skill
     assert CURRENT_MAIN_CI in skill

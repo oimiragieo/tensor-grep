@@ -243,7 +243,7 @@ Notes:
 - Latest harness loop medians across five iterations: search `0.343s`, plan `0.136s`, apply `0.313s`, verify `0.037s`; all iterations passed.
 - Latest index scaling rows passed build/query thresholds: 1,000 files `build 0.155s / query 0.161s`, 5,000 files `0.728s / 0.691s`, 10,000 files `1.413s / 1.327s`.
 - Latest post-`v1.9.6` native GPU dogfood still found no crossover even after both local GPUs passed 1GB and 5GB correctness: RTX 4070 and RTX 5070 native rows remained slower than `rg` and `tg_cpu`, and Python GPU scale rows are unsupported for native CUDA promotion when they route through the sidecar. Managed NVIDIA installs use PyTorch `cu128` wheels so RTX 50-series hosts have a compatible sidecar baseline, but benchmark scripts still require native backend proof, exact match/file-set correctness, and a measured win over both baselines before any GPU promotion claim.
-- Public `v1.10.6` managed binary note: a public managed binary GPU request still routes through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows must come from a CUDA-feature native build or a release profile that explicitly ships CUDA-native front doors. These artifacts are not public GPU readiness until the public managed binary produces native correctness and speed wins.
+- Public `v1.10.7` managed binary note: a public managed binary GPU request still routes through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows must come from a CUDA-feature native build or a release profile that explicitly ships CUDA-native front doors. These artifacts are not public GPU readiness until the public managed binary produces native correctness and speed wins.
 - Hot-query note: `repeated_regex_native` must stay on native/Rust routing such as `cpu_rust_regex`; benchmark probes should not force a Python fallback. Sub-10ms hot rows use absolute jitter tolerance in addition to ratio checks.
 - `run_repo_retrieval_benchmarks.py` now has a committed default smoke dataset at `benchmarks/datasets/repo_retrieval_eval.jsonl`, so the suite is runnable without a local-only fixture. Latest default artifact: `artifacts/bench_repo_retrieval_benchmarks.json`, with `recall_at_5 = 1.0`, `precision_at_5 = 0.333333`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.492064`, `line_f1 = 0.492064`, `p50_latency_ms = 4.8`, and `token_budget_mean = 74.333333`. This is benchmark-harness coverage, not a replacement for the accepted 2026-04-19 repo-map lexical feature line.
 - The current accepted provider hardcase artifact is `artifacts/bench_provider_navigation_click_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_click_hardcases.md`.
@@ -615,7 +615,11 @@ The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails
 
 ### Native GPU crossover / throughput (`run_gpu_native_benchmarks.py`)
 
-The post-`v1.10.6` native CUDA work splits the GPU story by workload. Single-pattern cold literal search still has no crossover once CUDA startup, file I/O, H2D transfer, and output materialization are counted. Many fixed-string patterns over a large corpus now have a credible native CUDA lane through a local CUDA-feature release binary.
+The post-`v1.10.7` native CUDA work splits the GPU story by workload. Single-pattern cold literal search still has no crossover once CUDA startup, file I/O, H2D transfer, and output materialization are counted. Many fixed-string patterns over a large corpus now have a credible native CUDA lane through a local CUDA-feature release binary.
+
+Native CUDA error diagnostic probes such as invalid device, NVRTC failure, timeout, and malformed-input handling run only after the runtime probe proves `NativeGpuBackend` with `sidecar_used = false`. If the runtime route is `GpuSidecar`, a non-CUDA front door, or another unsupported route, those diagnostics are recorded as `UNSUPPORTED` rather than native CUDA `FAIL` rows.
+
+Native CUDA correctness passed, but speed/promotion failed remains the public promotion read until a shipped managed binary produces qualifying `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins for the declared workload class.
 
 | Workload | Route | Speed read | Result |
 | --- | --- | --- | --- |

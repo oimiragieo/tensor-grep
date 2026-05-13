@@ -40,7 +40,7 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         path.write_text(required_content, encoding="utf-8")
 
     gpu_content = "\n".join([
-        "post-`v1.9.6`",
+        f"post-`v{version}`",
         "1GB and 5GB correctness",
         "RTX 4070",
         "RTX 5070",
@@ -188,6 +188,48 @@ def test_agent_readiness_docs_claims_reject_stale_current_release_prose(tmp_path
         assert "v1.9.10" in str(exc)
     else:
         raise AssertionError("expected stale current release prose to fail")
+
+
+def test_agent_readiness_docs_claims_reject_stale_latest_release_labels(tmp_path) -> None:
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path, version="1.9.12")
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text(
+        readme_path.read_text(encoding="utf-8")
+        + "\nLatest tagged GitHub release: [`v1.9.10`](https://example.test/v1.9.10).\n"
+        + "Latest complete PyPI release: [`v1.9.10`](https://example.test/v1.9.10).\n",
+        encoding="utf-8",
+    )
+
+    try:
+        module.validate_docs_claims("", tmp_path, "1.9.12")
+    except module.ReadinessError as exc:
+        message = str(exc)
+        assert "stale latest tagged GitHub release" in message
+        assert "stale latest complete PyPI release" in message
+    else:
+        raise AssertionError("expected stale latest release labels to fail")
+
+
+def test_agent_readiness_docs_claims_reject_stale_gpu_dogfood_label(tmp_path) -> None:
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path, version="1.9.12")
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text(
+        readme_path.read_text(encoding="utf-8").replace(
+            "post-`v1.9.12`",
+            "post-`v1.9.10`",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        module.validate_docs_claims("", tmp_path, "1.9.12")
+    except module.ReadinessError as exc:
+        assert "post-`v1.9.12`" in str(exc)
+    else:
+        raise AssertionError("expected stale GPU dogfood label to fail")
 
 
 def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypatch) -> None:

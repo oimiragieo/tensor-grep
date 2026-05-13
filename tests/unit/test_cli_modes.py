@@ -1331,6 +1331,7 @@ def test_doctor_json_reports_python_subprocess_foreign_tg_exe(monkeypatch, tmp_p
     assert "Python subprocess" in payload["python_subprocess_path_tg_foreign_warning"]
     assert str(foreign_tg) in payload["python_subprocess_path_tg_foreign_warning"]
     assert str(managed_tg.parent) in payload["python_subprocess_path_tg_foreign_remediation"]
+    assert "Machine PATH" in payload["python_subprocess_path_tg_foreign_remediation"]
     assert "delete" not in payload["python_subprocess_path_tg_foreign_remediation"].lower()
 
 
@@ -6245,7 +6246,8 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
     foreign_dir.mkdir(parents=True)
     python_executable.write_text("", encoding="utf-8")
     native_binary.write_text("new native", encoding="utf-8")
-    (foreign_dir / "tg.exe").write_text("Together CLI", encoding="utf-8")
+    foreign_tg = foreign_dir / "tg.exe"
+    foreign_tg.write_text("Together CLI", encoding="utf-8")
     managed_dir = native_binary.parent
     user_path = {"value": f"{foreign_dir};{managed_dir}"}
 
@@ -6291,6 +6293,14 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate == native_binary:
+            return "tg 0.33.0"
+        if candidate == foreign_tg:
+            return "Together CLI (v2.12.0)"
+        return None
+
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -6303,6 +6313,9 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
         lambda: "0.33.0",
         raising=False,
     )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_tg_candidate_version", _fake_candidate_version
+    )
 
     result = CliRunner().invoke(app, ["upgrade"])
 
@@ -6310,6 +6323,85 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
     assert user_path["value"].split(";")[0] == str(managed_dir)
     assert os.environ["PATH"].split(";")[0] == str(managed_dir)
     assert "Windows PATH now prefers managed native tg.exe" in result.stdout
+
+
+def test_windows_path_repair_reports_machine_path_python_subprocess_blocker(
+    monkeypatch,
+    tmp_path,
+):
+    from tensor_grep.cli import main as cli_main
+
+    install_dir = tmp_path / ".tensor-grep"
+    native_binary = install_dir / "bin" / "tg.exe"
+    foreign_dir = tmp_path / "MachinePython314" / "Scripts"
+    native_binary.parent.mkdir(parents=True)
+    foreign_dir.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    foreign_tg = foreign_dir / "tg.exe"
+    foreign_tg.write_text("Together CLI", encoding="utf-8")
+
+    user_path = {"value": str(native_binary.parent)}
+    machine_path = {"value": str(foreign_dir)}
+
+    class _FakeKey:
+        def __init__(self, root, subkey):
+            self.root = root
+            self.subkey = subkey
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    fake_winreg = types.SimpleNamespace()
+    fake_winreg.HKEY_CURRENT_USER = object()
+    fake_winreg.HKEY_LOCAL_MACHINE = object()
+    fake_winreg.KEY_SET_VALUE = 2
+    fake_winreg.REG_EXPAND_SZ = 2
+    fake_winreg.REG_SZ = 1
+    fake_winreg.OpenKey = lambda root, subkey, *_args: _FakeKey(root, subkey)
+
+    def _query_value_ex(key, name):
+        if name != "Path":
+            raise OSError("missing registry value")
+        if key.root is fake_winreg.HKEY_CURRENT_USER:
+            return user_path["value"], fake_winreg.REG_EXPAND_SZ
+        if key.root is fake_winreg.HKEY_LOCAL_MACHINE:
+            return machine_path["value"], fake_winreg.REG_EXPAND_SZ
+        raise OSError("missing registry value")
+
+    def _set_value_ex(key, name, _reserved, _value_type, value):
+        assert key.root is fake_winreg.HKEY_CURRENT_USER
+        assert name == "Path"
+        user_path["value"] = value
+
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate == native_binary:
+            return "tg 0.33.0"
+        if candidate == foreign_tg:
+            return "Together CLI (v2.12.0)"
+        return None
+
+    fake_winreg.QueryValueEx = _query_value_ex
+    fake_winreg.SetValueEx = _set_value_ex
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("PATH", f"{foreign_dir};{native_binary.parent}")
+    monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+
+    message = cli_main._ensure_windows_managed_native_first_on_path(native_binary)
+
+    assert message is not None
+    assert "Python subprocess" in message
+    assert "Machine PATH" in message
+    assert str(foreign_dir) in message
+    assert str(native_binary.parent) in message
+    assert "Do not remove unrelated launchers" in message
+    assert "Windows PATH now prefers managed native tg.exe" not in message
 
 
 def test_upgrade_does_not_treat_repo_dev_venv_as_managed_frontdoor(monkeypatch, tmp_path):
