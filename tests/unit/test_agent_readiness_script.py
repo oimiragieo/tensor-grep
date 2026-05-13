@@ -85,6 +85,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         assert "public-doctor-cmd" in names
         assert "public-doctor-pwsh-noprofile" in names
         assert "public-version-python-subprocess" in names
+    assert "repo-cli-build-warmup" in names
     assert "repo-doctor" in names
     assert "context-render-trust" in names
     assert "rg-parity-edges" in names
@@ -104,6 +105,11 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert broad_scan_check.timeout_s <= 120
     assert broad_scan_check.command[:4] == ["uv", "run", "pytest", "tests/unit/test_cli_modes.py"]
     assert "broad_generated_root_scan" in broad_scan_check.command
+
+    warmup_check = next(check for check in checks if check.name == "repo-cli-build-warmup")
+    assert warmup_check.command == ["uv", "run", "tg", "--version"]
+    assert warmup_check.timeout_s >= 180
+    assert warmup_check.validator is module.validate_version_output
 
     mcp_check = next(check for check in checks if check.name == "mcp-context-render-smoke")
     assert "test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target" in (

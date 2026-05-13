@@ -52,11 +52,20 @@ Current positioning:
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
-- Public GPU note: in `v1.10.8`, the public managed binary still reports explicit GPU requests through `GpuSidecar`; only a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. Local CUDA-native follow-up work shows the viable speed lane is many fixed strings over large corpora, not single-pattern cold grep. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce correctness and speed wins for the declared workload.
+- Public GPU note: in `v1.10.9`, the public managed binary still reports explicit GPU requests through `GpuSidecar`; only a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. Local CUDA-native follow-up work shows the viable speed lane is many fixed strings over large corpora, not single-pattern cold grep. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce correctness and speed wins for the declared workload.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.10.9` closed:
+
+- PR #103 `fix: harden v1.10.8 release docs governance` shipped the release as merge commit `b0df720 fix: harden v1.10.8 release docs governance` and release commit `d3812b0 chore(release): v1.10.9 [skip ci]`
+- main CI run `25800094003` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25800093062` passed
+- GitHub release assets for `v1.10.9` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.10.9 tg --version` reports `tensor-grep 1.10.9`
+- public managed-upgrade dogfood verified `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, direct managed native `tg.exe`, PyPI, `uvx`, and GitHub assets
+- release docs/governance now track the `v1.10.8` dogfood findings: `tg` remains positioned as agent-native code intelligence with rg-compatible search, public GPU remains `GpuSidecar` / unsupported rather than promoted, and Python subprocess launcher blockers are reported as foreign Machine PATH conflicts rather than tensor-grep-owned cleanup targets
+- current follow-up: Python `subprocess.run(["tg", ...])` still requires a non-foreign `tg.exe` earlier in the effective Windows process PATH; `tg doctor --json` reports the foreign Machine PATH blocker with remediation and does not delete unrelated launchers
 
 What `v1.10.8` closed:
 
@@ -130,7 +139,7 @@ What `v1.9.8` closed:
 What `v1.9.7` closed:
 
 - Python GPU scale rows are unsupported for native CUDA promotion, and benchmark artifacts now separate them from native CUDA rows where correctness passed but speed/promotion failed
-- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates. Single-pattern cold grep still has no crossover, but post-`v1.10.8` local CUDA-native measurements show 100 fixed-string 1GB probes beating sequential `rg` end-to-end.
+- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates. Single-pattern cold grep still has no crossover, but post-`v1.10.9` local CUDA-native measurements show 100 fixed-string 1GB probes beating sequential `rg` end-to-end.
 - public benchmark and README positioning now say `tg` is an agent-native code intelligence layer with rg-compatible search; `rg` remains the cold exact text baseline
 
 What `v1.9.6` closed:
@@ -193,7 +202,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.10.8` follow-up:
+Active post-`v1.10.9` follow-up:
 
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
 - keep Python `subprocess.run(["tg", ...])` in readiness: `tg upgrade` should repair Windows User/current PATH when that can put the managed native `tg.exe` ahead of foreign same-name launchers, and should report a Machine PATH blocker when an unrelated foreign `tg.exe` still wins without deleting unrelated tools
@@ -210,12 +219,12 @@ Active post-`v1.10.8` follow-up:
 - keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
 - keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
 - keep GPU experimental until the required 1GB/5GB correctness rows pass and a selected GPU beats both `rg` and `tg_cpu`; current RTX 4070/RTX 5070 smoke proof is correctness/compatibility evidence, not a speed claim
-- post-`v1.10.8` dogfood keeps the near-term performance story on large-file CPU search, not GPU: public managed GPU remains `GpuSidecar` / unsupported, while CPU large-file rows are the strongest current win signal
+- post-`v1.10.9` dogfood keeps the near-term performance story on large-file CPU search, not GPU: public managed GPU remains `GpuSidecar` / unsupported, while CPU large-file rows are the strongest current win signal
 
 Managed native-upgrade dogfood:
 
-- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.10.7` after `tg upgrade`
-- PyPI pinned public install resolves `tensor-grep==1.10.7`
+- direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.10.9` after `tg upgrade`
+- PyPI pinned public install resolves `tensor-grep==1.10.9`
 - `tg doctor --json` classifies unrelated first-PATH or Python-subprocess Together CLI `tg.exe` launchers as `foreign` with explicit remediation; where a tensor-grep `tg.com` bridge is needed to outrank that same-directory `.exe`, public dogfood must verify sidecar-backed commands and Python subprocess resolution as well as version output
 
 - `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
@@ -793,7 +802,7 @@ $ cargo build --release --features cuda
 $ cargo test --features cuda
 ```
 
-The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles GPU kernels via NVRTC JIT, and caches PTX by architecture and kernel hash across CLI invocations. The post-`v1.10.8` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`). Single-pattern cold grep still has no crossover; the measured CUDA speed lane is many fixed strings over large corpora. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
+The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles GPU kernels via NVRTC JIT, and caches PTX by architecture and kernel hash across CLI invocations. The post-`v1.10.9` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`). Single-pattern cold grep still has no crossover; the measured CUDA speed lane is many fixed strings over large corpora. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
 
 ## Hardware & Software Requirements
 

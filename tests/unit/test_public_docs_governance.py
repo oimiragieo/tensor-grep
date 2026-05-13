@@ -21,11 +21,11 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "0074fd2 chore(release): v1.10.8 [skip ci]"
-CURRENT_FIX_COMMIT = "6ee1d53 fix: harden v1.10.7 dogfood followups"
+CURRENT_RELEASE_COMMIT = "d3812b0 chore(release): v1.10.9 [skip ci]"
+CURRENT_FIX_COMMIT = "b0df720 fix: harden v1.10.8 release docs governance"
 CURRENT_FEATURE_COMMIT = "34fd556 feat: add agentic GPU evidence capsule"
-CURRENT_MAIN_CI = "25796273366"
-CURRENT_CODEQL = "25796273431"
+CURRENT_MAIN_CI = "25800094003"
+CURRENT_CODEQL = "25800093062"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -188,8 +188,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert CURRENT_RELEASE_COMMIT in readme
     assert CURRENT_MAIN_CI in readme
     assert CURRENT_CODEQL in readme
-    assert "GitHub release assets for `v1.10.8`" in readme
-    assert "tensor-grep==1.10.8" in readme
+    assert "GitHub release assets for `v1.10.9`" in readme
+    assert "tensor-grep==1.10.9" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -204,7 +204,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.10.8` closed:"
+    current_closed_heading = "What `v1.10.9` closed:"
+    v1108_heading = "What `v1.10.8` closed:"
     v1107_heading = "What `v1.10.7` closed:"
     v1106_heading = "What `v1.10.6` closed:"
     v1105_heading = "What `v1.10.5` closed:"
@@ -219,8 +220,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.10.8` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1107_heading, 1)[0]
+    follow_up_heading = "Active post-`v1.10.9` follow-up:"
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1108_heading, 1)[0]
+    v1108_closed_block = readme.split(v1108_heading, 1)[1].split(v1107_heading, 1)[0]
     v1107_closed_block = readme.split(v1107_heading, 1)[1].split(v1106_heading, 1)[0]
     v1106_closed_block = readme.split(v1106_heading, 1)[1].split(v1105_heading, 1)[0]
     v1105_closed_block = readme.split(v1105_heading, 1)[1].split(v1100_heading, 1)[0]
@@ -238,6 +240,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "GpuSidecar" in current_closed_block
     assert "subprocess.run" in current_closed_block
     assert "agent-native code intelligence" in current_closed_block
+    assert "release docs/governance" in current_closed_block
+    assert "GpuSidecar" in v1108_closed_block
+    assert "subprocess.run" in v1108_closed_block
     assert "native GPU search" in v1107_closed_block
     assert "smart-case" in v1107_closed_block
     assert "ambiguous invoice-task routing" in v1106_closed_block

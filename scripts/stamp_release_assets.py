@@ -14,6 +14,13 @@ RELEASE_DOC_PATHS = (
     "docs/CONTINUATION_PLAN.md",
     "docs/CONTRACTS.md",
 )
+GPU_DOGFOOD_DOC_PATHS = (
+    "README.md",
+    "docs/benchmarks.md",
+    "docs/gpu_crossover.md",
+    "docs/PAPER.md",
+)
+STAMPED_DOC_PATHS = tuple(dict.fromkeys((*RELEASE_DOC_PATHS, *GPU_DOGFOOD_DOC_PATHS)))
 
 
 def _read(path: Path) -> str:
@@ -59,6 +66,10 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
         (
             r"(?m)^(- Latest complete PyPI version:\s*)`v\d+\.\d+\.\d+`",
             rf"\g<1>`{tag}`",
+        ),
+        (
+            r"post-`v\d+\.\d+\.\d+`",
+            f"post-`{tag}`",
         ),
     ]
     stamped = content
@@ -121,7 +132,7 @@ def stamp_assets(*, check_only: bool) -> int:
         if not check_only:
             _write(winget_path, winget_after)
 
-    for relative in RELEASE_DOC_PATHS:
+    for relative in STAMPED_DOC_PATHS:
         doc_path = ROOT / relative
         if not doc_path.exists():
             continue

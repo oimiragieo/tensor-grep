@@ -480,6 +480,15 @@ def build_check_plan(
 
     checks.extend([
         Check(
+            name="repo-cli-build-warmup",
+            command=["uv", "run", "tg", "--version"],
+            description=(
+                "Warm the repo-local uv/tg editable build before bounded agent trust probes."
+            ),
+            timeout_s=240 if IS_WINDOWS else 180,
+            validator=validate_version_output,
+        ),
+        Check(
             name="repo-doctor",
             command=["uv", "run", "tg", "doctor", "--json", "--no-lsp"],
             description="Verify repo tg doctor reports version and PATH parity.",

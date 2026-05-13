@@ -13,10 +13,10 @@ As of 2026-05-13, the current tagged version is `v1.10.9`. Stable installer, PyP
 
 Current release facts:
 
-- PR #102 `fix: harden v1.10.7 dogfood followups` merged and released as `v1.10.8`
-- Merge commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
-- Release commit: `0074fd2 chore(release): v1.10.8 [skip ci]`
-- Latest merged fix commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
+- PR #103 `fix: harden v1.10.8 release docs governance` merged and released as `v1.10.9`
+- Merge commit: `b0df720 fix: harden v1.10.8 release docs governance`
+- Release commit: `d3812b0 chore(release): v1.10.9 [skip ci]`
+- Latest merged fix commit: `b0df720 fix: harden v1.10.8 release docs governance`
 - Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
 - PR #101 `fix: harden gpu search accuracy contracts` merged and released as `v1.10.7`
 - PR #100 `fix: harden v1.10.5 dogfood blockers` merged and released as `v1.10.6`
@@ -39,10 +39,11 @@ Current release facts:
 - Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
-- Main CI run `25796273366` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25796273431` passed on the `v1.10.8` release line.
-- PyPI pinned public install resolves with `uvx --refresh-package tensor-grep --from tensor-grep==1.10.8 tg --version`
-- GitHub release assets for `v1.10.8` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public `v1.10.8` dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, `uvx`, and GitHub assets. Python `subprocess.run(["tg", ...])` remains blocked on this host by a foreign Machine PATH `tg.exe`; `tg doctor --json` reports it as `foreign` with Machine PATH remediation instead of deleting unrelated launchers.
+- Main CI run `25800094003` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25800093062` passed on the `v1.10.9` release line.
+- PyPI pinned public install resolves with `uvx --refresh-package tensor-grep --from tensor-grep==1.10.9 tg --version`
+- GitHub release assets for `v1.10.9` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.10.9` dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, `uvx`, and GitHub assets. Python `subprocess.run(["tg", ...])` remains blocked on this host by a foreign Machine PATH `tg.exe`; `tg doctor --json` reports it as `foreign` with Machine PATH remediation instead of deleting unrelated launchers.
+- PR #102 `fix: harden v1.10.7 dogfood followups` merged and released as `v1.10.8`
 - Public `v1.9.9` dogfood: direct managed native `~/.tensor-grep/bin/tg.exe` reports `tg 1.9.9`; `uvx --from tensor-grep==1.9.9 tg --version` reports `tensor-grep 1.9.9`; `tg update` advanced `1.9.8` to `1.9.9`, refreshed the managed native front door, and fresh `cmd` plus unprofiled `pwsh` report `tg 1.9.9`.
 - Prior public update dogfood: `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4`, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.9.4`. Profiled PowerShell, `cmd`, `pwsh -NoProfile`, WSL, Git Bash, and direct managed native `tg.exe` resolved `tg 1.9.4`; `tg doctor --json` reported `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` for current shells that still route through the compatibility shim before fresh-shell PATH.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH. A simulated fresh shell resolves `C:\Users\oimir\.tensor-grep\bin\tg.exe` before `C:\Users\oimir\bin\tg.cmd`.
