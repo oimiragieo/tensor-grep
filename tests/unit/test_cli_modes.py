@@ -45,6 +45,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "tg PATTERN [PATH ...]",
     "upgrade",
     "update",
+    "repair-launcher",
     "lsp-setup",
     "checkpoint",
     "TG_SIDECAR_PYTHON",
@@ -59,6 +60,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "--hidden",
     "--max-depth",
     "--text",
+    "--allow-foreign-rename",
     "native GPU falls back",
     "gpu_acceleration",
     "sidecar-routed GPU results",
@@ -1150,8 +1152,14 @@ def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
 def test_doctor_launcher_kind_classifies_virtualenv_console_entrypoint(tmp_path: Path) -> None:
 
     venv_tg = tmp_path / ".venv" / "Scripts" / "tg.exe"
+    python_scripts_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
 
     assert cli_main._doctor_tg_launcher_kind(str(venv_tg)) == "python-entrypoint"
+    assert (
+        cli_main._doctor_tg_launcher_kind(str(python_scripts_tg), "tensor-grep 1.10.9")
+        == "python-entrypoint"
+    )
+    assert cli_main._doctor_tg_launcher_kind(str(python_scripts_tg), "tg 1.10.9") == "native-exe"
 
 
 def test_doctor_launcher_kind_classifies_windows_com_bridge(tmp_path: Path) -> None:
@@ -1332,6 +1340,10 @@ def test_doctor_json_reports_python_subprocess_foreign_tg_exe(monkeypatch, tmp_p
     assert str(foreign_tg) in payload["python_subprocess_path_tg_foreign_warning"]
     assert str(managed_tg.parent) in payload["python_subprocess_path_tg_foreign_remediation"]
     assert "Machine PATH" in payload["python_subprocess_path_tg_foreign_remediation"]
+    assert (
+        "repair-launcher --allow-foreign-rename"
+        in payload["python_subprocess_path_tg_foreign_remediation"]
+    )
     assert "delete" not in payload["python_subprocess_path_tg_foreign_remediation"].lower()
 
 
@@ -6401,7 +6413,78 @@ def test_windows_path_repair_reports_machine_path_python_subprocess_blocker(
     assert str(foreign_dir) in message
     assert str(native_binary.parent) in message
     assert "Do not remove unrelated launchers" in message
+    assert "repair-launcher --allow-foreign-rename" in message
     assert "Windows PATH now prefers managed native tg.exe" not in message
+
+
+def test_repair_launcher_requires_explicit_foreign_rename(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    native_binary = install_dir / "bin" / "tg.exe"
+    foreign_dir = tmp_path / "MachinePython314" / "Scripts"
+    native_binary.parent.mkdir(parents=True)
+    foreign_dir.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    foreign_tg = foreign_dir / "tg.exe"
+    foreign_tg.write_text("Together CLI", encoding="utf-8")
+
+    def _fake_candidate_version(path):
+        text = Path(path).read_text(encoding="utf-8")
+        if text == "managed native":
+            return "tg 0.33.0"
+        if text == "Together CLI":
+            return "Together CLI (v2.12.0)"
+        return None
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", f"{foreign_dir};{native_binary.parent}")
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr(cli_main, "_doctor_installed_version", lambda: "0.33.0")
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+
+    blocked = cli_main._repair_windows_python_subprocess_launcher(allow_foreign_rename=False)
+
+    assert blocked["status"] == "blocked_requires_allow_foreign_rename"
+    assert foreign_tg.read_text(encoding="utf-8") == "Together CLI"
+    assert "allow-foreign-rename" in str(blocked["message"])
+
+    repaired = cli_main._repair_windows_python_subprocess_launcher(allow_foreign_rename=True)
+
+    assert repaired["status"] == "repaired"
+    assert Path(str(repaired["replaced_path"])) == foreign_tg
+    backup_path = Path(str(repaired["backup_path"]))
+    assert backup_path.is_file()
+    assert backup_path.read_text(encoding="utf-8") == "Together CLI"
+    assert foreign_tg.read_text(encoding="utf-8") == "managed native"
+    assert repaired["post_repair_version"] == "tg 0.33.0"
+
+
+def test_repair_launcher_command_emits_json_and_nonzero_when_blocked(
+    monkeypatch,
+    tmp_path,
+):
+    native_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    foreign_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
+    native_binary.parent.mkdir(parents=True)
+    foreign_tg.parent.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    foreign_tg.write_text("Together CLI", encoding="utf-8")
+
+    def _fake_candidate_version(path):
+        return "Together CLI (v2.12.0)" if Path(path) == foreign_tg else "tg 0.33.0"
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", f"{foreign_tg.parent};{native_binary.parent}")
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr(cli_main, "_doctor_installed_version", lambda: "0.33.0")
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+
+    result = CliRunner().invoke(app, ["repair-launcher", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked_requires_allow_foreign_rename"
+    assert payload["foreign_path"] == str(foreign_tg.resolve())
+    assert "allow-foreign-rename" in payload["message"]
 
 
 def test_upgrade_does_not_treat_repo_dev_venv_as_managed_frontdoor(monkeypatch, tmp_path):
@@ -6426,14 +6509,17 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
     python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
     native_binary = install_dir / "bin" / "tg.exe"
     bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
+    repaired_tg = tmp_path / "MachinePython314" / "Scripts" / "tg.exe"
     foreign_tg = tmp_path / "ForeignPython" / "Scripts" / "tg.com"
     python_executable.parent.mkdir(parents=True)
     native_binary.parent.mkdir(parents=True)
     bridge_tg.parent.mkdir(parents=True)
+    repaired_tg.parent.mkdir(parents=True)
     foreign_tg.parent.mkdir(parents=True)
     python_executable.write_text("", encoding="utf-8")
     native_binary.write_text("old native", encoding="utf-8")
     bridge_tg.write_text("old native", encoding="utf-8")
+    repaired_tg.write_text("old native", encoding="utf-8")
     foreign_tg.write_text("foreign", encoding="utf-8")
 
     def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
@@ -6442,7 +6528,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
-        if command[0] in {str(native_binary), str(bridge_tg)}:
+        if command[0] in {str(native_binary), str(bridge_tg), str(repaired_tg)}:
             version = (
                 "0.33.0"
                 if Path(command[0]).read_text(encoding="utf-8") == "new native"
@@ -6461,7 +6547,10 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setenv("PATH", os.pathsep.join([str(bridge_tg.parent), str(foreign_tg.parent)]))
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join([str(bridge_tg.parent), str(repaired_tg.parent), str(foreign_tg.parent)]),
+    )
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
@@ -6483,9 +6572,11 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
     assert result.exit_code == 0
     assert native_binary.read_text(encoding="utf-8") == "new native"
     assert bridge_tg.read_text(encoding="utf-8") == "new native"
+    assert repaired_tg.read_text(encoding="utf-8") == "new native"
     assert foreign_tg.read_text(encoding="utf-8") == "foreign"
-    assert "Refreshed 1 PATH tg.com bridge to 0.33.0." in result.stdout
+    assert "Refreshed 2 PATH tensor-grep front-door copies to 0.33.0." in result.stdout
     assert str(bridge_tg) in result.stdout
+    assert str(repaired_tg) in result.stdout
 
 
 def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(monkeypatch, tmp_path):
@@ -6972,7 +7063,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
     assert result.exit_code == 0
     assert popen_calls
     helper_code = popen_calls[0][2]
-    assert "refresh native front door and stale PATH tg.com bridges" in helper_code
+    assert "refresh native front door and stale PATH tensor-grep front-door copies" in helper_code
     assert popen_calls[0][7] == str(native_binary)
     helper_assets = json.loads(popen_calls[0][8])
     assert helper_assets == [
