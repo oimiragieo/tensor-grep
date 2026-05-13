@@ -205,7 +205,7 @@ What `v1.9.0` closed:
 Active post-`v1.10.9` follow-up:
 
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
-- keep Python `subprocess.run(["tg", ...])` in readiness: `tg upgrade` should repair Windows User/current PATH when that can put the managed native `tg.exe` ahead of foreign same-name launchers, and should report a Machine PATH blocker when an unrelated foreign `tg.exe` still wins without deleting unrelated tools
+- keep Python `subprocess.run(["tg", ...])` in readiness: `tg upgrade` should repair Windows User/current PATH when that can put the managed native `tg.exe` ahead of foreign same-name launchers, and should report a Machine PATH blocker when an unrelated foreign `tg.exe` still wins without deleting unrelated tools; `tg repair-launcher --allow-foreign-rename` is the explicit operator-approved path that backs up a foreign `tg.exe` before installing the managed native front door into that slot
 - keep context/session latency guarded: direct validation evidence should reuse repo-map imports, and weak fuzzy symbols should not trigger expensive blast-radius work unless the target is explicit or sufficiently supported
 - agents must inspect top-level `ambiguity` before editing; `ambiguity.status = "tie_requires_confirmation"` is a hard stop for autonomous edits, and `tie_resolved` is acceptable only when `resolved_by` contains explicit evidence
 - keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces
@@ -225,7 +225,7 @@ Managed native-upgrade dogfood:
 
 - direct managed native `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.10.9` after `tg upgrade`
 - PyPI pinned public install resolves `tensor-grep==1.10.9`
-- `tg doctor --json` classifies unrelated first-PATH or Python-subprocess Together CLI `tg.exe` launchers as `foreign` with explicit remediation; where a tensor-grep `tg.com` bridge is needed to outrank that same-directory `.exe`, public dogfood must verify sidecar-backed commands and Python subprocess resolution as well as version output
+- `tg doctor --json` classifies unrelated first-PATH or Python-subprocess Together CLI `tg.exe` launchers as `foreign` with explicit remediation; where a tensor-grep `tg.com` bridge is needed to outrank that same-directory `.exe`, public dogfood must verify sidecar-backed commands and Python subprocess resolution as well as version output; if the operator owns the foreign command, `tg repair-launcher --allow-foreign-rename` backs it up before replacing the PATH slot with the managed native `tg.exe`
 
 - `tg update` from `v1.9.3` initially saw PyPI propagation lag, then installed sidecar `tensor-grep==1.9.4` and refreshed the managed native front door to `tg 1.9.4`
 - `tg doctor --json` now reports `version = 1.9.4`, `rust_binary_version_status = matches`, `search_acceleration_backend = standalone-native-tg`, `path_tg_first_launcher_kind = cmd-shim`, `fresh_shell_path_tg_first_launcher_kind = managed-native`, and a `path_tg_launcher_warning` when the current process still sees the slower shim route

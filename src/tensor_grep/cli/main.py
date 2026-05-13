@@ -114,6 +114,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg agent PATH --query "change invoice tax"`
 - `tg scan --config sgconfig.yml`
 - `tg doctor --with-lsp`
+- `tg repair-launcher --allow-foreign-rename`
 - `tg mcp`
 
 **AI workflows**
@@ -144,6 +145,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
+- Use `tg repair-launcher --allow-foreign-rename` only when Windows Python subprocess resolution is blocked by a foreign `tg.exe` that you own and want tensor-grep to back up.
 - Use `tg session --help` for cached edit-loop and daemon commands.
 
 **Environment overrides**
@@ -531,7 +533,8 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
     for path_value in path_values:
         for candidate in _doctor_path_tg_candidates(path_value):
             candidate_path = Path(str(candidate.get("path") or ""))
-            if candidate_path.name.lower() != "tg.com":
+            candidate_name = candidate_path.name.lower()
+            if candidate_name not in {"tg.com", "tg.exe"}:
                 continue
             if _same_path(candidate_path, native_path):
                 continue
@@ -543,6 +546,8 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
                 continue
             version = candidate.get("version")
             if not _doctor_tg_version_looks_like_tensor_grep(version):
+                continue
+            if candidate_name == "tg.exe" and not str(version).strip().lower().startswith("tg "):
                 continue
             if _native_tg_version_matches(expected_version, version):
                 continue
@@ -579,9 +584,15 @@ def _refresh_windows_tensor_grep_com_bridges(
 def _refreshed_com_bridge_message(expected_version: str, paths: list[Path]) -> str | None:
     if not paths:
         return None
-    noun = "bridge" if len(paths) == 1 else "bridges"
+    names = {path.name.lower() for path in paths}
+    if names == {"tg.com"}:
+        subject = f"PATH tg.com {'bridge' if len(paths) == 1 else 'bridges'}"
+    elif names == {"tg.exe"}:
+        subject = f"PATH tg.exe front-door {'copy' if len(paths) == 1 else 'copies'}"
+    else:
+        subject = f"PATH tensor-grep front-door {'copy' if len(paths) == 1 else 'copies'}"
     rendered_paths = "\n".join(f"- {path}" for path in paths)
-    return f"Refreshed {len(paths)} PATH tg.com {noun} to {expected_version}.\n{rendered_paths}"
+    return f"Refreshed {len(paths)} {subject} to {expected_version}.\n{rendered_paths}"
 
 
 def _windows_path_parts(path_value: str | None) -> list[str]:
@@ -672,9 +683,150 @@ def _windows_python_subprocess_resolution_blocker(
         f"- first Python subprocess tg.exe: {foreign_path} "
         f"({candidate_version or 'no recognizable --version output'})\n"
         f"Remediation: move {managed_dir} earlier in Machine PATH than {foreign_dir}, "
-        f"or rename {foreign_path} if you own that command. Do not remove unrelated "
+        f"or run tg repair-launcher --allow-foreign-rename if you own {foreign_path} "
+        "and want tensor-grep to back it up into a .bak file. Do not remove unrelated "
         "launchers automatically."
     )
+
+
+def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": "not_windows",
+        "platform": sys.platform,
+        "message": "Python subprocess launcher repair is only needed on Windows.",
+        "managed_native": None,
+        "foreign_path": None,
+        "backup_path": None,
+        "replaced_path": None,
+        "pre_repair_version": None,
+        "post_repair_version": None,
+    }
+    if not sys.platform.startswith("win"):
+        return payload
+
+    expected_version = _doctor_installed_version()
+    native_tg_binary = resolve_native_tg_binary()
+    payload["expected_version"] = expected_version
+    payload["managed_native"] = str(native_tg_binary) if native_tg_binary else None
+    if native_tg_binary is None or not native_tg_binary.is_file():
+        payload.update({
+            "status": "blocked_missing_managed_native",
+            "message": (
+                "No managed native tg.exe was found. Run tg upgrade or reinstall tensor-grep "
+                "before repairing Python subprocess launcher resolution."
+            ),
+        })
+        return payload
+
+    native_version = _doctor_tg_candidate_version(native_tg_binary)
+    payload["managed_native_version"] = native_version
+    if not _native_tg_version_matches(expected_version, native_version):
+        payload.update({
+            "status": "blocked_managed_native_version_mismatch",
+            "message": (
+                "Managed native tg.exe is not verified for this tensor-grep version: "
+                f"{native_tg_binary} reports {native_version or 'no version'}, "
+                f"expected {expected_version}."
+            ),
+        })
+        return payload
+
+    candidate = _doctor_python_subprocess_path_tg_candidate()
+    if not candidate:
+        payload.update({
+            "status": "blocked_no_python_subprocess_tg",
+            "message": "No tg.exe candidate was found on PATH for Python subprocess resolution.",
+        })
+        return payload
+
+    candidate_path = Path(str(candidate.get("path") or ""))
+    candidate_version = candidate.get("version")
+    candidate_kind = _doctor_tg_launcher_kind(str(candidate_path), candidate_version)
+    payload.update({
+        "foreign_path": str(candidate_path),
+        "pre_repair_version": candidate_version,
+        "pre_repair_launcher_kind": candidate_kind,
+    })
+
+    if _same_path(candidate_path, native_tg_binary) and _native_tg_version_matches(
+        expected_version,
+        candidate_version,
+    ):
+        payload.update({
+            "status": "already_ok",
+            "message": "Python subprocess resolution already finds the managed native tg.exe.",
+            "post_repair_version": candidate_version,
+        })
+        return payload
+
+    if candidate_kind != "foreign":
+        payload.update({
+            "status": "blocked_non_foreign_launcher",
+            "message": (
+                "Python subprocess resolution does not point at a foreign tg.exe, so "
+                "foreign launcher repair is not applicable. Use tg doctor --json for details."
+            ),
+        })
+        return payload
+
+    if candidate_path.name.lower() != "tg.exe":
+        payload.update({
+            "status": "blocked_unsupported_launcher_name",
+            "message": (
+                "Python subprocess launcher repair only handles a foreign tg.exe selected "
+                f"by Windows CreateProcess, not {candidate_path.name}."
+            ),
+        })
+        return payload
+
+    if not allow_foreign_rename:
+        payload.update({
+            "status": "blocked_requires_allow_foreign_rename",
+            "message": (
+                "Python subprocess resolution is blocked by a foreign tg.exe. Re-run with "
+                "--allow-foreign-rename only if you own that command and accept that it will "
+                "be moved aside to a .bak file before tensor-grep installs its managed "
+                f"native front door at {candidate_path}."
+            ),
+        })
+        return payload
+
+    backup_path = candidate_path.with_name(
+        f"{candidate_path.name}.foreign-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-"
+        f"{uuid4().hex[:8]}.bak"
+    )
+    payload["backup_path"] = str(backup_path)
+    try:
+        os.replace(candidate_path, backup_path)
+        try:
+            shutil.copy2(native_tg_binary, candidate_path)
+            post_version = _doctor_tg_candidate_version(candidate_path)
+            payload["post_repair_version"] = post_version
+            if not _native_tg_version_matches(expected_version, post_version):
+                raise RuntimeError(
+                    "repaired tg.exe reported "
+                    f"{post_version or 'no version'} instead of {expected_version}"
+                )
+        except Exception:
+            candidate_path.unlink(missing_ok=True)
+            os.replace(backup_path, candidate_path)
+            raise
+    except Exception as exc:
+        payload.update({
+            "status": "failed",
+            "message": f"Python subprocess launcher repair failed: {exc}",
+        })
+        return payload
+
+    payload.update({
+        "status": "repaired",
+        "replaced_path": str(candidate_path),
+        "message": (
+            "Python subprocess launcher repaired. The foreign tg.exe was backed up and "
+            "the verified managed native tensor-grep front door now occupies that PATH slot."
+        ),
+    })
+    return payload
 
 
 def _ensure_windows_managed_native_first_on_path(native_path: Path) -> str | None:
@@ -825,7 +977,7 @@ def _schedule_windows_native_frontdoor_refresh(
                         bridge_version = _version(bridge_path)
                         if expected_version not in bridge_version:
                             raise RuntimeError(
-                                "refreshed PATH tg.com bridge reported "
+                                "refreshed PATH tensor-grep front-door copy reported "
                                 + (bridge_version or "no version")
                                 + " for "
                                 + str(bridge_path)
@@ -833,8 +985,9 @@ def _schedule_windows_native_frontdoor_refresh(
                         refreshed_bridges.append(str(bridge_path))
                     bridge_text = ""
                     if refreshed_bridges:
-                        bridge_text = "\\nRefreshed PATH tg.com bridges:\\n" + "\\n".join(
-                            refreshed_bridges
+                        bridge_text = (
+                            "\\nRefreshed PATH tensor-grep front-door copies:\\n"
+                            + "\\n".join(refreshed_bridges)
                         )
                     log_path.write_text(
                         "Native tg front-door refresh completed.\\n"
@@ -930,7 +1083,7 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
             expected_version, native_path, stale_com_bridges
         )
     except OSError as exc:
-        raise RuntimeError(f"PATH tg.com bridge refresh failed: {exc}") from exc
+        raise RuntimeError(f"PATH tensor-grep front-door copy refresh failed: {exc}") from exc
     bridge_message = _refreshed_com_bridge_message(expected_version, refreshed_bridges)
     if bridge_message:
         messages.append(bridge_message)
@@ -1284,6 +1437,8 @@ def _doctor_tg_launcher_kind(
     if suffix in {".com", ".exe"}:
         if ".tensor-grep" in parts and "bin" in parts:
             return "managed-native"
+        if suffix == ".exe" and isinstance(version_text, str) and version_text.startswith("tg "):
+            return "native-exe"
         if "scripts" in parts and (
             suffix == ".exe"
             and (
@@ -1486,7 +1641,10 @@ def _doctor_tg_foreign_remediation(
     return (
         f"Move {managed_dir} earlier in PATH than {foreign_dir}, or rename the foreign tg "
         "command outside tensor-grep. If the foreign directory comes from Machine PATH, "
-        "User PATH repair cannot outrank it. Do not remove unrelated launchers unless you own them."
+        "User PATH repair cannot outrank it. If you own the foreign command, run "
+        "tg repair-launcher --allow-foreign-rename to back it up before installing the "
+        "managed native tg.exe into that PATH slot. Do not remove unrelated launchers "
+        "unless you own them."
     )
 
 
@@ -6524,6 +6682,36 @@ def mcp_server() -> None:
     run_mcp_server()
 
 
+@app.command(name="repair-launcher")
+def repair_launcher(
+    allow_foreign_rename: bool = typer.Option(
+        False,
+        "--allow-foreign-rename",
+        help=(
+            "Move aside the first foreign Windows tg.exe selected by Python subprocess "
+            "resolution and replace it with the managed tensor-grep native front door. "
+            "Use only when you own that foreign command."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Repair Windows Python subprocess tg resolution when explicitly allowed."""
+    payload = _repair_windows_python_subprocess_launcher(allow_foreign_rename=allow_foreign_rename)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(payload["message"])
+        if payload.get("backup_path"):
+            typer.echo(f"backup_path: {payload['backup_path']}")
+        if payload.get("replaced_path"):
+            typer.echo(f"replaced_path: {payload['replaced_path']}")
+        if payload.get("post_repair_version"):
+            typer.echo(f"post_repair_version: {payload['post_repair_version']}")
+
+    if str(payload.get("status") or "").startswith(("blocked", "failed")):
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def doctor(
     path: str = typer.Argument(".", help="Workspace root to inspect."),
@@ -6772,7 +6960,7 @@ def upgrade() -> None:
                 return bool(expected_version and expected_version in version_text)
 
             def _refresh_native_frontdoor_and_bridges() -> str:
-                # refresh native front door and stale PATH tg.com bridges after locked self-upgrade
+                # refresh native front door and stale PATH tensor-grep front-door copies after locked self-upgrade
                 if not expected_version or native_path is None:
                     return ""
 
@@ -6843,7 +7031,7 @@ def upgrade() -> None:
                     bridge_version = _version(bridge_path)
                     if not _version_matches(bridge_version):
                         raise RuntimeError(
-                            "refreshed PATH tg.com bridge reported "
+                            "refreshed PATH tensor-grep front-door copy reported "
                             + (bridge_version or "no version")
                             + " for "
                             + str(bridge_path)
@@ -6851,7 +7039,8 @@ def upgrade() -> None:
                     refreshed_bridges.append(str(bridge_path))
                 if refreshed_bridges:
                     messages.append(
-                        "Refreshed PATH tg.com bridges:\\n" + "\\n".join(refreshed_bridges)
+                        "Refreshed PATH tensor-grep front-door copies:\\n"
+                        + "\\n".join(refreshed_bridges)
                     )
                 return "\\n".join(messages)
 

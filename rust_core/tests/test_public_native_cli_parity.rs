@@ -264,3 +264,35 @@ fn test_agent_json_is_accepted_on_public_native_frontdoor() {
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["routing_reason"], "agent-context-capsule");
 }
+
+#[test]
+fn test_repair_launcher_is_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_python = fake_python_passthrough_script(
+        dir.path(),
+        r#"{"status":"blocked_requires_allow_foreign_rename","message":"blocked"}"#,
+    );
+
+    let output = tg()
+        .current_dir(repo_root())
+        .arg("repair-launcher")
+        .arg("--json")
+        .env("TG_SIDECAR_PYTHON", &fake_python)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["status"], "blocked_requires_allow_foreign_rename");
+}

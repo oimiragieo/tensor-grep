@@ -12,6 +12,7 @@ KNOWN_COMMANDS = {
     "calibrate",
     "upgrade",
     "update",
+    "repair-launcher",
     "audit-verify",
     "mcp",
     "classify",

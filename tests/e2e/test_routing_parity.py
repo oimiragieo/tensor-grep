@@ -20,6 +20,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "calibrate",
     "upgrade",
     "update",
+    "repair-launcher",
     "audit-verify",
     "mcp",
     "classify",
