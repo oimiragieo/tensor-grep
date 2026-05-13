@@ -52,6 +52,14 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
             r"Latest complete PyPI release: \[`v\d+\.\d+\.\d+`\]\(https://github\.com/oimiragieo/tensor-grep/releases/tag/v\d+\.\d+\.\d+\)",
             f"Latest complete PyPI release: [`{tag}`](https://github.com/oimiragieo/tensor-grep/releases/tag/{tag})",
         ),
+        (
+            r"(?m)^(- Latest tagged version:\s*)`v\d+\.\d+\.\d+`",
+            rf"\g<1>`{tag}`",
+        ),
+        (
+            r"(?m)^(- Latest complete PyPI version:\s*)`v\d+\.\d+\.\d+`",
+            rf"\g<1>`{tag}`",
+        ),
     ]
     stamped = content
     for pattern, replacement in replacements:

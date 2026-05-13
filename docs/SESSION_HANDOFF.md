@@ -6,20 +6,21 @@ Last updated: 2026-05-13
 
 release_docs_current_tag: v1.10.8
 
-- Latest tagged version: `v1.10.7`
-- Latest complete PyPI version: `v1.10.7`
-- Latest release PR: #101 `fix: harden gpu search accuracy contracts`
-- Latest merge commit: `57f9ada fix: harden gpu search accuracy contracts`
-- Latest release commit: `f4aac39 chore(release): v1.10.7 [skip ci]`
-- Latest fix commit: `57f9ada fix: harden gpu search accuracy contracts`
+- Latest tagged version: `v1.10.8`
+- Latest complete PyPI version: `v1.10.8`
+- Latest release PR: #102 `fix: harden v1.10.7 dogfood followups`
+- Latest merge commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
+- Latest release commit: `0074fd2 chore(release): v1.10.8 [skip ci]`
+- Latest fix commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
 - Latest feature commit: `34fd556 feat: add agentic GPU evidence capsule`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.7>
-- Main CI run `25774742206`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25775170033`: passed on the `v1.10.7` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.7 tg --version` reports `tensor-grep 1.10.7`
-- GitHub release assets: `v1.10.7` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public `v1.10.7` managed-upgrade dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, and GitHub assets. New readiness work must also check Python `subprocess.run(["tg", ...])`, because Windows `CreateProcess` can resolve a foreign same-directory `tg.exe` even when shells prefer a tensor-grep `tg.com` bridge through `PATHEXT`.
-- Public `v1.10.7` dogfood lesson: GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU rows are the strongest near-term performance story.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.8>
+- Main CI run `25796273366`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25796273431`: passed on the `v1.10.8` release line
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.8 tg --version` reports `tensor-grep 1.10.8`
+- GitHub release assets: `v1.10.8` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.10.8` managed-upgrade dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, `uvx`, and GitHub assets. Python `subprocess.run(["tg", "--version"])` still resolves the foreign Together CLI `tg.exe` from Machine PATH on this host; `tg doctor --json` reports it as `foreign` with Machine PATH remediation and readiness should keep failing until that environment-level PATH conflict is fixed.
+- Public `v1.10.8` dogfood lesson: GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU rows are the strongest near-term performance story.
+- Closed v1.10.8 dogfood follow-up gap: `v1.10.8` synchronizes release docs/governance, keeps public positioning on agent-native code intelligence with rg-compatible search rather than faster-grep claims, reports Python-subprocess foreign launcher blockers precisely, and marks sidecar-routed native GPU diagnostic probes unsupported instead of false failures.
 - Closed v1.10.7 GPU/search accuracy gap: native GPU JSON line numbers are accurate after blank lines, smart-case/hidden/max-depth/text semantics stay on CPU/sidecar routes when native GPU cannot faithfully execute them, and root help/docs describe the fallback behavior.
 - Closed v1.10.0 agentic GPU evidence gap: `v1.10.0` adds opt-in `tg agent --gpu-device-ids ... --json` / MCP GPU evidence, keeps sidecar-routed GPU unsupported for promotion, and updates help/docs/contracts for the agentic GPU surface.
 - Closed v1.9.11 release wheel retry gap: `v1.9.11` prefetches Cargo dependencies with retry/timeout settings before PyPI wheel and sdist builds, publishes all PyPI distributions, and passes `publish-success-gate`.
@@ -54,13 +55,13 @@ release_docs_current_tag: v1.10.8
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.10.7 Scope
+## Current Post-v1.10.8 Scope
 
-Current release branch is publication-complete for `v1.10.7`: PR #101 `fix: harden gpu search accuracy contracts` was squash-merged as `57f9ada`, release commit `f4aac39 chore(release): v1.10.7 [skip ci]` exists, main CI run `25774742206` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25775170033` passed. Public dogfood verified PyPI, release assets, managed upgrade, fresh shell version probes, and `tg doctor --json`; the next launcher/readiness follow-up is Python `subprocess.run(["tg", ...])` resolving a foreign `.exe` path on Windows, plus guarding context/session latency from low-confidence blast-radius work.
+Current release branch is publication-complete for `v1.10.8`: PR #102 `fix: harden v1.10.7 dogfood followups` was squash-merged as `6ee1d53`, release commit `0074fd2 chore(release): v1.10.8 [skip ci]` exists, main CI run `25796273366` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25796273431` passed. Public dogfood verified PyPI, release assets, managed upgrade, fresh shell version probes, direct managed native, `uvx`, and `tg doctor --json`; the remaining launcher/readiness blocker is Python `subprocess.run(["tg", ...])` resolving a foreign Machine PATH `.exe` path on Windows. Keep this as an environment-level blocker with explicit remediation rather than deleting unrelated tools.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`; edit JSON/rollback safety shipped in `v1.9.2`; explicit Python ranking and quoted validation commands shipped in `v1.9.3`; docs-governance and validation placeholders shipped in `v1.9.4`; native CUDA gate hardening, capsule alternatives, help diagnostics, and foreign launcher diagnostics shipped in `v1.9.5`; directory validation, CUDA 12.8 install paths, help coverage, and release-proof governance shipped in `v1.9.6`; GPU benchmark promotion-gate taxonomy and cold-search positioning shipped in `v1.9.7`; stale tensor-grep-owned `tg.com` bridge refresh after upgrade shipped in `v1.9.8`; agent workflow benchmark governance shipped in `v1.9.9`; capsule confidence/secrets/docs dogfood follow-ups shipped in source/GitHub assets in `v1.9.10`; and release wheel Cargo prefetch retries shipped in `v1.9.11`.
 
-Active post-`v1.10.7` implementation scope:
+Active post-`v1.10.8` implementation scope:
 
 - Continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language intent, token economy, follow-up reads, call-site evidence, and workflow benchmarks without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 - Agents must inspect top-level `ambiguity` before editing. `ambiguity.status = "tie_requires_confirmation"` is a hard stop for autonomous edits; `tie_resolved` is acceptable only when `resolved_by` evidence is explicit.

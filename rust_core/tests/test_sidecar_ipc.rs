@@ -549,7 +549,7 @@ fn test_gpu_search_recovers_after_previous_malformed_sidecar_payload() {
                 .env("TG_SIDECAR_SCRIPT", &bad_script);
             tg
         },
-        Duration::from_secs(5),
+        sidecar_test_timeout(),
     );
 
     assert!(!first_output.status.success());
@@ -570,7 +570,7 @@ fn test_gpu_search_recovers_after_previous_malformed_sidecar_payload() {
                 .env("TG_SIDECAR_SCRIPT", &good_script);
             tg
         },
-        Duration::from_secs(5),
+        sidecar_test_timeout(),
     );
 
     assert!(

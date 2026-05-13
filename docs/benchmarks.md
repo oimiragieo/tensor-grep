@@ -615,7 +615,7 @@ The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails
 
 ### Native GPU crossover / throughput (`run_gpu_native_benchmarks.py`)
 
-The post-`v1.10.7` native CUDA work splits the GPU story by workload. Single-pattern cold literal search still has no crossover once CUDA startup, file I/O, H2D transfer, and output materialization are counted. Many fixed-string patterns over a large corpus now have a credible native CUDA lane through a local CUDA-feature release binary.
+The post-`v1.10.8` native CUDA work splits the GPU story by workload. Single-pattern cold literal search still has no crossover once CUDA startup, file I/O, H2D transfer, and output materialization are counted. Many fixed-string patterns over a large corpus now have a credible native CUDA lane through a local CUDA-feature release binary.
 
 Native CUDA error diagnostic probes such as invalid device, NVRTC failure, timeout, and malformed-input handling run only after the runtime probe proves `NativeGpuBackend` with `sidecar_used = false`. If the runtime route is `GpuSidecar`, a non-CUDA front door, or another unsupported route, those diagnostics are recorded as `UNSUPPORTED` rather than native CUDA `FAIL` rows.
 
