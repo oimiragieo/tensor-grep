@@ -2,24 +2,24 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
-## 2026-05-11 Current Handoff
+## 2026-05-12 Current Handoff
 
 release_docs_current_tag: v1.10.6
 
-The current tagged state is `v1.10.5`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade`, refresh of stale tensor-grep-owned `tg.com` PATH bridges after upgrade, public native-front-door parity for advertised Python-backed shapes, Windows `.cmd` quoted-pattern handling, fresh-shell launcher diagnostics, Python-subprocess launcher diagnostics, top-level `validation_commands`, deterministic local `classify`, GPU scale correctness gates, benchmark launcher attribution, scoped GPU device probing, `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, edit JSON/rollback safety, ambiguous capsule tie metadata, workflow benchmark governance, release-doc synchronization, and release wheel Cargo prefetch retries. Public v1.10.5 dogfood verified PyPI, GitHub assets, managed `tg upgrade`, fresh `cmd`, fresh unprofiled `pwsh`, and managed native `tg.exe`; the remaining launcher lesson is that Python `subprocess.run(["tg", ...])` can resolve a foreign same-directory `.exe` even when shells prefer a tensor-grep `.com` bridge. Public GPU remains experimental because managed GPU requests still route through `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU behavior is the near-term performance story. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current tagged state is `v1.10.6`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade`, refresh of stale tensor-grep-owned `tg.com` PATH bridges after upgrade, public native-front-door parity for advertised Python-backed shapes, Windows `.cmd` quoted-pattern handling, fresh-shell launcher diagnostics, Python-subprocess launcher diagnostics, top-level `validation_commands`, deterministic local `classify`, GPU scale correctness gates, benchmark launcher attribution, scoped GPU device probing, `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, edit JSON/rollback safety, ambiguous capsule tie metadata, workflow benchmark governance, release-doc synchronization, and release wheel Cargo prefetch retries. Public v1.10.6 dogfood verified PyPI, GitHub assets, managed `tg upgrade`, fresh `cmd`, fresh unprofiled `pwsh`, and managed native `tg.exe`; the remaining launcher lesson is that Python `subprocess.run(["tg", ...])` can resolve a foreign same-directory `.exe` even when shells prefer a tensor-grep `.com` bridge. Public GPU remains experimental because managed GPU requests still route through `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU behavior is the near-term performance story. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release PR: #99 `fix: harden v1.10.4 dogfood followups`
-- Merge commit: `03db0ff fix: harden v1.10.4 dogfood followups`
-- Release commit: `72bd57c chore(release): v1.10.5 [skip ci]`
-- Latest merged fix commit: `03db0ff fix: harden v1.10.4 dogfood followups`
+- Release PR: #100 `fix: harden v1.10.5 dogfood blockers`
+- Merge commit: `7a8c9cf fix: harden v1.10.5 dogfood blockers`
+- Release commit: `b8680e8 chore(release): v1.10.6 [skip ci]`
+- Latest merged fix commit: `7a8c9cf fix: harden v1.10.5 dogfood blockers`
 - Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
-- Main CI run `25753248700`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
-- CodeQL run `25753247506`: passed on the v1.10.5 release line.
-- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.5 tg --version` reports `tensor-grep 1.10.5`.
-- GitHub release assets for `v1.10.5` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.10.5` after `tg upgrade`; fresh `cmd` and unprofiled `pwsh` also report `tg 1.10.5`.
+- Main CI run `25762981815`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- CodeQL run `25762981305`: passed on the v1.10.6 release line.
+- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.6 tg --version` reports `tensor-grep 1.10.6`.
+- GitHub release assets for `v1.10.6` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version` reports `tg 1.10.6` after `tg upgrade`; fresh `cmd` and unprofiled `pwsh` also report `tg 1.10.6`.
 - Prior managed native-upgrade dogfood: `tg update` from `v1.9.3` installed sidecar `tensor-grep==1.9.4` and refreshed the native front door to `tg 1.9.4` after transient PyPI propagation lag.
 - Public capsule dogfood: `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.
 - Prior public installer dogfood: rerunning `scripts/install.ps1` for `v1.8.31` put `C:\Users\oimir\.tensor-grep\bin` ahead of compatibility shim directories on User PATH, and a simulated fresh shell resolves the native managed front door first.

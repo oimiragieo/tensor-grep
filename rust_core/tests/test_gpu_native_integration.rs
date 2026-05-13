@@ -76,6 +76,20 @@ fn write_single_file_fixture(dir: &Path) -> PathBuf {
     file_path
 }
 
+fn write_blank_line_fixture(dir: &Path) -> PathBuf {
+    let file_path = dir.join("blank-lines.log");
+    fs::write(&file_path, "INFO boot\n\nERROR after blank\nWARN tail\n").unwrap();
+    file_path
+}
+
+fn write_hidden_file_fixture(dir: &Path) -> PathBuf {
+    let corpus = dir.join("hidden-corpus");
+    fs::create_dir(&corpus).unwrap();
+    fs::write(corpus.join(".hidden.log"), "SECRET hidden match\n").unwrap();
+    fs::write(corpus.join("visible.log"), "INFO visible only\n").unwrap();
+    corpus
+}
+
 fn write_multi_file_fixture(dir: &Path) -> PathBuf {
     let corpus = dir.join("corpus");
     fs::create_dir(&corpus).unwrap();
@@ -286,6 +300,104 @@ fn test_gpu_native_single_file_json_routes_to_native_backend() {
     assert_eq!(payload["sidecar_used"], false);
     assert_eq!(payload["total_files"], 1);
     assert_eq!(payload["total_matches"], 2);
+}
+
+#[test]
+fn test_gpu_native_json_preserves_line_numbers_after_blank_lines() {
+    let dir = tempdir().unwrap();
+    let file_path = write_blank_line_fixture(dir.path());
+
+    let gpu_output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--json")
+        .arg("--fixed-strings")
+        .arg("ERROR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    let cpu_output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--cpu")
+        .arg("--json")
+        .arg("--fixed-strings")
+        .arg("ERROR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        gpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&gpu_output.stderr)
+    );
+    assert!(
+        cpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&cpu_output.stderr)
+    );
+
+    assert_eq!(
+        parse_json_tuples(&gpu_output.stdout),
+        parse_json_tuples(&cpu_output.stdout)
+    );
+    let tuples = parse_json_tuples(&gpu_output.stdout);
+    assert_eq!(tuples[0].1, 3);
+    assert_eq!(tuples[0].2, "ERROR after blank");
+}
+
+#[test]
+fn test_gpu_native_json_hidden_matches_cpu_output() {
+    let dir = tempdir().unwrap();
+    let corpus = write_hidden_file_fixture(dir.path());
+
+    let gpu_output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--json")
+        .arg("--hidden")
+        .arg("--fixed-strings")
+        .arg("SECRET")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+
+    let cpu_output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--cpu")
+        .arg("--json")
+        .arg("--hidden")
+        .arg("--fixed-strings")
+        .arg("SECRET")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+
+    assert!(
+        gpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&gpu_output.stderr)
+    );
+    assert!(
+        cpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&cpu_output.stderr)
+    );
+
+    assert_eq!(
+        parse_json_tuples(&gpu_output.stdout),
+        parse_json_tuples(&cpu_output.stdout)
+    );
+    let tuples = parse_json_tuples(&gpu_output.stdout);
+    assert_eq!(tuples.len(), 1);
+    assert_eq!(tuples[0].2, "SECRET hidden match");
 }
 
 #[test]
@@ -662,6 +774,8 @@ fn test_gpu_native_multi_pattern_falls_back_to_batched_passes_for_large_pattern_
         paths: vec![corpus.clone()],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(8 * 1024),
     };
 
@@ -704,6 +818,8 @@ fn test_gpu_native_three_pattern_dispatch_is_below_two_times_single_pattern() {
         paths: vec![corpus.clone()],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: None,
     };
     let multi_config = GpuNativeSearchConfig {
@@ -715,6 +831,8 @@ fn test_gpu_native_three_pattern_dispatch_is_below_two_times_single_pattern() {
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: None,
     };
 

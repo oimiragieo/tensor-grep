@@ -43,6 +43,8 @@ fn test_gpu_native_replays_captured_cuda_graphs_without_changing_results() {
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(4 * 1024),
     };
 
@@ -78,6 +80,8 @@ fn test_gpu_native_cuda_graphs_reduce_batch_overhead_by_ten_percent() {
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(4 * 1024),
     };
 

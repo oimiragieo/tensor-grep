@@ -288,6 +288,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
 
     config = SearchConfig(
         ignore_case=bool(payload.get("ignore_case", False)),
+        smart_case=bool(payload.get("smart_case", False)),
         fixed_strings=bool(payload.get("fixed_strings", False)),
         invert_match=bool(payload.get("invert_match", False)),
         count=bool(payload.get("count", False)),
@@ -295,6 +296,9 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         max_count=payload.get("max_count"),
         word_regexp=bool(payload.get("word_regexp", False)),
         no_ignore=bool(payload.get("no_ignore", False)),
+        hidden=bool(payload.get("hidden", False)),
+        max_depth=payload.get("max_depth"),
+        text=bool(payload.get("text", False)),
         glob=glob_values,
         gpu_device_ids=requested_gpu_device_ids,
         query_pattern=search_patterns[0],

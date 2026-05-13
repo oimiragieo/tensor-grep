@@ -84,6 +84,8 @@ _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 _VALIDATION_RUNNER_SCAN_LIMIT = 512
 _SOURCE_FALLBACK_SCAN_LIMIT = 8
+_DIRECT_VALIDATION_SYMBOL_SCAN_LIMIT = 64
+_DIRECT_VALIDATION_TEST_SCAN_LIMIT = 256
 _SYMBOL_LITERAL_SEED_SCAN_LIMIT = 4096
 _SYMBOL_LITERAL_SEED_MAX_FILES = 16
 _SYMBOL_LITERAL_SEED_MAX_BYTES = 2_000_000
@@ -2035,6 +2037,59 @@ def _file_imports_symbol_from_definition(
         return False
 
     return False
+
+
+def _import_names_reference_symbol_definition(
+    import_names: list[str],
+    *,
+    importer_path: Path,
+    symbol: str,
+    definition_path: str,
+) -> bool:
+    normalized_symbol = symbol.strip()
+    if not normalized_symbol:
+        return False
+
+    for raw_import_name in import_names:
+        import_name = str(raw_import_name).strip()
+        if not import_name:
+            continue
+        variants = [import_name]
+        rust_like = import_name.replace("::", ".")
+        if rust_like != import_name:
+            variants.append(rust_like)
+
+        for candidate in variants:
+            if candidate.endswith(f".{normalized_symbol}") or candidate.endswith(".*"):
+                module_name = candidate.rsplit(".", 1)[0]
+                if _module_path_matches_definition(module_name, definition_path):
+                    return True
+            if importer_path.suffix == ".py" and _module_path_matches_definition(
+                candidate,
+                definition_path,
+            ):
+                return True
+    return False
+
+
+def _direct_validation_import_count_from_repo_map(
+    *,
+    tests: list[str],
+    imports_by_file: dict[str, list[str]],
+    symbol: str,
+    definition_path: str,
+) -> int:
+    count = 0
+    for test_path in tests[:_DIRECT_VALIDATION_TEST_SCAN_LIMIT]:
+        test_file = Path(str(test_path))
+        if _import_names_reference_symbol_definition(
+            imports_by_file.get(str(test_path), []),
+            importer_path=test_file,
+            symbol=symbol,
+            definition_path=definition_path,
+        ):
+            count += 1
+    return count
 
 
 def _python_import_update_target(
@@ -4861,30 +4916,24 @@ def _build_context_pack_from_map(
             for symbol in scored_symbols
         )
         if not explicit_symbol_intent:
-            repo_root = Path(str(payload["path"])).resolve()
-            for symbol in scored_symbols:
-                current_path = str(symbol["file"])
-                if _is_test_file(Path(current_path)):
-                    continue
-                direct_test_count = 0
-                for test_path in payload["tests"]:
-                    test_file = Path(str(test_path))
-                    if not test_file.is_absolute():
-                        test_file = repo_root / test_file
-                    if _file_imports_symbol_from_definition(
-                        test_file,
-                        str(symbol["name"]),
-                        current_path,
-                        repo_root,
-                    ):
-                        direct_test_count += 1
-                if direct_test_count <= 0:
-                    continue
-                file_scores[current_path] = file_scores.get(current_path, 0) + min(
-                    32,
-                    20 + direct_test_count * 4,
-                )
-                _append_reason(file_reasons, current_path, "validation-direct-definition")
+            with _profiling_phase(_profiling_collector, "direct_validation_scoring"):
+                for symbol in scored_symbols[:_DIRECT_VALIDATION_SYMBOL_SCAN_LIMIT]:
+                    current_path = str(symbol["file"])
+                    if _is_test_file(Path(current_path)):
+                        continue
+                    direct_test_count = _direct_validation_import_count_from_repo_map(
+                        tests=[str(test_path) for test_path in payload["tests"]],
+                        imports_by_file=imports_by_file,
+                        symbol=str(symbol["name"]),
+                        definition_path=current_path,
+                    )
+                    if direct_test_count <= 0:
+                        continue
+                    file_scores[current_path] = file_scores.get(current_path, 0) + min(
+                        32,
+                        20 + direct_test_count * 4,
+                    )
+                    _append_reason(file_reasons, current_path, "validation-direct-definition")
 
         scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
         scored_files.sort(key=lambda item: (-item[0], item[1]))
@@ -7338,6 +7387,22 @@ def _preferred_edit_anchor_symbol(
     return primary_symbol
 
 
+def _should_build_edit_plan_blast_radius(
+    symbol: dict[str, Any] | None,
+    file_match: dict[str, Any] | None,
+) -> bool:
+    if symbol is None:
+        return False
+    if bool(symbol.get("exact_query_match") or symbol.get("bridge_query_match")):
+        return True
+
+    reasons = {str(reason) for reason in (file_match or {}).get("reasons", [])}
+    symbol_score = int(symbol.get("score", 0) or 0)
+    if "validation-direct-definition" in reasons:
+        return symbol_score >= 6
+    return symbol_score >= 8 and bool(reasons & {"definition", "source", "import"})
+
+
 def _rollback_risk_from_blast_radius(
     *,
     dependent_matches: list[dict[str, Any]],
@@ -7441,7 +7506,11 @@ def _build_edit_plan_seed(
         else None
     )
     radius_payload = blast_radius_payload
-    if edit_anchor_symbol is not None and radius_payload is None:
+    if (
+        edit_anchor_symbol is not None
+        and radius_payload is None
+        and _should_build_edit_plan_blast_radius(edit_anchor_symbol, primary_file_match)
+    ):
         edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
         if edit_symbol_name:
             radius_payload = build_symbol_blast_radius_from_map(
@@ -7588,26 +7657,44 @@ def _attach_edit_plan_metadata(
             ),
             None,
         )
+        primary_payload_file_match: dict[str, Any] = next(
+            (
+                match
+                for match in payload.get("file_matches", [])
+                if primary_payload_file is not None
+                and str(match.get("path")) == str(primary_payload_file)
+            ),
+            {},
+        )
         edit_anchor_symbol = _preferred_edit_anchor_symbol(payload_file_symbol, ranked_symbols)
         resolved_blast_radius_payload = blast_radius_payload
-        if edit_anchor_symbol is not None and resolved_blast_radius_payload is None:
+        if (
+            edit_anchor_symbol is not None
+            and resolved_blast_radius_payload is None
+            and _should_build_edit_plan_blast_radius(
+                edit_anchor_symbol,
+                primary_payload_file_match,
+            )
+        ):
             edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
             if edit_symbol_name:
-                resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
-                    repo_map,
-                    edit_symbol_name,
-                    max_depth=max_depth,
-                    _profiling_collector=_profiling_collector,
-                )
-        payload["edit_plan_seed"] = _build_edit_plan_seed(
-            repo_map,
-            payload,
-            ranked_symbols=ranked_symbols,
-            query=query,
-            max_files=max_files,
-            max_depth=max_depth,
-            blast_radius_payload=resolved_blast_radius_payload,
-        )
+                with _profiling_phase(_profiling_collector, "edit_plan_blast_radius"):
+                    resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
+                        repo_map,
+                        edit_symbol_name,
+                        max_depth=max_depth,
+                        _profiling_collector=_profiling_collector,
+                    )
+        with _profiling_phase(_profiling_collector, "edit_plan_seed"):
+            payload["edit_plan_seed"] = _build_edit_plan_seed(
+                repo_map,
+                payload,
+                ranked_symbols=ranked_symbols,
+                query=query,
+                max_files=max_files,
+                max_depth=max_depth,
+                blast_radius_payload=resolved_blast_radius_payload,
+            )
         payload["graph_trust_summary"] = (
             dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
             if resolved_blast_radius_payload is not None
@@ -7653,11 +7740,12 @@ def _attach_edit_plan_metadata(
             related_spans=list(payload["edit_plan_seed"].get("related_spans", [])),
             max_spans=max(max_files, max_symbols),
         )
-        payload["navigation_pack"] = _navigation_pack(
-            repo_map,
-            payload,
-            max_reads=max(max_files, max_symbols),
-        )
+        with _profiling_phase(_profiling_collector, "edit_plan_navigation_pack"):
+            payload["navigation_pack"] = _navigation_pack(
+                repo_map,
+                payload,
+                max_reads=max(max_files, max_symbols),
+            )
     return payload
 
 
