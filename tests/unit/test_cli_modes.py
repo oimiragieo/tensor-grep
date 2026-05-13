@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -16,6 +17,7 @@ from typer.completion import get_completion_script
 from typer.testing import CliRunner
 
 from tensor_grep.cli import agent_capsule, repo_map
+from tensor_grep.cli import main as cli_main
 from tensor_grep.cli.main import (
     _candidate_versions_from_pypi_json,
     _candidate_versions_from_pypi_simple_index,
@@ -53,6 +55,11 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "TENSOR_GREP_DEVICE_IDS",
     "TENSOR_GREP_CLASSIFY_PROVIDER",
     "TENSOR_GREP_TRITON_TIMEOUT_SECONDS",
+    "--smart-case",
+    "--hidden",
+    "--max-depth",
+    "--text",
+    "native GPU falls back",
     "gpu_acceleration",
     "sidecar-routed GPU results",
 )
@@ -999,7 +1006,6 @@ def test_doctor_path_tg_candidates_splits_windows_pathext_on_semicolon(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from tensor_grep.cli import main as cli_main
 
     monkeypatch.chdir(tmp_path)
     bridge_tg = Path("Python314") / "Scripts" / "tg.com"
@@ -1021,8 +1027,6 @@ def test_doctor_path_tg_candidates_splits_windows_pathext_on_semicolon(
 
 def test_doctor_fresh_shell_path_uses_windows_registry_separator(monkeypatch) -> None:
     import types
-
-    from tensor_grep.cli import main as cli_main
 
     fake_winreg = types.SimpleNamespace()
     fake_winreg.HKEY_LOCAL_MACHINE = object()
@@ -1116,7 +1120,6 @@ def test_doctor_json_reports_foreign_first_path_tg_remediation(monkeypatch, tmp_
 def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from tensor_grep.cli import main as cli_main
 
     candidate = tmp_path / "Python314" / "Scripts" / "tg.exe"
     candidate.parent.mkdir(parents=True)
@@ -1145,7 +1148,6 @@ def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
 
 
 def test_doctor_launcher_kind_classifies_virtualenv_console_entrypoint(tmp_path: Path) -> None:
-    from tensor_grep.cli import main as cli_main
 
     venv_tg = tmp_path / ".venv" / "Scripts" / "tg.exe"
 
@@ -1153,7 +1155,6 @@ def test_doctor_launcher_kind_classifies_virtualenv_console_entrypoint(tmp_path:
 
 
 def test_doctor_launcher_kind_classifies_windows_com_bridge(tmp_path: Path) -> None:
-    from tensor_grep.cli import main as cli_main
 
     bridge_tg = tmp_path / "Python314" / "Scripts" / "tg.com"
 
@@ -3383,6 +3384,32 @@ def test_agent_context_commands_prefer_invoice_implementation_over_service_menti
     assert agent_payload["ask_user_before_editing"]["required"] is False
 
 
+def test_context_pack_uses_repo_map_imports_for_direct_validation_evidence(
+    monkeypatch, tmp_path: Path
+):
+    paths = _write_invoice_service_ambiguity_fixture(tmp_path)
+    payload = repo_map.build_repo_map(paths["project"])
+
+    def _fail_if_context_scoring_reparses_tests(*_args, **_kwargs):
+        raise AssertionError("context scoring should reuse repo-map imports")
+
+    monkeypatch.setattr(
+        repo_map,
+        "_file_imports_symbol_from_definition",
+        _fail_if_context_scoring_reparses_tests,
+    )
+
+    context_payload = repo_map.build_context_pack_from_map(
+        payload,
+        "change invoice tax calculation",
+    )
+
+    assert context_payload["files"][0] == str(paths["payments"].resolve())
+    primary_match = context_payload["file_matches"][0]
+    assert primary_match["path"] == str(paths["payments"].resolve())
+    assert "validation-direct-definition" in primary_match["reasons"]
+
+
 def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tmp_path):
     paths = _write_mixed_invoice_fixture(tmp_path)
 
@@ -4119,6 +4146,38 @@ def test_build_context_render_full_seed_reuses_bounded_repo_map(monkeypatch, tmp
     assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
     assert payload["edit_plan_seed"]["dependent_files"] == [str(service_path.resolve())]
     assert unbounded_walks == 0
+
+
+def test_context_render_skips_blast_radius_for_low_confidence_fuzzy_symbol(
+    monkeypatch, tmp_path: Path
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "session_store.py"
+    module_path.write_text(
+        "def _empty_changeset():\n    return {'added': [], 'modified': [], 'removed': []}\n",
+        encoding="utf-8",
+    )
+
+    def _unexpected_blast_radius(*_args, **_kwargs):
+        raise AssertionError("low-confidence fuzzy symbols should not build blast radius")
+
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius_from_map",
+        _unexpected_blast_radius,
+    )
+
+    payload = repo_map.build_context_render(
+        "change invoice tax calculation",
+        project,
+        include_edit_plan_seed=True,
+    )
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "_empty_changeset"
+    assert payload["edit_plan_seed"]["dependent_files"] == []
 
 
 def test_context_render_json_reports_bounded_repo_scan(tmp_path):
@@ -5891,7 +5950,6 @@ def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_lates
 
 
 def test_native_frontdoor_asset_candidates_default_to_cpu_even_when_host_has_nvidia(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     def _fake_run(cmd, capture_output=True, text=True, check=False, timeout=None):
         raise AssertionError(f"default asset selection should not probe hardware: {cmd}")
@@ -5913,7 +5971,6 @@ def test_native_frontdoor_asset_candidates_default_to_cpu_even_when_host_has_nvi
 
 
 def test_native_frontdoor_asset_candidates_prefer_nvidia_only_when_requested(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
     monkeypatch.delenv("TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR", raising=False)
@@ -6176,6 +6233,100 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     assert native_binary.read_text(encoding="utf-8") == "new native"
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
     assert "Native tg front door refreshed to 0.33.0." in result.stdout
+
+
+def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    foreign_dir = tmp_path / "Python314" / "Scripts"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    foreign_dir.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("new native", encoding="utf-8")
+    (foreign_dir / "tg.exe").write_text("Together CLI", encoding="utf-8")
+    managed_dir = native_binary.parent
+    user_path = {"value": f"{foreign_dir};{managed_dir}"}
+
+    class _FakeKey:
+        def __init__(self, root, subkey):
+            self.root = root
+            self.subkey = subkey
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    fake_winreg = types.SimpleNamespace()
+    fake_winreg.HKEY_CURRENT_USER = object()
+    fake_winreg.HKEY_LOCAL_MACHINE = object()
+    fake_winreg.KEY_SET_VALUE = 2
+    fake_winreg.REG_EXPAND_SZ = 2
+    fake_winreg.REG_SZ = 1
+    fake_winreg.OpenKey = lambda root, subkey, *_args: _FakeKey(root, subkey)
+
+    def _query_value_ex(key, name):
+        if name != "Path" or key.root is not fake_winreg.HKEY_CURRENT_USER:
+            raise OSError("missing registry value")
+        return user_path["value"], fake_winreg.REG_EXPAND_SZ
+
+    def _set_value_ex(key, name, _reserved, _value_type, value):
+        assert key.root is fake_winreg.HKEY_CURRENT_USER
+        assert name == "Path"
+        user_path["value"] = value
+
+    fake_winreg.QueryValueEx = _query_value_ex
+    fake_winreg.SetValueEx = _set_value_ex
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("PATH", f"{foreign_dir};{managed_dir}")
+    monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert user_path["value"].split(";")[0] == str(managed_dir)
+    assert os.environ["PATH"].split(";")[0] == str(managed_dir)
+    assert "Windows PATH now prefers managed native tg.exe" in result.stdout
+
+
+def test_upgrade_does_not_treat_repo_dev_venv_as_managed_frontdoor(monkeypatch, tmp_path):
+    from tensor_grep.cli import main as cli_main
+
+    project = tmp_path / "project"
+    python_executable = project / ".venv" / "Scripts" / "python.exe"
+    native_binary = project / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert cli_main._managed_native_frontdoor_path_from_env() is None
 
 
 def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monkeypatch, tmp_path):
@@ -6467,7 +6618,6 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
 def test_managed_native_frontdoor_path_uses_unix_native_binary_when_env_is_absent(
     monkeypatch, tmp_path
 ):
-    from tensor_grep.cli import main as cli_main
 
     install_dir = tmp_path / ".tensor-grep"
     python_executable = install_dir / ".venv" / "bin" / "python"
@@ -8874,7 +9024,6 @@ def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
 
 
 def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -8890,7 +9039,6 @@ def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
 
 
 def test_main_entry_should_disable_click_windows_arg_expansion_for_globs(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, object] = {}
 
@@ -8922,7 +9070,6 @@ def test_main_entry_should_disable_click_windows_arg_expansion_for_globs(monkeyp
 
 
 def test_main_entry_should_not_rewrite_map_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -8938,7 +9085,6 @@ def test_main_entry_should_not_rewrite_map_subcommand(monkeypatch):
 
 
 def test_main_entry_should_not_rewrite_doctor_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -8954,7 +9100,6 @@ def test_main_entry_should_not_rewrite_doctor_subcommand(monkeypatch):
 
 
 def test_main_entry_should_not_rewrite_checkpoint_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -8970,7 +9115,6 @@ def test_main_entry_should_not_rewrite_checkpoint_subcommand(monkeypatch):
 
 
 def test_main_entry_should_not_rewrite_session_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -8986,7 +9130,6 @@ def test_main_entry_should_not_rewrite_session_subcommand(monkeypatch):
 
 
 def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -9002,7 +9145,6 @@ def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):
 
 
 def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -9042,7 +9184,6 @@ def test_main_module_should_disable_rich_when_windows_stdout_is_redirected():
 
 
 def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -9436,7 +9577,6 @@ def test_review_bundle_verify_json_reports_invalid_integrity(tmp_path):
 
 
 def test_calibrate_command_delegates_to_native_tg(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, object] = {}
 
@@ -9458,7 +9598,6 @@ def test_calibrate_command_delegates_to_native_tg(monkeypatch):
 
 
 def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch):
-    from tensor_grep.cli import main as cli_main
 
     seen: dict[str, list[str]] = {}
 
@@ -9476,8 +9615,6 @@ def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch)
 def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(monkeypatch, capsys):
     import importlib.metadata as importlib_metadata
 
-    from tensor_grep.cli import main as cli_main
-
     def _raise_version(_dist_name: str) -> str:
         raise RuntimeError("metadata unavailable")
 
@@ -9494,8 +9631,6 @@ def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(m
 
 def test_main_entry_should_keep_verbose_version_details_when_requested(monkeypatch, capsys):
     import importlib.metadata as importlib_metadata
-
-    from tensor_grep.cli import main as cli_main
 
     def _raise_version(_dist_name: str) -> str:
         raise RuntimeError("metadata unavailable")
@@ -9517,7 +9652,6 @@ def test_main_entry_should_keep_verbose_version_details_when_requested(monkeypat
 def test_main_entry_should_delegate_top_level_pcre2_version_to_native_binary(
     monkeypatch, tmp_path: Path, capsys
 ):
-    from tensor_grep.cli import main as cli_main
 
     native_binary = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
     native_binary.write_text("binary", encoding="utf-8")
@@ -9551,7 +9685,6 @@ def test_main_entry_should_delegate_top_level_pcre2_version_to_native_binary(
 
 
 def test_main_entry_should_fail_pcre2_version_when_no_backend_is_available(monkeypatch, capsys):
-    from tensor_grep.cli import main as cli_main
 
     monkeypatch.setattr(sys, "argv", ["tg", "--pcre2-version"])
     monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)

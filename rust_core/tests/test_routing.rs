@@ -1070,6 +1070,73 @@ fn test_routing_force_cpu_routes_to_native_search_even_when_rg_is_available() {
 }
 
 #[test]
+fn test_routing_json_hidden_flag_reaches_native_search() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".hidden.log"), "SECRET hidden match\n").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--json")
+        .arg("--hidden")
+        .arg("--fixed-strings")
+        .arg("SECRET")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "force_cpu", false);
+    assert_eq!(payload["total_matches"], 1);
+    assert_eq!(payload["matches"][0]["text"], "SECRET hidden match");
+}
+
+#[test]
+fn test_routing_json_max_depth_reaches_native_search() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("root.log"), "SECRET root match\n").unwrap();
+    let nested = dir.path().join("nested");
+    fs::create_dir(&nested).unwrap();
+    fs::write(nested.join("deep.log"), "SECRET nested match\n").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--json")
+        .arg("--max-depth")
+        .arg("1")
+        .arg("--fixed-strings")
+        .arg("SECRET")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "force_cpu", false);
+    assert_eq!(payload["total_matches"], 1);
+    assert_eq!(payload["matches"][0]["text"], "SECRET root match");
+}
+
+#[test]
+fn test_routing_json_text_flag_reaches_native_search() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("binary.dat"), b"SECRET\0binary match\n").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--json")
+        .arg("--text")
+        .arg("--fixed-strings")
+        .arg("SECRET")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "force_cpu", false);
+    assert_eq!(payload["total_matches"], 1);
+    assert_eq!(payload["matches"][0]["text"], "SECRET\u{0}binary match");
+}
+
+#[test]
 fn test_routing_force_cpu_alias_is_accepted() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

@@ -123,6 +123,7 @@ pub struct NativeSearchConfig {
     pub sidecar_used: bool,
     pub requested_gpu_device_ids: Vec<i32>,
     pub ignore_case: bool,
+    pub smart_case: bool,
     pub fixed_strings: bool,
     pub word_boundary: bool,
     pub invert_match: bool,
@@ -134,6 +135,7 @@ pub struct NativeSearchConfig {
     pub max_depth: Option<usize>,
     pub glob: Vec<String>,
     pub hidden: bool,
+    pub text: bool,
     pub null_data: bool,
     pub count: bool,
     pub crlf: bool,
@@ -161,6 +163,7 @@ impl Default for NativeSearchConfig {
             sidecar_used: false,
             requested_gpu_device_ids: Vec::new(),
             ignore_case: false,
+            smart_case: false,
             fixed_strings: false,
             word_boundary: false,
             invert_match: false,
@@ -172,6 +175,7 @@ impl Default for NativeSearchConfig {
             max_depth: None,
             glob: Vec::new(),
             hidden: false,
+            text: false,
             null_data: false,
             count: false,
             crlf: false,
@@ -1112,7 +1116,11 @@ fn search_file_count(
 
 fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
     let mut builder = RegexMatcherBuilder::new();
-    builder.case_insensitive(config.ignore_case);
+    builder.case_insensitive(effective_ignore_case(
+        &config.pattern,
+        config.ignore_case,
+        config.smart_case,
+    ));
     builder.fixed_strings(config.fixed_strings);
     builder.word(config.word_boundary);
     if config.crlf {
@@ -1126,6 +1134,14 @@ fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
     })
 }
 
+pub fn effective_ignore_case(pattern: &str, ignore_case: bool, smart_case: bool) -> bool {
+    ignore_case || (smart_case && smart_case_pattern_is_case_insensitive(pattern))
+}
+
+pub fn smart_case_pattern_is_case_insensitive(pattern: &str) -> bool {
+    !pattern.chars().any(|ch| ch.is_uppercase())
+}
+
 fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
     let mut builder = SearcherBuilder::new();
     builder.line_number(line_number);
@@ -1133,7 +1149,11 @@ fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
     builder.before_context(config.before_context);
     builder.after_context(config.after_context);
     builder.max_matches(config.max_count);
-    builder.binary_detection(BinaryDetection::quit(b'\x00'));
+    if config.text {
+        builder.binary_detection(BinaryDetection::none());
+    } else {
+        builder.binary_detection(BinaryDetection::quit(b'\x00'));
+    }
 
     if config.null_data {
         builder.line_terminator(LineTerminator::byte(b'\0'));

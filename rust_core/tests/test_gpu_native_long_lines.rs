@@ -116,6 +116,8 @@ fn test_gpu_native_adaptive_dispatch_matches_cpu_for_ten_kib_lines() {
         paths: vec![corpus.clone()],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(256 * 1024),
     };
 
@@ -156,6 +158,8 @@ fn test_gpu_native_adaptive_dispatch_matches_cpu_for_hundred_kib_lines() {
         paths: vec![corpus.clone()],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(512 * 1024),
     };
 
@@ -195,6 +199,8 @@ fn test_gpu_native_adaptive_dispatch_classifies_mixed_short_medium_and_long_line
         paths: vec![corpus.clone()],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(256 * 1024),
     };
 
@@ -254,6 +260,8 @@ fn test_gpu_native_long_line_corpus_is_not_slower_than_short_line_corpus() {
         paths: vec![short_corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(2 * 1024 * 1024),
     };
     let long_config = GpuNativeSearchConfig {
@@ -261,6 +269,8 @@ fn test_gpu_native_long_line_corpus_is_not_slower_than_short_line_corpus() {
         paths: vec![long_corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(2 * 1024 * 1024),
     };
 

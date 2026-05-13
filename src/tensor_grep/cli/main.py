@@ -134,6 +134,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Search and safety**
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
 - Broad generated-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
+- `--smart-case`, `--hidden`, `--max-depth`, and `--text` are honored by structured CPU and sidecar search; native GPU falls back when a requested switch changes semantics it cannot safely execute yet.
 - `--gpu-device-ids` pins selected GPUs for explicit search, benchmark, and agent evidence probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
 - `classify` is local by default; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into CyBERT/Triton.
 
@@ -439,6 +440,8 @@ def _managed_native_frontdoor_path_from_env() -> Path | None:
     if venv_root.name != ".venv":
         return None
     install_root = venv_root.parent
+    if install_root.name != ".tensor-grep":
+        return None
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg-native"
     native_path = (
         Path(native_env).expanduser() if native_env else install_root / "bin" / binary_name
@@ -579,6 +582,101 @@ def _refreshed_com_bridge_message(expected_version: str, paths: list[Path]) -> s
     noun = "bridge" if len(paths) == 1 else "bridges"
     rendered_paths = "\n".join(f"- {path}" for path in paths)
     return f"Refreshed {len(paths)} PATH tg.com {noun} to {expected_version}.\n{rendered_paths}"
+
+
+def _windows_path_parts(path_value: str | None) -> list[str]:
+    if not path_value:
+        return []
+    return [part.strip() for part in path_value.split(";") if part.strip()]
+
+
+def _windows_path_part_key(path_value: str) -> str:
+    normalized = os.path.expandvars(path_value.strip())
+    normalized = os.path.normpath(normalized)
+    return os.path.normcase(normalized).rstrip("\\/")
+
+
+def _windows_prepend_path_part(path_value: str | None, preferred_dir: Path) -> tuple[str, bool]:
+    preferred_text = str(preferred_dir)
+    preferred_key = _windows_path_part_key(preferred_text)
+    parts = _windows_path_parts(path_value)
+    reordered = [preferred_text]
+    reordered.extend(part for part in parts if _windows_path_part_key(part) != preferred_key)
+    rendered = ";".join(reordered)
+    return rendered, rendered != (path_value or "")
+
+
+def _windows_managed_native_bin_dir() -> Path | None:
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        return Path(user_profile).expanduser() / ".tensor-grep" / "bin"
+    try:
+        return Path.home() / ".tensor-grep" / "bin"
+    except RuntimeError:
+        return None
+
+
+def _windows_user_path_value() -> str | None:
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import winreg  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _value_type = winreg.QueryValueEx(key, "Path")
+    except OSError:
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def _set_windows_user_path_value(path_value: str) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import winreg  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise OSError("winreg is unavailable") from exc
+    value_type = winreg.REG_EXPAND_SZ if "%" in path_value else winreg.REG_SZ
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, "Path", 0, value_type, path_value)
+
+
+def _ensure_windows_managed_native_first_on_path(native_path: Path) -> str | None:
+    if not sys.platform.startswith("win"):
+        return None
+
+    managed_dir = native_path.parent
+    expected_managed_dir = _windows_managed_native_bin_dir()
+    if expected_managed_dir is None or _windows_path_part_key(str(managed_dir)) != (
+        _windows_path_part_key(str(expected_managed_dir))
+    ):
+        return None
+
+    messages: list[str] = []
+    try:
+        user_path = _windows_user_path_value()
+        reordered_user_path, user_changed = _windows_prepend_path_part(user_path, managed_dir)
+        if user_changed:
+            _set_windows_user_path_value(reordered_user_path)
+            messages.append("persistent User PATH")
+    except OSError as exc:
+        messages.append(f"User PATH repair warning: {exc}")
+
+    current_path = os.environ.get("PATH", "")
+    reordered_current_path, current_changed = _windows_prepend_path_part(current_path, managed_dir)
+    if current_changed:
+        os.environ["PATH"] = reordered_current_path
+        messages.append("current process PATH")
+
+    if not messages:
+        return None
+    return (
+        "Windows PATH now prefers managed native tg.exe for Python subprocesses.\n"
+        f"- {managed_dir}\n"
+        f"Updated: {', '.join(messages)}."
+    )
 
 
 def _looks_like_windows_file_lock_error(message: str) -> bool:
@@ -754,6 +852,9 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
         return None
 
     messages: list[str] = []
+    path_order_message = _ensure_windows_managed_native_first_on_path(native_path)
+    if path_order_message:
+        messages.append(path_order_message)
     stale_com_bridges = _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
     current_version = _native_tg_version(native_path) if native_path.is_file() else None
     if not _native_tg_version_matches(expected_version, current_version):
@@ -767,10 +868,11 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
                 log_path = _schedule_windows_native_frontdoor_refresh(
                     native_path, expected_version, stale_com_bridges
                 )
-                return (
+                scheduled_message = (
                     f"Native tg front door refresh scheduled for {expected_version}."
                     f"\nUpgrade log: {log_path}"
                 )
+                return "\n".join([scheduled_message, *messages])
             raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
         except RuntimeError as exc:
             raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
@@ -6847,6 +6949,11 @@ def upgrade() -> None:
             else:
                 package_spec = "tensor-grep"
             native_path = _managed_native_frontdoor_path_from_env()
+            path_order_message = (
+                _ensure_windows_managed_native_first_on_path(native_path)
+                if native_path is not None
+                else None
+            )
             native_assets = [
                 {"url": url, "flavor": candidate.flavor}
                 for candidate, url in (
@@ -6872,6 +6979,8 @@ def upgrade() -> None:
             )
             typer.echo("Wait a few seconds, then run `tg --version` again.")
             typer.echo(f"Upgrade log: {log_path}")
+            if path_order_message:
+                typer.echo(path_order_message)
             return
         typer.echo("Error occurred while upgrading tensor-grep.", err=True)
         typer.echo(str(e), err=True)

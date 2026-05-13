@@ -284,6 +284,47 @@ fn test_native_search_case_insensitive_search() {
 }
 
 #[test]
+fn test_native_search_smart_case_lowercase_searches_insensitively() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("smart-lower.log");
+    fs::write(&file_path, "warning lower\nWARNING upper\nWarn mixed\n").unwrap();
+
+    let (target, _buffer) = buffer_target();
+    let mut config = base_config("warning", &file_path, target);
+    config.fixed_strings = true;
+    config.smart_case = true;
+
+    let stats = run_native_search(config).unwrap();
+
+    assert_eq!(stats.total_matches, 2);
+    assert_eq!(
+        stats
+            .matches
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["warning lower", "WARNING upper"]
+    );
+}
+
+#[test]
+fn test_native_search_smart_case_uppercase_stays_sensitive() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("smart-upper.log");
+    fs::write(&file_path, "warning lower\nWARNING upper\n").unwrap();
+
+    let (target, _buffer) = buffer_target();
+    let mut config = base_config("WARNING", &file_path, target);
+    config.fixed_strings = true;
+    config.smart_case = true;
+
+    let stats = run_native_search(config).unwrap();
+
+    assert_eq!(stats.total_matches, 1);
+    assert_eq!(stats.matches[0].text, "WARNING upper");
+}
+
+#[test]
 fn test_native_search_fixed_string_treats_meta_characters_literally() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("literal.log");

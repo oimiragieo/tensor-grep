@@ -1,14 +1,15 @@
 # Native GPU Crossover Benchmark
 
-## Current post-`v1.9.6` / `v1.9.11` GPU dogfood Read
+## Current post-`v1.10.6` GPU dogfood Read
 
-The post-`v1.9.6` native CUDA dogfood, refreshed by the latest `v1.9.11` GPU dogfood, is a correctness improvement, not a speed promotion.
+The post-`v1.10.6` native CUDA work changes the GPU read: single-pattern cold grep is still not a promotion story, but high-intensity fixed-string scans now have a credible native CUDA lane.
 
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
-- There is still no crossover for literal search: GPU remains slower than `rg` and `tg_cpu`.
+- There is still no crossover for single-pattern literal search: GPU remains slower than `rg` and `tg_cpu` after CUDA startup, file I/O, H2D transfer, and output materialization are counted.
+- There is a measured crossover for many fixed patterns over a large corpus through the local CUDA-enabled native binary.
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary.
-- The public managed binary in `v1.10.5` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a special native CUDA dogfood build. That is not public GPU readiness.
-- Native CUDA correctness passed, but speed/promotion failed; keep GPU experimental and opt-in.
+- The public managed binary in `v1.10.6` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
+- Native CUDA correctness and the high-intensity multi-pattern lane are real, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
 
 Current benchmark taxonomy:
 
@@ -17,12 +18,15 @@ Current benchmark taxonomy:
 | Python GPU scale (`run_gpu_benchmarks.py`) | Measures Python/Torch sidecar behavior and device availability. | Unsupported for native CUDA promotion unless `scale_gate_summary.native_cuda_scale_gate.status = SUPPORTED`. |
 | Native CUDA scale (`run_gpu_native_benchmarks.py`) | Measures release-native `tg --gpu-device-ids ...` correctness and speed against `rg` and `tg_cpu`. | Requires 1GB and 5GB correctness plus a speed win over both baselines. |
 
-Current native no-crossover evidence:
+Current native evidence:
 
-| Device | Correctness | Best recorded no-crossover ratio | Latest 5GB dogfood read |
+| Workload | Device / route | Evidence | Read |
 | --- | --- | ---: | --- |
-| RTX 4070 (`sm_89`) | 1GB and 5GB correctness passed | `35.46x` slower than `rg` | latest `v1.9.11` 5GB dogfood read: GPU 0 still loses badly |
-| RTX 5070 (`sm_120`) | 1GB and 5GB correctness passed | `29.91x` slower than `rg` | latest `v1.9.11` 5GB dogfood read: GPU 1 still loses badly |
+| Single no-match fixed string, 1GB | RTX 4070 local CUDA native | `rg = 73.838ms`, `tg GPU = 1093.778ms` | no crossover |
+| Three real fixed strings, 1GB | RTX 4070 local CUDA native stats | `rg = 277.661ms`, `tg GPU = 2398.238ms` | no crossover after output materialization |
+| 100 no-match fixed strings, 1GB | RTX 4070 public `tg search -F --gpu-device-ids 0 --json -e ...` via local CUDA native binary | `rg = 7222.304ms`, `tg GPU = 1301.676ms` | `5.55x` end-to-end speedup over sequential `rg` |
+| 100 mixed fixed strings with 2665 emitted matches, 1GB | RTX 4070 public `tg search -F --gpu-device-ids 0 --json -e ...` via local CUDA native binary | `rg = 6676.904ms`, `tg GPU = 2488.768ms` | `2.68x` end-to-end speedup over sequential `rg` |
+| Prior 5GB single-pattern scale | RTX 4070 / RTX 5070 local CUDA native | `35.46x` / `29.91x` slower than `rg` in latest `v1.9.11` dogfood read | superseded as a single-pattern caution |
 
 The latest user dogfood also reported the native harness as `passed = false` because the speed target and error-test expectations did not pass. That is the intended decision: correctness evidence is necessary, but it is not enough to enable or market GPU auto-routing.
 
@@ -30,18 +34,23 @@ The latest user dogfood also reported the native harness as `passed = false` bec
 
 The latest local route audit found that the public managed Windows front door is not a clean native CUDA timing source for `--gpu-device-ids`: a direct JSON probe reports `routing_backend = "GpuSidecar"` and `sidecar_used = true`. An in-tree debug binary without the CUDA feature also falls through the Python sidecar and can time out there. Treat any artifact without explicit `NativeGpuBackend` / `sidecar_used = false` route metadata as sidecar-contaminated and unsupported for native CUDA speed proof.
 
-The accepted remediation is twofold:
+The accepted remediation is now threefold:
 
 1. The native GPU benchmark must probe the runtime backend before timing GPU rows and must not time or promote sidecar-routed rows.
 2. The CUDA ingest path must make CPU staging measurable. Native JSON/verbose output now exposes host file-read time, host preprocess time, host-to-pinned copy time, CPU staging bytes, pageable-host staging bytes, H2D transfer time, kernel time, and wall time.
+3. GPU performance claims must name the workload class. Single-pattern cold grep is not the win; many fixed-string patterns over a large corpus is the current CUDA crossover lane.
 
 The native ingest implementation now applies the same data-movement principles used by CUDA and RAPIDS guidance:
 
-- load file chunks directly into reusable pinned host buffers instead of reading into a pageable `Vec<u8>` and then copying into pinned memory;
+- read file chunks into reusable pageable staging memory, run CPU-side binary and line classification there, then copy accepted text into pinned host buffers for DMA. This avoids CPU preprocessing over pinned pages while preserving fast H2D transfer;
+- cache NVRTC-generated PTX on disk by architecture and kernel hash so repeated CUDA CLI invocations do not pay the full compile cost;
+- reuse line descriptors collected during CUDA dispatch setup when materializing output so matched lines are not discovered by rescanning every file buffer;
 - keep chunking explicit so H2D transfer and kernel work can overlap through existing streams and double buffering;
 - keep sidecar, CPU fallback, H2D transfer, and kernel execution visible as separate metrics instead of collapsing them into a single "GPU" timing;
 - reserve future GPUDirect Storage work for platforms where direct storage-to-GPU DMA is available, because that is the correct next step to remove the remaining host I/O bounce;
 - reserve NVLink/P2P work for multi-GPU systems whose topology actually supports peer access, instead of assuming PCIe-attached developer GPUs have that path.
+
+Local CUDA-feature release measurements on 2026-05-12 show the host-tail improvement clearly. On the 1GB corpus, host preprocessing dropped from about `15195.926ms` to `71.510ms`; on the 5GB corpus it dropped from about `77161.298ms` to `359.224ms`. A warm PTX cache reduced an isolated 100MB native CUDA CLI run from about `1149.117ms` cold to `672.116ms` warm. These are implementation evidence for the local CUDA-native route, not proof that the public `v1.10.6` managed binary should be promoted.
 
 Agent workflow GPU use follows the same rule. `tg agent --gpu-device-ids ... --json` may run a batched fixed-string evidence scan through the selected native GPU route, records the result in `gpu_acceleration`, and only marks the evidence as used when the route reports `NativeGpuBackend` with `sidecar_used = false`. Sidecar-routed output remains unsupported compatibility evidence and does not change the no-crossover positioning.
 
@@ -58,7 +67,7 @@ Do not promote GPU speed from device discovery, sidecar availability, or correct
 
 1. Native CUDA backend, not only Python/Torch sidecar rows.
 2. Exact match and file-set correctness at every required 1GB and 5GB corpus.
-3. GPU faster than both `rg` and `tg_cpu` at the required scale.
+3. GPU faster than both `rg` and `tg_cpu` at the required scale and declared workload class.
 4. No failed error-handling or throughput gates.
 
 Until those are true, the public routing decision is explicit GPU search only.

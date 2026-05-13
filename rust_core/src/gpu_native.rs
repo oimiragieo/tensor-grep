@@ -3,11 +3,12 @@ use cudarc::driver::{
     result as cuda_result, sys, CudaContext, CudaEvent, CudaFunction, CudaModule, CudaSlice,
     CudaStream, DevicePtr, DevicePtrMut, LaunchConfig, PinnedHostSlice, PushKernelArg,
 };
-use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
+use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions, Ptx};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
-use memchr::memchr_iter;
+use memchr::{memchr, memchr_iter};
 use rayon::prelude::*;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
@@ -337,6 +338,7 @@ const PIPELINE_SLOT_COUNT: usize = 2;
 const DEFAULT_GPU_BATCH_BYTES: usize = 128 * 1024 * 1024;
 const SHARED_PATTERN_MEMORY_LIMIT_BYTES: usize = 48 * 1024;
 const MAX_SLOT_DEVICE_MEMORY_BYTES: usize = 1024 * 1024 * 1024;
+const PTX_CACHE_VERSION: &str = "v1";
 static CUDA_LIBRARY_PATH_INIT: Once = Once::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -356,6 +358,8 @@ pub struct GpuNativeSearchConfig {
     pub paths: Vec<PathBuf>,
     pub no_ignore: bool,
     pub glob: Vec<String>,
+    pub hidden: bool,
+    pub max_depth: Option<usize>,
     pub max_batch_bytes: Option<usize>,
 }
 
@@ -493,12 +497,14 @@ struct BatchedFile {
     path: PathBuf,
     start: usize,
     end: usize,
+    line_descriptors: Vec<LineDescriptor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LineDescriptor {
     start: u32,
     len: u32,
+    line_number: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1478,8 +1484,11 @@ fn load_file_batch_into_pinned_slice(
     let mut batch_files = Vec::new();
     let mut classified_lines = ClassifiedLineBatch::default();
     let mut cpu_staging_bytes = 0usize;
+    let mut pageable_host_staging_bytes = 0usize;
     let mut host_file_read_time_ms = 0.0f64;
     let mut host_preprocess_time_ms = 0.0f64;
+    let mut host_to_pinned_copy_time_ms = 0.0f64;
+    let mut pageable_buffer = Vec::new();
 
     for path in &plan.files {
         let metadata = fs::metadata(path)
@@ -1500,29 +1509,39 @@ fn load_file_batch_into_pinned_slice(
         ensure_capacity(host.len(), end, path)?;
 
         let read_started_at = Instant::now();
+        pageable_buffer.resize(file_len, 0);
         let mut file = fs::File::open(path)
             .with_context(|| format!("failed to open GPU native search file {}", path.display()))?;
-        file.read_exact(&mut host[start..end]).with_context(|| {
-            format!(
-                "failed to read GPU native search file directly into pinned host memory {}",
-                path.display()
-            )
-        })?;
+        file.read_exact(&mut pageable_buffer[..file_len])
+            .with_context(|| {
+                format!(
+                    "failed to read GPU native search file into host staging memory {}",
+                    path.display()
+                )
+            })?;
         host_file_read_time_ms += read_started_at.elapsed().as_secs_f64() * 1_000.0;
+        pageable_host_staging_bytes = pageable_host_staging_bytes.saturating_add(file_len);
 
         let preprocess_started_at = Instant::now();
-        if host[start..end].contains(&b'\0') {
+        let file_bytes = &pageable_buffer[..file_len];
+        if memchr(b'\0', file_bytes).is_some() {
             host_preprocess_time_ms += preprocess_started_at.elapsed().as_secs_f64() * 1_000.0;
             continue;
         }
+
+        let line_descriptors = if classify_lines {
+            classify_file_lines(start, file_bytes, &mut classified_lines)?
+        } else {
+            Vec::new()
+        };
+        host_preprocess_time_ms += preprocess_started_at.elapsed().as_secs_f64() * 1_000.0;
+
+        let pinned_copy_started_at = Instant::now();
         if cursor > 0 {
             host[cursor] = 0;
         }
-
-        if classify_lines {
-            classify_file_lines(start, &host[start..end], &mut classified_lines)?;
-        }
-        host_preprocess_time_ms += preprocess_started_at.elapsed().as_secs_f64() * 1_000.0;
+        host[start..end].copy_from_slice(file_bytes);
+        host_to_pinned_copy_time_ms += pinned_copy_started_at.elapsed().as_secs_f64() * 1_000.0;
         cursor = end;
         cpu_staging_bytes = cpu_staging_bytes.saturating_add(file_len);
 
@@ -1530,6 +1549,7 @@ fn load_file_batch_into_pinned_slice(
             path: path.clone(),
             start,
             end,
+            line_descriptors,
         });
     }
 
@@ -1538,10 +1558,10 @@ fn load_file_batch_into_pinned_slice(
         bytes_used: cursor,
         classified_lines,
         cpu_staging_bytes,
-        pageable_host_staging_bytes: 0,
+        pageable_host_staging_bytes,
         host_file_read_time_ms,
         host_preprocess_time_ms,
-        host_to_pinned_copy_time_ms: 0.0,
+        host_to_pinned_copy_time_ms,
     })
 }
 
@@ -3194,30 +3214,39 @@ fn classify_file_lines(
     batch_start: usize,
     bytes: &[u8],
     classified_lines: &mut ClassifiedLineBatch,
-) -> Result<()> {
+) -> Result<Vec<LineDescriptor>> {
+    let mut line_descriptors = Vec::new();
     let mut line_start = 0usize;
+    let mut line_number = 1usize;
     for newline_index in memchr_iter(b'\n', bytes) {
         push_classified_line(
             batch_start.saturating_add(line_start),
             newline_index.saturating_sub(line_start),
+            line_number,
             classified_lines,
+            &mut line_descriptors,
         )?;
         line_start = newline_index.saturating_add(1);
+        line_number = line_number.saturating_add(1);
     }
     if line_start < bytes.len() {
         push_classified_line(
             batch_start.saturating_add(line_start),
             bytes.len().saturating_sub(line_start),
+            line_number,
             classified_lines,
+            &mut line_descriptors,
         )?;
     }
-    Ok(())
+    Ok(line_descriptors)
 }
 
 fn push_classified_line(
     absolute_start: usize,
     line_len: usize,
+    line_number: usize,
     classified_lines: &mut ClassifiedLineBatch,
+    line_descriptors: &mut Vec<LineDescriptor>,
 ) -> Result<()> {
     if line_len == 0 {
         return Ok(());
@@ -3226,6 +3255,7 @@ fn push_classified_line(
     let descriptor = LineDescriptor {
         start: u32::try_from(absolute_start).context("GPU native line start exceeds u32 range")?,
         len: u32::try_from(line_len).context("GPU native line length exceeds u32 range")?,
+        line_number,
     };
 
     if descriptor.len < SHORT_LINE_BYTES_THRESHOLD {
@@ -3235,6 +3265,7 @@ fn push_classified_line(
     } else {
         classified_lines.long_lines.push(descriptor);
     }
+    line_descriptors.push(descriptor);
 
     Ok(())
 }
@@ -3814,6 +3845,8 @@ fn build_walk_builder(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Resu
         builder.add(root);
     }
     builder.threads(0);
+    builder.hidden(!config.hidden);
+    builder.max_depth(config.max_depth);
 
     if config.no_ignore {
         builder.ignore(false);
@@ -3885,7 +3918,7 @@ fn convert_offsets_to_line_matches(
         }
         let file_bytes = &buffer[file.start..file.end];
         matches.extend(line_matches_for_file(
-            &file.path,
+            file,
             file_bytes,
             &file_offsets,
             all_patterns,
@@ -3896,6 +3929,55 @@ fn convert_offsets_to_line_matches(
 }
 
 fn line_matches_for_file(
+    file: &BatchedFile,
+    file_bytes: &[u8],
+    offsets: &[PatternMatchPosition],
+    all_patterns: &[String],
+) -> Vec<GpuNativeSearchMatch> {
+    if file.line_descriptors.is_empty() {
+        return line_matches_for_file_by_scanning(&file.path, file_bytes, offsets, all_patterns);
+    }
+
+    let mut matches = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for offset in offsets {
+        let absolute_offset = file.start.saturating_add(offset.byte_offset);
+        let line_index = file
+            .line_descriptors
+            .partition_point(|line| (line.start as usize) <= absolute_offset)
+            .saturating_sub(1);
+        let Some(line) = file.line_descriptors.get(line_index).copied() else {
+            continue;
+        };
+        let line_start = line.start as usize;
+        let line_len = line.len as usize;
+        if absolute_offset < line_start || absolute_offset >= line_start.saturating_add(line_len) {
+            continue;
+        }
+        if !seen.insert((line_start, offset.pattern_id)) {
+            continue;
+        }
+        let relative_start = line_start.saturating_sub(file.start);
+        let relative_end = relative_start
+            .saturating_add(line_len)
+            .min(file_bytes.len());
+        let line_bytes = &file_bytes[relative_start..relative_end];
+        let text = String::from_utf8_lossy(line_bytes)
+            .trim_end_matches('\r')
+            .to_string();
+        matches.push(GpuNativeSearchMatch {
+            path: file.path.clone(),
+            line_number: line.line_number,
+            text,
+            pattern_id: offset.pattern_id,
+            pattern_text: all_patterns[offset.pattern_id].clone(),
+        });
+    }
+
+    matches
+}
+
+fn line_matches_for_file_by_scanning(
     path: &Path,
     file_bytes: &[u8],
     offsets: &[PatternMatchPosition],
@@ -3936,6 +4018,12 @@ fn line_matches_for_file(
     matches
 }
 
+struct CachedKernelPtx {
+    ptx: Ptx,
+    cache_path: PathBuf,
+    from_cache: bool,
+}
+
 fn compile_kernel_module(context: &Arc<CudaContext>, device_id: i32) -> Result<Arc<CudaModule>> {
     let compute_capability = context
         .compute_capability()
@@ -3945,6 +4033,77 @@ fn compile_kernel_module(context: &Arc<CudaContext>, device_id: i32) -> Result<A
         })?;
     let architecture_option = nvrtc_architecture_option_for_compute_capability(compute_capability)?;
     let compile_options = kernel_compile_options_for_compute_capability(compute_capability)?;
+    let cached_ptx = load_or_compile_search_kernel_ptx(
+        device_id,
+        compute_capability,
+        &architecture_option,
+        compile_options,
+    )?;
+
+    match context.load_module(cached_ptx.ptx) {
+        Ok(module) => Ok(module),
+        Err(_err) if cached_ptx.from_cache => {
+            let _ = fs::remove_file(&cached_ptx.cache_path);
+            let fresh_ptx = compile_search_kernel_ptx(
+                device_id,
+                compute_capability,
+                &architecture_option,
+                kernel_compile_options_for_compute_capability(compute_capability)?,
+                Some(&cached_ptx.cache_path),
+            )?;
+            context
+                .load_module(fresh_ptx)
+                .map_err(anyhow::Error::new)
+                .with_context(|| {
+                    format!("failed to load freshly compiled CUDA module for device {device_id}")
+                })
+        }
+        Err(err) => Err(anyhow::Error::new(err))
+            .with_context(|| format!("failed to load compiled CUDA module for device {device_id}")),
+    }
+}
+
+fn load_or_compile_search_kernel_ptx(
+    device_id: i32,
+    compute_capability: (i32, i32),
+    architecture_option: &str,
+    compile_options: CompileOptions,
+) -> Result<CachedKernelPtx> {
+    let cache_path = cached_search_kernel_ptx_path(compute_capability, &compile_options.options)?;
+    if cache_path.is_file()
+        && cache_path
+            .metadata()
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false)
+    {
+        return Ok(CachedKernelPtx {
+            ptx: Ptx::from_file(cache_path.clone()),
+            cache_path,
+            from_cache: true,
+        });
+    }
+
+    let ptx = compile_search_kernel_ptx(
+        device_id,
+        compute_capability,
+        architecture_option,
+        compile_options,
+        Some(&cache_path),
+    )?;
+    Ok(CachedKernelPtx {
+        ptx,
+        cache_path,
+        from_cache: false,
+    })
+}
+
+fn compile_search_kernel_ptx(
+    device_id: i32,
+    compute_capability: (i32, i32),
+    architecture_option: &str,
+    compile_options: CompileOptions,
+    cache_path: Option<&Path>,
+) -> Result<Ptx> {
     let ptx = catch_cuda("compile CUDA substring kernel via NVRTC", || {
         compile_ptx_with_opts(SEARCH_KERNEL_SOURCE, compile_options).map_err(|err| {
             anyhow!(
@@ -3958,11 +4117,77 @@ fn compile_kernel_module(context: &Arc<CudaContext>, device_id: i32) -> Result<A
             )
         })
     })?;
+    if let (Some(path), Some(bytes)) = (cache_path, ptx.as_bytes()) {
+        write_cached_search_kernel_ptx(path, bytes);
+    }
+    Ok(ptx)
+}
 
-    context
-        .load_module(ptx)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("failed to load compiled CUDA module for device {device_id}"))
+fn write_cached_search_kernel_ptx(path: &Path, bytes: &[u8]) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let temp_path = path.with_extension("ptx.tmp");
+    if fs::write(&temp_path, bytes).is_err() {
+        return;
+    }
+    let _ = fs::remove_file(path);
+    if fs::rename(&temp_path, path).is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+}
+
+fn cached_search_kernel_ptx_path(
+    compute_capability: (i32, i32),
+    compile_options: &[String],
+) -> Result<PathBuf> {
+    let architecture_option = nvrtc_architecture_option_for_compute_capability(compute_capability)?;
+    let mut hasher = Sha256::new();
+    hasher.update(PTX_CACHE_VERSION.as_bytes());
+    hasher.update([0]);
+    hasher.update(SEARCH_KERNEL_SOURCE.as_bytes());
+    for option in compile_options {
+        hasher.update([0]);
+        hasher.update(option.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let digest_hex = digest
+        .iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    Ok(cuda_ptx_cache_dir().join(format!(
+        "gpu_native_search_{}_{}.ptx",
+        architecture_option.trim_start_matches("--gpu-architecture="),
+        digest_hex
+    )))
+}
+
+fn cuda_ptx_cache_dir() -> PathBuf {
+    if let Some(path) = env::var_os("TG_CUDA_PTX_CACHE_DIR") {
+        return PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(path)
+            .join("tensor-grep")
+            .join("cuda-ptx-cache");
+    }
+    if let Some(path) = env::var_os("XDG_CACHE_HOME") {
+        return PathBuf::from(path)
+            .join("tensor-grep")
+            .join("cuda-ptx-cache");
+    }
+    if let Some(path) = env::var_os("HOME") {
+        return PathBuf::from(path)
+            .join(".cache")
+            .join("tensor-grep")
+            .join("cuda-ptx-cache");
+    }
+    env::temp_dir().join("tensor-grep").join("cuda-ptx-cache")
 }
 
 fn kernel_compile_options_for_compute_capability(
@@ -4060,9 +4285,13 @@ fn ensure_cuda_library_path() {
 #[cfg(test)]
 mod tests {
     use super::{
-        kernel_compile_options_for_compute_capability, resolve_adaptive_match_capacity,
-        resolve_max_match_capacity, validate_requested_cuda_device_ids,
+        cached_search_kernel_ptx_path, kernel_compile_options_for_compute_capability,
+        line_matches_for_file, load_file_batch_into_pinned_slice, resolve_adaptive_match_capacity,
+        resolve_max_match_capacity, validate_requested_cuda_device_ids, BatchedFile, FileBatchPlan,
+        LineDescriptor, PatternMatchPosition,
     };
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn validate_requested_cuda_device_ids_preserves_selected_subset_without_expanding() {
@@ -4109,6 +4338,117 @@ mod tests {
 
         assert!(message.contains("invalid CUDA compute capability 0.0"));
         assert!(message.contains("not falling back"));
+    }
+
+    #[test]
+    fn file_batch_loading_preprocesses_pageable_memory_before_pinned_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let text_path = temp.path().join("text.log");
+        let binary_path = temp.path().join("binary.log");
+        fs::write(&text_path, b"INFO start\nERROR target\n").unwrap();
+        fs::write(&binary_path, b"INFO\0binary\nERROR ignored\n").unwrap();
+        let text_len = fs::metadata(&text_path).unwrap().len() as usize;
+        let binary_len = fs::metadata(&binary_path).unwrap().len() as usize;
+        let plan = FileBatchPlan {
+            files: vec![text_path.clone(), binary_path],
+            estimated_bytes: text_len + binary_len + 1,
+        };
+        let mut host = vec![0u8; plan.estimated_bytes + 16];
+
+        let loaded = load_file_batch_into_pinned_slice(&mut host, &plan, true).unwrap();
+
+        assert_eq!(loaded.files.len(), 1);
+        assert_eq!(loaded.files[0].path, text_path);
+        assert_eq!(loaded.cpu_staging_bytes, text_len);
+        assert_eq!(loaded.pageable_host_staging_bytes, text_len + binary_len);
+        assert!(loaded.host_to_pinned_copy_time_ms >= 0.0);
+        assert_eq!(loaded.classified_lines.short_line_count(), 2);
+        assert_eq!(&host[..text_len], b"INFO start\nERROR target\n");
+    }
+
+    #[test]
+    fn ptx_cache_path_is_scoped_by_architecture_and_kernel_hash() {
+        let cache_path =
+            cached_search_kernel_ptx_path((12, 0), &["--gpu-architecture=compute_120".to_string()])
+                .unwrap();
+        let cache_file = cache_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap();
+
+        assert!(cache_file.starts_with("gpu_native_search_compute_120_"));
+        assert!(cache_file.ends_with(".ptx"));
+        assert!(cache_file.len() > "gpu_native_search_compute_120_.ptx".len());
+    }
+
+    #[test]
+    fn line_match_materialization_uses_loaded_line_descriptors() {
+        let path = PathBuf::from("sample.log");
+        let bytes = b"INFO start\nERROR target\n";
+        let file = BatchedFile {
+            path: path.clone(),
+            start: 100,
+            end: 100 + bytes.len(),
+            line_descriptors: vec![
+                LineDescriptor {
+                    start: 100,
+                    len: 10,
+                    line_number: 1,
+                },
+                LineDescriptor {
+                    start: 111,
+                    len: 12,
+                    line_number: 2,
+                },
+            ],
+        };
+        let offsets = vec![PatternMatchPosition {
+            byte_offset: 11,
+            pattern_id: 0,
+        }];
+        let patterns = vec!["ERROR".to_string()];
+
+        let matches = line_matches_for_file(&file, bytes, &offsets, &patterns);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, path);
+        assert_eq!(matches[0].line_number, 2);
+        assert_eq!(matches[0].text, "ERROR target");
+    }
+
+    #[test]
+    fn line_match_materialization_preserves_line_numbers_after_blank_lines() {
+        let path = PathBuf::from("blank-lines.log");
+        let bytes = b"INFO start\n\nERROR target\n";
+        let file = BatchedFile {
+            path: path.clone(),
+            start: 100,
+            end: 100 + bytes.len(),
+            line_descriptors: vec![
+                LineDescriptor {
+                    start: 100,
+                    len: 10,
+                    line_number: 1,
+                },
+                LineDescriptor {
+                    start: 112,
+                    len: 12,
+                    line_number: 3,
+                },
+            ],
+        };
+        let offsets = vec![PatternMatchPosition {
+            byte_offset: 12,
+            pattern_id: 0,
+        }];
+        let patterns = vec!["ERROR".to_string()];
+
+        let matches = line_matches_for_file(&file, bytes, &offsets, &patterns);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, path);
+        assert_eq!(matches[0].line_number, 3);
+        assert_eq!(matches[0].text, "ERROR target");
     }
 }
 

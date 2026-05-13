@@ -208,6 +208,14 @@ fn test_help_documents_runtime_override_env_vars() {
         stdout.contains("TENSOR_GREP_TRITON_TIMEOUT_SECONDS"),
         "stdout={stdout}"
     );
+    for expected in ["--smart-case", "--hidden", "--max-depth", "--text"] {
+        assert!(stdout.contains(expected), "stdout={stdout}");
+    }
+    let normalized_stdout = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized_stdout.contains("native GPU falls back"),
+        "stdout={stdout}"
+    );
 }
 
 #[test]

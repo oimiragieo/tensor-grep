@@ -1,25 +1,25 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
 
 ## Current Release State
 
 release_docs_current_tag: v1.10.6
 
-- Latest tagged version: `v1.10.5`
-- Latest complete PyPI version: `v1.10.5`
-- Latest release PR: #99 `fix: harden v1.10.4 dogfood followups`
-- Latest merge commit: `03db0ff fix: harden v1.10.4 dogfood followups`
-- Latest release commit: `72bd57c chore(release): v1.10.5 [skip ci]`
-- Latest fix commit: `03db0ff fix: harden v1.10.4 dogfood followups`
+- Latest tagged version: `v1.10.6`
+- Latest complete PyPI version: `v1.10.6`
+- Latest release PR: #100 `fix: harden v1.10.5 dogfood blockers`
+- Latest merge commit: `7a8c9cf fix: harden v1.10.5 dogfood blockers`
+- Latest release commit: `b8680e8 chore(release): v1.10.6 [skip ci]`
+- Latest fix commit: `7a8c9cf fix: harden v1.10.5 dogfood blockers`
 - Latest feature commit: `34fd556 feat: add agentic GPU evidence capsule`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.5>
-- Main CI run `25753248700`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25753247506`: passed on the `v1.10.5` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.5 tg --version` reports `tensor-grep 1.10.5`
-- GitHub release assets: `v1.10.5` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public `v1.10.5` managed-upgrade dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, and GitHub assets. New readiness work must also check Python `subprocess.run(["tg", ...])`, because Windows `CreateProcess` can resolve a foreign same-directory `tg.exe` even when shells prefer a tensor-grep `tg.com` bridge through `PATHEXT`.
-- Public `v1.10.5` dogfood lesson: GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU rows are the strongest near-term performance story.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.6>
+- Main CI run `25762981815`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25762981305`: passed on the `v1.10.6` release line
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.6 tg --version` reports `tensor-grep 1.10.6`
+- GitHub release assets: `v1.10.6` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.10.6` managed-upgrade dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, and GitHub assets. New readiness work must also check Python `subprocess.run(["tg", ...])`, because Windows `CreateProcess` can resolve a foreign same-directory `tg.exe` even when shells prefer a tensor-grep `tg.com` bridge through `PATHEXT`.
+- Public `v1.10.6` dogfood lesson: GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU rows are the strongest near-term performance story.
 - Closed v1.10.0 agentic GPU evidence gap: `v1.10.0` adds opt-in `tg agent --gpu-device-ids ... --json` / MCP GPU evidence, keeps sidecar-routed GPU unsupported for promotion, and updates help/docs/contracts for the agentic GPU surface.
 - Closed v1.9.11 release wheel retry gap: `v1.9.11` prefetches Cargo dependencies with retry/timeout settings before PyPI wheel and sdist builds, publishes all PyPI distributions, and passes `publish-success-gate`.
 - Closed v1.9.10 dogfood follow-up gap: `v1.9.10` caps capsule alternative-target confidence at the selected primary target, adds regex-backed `secrets-basic` provider-token detection for generic `sk_live...` tokens, and synchronizes stale v1.9.9 release-governance prose. Its PyPI publish did not complete because a macOS wheel runner could not resolve `index.crates.io`; the v1.9.11 release-wheel retry follow-up hardens Cargo fetch retries and publishes the replacement patch.
@@ -53,17 +53,19 @@ release_docs_current_tag: v1.10.6
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.10.5 Scope
+## Current Post-v1.10.6 Scope
 
-Current release branch is publication-complete for `v1.10.5`: PR #99 `fix: harden v1.10.4 dogfood followups` was squash-merged as `03db0ff`, release commit `72bd57c chore(release): v1.10.5 [skip ci]` exists, main CI run `25753248700` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25753247506` passed. Public dogfood verified PyPI, release assets, managed upgrade, fresh shell version probes, and `tg doctor --json`; the next launcher/readiness follow-up is Python `subprocess.run(["tg", ...])` resolving a foreign `.exe` path on Windows.
+Current release branch is publication-complete for `v1.10.6`: PR #100 `fix: harden v1.10.5 dogfood blockers` was squash-merged as `7a8c9cf`, release commit `b8680e8 chore(release): v1.10.6 [skip ci]` exists, main CI run `25762981815` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25762981305` passed. Public dogfood verified PyPI, release assets, managed upgrade, fresh shell version probes, and `tg doctor --json`; the next launcher/readiness follow-up is Python `subprocess.run(["tg", ...])` resolving a foreign `.exe` path on Windows, plus guarding context/session latency from low-confidence blast-radius work.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`; edit JSON/rollback safety shipped in `v1.9.2`; explicit Python ranking and quoted validation commands shipped in `v1.9.3`; docs-governance and validation placeholders shipped in `v1.9.4`; native CUDA gate hardening, capsule alternatives, help diagnostics, and foreign launcher diagnostics shipped in `v1.9.5`; directory validation, CUDA 12.8 install paths, help coverage, and release-proof governance shipped in `v1.9.6`; GPU benchmark promotion-gate taxonomy and cold-search positioning shipped in `v1.9.7`; stale tensor-grep-owned `tg.com` bridge refresh after upgrade shipped in `v1.9.8`; agent workflow benchmark governance shipped in `v1.9.9`; capsule confidence/secrets/docs dogfood follow-ups shipped in source/GitHub assets in `v1.9.10`; and release wheel Cargo prefetch retries shipped in `v1.9.11`.
 
-Active post-`v1.10.5` implementation scope:
+Active post-`v1.10.6` implementation scope:
 
 - Continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language intent, token economy, follow-up reads, call-site evidence, and workflow benchmarks without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 - Agents must inspect top-level `ambiguity` before editing. `ambiguity.status = "tie_requires_confirmation"` is a hard stop for autonomous edits; `tie_resolved` is acceptable only when `resolved_by` evidence is explicit.
 - Keep Windows public launcher dogfood checking shell routes, sidecar-backed commands, and Python `subprocess.run(["tg", ...])`. Python subprocess resolution can differ from shell `PATHEXT` resolution and should be reported in `tg doctor --json` as its own route.
+- `tg upgrade` should repair Windows User/current PATH so the managed native `tg.exe` is ahead of foreign same-name launchers for Python subprocesses, while keeping unrelated launchers as diagnostics instead of deletion targets.
+- Context/session latency must stay guarded: direct validation evidence should reuse repo-map imports, and weak fuzzy symbols should not trigger expensive blast-radius work unless the target is explicit or sufficiently supported.
 - Keep edit validation command parsing and `$file` / `{file}` placeholder substitution argv-safe for quoted Windows paths with spaces.
 - Preserve mixed-language capsule trust: explicit query language hints, exact symbol intent, primary target language, selected snippets, and validation commands must agree or `confidence.overall` / `primary_target.confidence` must be capped and `ask_user_before_editing.required` must become true.
 - Keep validation hints aligned with the selected primary target language unless verified cross-language dependency evidence exists. `validation_alignment` should report filtered mismatches so a TypeScript target is not silently paired with pytest-only validation.
@@ -72,7 +74,7 @@ Active post-`v1.10.5` implementation scope:
 - Keep foreign first-PATH `tg` diagnostics separate from tensor-grep-owned stale-launcher cleanup. If a candidate reports another product's version, `tg doctor --json` should classify it as `foreign`, readiness should fail with remediation, and installer logic should not delete unrelated tools.
 - Keep benchmark `tg_launcher_command_kind` in the environment block so native-exe, `.cmd` shim, `uv`, and Python-module routes are not mixed in cold-path claims. Treat benchmark warnings about shim/interpreter overhead as blocking evidence for performance comparisons.
 - Keep `classify` provider/cache UX explicit and fast. The default local path is quick; CyBERT/Triton remains opt-in and must not warn or block agent loops when unavailable.
-- Keep GPU experimental until native streaming correctness and speed are proven on the 1GB/5GB gates. Local post-`v1.9.6` work proves both RTX 4070 and RTX 5070 can execute native and sidecar GPU smoke paths when the sidecar uses `cu128`, but public `v1.10.5` managed GPU requests still report `GpuSidecar` / unsupported and do not produce qualifying `NativeGpuBackend` rows. The near-term performance story is large-file CPU behavior, not GPU marketing. Explicit `--gpu-device-ids` routing must stay scoped to selected devices and sidecar-routed rows must not count as native CUDA scale-gate timings. Native CUDA JSON/verbose output now reports CPU staging bytes/time, pageable-host staging bytes, H2D transfer time, and kernel time so future artifacts can separate CPU bleed from device work.
+- Keep GPU experimental for public managed installs until native streaming correctness and speed are proven on the 1GB/5GB gates by public `NativeGpuBackend`, `sidecar_used = false` assets. Local post-`v1.10.6` CUDA-feature work now shows a real high-intensity lane: public `tg search -F --gpu-device-ids 0 --json -e ...` through the local CUDA native binary ran 100 fixed-string patterns over 1GB at `1301.676ms` versus `7222.304ms` for sequential `rg` no-match probes, and a 100-pattern mixed-match probe with 2665 emitted matches ran `2488.768ms` versus `6676.904ms` for sequential `rg`. Single-pattern GPU still loses (`1093.778ms` versus `73.838ms` for a 1GB no-match), so the product story is "many fixed patterns over large corpora," not blanket faster grep. Explicit `--gpu-device-ids` routing must stay scoped to selected devices and sidecar-routed rows must not count as native CUDA scale-gate timings. Native CUDA JSON/verbose output now reports CPU staging bytes/time, pageable-host staging bytes, H2D transfer time, and kernel time so future artifacts can separate CPU bleed from device work.
 - Current GPU-readiness follow-up is still diagnostic, not promotion. The planned benchmark artifact surface adds advisory bottleneck summaries, source provenance, and host-tail accounting from native pipeline samples so future optimization targets are evidence-based. Missing pipeline evidence should report `NOT_AVAILABLE`, and advisory bottleneck fields must not influence `gpu_auto_recommendation` or `promotion_ready`.
 - GPUDirect Storage/cuFile is a future opt-in Linux experiment only if host-tail/storage evidence dominates after instrumentation. It can remove CPU bounce buffers for suitable coarse streaming transfers, but requires platform, filesystem, O_DIRECT/alignment, buffer-registration reuse, batching/asynchrony, and topology proof; do not attach it to Windows/default readiness or GPU promotion claims.
 - Release-native GPU front-door assets are opt-in profile work, not default GPU readiness. Default release assets remain CPU-only `native-frontdoor`; `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE=native-frontdoor-gpu` enables additional Linux/Windows NVIDIA assets while macOS stays CPU-only. Installers and `tg upgrade` may prefer an NVIDIA asset only when explicitly requested with `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia` or `TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR=nvidia`; they must fall back to CPU and record asset flavor without implying performance promotion.

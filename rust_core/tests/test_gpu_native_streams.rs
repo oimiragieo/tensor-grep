@@ -77,6 +77,8 @@ fn test_gpu_native_search_reports_pinned_double_buffered_stream_pipeline() {
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(64 * 1024),
     };
 
@@ -102,6 +104,8 @@ fn test_gpu_native_overlap_matches_expected_results_without_races() {
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(64 * 1024),
     };
 
@@ -131,6 +135,8 @@ fn test_gpu_native_overlap_metrics_show_transfer_compute_overlap() {
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(64 * 1024),
     };
 
@@ -180,6 +186,8 @@ fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_result
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: Some(128 * 1024),
     };
 

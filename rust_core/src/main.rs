@@ -29,6 +29,8 @@ use tensor_grep_rs::gpu_native::{
     probe_device_allocation, GpuNativeSearchConfig, GpuNativeSearchStats, GpuPipelineStats,
 };
 use tensor_grep_rs::index::TrigramIndex;
+#[cfg(feature = "cuda")]
+use tensor_grep_rs::native_search::smart_case_pattern_is_case_insensitive;
 use tensor_grep_rs::native_search::{
     run_native_search, NativeOutputTarget, NativeSearchConfig, SearchStats,
 };
@@ -44,7 +46,7 @@ use tensor_grep_rs::routing::{
     SearchRoutingConfig,
 };
 
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -1203,6 +1205,75 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn gpu_params_for_patterns(patterns: &[String]) -> GpuSearchParams<'_> {
+        GpuSearchParams {
+            patterns,
+            query: patterns.first().map(String::as_str).unwrap_or_default(),
+            path: ".",
+            line_number: false,
+            ignore_case: false,
+            smart_case: false,
+            fixed_strings: true,
+            invert_match: false,
+            count: false,
+            context: None,
+            max_count: None,
+            word_regexp: false,
+            globs: Vec::new(),
+            hidden: false,
+            max_depth: None,
+            text: false,
+            no_ignore: true,
+            gpu_device_ids: &[0],
+            json: true,
+            ndjson: false,
+            verbose: false,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn gpu_native_route_rejects_case_insensitive_smart_case_patterns() {
+        let lowercase = vec!["warning".to_string()];
+        let mut params = gpu_params_for_patterns(&lowercase);
+        params.smart_case = true;
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("case-insensitive searches are not yet supported by native GPU routing")
+        );
+
+        let uppercase = vec!["WARNING".to_string()];
+        let mut params = gpu_params_for_patterns(&uppercase);
+        params.smart_case = true;
+        assert_eq!(gpu_native_fallback_reason(&params), None);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn gpu_native_route_rejects_line_terminator_patterns() {
+        let patterns = vec!["foo\nbar".to_string()];
+        let params = gpu_params_for_patterns(&patterns);
+
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("line-terminator patterns require CPU or sidecar routing")
+        );
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn gpu_native_route_rejects_binary_as_text_searches() {
+        let patterns = vec!["SECRET".to_string()];
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.text = true;
+
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("binary-as-text searches are not yet supported by native GPU routing")
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn simple_windows_validation_split_preserves_quoted_path_but_rejects_shell_builtin() {
@@ -2054,6 +2125,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             path: primary_path,
             line_number: true,
             ignore_case: cli.ignore_case,
+            smart_case: false,
             fixed_strings: cli.fixed_strings,
             invert_match: cli.invert_match,
             count: cli.count,
@@ -2061,6 +2133,9 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             max_count: cli.max_count,
             word_regexp: cli.word_regexp,
             globs: Vec::new(),
+            hidden: false,
+            max_depth: None,
+            text: false,
             no_ignore: true,
             gpu_device_ids: &auto_gpu_ids,
             json: cli.json,
@@ -2114,6 +2189,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 path: primary_path,
                 line_number: true,
                 ignore_case: cli.ignore_case,
+                smart_case: false,
                 fixed_strings: cli.fixed_strings,
                 invert_match: cli.invert_match,
                 count: cli.count,
@@ -2121,6 +2197,9 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 max_count: cli.max_count,
                 word_regexp: cli.word_regexp,
                 globs: Vec::new(),
+                hidden: false,
+                max_depth: None,
+                text: false,
                 no_ignore: true,
                 gpu_device_ids,
                 json: cli.json,
@@ -2516,6 +2595,7 @@ fn native_search_config_for_positional(
         sidecar_used: decision.sidecar_used(),
         requested_gpu_device_ids: Vec::new(),
         ignore_case: cli.ignore_case,
+        smart_case: false,
         fixed_strings: cli.fixed_strings,
         word_boundary: cli.word_regexp,
         invert_match: cli.invert_match,
@@ -2525,6 +2605,7 @@ fn native_search_config_for_positional(
         json: cli.json,
         ndjson: cli.ndjson,
         verbose: cli.verbose,
+        text: false,
         line_number: cli.line_number,
         only_matching: cli.only_matching,
         replace: cli.replace.clone(),
@@ -2546,6 +2627,7 @@ fn native_search_config_for_command(
         sidecar_used: decision.sidecar_used(),
         requested_gpu_device_ids: Vec::new(),
         ignore_case: args.ignore_case,
+        smart_case: args.smart_case,
         fixed_strings: args.fixed_strings,
         word_boundary: args.word_regexp,
         invert_match: args.invert_match,
@@ -2553,11 +2635,14 @@ fn native_search_config_for_command(
         after_context: search_after_context(args),
         max_count: args.max_count.map(|value| value as u64),
         glob: args.globs.clone(),
+        hidden: args.hidden,
+        max_depth: args.max_depth,
         count: args.count,
         no_ignore: args.no_ignore,
         json: args.json,
         ndjson: args.ndjson,
         verbose: args.verbose,
+        text: args.text,
         line_number: args.line_number,
         only_matching: args.only_matching,
         replace: args.replace.clone(),
@@ -2579,6 +2664,7 @@ fn native_search_config_for_gpu_params(
         sidecar_used: decision.sidecar_used(),
         requested_gpu_device_ids: params.gpu_device_ids.to_vec(),
         ignore_case: params.ignore_case,
+        smart_case: params.smart_case,
         fixed_strings: params.fixed_strings,
         word_boundary: params.word_regexp,
         invert_match: params.invert_match,
@@ -2586,11 +2672,14 @@ fn native_search_config_for_gpu_params(
         after_context: params.context.unwrap_or(0),
         max_count: params.max_count.map(|value| value as u64),
         glob: params.globs.clone(),
+        hidden: params.hidden,
+        max_depth: params.max_depth,
         count: params.count,
         no_ignore: params.no_ignore,
         json: params.json,
         ndjson: params.ndjson,
         verbose: params.verbose,
+        text: params.text,
         line_number: params.line_number,
         ..NativeSearchConfig::default()
     }
@@ -2750,6 +2839,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             path: request.primary_path(),
             line_number: false,
             ignore_case: args.ignore_case,
+            smart_case: args.smart_case,
             fixed_strings: args.fixed_strings,
             invert_match: args.invert_match,
             count: args.count,
@@ -2757,6 +2847,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             max_count: args.max_count,
             word_regexp: args.word_regexp,
             globs: args.globs.clone(),
+            hidden: args.hidden,
+            max_depth: args.max_depth,
+            text: args.text,
             no_ignore: args.no_ignore,
             gpu_device_ids: &auto_gpu_ids,
             json: args.json,
@@ -2811,6 +2904,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 path: request.primary_path(),
                 line_number: false,
                 ignore_case: args.ignore_case,
+                smart_case: args.smart_case,
                 fixed_strings: args.fixed_strings,
                 invert_match: args.invert_match,
                 count: args.count,
@@ -2818,6 +2912,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 max_count: args.max_count,
                 word_regexp: args.word_regexp,
                 globs: args.globs.clone(),
+                hidden: args.hidden,
+                max_depth: args.max_depth,
+                text: args.text,
                 no_ignore: args.no_ignore,
                 gpu_device_ids,
                 json: args.json,
@@ -5161,6 +5258,7 @@ struct GpuSearchParams<'a> {
     #[cfg_attr(not(feature = "cuda"), allow(dead_code))]
     line_number: bool,
     ignore_case: bool,
+    smart_case: bool,
     fixed_strings: bool,
     invert_match: bool,
     count: bool,
@@ -5168,6 +5266,9 @@ struct GpuSearchParams<'a> {
     max_count: Option<usize>,
     word_regexp: bool,
     globs: Vec<String>,
+    hidden: bool,
+    max_depth: Option<usize>,
+    text: bool,
     no_ignore: bool,
     gpu_device_ids: &'a [i32],
     json: bool,
@@ -5207,8 +5308,16 @@ struct GpuRouteFailure {
 
 #[cfg(feature = "cuda")]
 fn gpu_native_fallback_reason(params: &GpuSearchParams<'_>) -> Option<&'static str> {
-    if params.ignore_case {
-        Some("ignore-case searches are not yet supported by native GPU routing")
+    if gpu_params_require_case_insensitive_matching(params) {
+        Some("case-insensitive searches are not yet supported by native GPU routing")
+    } else if params.text {
+        Some("binary-as-text searches are not yet supported by native GPU routing")
+    } else if params
+        .patterns
+        .iter()
+        .any(|pattern| pattern_contains_line_terminator(pattern))
+    {
+        Some("line-terminator patterns require CPU or sidecar routing")
     } else if params.invert_match {
         Some("invert-match searches are not yet supported by native GPU routing")
     } else if params.context.is_some() {
@@ -5222,6 +5331,26 @@ fn gpu_native_fallback_reason(params: &GpuSearchParams<'_>) -> Option<&'static s
     } else {
         None
     }
+}
+
+#[cfg(feature = "cuda")]
+fn pattern_contains_line_terminator(pattern: &str) -> bool {
+    pattern
+        .as_bytes()
+        .iter()
+        .any(|byte| matches!(byte, b'\n' | b'\r'))
+}
+
+#[cfg(feature = "cuda")]
+fn gpu_params_require_case_insensitive_matching(params: &GpuSearchParams<'_>) -> bool {
+    if params.ignore_case {
+        return true;
+    }
+    params.smart_case
+        && params
+            .patterns
+            .iter()
+            .any(|pattern| smart_case_pattern_is_case_insensitive(pattern))
 }
 
 #[cfg(feature = "cuda")]
@@ -5398,6 +5527,8 @@ fn gpu_native_config_from_internal_args(args: &GpuNativeStatsArgs) -> GpuNativeS
         paths: vec![args.path.clone()],
         no_ignore: args.no_ignore,
         glob: args.globs.clone(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: args.max_batch_bytes,
     }
 }
@@ -5409,6 +5540,8 @@ fn gpu_native_config_from_graph_args(args: &GpuCudaGraphArgs) -> GpuNativeSearch
         paths: vec![args.path.clone()],
         no_ignore: args.no_ignore,
         glob: args.globs.clone(),
+        hidden: false,
+        max_depth: None,
         max_batch_bytes: args.max_batch_bytes,
     }
 }
@@ -5495,6 +5628,8 @@ fn execute_gpu_native_route(
         paths: vec![PathBuf::from(params.path)],
         no_ignore: params.no_ignore,
         glob: params.globs.clone(),
+        hidden: params.hidden,
+        max_depth: params.max_depth,
         max_batch_bytes: None,
     };
 
@@ -5633,12 +5768,12 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 after_context: None,
                                 max_count: params.max_count,
                                 word_regexp: params.word_regexp,
-                                smart_case: false,
+                                smart_case: params.smart_case,
                                 globs: params.globs.clone(),
                                 no_ignore: params.no_ignore,
-                                hidden: false,
+                                hidden: params.hidden,
                                 follow: false,
-                                text: false,
+                                text: params.text,
                                 files_with_matches: false,
                                 files_without_match: false,
                                 file_types: Vec::new(),
@@ -5646,7 +5781,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 replace: None,
                                 sort: None,
                                 sort_reverse: None,
-                                max_depth: None,
+                                max_depth: params.max_depth,
                                 null: false,
                                 null_data: false,
                                 multiline: false,
@@ -5697,6 +5832,7 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
         "patterns": params.patterns,
         "path": params.path,
         "ignore_case": params.ignore_case,
+        "smart_case": params.smart_case,
         "fixed_strings": params.fixed_strings,
         "invert_match": params.invert_match,
         "count": params.count,
@@ -5704,6 +5840,9 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
         "max_count": params.max_count,
         "word_regexp": params.word_regexp,
         "globs": params.globs,
+        "hidden": params.hidden,
+        "max_depth": params.max_depth,
+        "text": params.text,
         "no_ignore": params.no_ignore,
         "gpu_device_ids": params.gpu_device_ids,
         "json": params.json || params.ndjson,

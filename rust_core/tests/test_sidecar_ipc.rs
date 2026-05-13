@@ -322,6 +322,54 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
 }
 
 #[test]
+fn test_gpu_search_smart_case_lowercase_uses_sidecar_and_preserves_flag() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    let file_path = write_sample_log(&corpus_dir);
+    let mock_script = dir.path().join("mock_gpu_sidecar_smart_case.py");
+    fs::write(
+        &mock_script,
+        format!(
+            "import json\nimport os\nimport sys\nrequest = json.loads(sys.stdin.buffer.read())\npayload = request[\"payload\"]\nassert payload.get(\"gpu_device_ids\") == [0]\nassert payload.get(\"smart_case\") is True\nassert payload.get(\"hidden\") is True\nassert payload.get(\"max_depth\") == 1\nresponse = {{\"stdout\": json.dumps({{\"total_matches\": 1, \"total_files\": 1, \"requested_gpu_device_ids\": [0], \"routing_gpu_device_ids\": [], \"matches\": [{{\"file\": {:?}, \"line_number\": 2, \"text\": \"ERROR database failed\"}}]}}) + \'\\n\', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}}\nsys.stdout.write(json.dumps(response))\n",
+            file_path.display().to_string()
+        ),
+    )
+    .unwrap();
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--json")
+        .arg("--smart-case")
+        .arg("--hidden")
+        .arg("--max-depth")
+        .arg("1")
+        .arg("warning")
+        .arg(&corpus_dir)
+        .env("TG_SIDECAR_PYTHON", repo_python())
+        .env("TG_SIDECAR_SCRIPT", &mock_script);
+
+    let output = run_with_timeout(tg, sidecar_test_timeout());
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "GpuSidecar");
+    assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
+    assert_eq!(payload["sidecar_used"], true);
+    assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
+    assert_eq!(payload["total_matches"], 1);
+}
+
+#[test]
 fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
     let dir = tempdir().unwrap();
     let corpus_dir = dir.path().join("corpus");
