@@ -4,10 +4,10 @@ Last updated: 2026-05-13
 
 ## Current Release State
 
-release_docs_current_tag: v1.10.8
+release_docs_current_tag: v1.10.9
 
-- Latest tagged version: `v1.10.8`
-- Latest complete PyPI version: `v1.10.8`
+- Latest tagged version: `v1.10.9`
+- Latest complete PyPI version: `v1.10.9`
 - Latest release PR: #102 `fix: harden v1.10.7 dogfood followups`
 - Latest merge commit: `6ee1d53 fix: harden v1.10.7 dogfood followups`
 - Latest release commit: `0074fd2 chore(release): v1.10.8 [skip ci]`

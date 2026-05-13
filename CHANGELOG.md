@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.10.9 (2026-05-13)
+
+### Bug Fixes
+
+- Harden v1.10.8 release docs governance
+  ([`b0df720`](https://github.com/oimiragieo/tensor-grep/commit/b0df7207e61c5125189c4be495bdce67fa67c0a4))
+
+Refresh v1.10.8 release proof, enforce latest-release handoff labels, and relax the Windows sidecar
+  recovery timeout to match the existing platform-specific test helper.
+
+
 ## v1.10.8 (2026-05-13)
 
 ### Bug Fixes
