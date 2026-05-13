@@ -52,11 +52,20 @@ Current positioning:
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
-- Public GPU note: in `v1.10.9`, the public managed binary still reports explicit GPU requests through `GpuSidecar`; only a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. Local CUDA-native follow-up work shows the viable speed lane is many fixed strings over large corpora, not single-pattern cold grep. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce correctness and speed wins for the declared workload.
+- Public GPU note: in `v1.10.10`, the public managed binary still reports explicit GPU requests through `GpuSidecar`; only a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. Local CUDA-native follow-up work shows the viable speed lane is many fixed strings over large corpora, not single-pattern cold grep. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce correctness and speed wins for the declared workload.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.10.10` closed:
+
+- PR #105 `fix: add explicit Windows subprocess launcher repair` shipped the release as merge commit `dd995fc fix: add explicit Windows subprocess launcher repair` and release commit `5bc5749 chore(release): v1.10.10 [skip ci]`
+- main CI run `25829350863` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25829350222` passed
+- GitHub release assets for `v1.10.10` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.10.10 tg --version` reports `tensor-grep 1.10.10`
+- public dogfood verified the pinned managed installer, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, direct managed native `tg.exe`, Python `subprocess.run(["tg", "--version"])`, PyPI, `uvx`, and GitHub assets
+- `tg repair-launcher --allow-foreign-rename` now gives operators an explicit Windows repair route when Python subprocess resolution is blocked by a foreign `tg.exe` they own; it backs up the foreign executable before installing the verified managed native front door into that PATH slot
+- public GPU remains experimental: managed GPU requests still route through `GpuSidecar` / unsupported rather than public `NativeGpuBackend` evidence
 
 What `v1.10.9` closed:
 
@@ -65,7 +74,7 @@ What `v1.10.9` closed:
 - GitHub release assets for `v1.10.9` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.10.9 tg --version` reports `tensor-grep 1.10.9`
 - public managed-upgrade dogfood verified `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, direct managed native `tg.exe`, PyPI, `uvx`, and GitHub assets
 - release docs/governance now track the `v1.10.8` dogfood findings: `tg` remains positioned as agent-native code intelligence with rg-compatible search, public GPU remains `GpuSidecar` / unsupported rather than promoted, and Python subprocess launcher blockers are reported as foreign Machine PATH conflicts rather than tensor-grep-owned cleanup targets
-- current follow-up: Python `subprocess.run(["tg", ...])` still requires a non-foreign `tg.exe` earlier in the effective Windows process PATH; `tg doctor --json` reports the foreign Machine PATH blocker with remediation and does not delete unrelated launchers
+- current follow-up from that release was closed in `v1.10.10` by the explicit `tg repair-launcher --allow-foreign-rename` path; foreign launchers are still never deleted without operator opt-in
 
 What `v1.10.8` closed:
 

@@ -8,18 +8,19 @@ release_docs_current_tag: v1.10.10
 
 - Latest tagged version: `v1.10.10`
 - Latest complete PyPI version: `v1.10.10`
-- Latest release PR: #103 `fix: harden v1.10.8 release docs governance`
-- Latest merge commit: `b0df720 fix: harden v1.10.8 release docs governance`
-- Latest release commit: `d3812b0 chore(release): v1.10.9 [skip ci]`
-- Latest fix commit: `b0df720 fix: harden v1.10.8 release docs governance`
+- Latest release PR: #105 `fix: add explicit Windows subprocess launcher repair`
+- Latest merge commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
+- Latest release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
+- Latest fix commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
 - Latest feature commit: `34fd556 feat: add agentic GPU evidence capsule`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.9>
-- Main CI run `25800094003`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25800093062`: passed on the `v1.10.9` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.9 tg --version` reports `tensor-grep 1.10.9`
-- GitHub release assets: `v1.10.9` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public `v1.10.9` managed-upgrade dogfood verified `tg upgrade`, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, PyPI, `uvx`, and GitHub assets. Python `subprocess.run(["tg", "--version"])` still resolves the foreign Together CLI `tg.exe` from Machine PATH on this host; `tg doctor --json` reports it as `foreign` with Machine PATH remediation and readiness should keep failing until that environment-level PATH conflict is fixed.
-- Public `v1.10.9` dogfood lesson: GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU rows are the strongest near-term performance story.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.10>
+- Main CI run `25829350863`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25829350222`: passed on the `v1.10.10` release line
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.10 tg --version` reports `tensor-grep 1.10.10`
+- GitHub release assets: `v1.10.10` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.10.10` managed-upgrade and launcher dogfood verified the pinned managed installer, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, Python `subprocess.run(["tg", "--version"])`, PyPI, `uvx`, and GitHub assets. `tg repair-launcher --allow-foreign-rename` backed up the foreign Together CLI `tg.exe` before installing the verified managed native front door into that PATH slot.
+- Public `v1.10.10` dogfood lesson: Python subprocess resolution is now repairable with explicit operator opt-in, while GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`.
+- Closed v1.10.10 Python subprocess launcher gap: `v1.10.10` adds `tg repair-launcher --allow-foreign-rename`, documents it in root help, preserves foreign launchers unless explicitly opted in, refreshes stale tensor-grep-owned PATH bridges, and verifies `cmd`, unprofiled `pwsh`, direct managed native, and Python `subprocess.run(["tg", "--version"])` at `tg 1.10.10` after repair.
 - Closed v1.10.9 release docs governance gap: `v1.10.9` synchronizes release docs/governance, keeps public positioning on agent-native code intelligence with rg-compatible search rather than faster-grep claims, reports Python-subprocess foreign launcher blockers precisely, and marks sidecar-routed native GPU diagnostic probes unsupported instead of false failures.
 - Closed v1.10.8 dogfood follow-up gap: `v1.10.8` verified the public managed upgrade and launcher route after the v1.10.7 GPU/search accuracy release while preserving the foreign Python subprocess blocker as an environment-level failure.
 - Closed v1.10.7 GPU/search accuracy gap: native GPU JSON line numbers are accurate after blank lines, smart-case/hidden/max-depth/text semantics stay on CPU/sidecar routes when native GPU cannot faithfully execute them, and root help/docs describe the fallback behavior.
@@ -56,9 +57,9 @@ release_docs_current_tag: v1.10.10
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.10.9 Scope
+## Current Post-v1.10.10 Scope
 
-Current release branch is publication-complete for `v1.10.9`: PR #103 `fix: harden v1.10.8 release docs governance` was squash-merged as `b0df720`, release commit `d3812b0 chore(release): v1.10.9 [skip ci]` exists, main CI run `25800094003` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25800093062` passed. Public dogfood verified PyPI, release assets, managed upgrade, fresh shell version probes, direct managed native, `uvx`, and `tg doctor --json`; the remaining launcher/readiness blocker is Python `subprocess.run(["tg", ...])` resolving a foreign Machine PATH `.exe` path on Windows. Keep this as an environment-level blocker with explicit remediation rather than deleting unrelated tools.
+Current release branch is publication-complete for `v1.10.10`: PR #105 `fix: add explicit Windows subprocess launcher repair` was squash-merged as `dd995fc`, release commit `5bc5749 chore(release): v1.10.10 [skip ci]` exists, main CI run `25829350863` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25829350222` passed. Public dogfood verified PyPI, release assets, pinned managed installer, fresh shell version probes, direct managed native, `uvx`, `tg doctor --json`, and Python `subprocess.run(["tg", ...])` after the explicit repair command backed up the operator-owned foreign launcher. Keep foreign launcher handling opt-in and auditable rather than deleting unrelated tools.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`; edit JSON/rollback safety shipped in `v1.9.2`; explicit Python ranking and quoted validation commands shipped in `v1.9.3`; docs-governance and validation placeholders shipped in `v1.9.4`; native CUDA gate hardening, capsule alternatives, help diagnostics, and foreign launcher diagnostics shipped in `v1.9.5`; directory validation, CUDA 12.8 install paths, help coverage, and release-proof governance shipped in `v1.9.6`; GPU benchmark promotion-gate taxonomy and cold-search positioning shipped in `v1.9.7`; stale tensor-grep-owned `tg.com` bridge refresh after upgrade shipped in `v1.9.8`; agent workflow benchmark governance shipped in `v1.9.9`; capsule confidence/secrets/docs dogfood follow-ups shipped in source/GitHub assets in `v1.9.10`; and release wheel Cargo prefetch retries shipped in `v1.9.11`.
 
