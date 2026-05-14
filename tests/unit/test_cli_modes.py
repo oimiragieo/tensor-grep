@@ -46,6 +46,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "upgrade",
     "update",
     "repair-launcher",
+    "dogfood",
     "lsp-setup",
     "checkpoint",
     "TG_SIDECAR_PYTHON",
@@ -9295,6 +9296,21 @@ def test_main_entry_should_not_rewrite_checkpoint_subcommand(monkeypatch):
     cli_main.main_entry()
 
     assert seen["argv"] == ["tg", "checkpoint", "list"]
+
+
+def test_main_entry_should_not_rewrite_dogfood_subcommand(monkeypatch):
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app(*_args, **_kwargs):
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "dogfood", "--json"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "dogfood", "--json"]
 
 
 def test_main_entry_should_not_rewrite_session_subcommand(monkeypatch):

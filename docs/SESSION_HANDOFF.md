@@ -312,7 +312,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 ## Next Highest-Value Work
 
-1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) fast and representative; it should cover context trust, `agent-capsule`, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
+1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`, or `tg dogfood --output artifacts/dogfood_readiness.json` for the verdict envelope) fast and representative; it should cover context trust, `agent-capsule`, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Keep dogfooding `impact --symbol` preferred-command metadata so agents consistently choose `blast-radius` for direct impact.
 4. Track AST parity roadmap gaps, GPU benchmark/no-match cleanup, and `classify` provider/cache UX as blockers for a future "world-class" claim, not as blockers for this launcher/control-plane PR.

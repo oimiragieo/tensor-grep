@@ -540,6 +540,11 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    #[command(name = "dogfood", disable_help_flag = true)]
+    Dogfood {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     #[command(name = "source", disable_help_flag = true)]
     Source {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -1899,6 +1904,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Doctor { args } => handle_python_passthrough("doctor", args),
         Commands::RepairLauncher { args } => handle_python_passthrough("repair-launcher", args),
         Commands::Checkpoint { args } => handle_python_passthrough("checkpoint", args),
+        Commands::Dogfood { args } => handle_python_passthrough("dogfood", args),
         Commands::Defs { args } => handle_python_passthrough("defs", args),
         Commands::Refs { args } => handle_python_passthrough("refs", args),
         Commands::Source { args } => handle_python_passthrough("source", args),

@@ -114,6 +114,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg agent PATH --query "change invoice tax"`
 - `tg scan --config sgconfig.yml`
 - `tg doctor --with-lsp`
+- `tg dogfood --output artifacts/agent_readiness.json`
 - `tg repair-launcher --allow-foreign-rename`
 - `tg mcp`
 
@@ -6238,30 +6239,105 @@ def checkpoint_create(
     typer.echo(
         f"Created checkpoint {payload.checkpoint_id} ({payload.mode}, files={payload.file_count})"
     )
+    typer.echo(f"Undo command: {payload.undo_command}")
 
 
 @checkpoint_app.command("list")
 def checkpoint_list(
     path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    discover: bool = typer.Option(
+        False,
+        "--discover",
+        help="Recursively discover checkpoint scopes under PATH instead of listing one detected scope.",
+    ),
 ) -> None:
     """List available checkpoints."""
-    from tensor_grep.cli.checkpoint_store import list_checkpoints
+    from tensor_grep.cli.checkpoint_store import (
+        describe_checkpoint_scope,
+        discover_checkpoint_scopes,
+    )
 
     try:
-        records = [record.__dict__ for record in list_checkpoints(path)]
+        if discover:
+            scope_payloads: list[dict[str, Any]] = [
+                {
+                    "root": scope.root,
+                    "mode": scope.mode,
+                    "checkpoint_count": scope.checkpoint_count,
+                    "checkpoints": [record.__dict__ for record in scope.checkpoints],
+                }
+                for scope in discover_checkpoint_scopes(path)
+            ]
+            checkpoint_count = sum(
+                int(cast(int, scope_payload["checkpoint_count"]))
+                for scope_payload in scope_payloads
+            )
+            if json_output:
+                typer.echo(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "path": str(Path(path).expanduser().resolve()),
+                            "checkpoint_count": checkpoint_count,
+                            "discovered_scopes": scope_payloads,
+                        },
+                        indent=2,
+                    )
+                )
+                return
+
+            if not scope_payloads:
+                typer.echo(f"No checkpoint scopes found under {Path(path).expanduser().resolve()}.")
+                return
+
+            typer.echo(
+                f"Discovered {checkpoint_count} checkpoint(s) across {len(scope_payloads)} scope(s)."
+            )
+            for scope_payload in scope_payloads:
+                typer.echo(
+                    f"Checkpoint root: {scope_payload['root']} "
+                    f"({scope_payload['mode']}, count={scope_payload['checkpoint_count']})"
+                )
+                checkpoint_records = cast(list[dict[str, object]], scope_payload["checkpoints"])
+                for record in checkpoint_records:
+                    typer.echo(
+                        f"  {record['checkpoint_id']}  {record['mode']}  "
+                        f"{record['created_at']}  files={record['file_count']}"
+                    )
+            return
+
+        scope_result = describe_checkpoint_scope(path)
+        records = [record.__dict__ for record in scope_result.checkpoints]
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps({"version": 1, "checkpoints": records}, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "version": 1,
+                    "root": scope_result.root,
+                    "mode": scope_result.mode,
+                    "checkpoint_count": scope_result.checkpoint_count,
+                    "checkpoints": records,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not records:
-        typer.echo("No checkpoints found.")
+        typer.echo(f"Checkpoint root: {scope_result.root} ({scope_result.mode})")
+        typer.echo("No checkpoints found under this scope.")
+        typer.echo("Use `tg checkpoint list PATH --discover` to search child scopes explicitly.")
         return
 
+    typer.echo(
+        f"Checkpoint root: {scope_result.root} "
+        f"({scope_result.mode}, count={scope_result.checkpoint_count})"
+    )
     for record in records:
         typer.echo(
             f"{record['checkpoint_id']}  {record['mode']}  "
@@ -6593,6 +6669,52 @@ def new() -> None:
     os.makedirs("tests", exist_ok=True)
 
     typer.echo("Initialized new tensor-grep structural search project.")
+
+
+@app.command(name="dogfood")
+def dogfood(
+    root: Path = typer.Option(Path("."), "--root", help="Repository root to validate."),
+    output: Path | None = typer.Option(None, "--output", help="Optional JSON report path."),
+    expected_version: str | None = typer.Option(
+        None, "--expected-version", help="Expected tensor-grep version. Defaults to pyproject."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    no_shell_probes: bool = typer.Option(
+        False, "--no-shell-probes", help="Skip public shell version probes."
+    ),
+    no_wsl_probe: bool = typer.Option(False, "--no-wsl-probe", help="Skip the optional WSL probe."),
+) -> None:
+    """Run the agent-readiness dogfood gate and emit a release-readiness verdict."""
+    from tensor_grep.cli.dogfood import run_dogfood_readiness
+
+    exit_code, report = run_dogfood_readiness(
+        root=root,
+        output=output,
+        expected_version=expected_version,
+        include_shell_probes=not no_shell_probes,
+        include_wsl_probe=not no_wsl_probe,
+    )
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        summary = cast(dict[str, object], report["agent_readiness"]).get("summary")
+        if not isinstance(summary, dict):
+            summary = {}
+        verdict = cast(dict[str, object], report["verdict"])
+        typer.echo(f"Dogfood verdict: {verdict['status']}")
+        typer.echo(
+            "agent-readiness: "
+            f"passed={summary.get('passed', 0)} "
+            f"failed={summary.get('failed', 0)} "
+            f"skipped={summary.get('skipped', 0)}"
+        )
+        if output is not None:
+            typer.echo(f"report: {output}")
+        failed_checks = verdict.get("failed_checks")
+        if isinstance(failed_checks, list) and failed_checks:
+            typer.echo("failed checks: " + ", ".join(str(check) for check in failed_checks))
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command()

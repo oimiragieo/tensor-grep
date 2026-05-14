@@ -51,6 +51,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "session",
     "doctor",
     "checkpoint",
+    "dogfood",
 }
 
 

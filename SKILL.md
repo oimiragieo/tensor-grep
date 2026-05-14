@@ -223,9 +223,10 @@ For fast agent-readiness dogfood before push, run:
 
 ```powershell
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
+tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.10.10` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.10.10` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. `tg dogfood` wraps the same gate with a compact verdict and JSON report. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

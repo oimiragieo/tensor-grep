@@ -151,9 +151,10 @@ For fast pre-push dogfood on agent-critical surfaces, run the agent-readiness do
 
 ```powershell
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
+tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This 3-5 minute gate checks public shell version resolution, `public-version-python-subprocess`, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene. It complements, not replaces, the full local validation gate.
+This 3-5 minute gate checks public shell version resolution, `public-version-python-subprocess`, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene. `tg dogfood` wraps the same readiness gate with a one-page verdict and JSON envelope. It complements, not replaces, the full local validation gate.
 
 For release dogfood, include this compact public path checklist:
 
