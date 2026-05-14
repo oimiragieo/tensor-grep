@@ -11,20 +11,20 @@ The current tagged state is `v1.11.5`, and the latest complete public PyPI/relea
 Current release facts:
 
 - Latest tagged release PR: #113 `fix: accelerate fixed multi-pattern native search`
-- Latest tagged merge commit: `2100122 fix: harden release docs stamp governance`
-- Latest tagged release commit: `49a7c9a chore(release): v1.11.4 [skip ci]`
-- Latest complete public release commit: `49a7c9a chore(release): v1.11.4 [skip ci]`
-- Latest merged fix commit: `2100122 fix: harden release docs stamp governance`
+- Latest tagged merge commit: `a78e33c fix: harden post-release docs governance`
+- Latest tagged release commit: `e33c2ba chore(release): v1.11.5 [skip ci]`
+- Latest complete public release commit: `e33c2ba chore(release): v1.11.5 [skip ci]`
+- Latest merged fix commit: `a78e33c fix: harden post-release docs governance`
 - Latest merged feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
-- Latest complete public release PRs: #114 `fix: harden public GPU unavailable routing`, #115 `fix: harden release docs stamp governance`
-- Latest complete public merge commits: `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`
+- Latest complete public release PR: #116 `fix: harden post-release docs governance`
+- Latest complete public merge commit: `a78e33c fix: harden post-release docs governance`
 - `v1.11.0` main CI run `25834508800` passed pre-release checks and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
 - Main CI run `25860914920`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
-- Main CI run `25863754902`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
-- CodeQL run `25863751937`: passed on the v1.11.4 release line.
+- Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- CodeQL run `25866868462`: passed on the v1.11.5 release line.
 - PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.11.3 tg --version` reports `tensor-grep 1.11.3`.
-- GitHub release assets for `v1.11.4` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Public `v1.11.4` dogfood verified native GPU unavailable fallback to `NativeCpuBackend` and post-release-safe docs governance; `87d4ca4 fix: accelerate fixed multi-pattern native search` remains the `v1.11.3` CPU many-pattern lane.
+- GitHub release assets for `v1.11.5` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Public `v1.11.5` dogfood verified post-release-safe docs governance; `2100122 fix: harden release docs stamp governance` remains the release-stamper alignment fix, `361e0db fix: harden public GPU unavailable routing` remains the native GPU unavailable fallback, and `87d4ca4 fix: accelerate fixed multi-pattern native search` remains the `v1.11.3` CPU many-pattern lane.
 - Historical `v1.10.10` launcher dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version`, fresh `cmd`, unprofiled `pwsh`, and Python `subprocess.run(["tg", "--version"])` all reported `tg 1.10.10` after the explicit repair command.
 - Prior managed native-upgrade dogfood: `tg update` from `v1.9.3` installed sidecar `tensor-grep==1.9.4` and refreshed the native front door to `tg 1.9.4` after transient PyPI propagation lag.
 - Public capsule dogfood: `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.

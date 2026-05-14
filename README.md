@@ -45,7 +45,7 @@ release_docs_current_tag: v1.11.5
 
 Latest tagged GitHub release: [`v1.11.5`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.5). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.11.5`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.5). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.11.4` completed in main CI run `25863754902`; CodeQL run `25863751937` passed.
+Latest verified release proof: `v1.11.5` completed in main CI run `25866871838`; CodeQL run `25866868462` passed.
 
 Current positioning:
 
@@ -58,6 +58,13 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.11.5` closed:
+
+- PR #116 `fix: harden post-release docs governance` shipped the release as merge commit `a78e33c fix: harden post-release docs governance` and release commit `e33c2ba chore(release): v1.11.5 [skip ci]`
+- main CI run `25866871838` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25866868462` passed
+- GitHub release assets for `v1.11.5` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.11.5 tg --version` reports `tensor-grep 1.11.5`
+- post-release-safe docs governance now separates auto-stamped current tag labels from latest verified proof blocks so semantic-release patch bumps do not make future docs-governance tests depend on a not-yet-written historical block
 
 What `v1.11.4` closed:
 
