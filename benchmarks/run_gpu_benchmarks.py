@@ -1090,6 +1090,41 @@ def _required_size_labels(required_corpus_sizes: tuple[int, ...]) -> list[str]:
     return [_format_size_label(size_bytes) for size_bytes in required_corpus_sizes]
 
 
+def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object]:
+    return {
+        "required_runtime_backend": "NativeGpuBackend",
+        "required_sidecar_used": False,
+        "required_correctness_sizes": required_labels,
+        "required_speed_baselines": ["rg", "tg_cpu"],
+        "sidecar_routing_counts_as_promotion": False,
+        "public_managed_rows_must_not_be_sidecar": True,
+    }
+
+
+def _promotion_blockers(
+    *,
+    runtime_gate: dict[str, object],
+    correctness_gate: dict[str, object],
+    speed_gate: dict[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+    if runtime_gate.get("status") != "SUPPORTED":
+        blockers.append("native_cuda_runtime_unsupported")
+    if runtime_gate.get("sidecar_observed") is True:
+        blockers.append("sidecar_routing_observed")
+    correctness_status = correctness_gate.get("status")
+    if correctness_status == "NOT_RUN":
+        blockers.append("correctness_not_run")
+    elif correctness_status != "PASS":
+        blockers.append("correctness_gate_failed")
+    speed_status = speed_gate.get("status")
+    if speed_status == "NOT_RUN":
+        blockers.append("speed_not_run")
+    elif speed_status != "PASS":
+        blockers.append("speed_gate_failed")
+    return blockers
+
+
 def _observed_operational_backends(devices: list[dict[str, object]]) -> list[str]:
     observed = {
         str(device.get("tg_runtime_backend") or "unknown")
@@ -1205,9 +1240,15 @@ def build_scale_gate_summary(
 
     return {
         "benchmark_surface": "python-gpu-scale",
+        "promotion_evidence_contract": _promotion_evidence_contract(required_labels),
         "native_cuda_scale_gate": native_gate,
         "correctness_gate": correctness_gate,
         "speed_gate": speed_gate,
+        "promotion_blockers": _promotion_blockers(
+            runtime_gate=native_gate,
+            correctness_gate=correctness_gate,
+            speed_gate=speed_gate,
+        ),
         "promotion_ready": has_native_cuda_backend
         and bool(gpu_auto_recommendation.get("should_add_flag", False)),
         "summary": summary,

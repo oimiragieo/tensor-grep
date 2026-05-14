@@ -641,6 +641,8 @@ The Python benchmark now exposes the distinction directly:
 - `scale_gate_summary.benchmark_surface = "python-gpu-scale"`
 - `scale_gate_summary.native_cuda_scale_gate.status = "UNSUPPORTED"` when only sidecar backends are observed
 - `scale_gate_summary.speed_gate.status = "NOT_RUN"` when native CUDA scale proof is unavailable
+- `scale_gate_summary.promotion_evidence_contract` records the required `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and `rg`/`tg_cpu` speed baselines
+- `scale_gate_summary.promotion_blockers` names blocking states such as `sidecar_routing_observed`, `correctness_not_run`, and `speed_not_run`
 - `promotion_ready = false` unless native CUDA correctness and speed evidence both pass
 
 If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, and empty timing rows. The Python GPU scale script defaults to 5GB and checks exact rg-vs-GPU match/file sets for every >=1GB corpus, but those rows still need native backend support before they can feed a routing promotion.

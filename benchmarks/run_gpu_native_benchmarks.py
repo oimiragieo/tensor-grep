@@ -949,6 +949,17 @@ def _required_size_labels(required_corpus_sizes: tuple[int, ...]) -> list[str]:
     return [_format_size_label(size_bytes) for size_bytes in required_corpus_sizes]
 
 
+def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object]:
+    return {
+        "required_runtime_backend": "NativeGpuBackend",
+        "required_sidecar_used": False,
+        "required_correctness_sizes": required_labels,
+        "required_speed_baselines": ["rg", "tg_cpu"],
+        "sidecar_routing_counts_as_promotion": False,
+        "public_managed_rows_must_not_be_sidecar": True,
+    }
+
+
 def _passing_correctness_size_labels(
     correctness_checks: list[dict[str, object]],
     *,
@@ -1070,6 +1081,30 @@ def _native_runtime_gate(rows: list[dict[str, object]]) -> dict[str, object]:
         "sidecar_observed": observed_sidecar,
         "reason": reason,
     }
+
+
+def _promotion_blockers(
+    *,
+    runtime_gate: dict[str, object],
+    correctness_gate: dict[str, object],
+    speed_gate: dict[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+    if runtime_gate.get("status") != "PASS":
+        blockers.append("native_cuda_runtime_unsupported")
+    if runtime_gate.get("sidecar_observed") is True:
+        blockers.append("sidecar_routing_observed")
+    correctness_status = correctness_gate.get("status")
+    if correctness_status == "UNSUPPORTED":
+        blockers.append("correctness_not_run")
+    elif correctness_status != "PASS":
+        blockers.append("correctness_gate_failed")
+    speed_status = speed_gate.get("status")
+    if speed_status == "NOT_RUN":
+        blockers.append("speed_not_run")
+    elif speed_status != "PASS":
+        blockers.append("speed_gate_failed")
+    return blockers
 
 
 def collect_gpu_native_pipeline_samples(
@@ -1238,9 +1273,15 @@ def build_native_scale_gate_summary(
 
     return {
         "benchmark_surface": "native-cuda-scale",
+        "promotion_evidence_contract": _promotion_evidence_contract(required_labels),
         "native_cuda_runtime_gate": runtime_gate,
         "correctness_gate": correctness_gate,
         "speed_gate": speed_gate,
+        "promotion_blockers": _promotion_blockers(
+            runtime_gate=runtime_gate,
+            correctness_gate=correctness_gate,
+            speed_gate=speed_gate,
+        ),
         "promotion_ready": promotion_ready,
         "summary": summary,
     }
