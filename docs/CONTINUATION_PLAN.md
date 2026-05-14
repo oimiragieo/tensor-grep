@@ -6,23 +6,23 @@
 
 release_docs_current_tag: v1.11.3
 
-The current tagged state is `v1.11.2`, and the latest complete public PyPI/release-asset distribution is also `v1.11.2`. Stable installer and sidecar upgrade hardening shipped through `v1.11.2`, including managed-native front-door refresh after `tg upgrade`, refresh of stale tensor-grep-owned `tg.com` PATH bridges after upgrade, public native-front-door parity for advertised Python-backed shapes, Windows `.cmd` quoted-pattern handling, fresh-shell launcher diagnostics, Python-subprocess launcher diagnostics, top-level `validation_commands`, deterministic local `classify`, classify provider provenance, GPU scale correctness gates, benchmark launcher attribution, scoped GPU device probing, `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, edit JSON/rollback safety, ambiguous capsule tie metadata, workflow benchmark governance, release-doc synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, and agent capsule hardcase routing. Public v1.11.2 dogfood verified PyPI, GitHub assets, `uvx`, and classify provider provenance; the `v1.10.10` repair release remains the Windows subprocess launcher repair baseline. Public GPU remains experimental because managed GPU requests still route through `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU behavior is the near-term performance story. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current tagged state is `v1.11.3`, and the latest complete public PyPI/release-asset distribution is also `v1.11.3`. Stable installer and sidecar upgrade hardening shipped through `v1.11.3`, including managed-native front-door refresh after `tg upgrade`, refresh of stale tensor-grep-owned `tg.com` PATH bridges after upgrade, public native-front-door parity for advertised Python-backed shapes, Windows `.cmd` quoted-pattern handling, fresh-shell launcher diagnostics, Python-subprocess launcher diagnostics, top-level `validation_commands`, deterministic local `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale correctness gates, benchmark launcher attribution, scoped GPU device probing, `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, edit JSON/rollback safety, ambiguous capsule tie metadata, workflow benchmark governance, release-doc synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, and agent capsule hardcase routing. Public v1.11.3 dogfood verified PyPI, GitHub assets, `uvx`, and the fixed multi-pattern native CPU lane; the `v1.10.10` repair release remains the Windows subprocess launcher repair baseline. Public GPU remains experimental because managed GPU requests still route through `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while native CPU fixed multi-pattern search is the accepted many-pattern improvement. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Latest tagged release PR: #110 `fix: expose classify provider provenance`
-- Latest tagged merge commit: `ada6a47 fix: expose classify provider provenance (#110)`
-- Latest tagged release commit: `5679b22 chore(release): v1.11.2 [skip ci]`
-- Latest complete public release commit: `5679b22 chore(release): v1.11.2 [skip ci]`
-- Latest merged fix commit: `ada6a47 fix: expose classify provider provenance (#110)`
+- Latest tagged release PR: #113 `fix: accelerate fixed multi-pattern native search`
+- Latest tagged merge commit: `87d4ca4 fix: accelerate fixed multi-pattern native search`
+- Latest tagged release commit: `2731659 chore(release): v1.11.3 [skip ci]`
+- Latest complete public release commit: `2731659 chore(release): v1.11.3 [skip ci]`
+- Latest merged fix commit: `87d4ca4 fix: accelerate fixed multi-pattern native search`
 - Latest merged feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
-- Latest complete public release PR: #110 `fix: expose classify provider provenance`
-- Latest complete public merge commit: `ada6a47 fix: expose classify provider provenance (#110)`
+- Latest complete public release PR: #113 `fix: accelerate fixed multi-pattern native search`
+- Latest complete public merge commit: `87d4ca4 fix: accelerate fixed multi-pattern native search`
 - `v1.11.0` main CI run `25834508800` passed pre-release checks and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `25839425530`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
-- CodeQL run `25839425282`: passed on the v1.11.2 release line.
-- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.11.2 tg --version` reports `tensor-grep 1.11.2`.
-- GitHub release assets for `v1.11.2` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Main CI run `25860914920`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- CodeQL run `25860914488`: passed on the v1.11.3 release line.
+- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.11.3 tg --version` reports `tensor-grep 1.11.3`.
+- GitHub release assets for `v1.11.3` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
 - Historical `v1.10.10` launcher dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version`, fresh `cmd`, unprofiled `pwsh`, and Python `subprocess.run(["tg", "--version"])` all reported `tg 1.10.10` after the explicit repair command.
 - Prior managed native-upgrade dogfood: `tg update` from `v1.9.3` installed sidecar `tensor-grep==1.9.4` and refreshed the native front door to `tg 1.9.4` after transient PyPI propagation lag.
 - Public capsule dogfood: `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returns the Actionable Context Capsule contract.

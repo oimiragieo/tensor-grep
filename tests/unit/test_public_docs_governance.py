@@ -21,14 +21,14 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "5679b22 chore(release): v1.11.2 [skip ci]"
-CURRENT_FIX_COMMIT = "ada6a47 fix: expose classify provider provenance (#110)"
+CURRENT_RELEASE_COMMIT = "2731659 chore(release): v1.11.3 [skip ci]"
+CURRENT_FIX_COMMIT = "87d4ca4 fix: accelerate fixed multi-pattern native search"
 CURRENT_FEATURE_COMMIT = "213d383 feat: add dogfood readiness verdict and checkpoint UX"
-LATEST_COMPLETE_RELEASE_TAG = "v1.11.2"
-LATEST_COMPLETE_RELEASE_COMMIT = "5679b22 chore(release): v1.11.2 [skip ci]"
-LATEST_COMPLETE_FIX_COMMIT = "ada6a47 fix: expose classify provider provenance (#110)"
-LATEST_COMPLETE_MAIN_CI = "25839425530"
-LATEST_COMPLETE_CODEQL = "25839425282"
+LATEST_COMPLETE_RELEASE_TAG = CURRENT_RELEASE_TAG
+LATEST_COMPLETE_RELEASE_COMMIT = CURRENT_RELEASE_COMMIT
+LATEST_COMPLETE_FIX_COMMIT = CURRENT_FIX_COMMIT
+LATEST_COMPLETE_MAIN_CI = "25860914920"
+LATEST_COMPLETE_CODEQL = "25860914488"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -112,6 +112,17 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         assert f"release_docs_current_tag: {_project_release_tag()}" in content
         assert "python scripts/agent_readiness.py" in content
         assert "tg dogfood" in content
+
+    for path in ("AGENTS.md", "SKILL.md"):
+        assert (
+            "latest complete public PyPI/release-asset distribution is also "
+            f"`{CURRENT_RELEASE_TAG}`"
+        ) in docs[path]
+
+    assert f"current tagged state is `{CURRENT_RELEASE_TAG}`" in docs["docs/CONTINUATION_PLAN.md"]
+    assert (
+        f"latest complete public PyPI/release-asset distribution is also `{CURRENT_RELEASE_TAG}`"
+    ) in docs["docs/CONTINUATION_PLAN.md"]
 
     for content in (
         docs["AGENTS.md"],
@@ -216,7 +227,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.11.2` closed:"
+    current_closed_heading = "What `v1.11.3` closed:"
+    v1112_heading = "What `v1.11.2` closed:"
     v1111_heading = "What `v1.11.1` closed:"
     v1110_failed_heading = "What `v1.11.0` tagged but did not complete:"
     v11010_heading = "What `v1.10.10` closed:"
@@ -237,7 +249,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
     follow_up_heading = f"Active post-`{CURRENT_RELEASE_TAG}` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1111_heading, 1)[0]
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1112_heading, 1)[0]
+    v1112_closed_block = readme.split(v1112_heading, 1)[1].split(v1111_heading, 1)[0]
     v1111_closed_block = readme.split(v1111_heading, 1)[1].split(v1110_failed_heading, 1)[0]
     v1110_failed_block = readme.split(v1110_failed_heading, 1)[1].split(v11010_heading, 1)[0]
     v11010_closed_block = readme.split(v11010_heading, 1)[1].split(v1109_heading, 1)[0]
@@ -257,9 +270,12 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "classify provider provenance" in current_closed_block
-    assert "classification_backend" in current_closed_block
-    assert "tg classify --format json" in current_closed_block
+    assert "fixed multi-pattern" in current_closed_block
+    assert "Aho-Corasick" in current_closed_block
+    assert "100 fixed no-match patterns over 1GB" in current_closed_block
+    assert "classify provider provenance" in v1112_closed_block
+    assert "classification_backend" in v1112_closed_block
+    assert "tg classify --format json" in v1112_closed_block
     assert "agent capsule hardcases" in v1111_closed_block
     assert "implementation files outrank preview/mention files" in v1111_closed_block
     assert "release docs governance" in v1111_closed_block

@@ -8,20 +8,23 @@ release_docs_current_tag: v1.11.3
 
 - Latest tagged version: `v1.11.3`
 - Latest complete PyPI version: `v1.11.3`
-- Latest tagged release PR: #110 `fix: expose classify provider provenance`
-- Latest tagged merge commit: `ada6a47 fix: expose classify provider provenance (#110)`
-- Latest tagged release commit: `5679b22 chore(release): v1.11.2 [skip ci]`
-- Latest complete public release PR: #110 `fix: expose classify provider provenance`
-- Latest complete public release commit: `5679b22 chore(release): v1.11.2 [skip ci]`
-- Latest fix commit: `ada6a47 fix: expose classify provider provenance (#110)`
+- Latest tagged release PR: #113 `fix: accelerate fixed multi-pattern native search`
+- Latest tagged merge commit: `87d4ca4 fix: accelerate fixed multi-pattern native search`
+- Latest tagged release commit: `2731659 chore(release): v1.11.3 [skip ci]`
+- Latest complete public release PR: #113 `fix: accelerate fixed multi-pattern native search`
+- Latest complete public release commit: `2731659 chore(release): v1.11.3 [skip ci]`
+- Latest fix commit: `87d4ca4 fix: accelerate fixed multi-pattern native search`
 - Latest feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.2>
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.3>
 - `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
-- Main CI run `25839425530`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25839425282`: passed on the `v1.11.2` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.11.2 tg --version` reports `tensor-grep 1.11.2`
-- GitHub release assets: `v1.11.2` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Main CI run `25860914920`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25860914488`: passed on the `v1.11.3` release line
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.11.3 tg --version` reports `tensor-grep 1.11.3`
+- GitHub release assets: `v1.11.3` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.11.3` dogfood verified PyPI, `uvx`, release assets, and the fixed multi-pattern native CPU lane. `v1.11.3` uses a single Aho-Corasick pass for safe fixed-string multi-pattern searches and keeps GPU promotion separate from this CPU workload-class win.
 - Public `v1.11.2` dogfood verified PyPI, `uvx`, release assets, and classify provider provenance in JSON output. `v1.11.2` exposes `classification_backend` so harnesses can distinguish local deterministic classification from opt-in provider-backed classification.
+- Closed v1.11.3 fixed multi-pattern lane gap: `v1.11.3` routes safe fixed-string multi-pattern native searches through one Aho-Corasick pass, preserves fallback for unsupported semantics, and records the local 100 fixed no-match patterns over 1GB CPU win separately from GPU promotion evidence.
+- Closed v1.11.2 classify provenance gap: `v1.11.2` exposes `classification_backend` in JSON output so harnesses can distinguish local deterministic classification from opt-in provider-backed classification.
 - Public `v1.10.10` managed-upgrade and launcher dogfood verified the pinned managed installer, direct managed native `tg.exe`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, Python `subprocess.run(["tg", "--version"])`, PyPI, `uvx`, and GitHub assets. `tg repair-launcher --allow-foreign-rename` backed up the foreign Together CLI `tg.exe` before installing the verified managed native front door into that PATH slot.
 - Public `v1.10.10` dogfood lesson: Python subprocess resolution is now repairable with explicit operator opt-in, while GPU remains public-experimental because managed GPU requests still report `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`.
 - Closed v1.10.10 Python subprocess launcher gap: `v1.10.10` adds `tg repair-launcher --allow-foreign-rename`, documents it in root help, preserves foreign launchers unless explicitly opted in, refreshes stale tensor-grep-owned PATH bridges, and verifies `cmd`, unprofiled `pwsh`, direct managed native, and Python `subprocess.run(["tg", "--version"])` at `tg 1.10.10` after repair.
@@ -61,9 +64,9 @@ release_docs_current_tag: v1.11.3
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.11.2 Scope
+## Current Post-v1.11.3 Scope
 
-Current release branch is publication-complete for `v1.11.2`: PR #110 `fix: expose classify provider provenance` was squash-merged as `ada6a47`, release commit `5679b22 chore(release): v1.11.2 [skip ci]` exists, main CI run `25839425530` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25839425282` passed. Public dogfood verified PyPI, release assets, `uvx`, and classify provider provenance. The `v1.10.10` Windows subprocess launcher repair remains the public launcher repair baseline; keep foreign launcher handling opt-in and auditable rather than deleting unrelated tools.
+Current release branch is publication-complete for `v1.11.3`: PR #113 `fix: accelerate fixed multi-pattern native search` was squash-merged as `87d4ca4`, release commit `2731659 chore(release): v1.11.3 [skip ci]` exists, main CI run `25860914920` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25860914488` passed. Public dogfood verified PyPI, release assets, `uvx`, and the fixed multi-pattern native CPU lane. The `v1.10.10` Windows subprocess launcher repair remains the public launcher repair baseline; keep foreign launcher handling opt-in and auditable rather than deleting unrelated tools.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`; edit JSON/rollback safety shipped in `v1.9.2`; explicit Python ranking and quoted validation commands shipped in `v1.9.3`; docs-governance and validation placeholders shipped in `v1.9.4`; native CUDA gate hardening, capsule alternatives, help diagnostics, and foreign launcher diagnostics shipped in `v1.9.5`; directory validation, CUDA 12.8 install paths, help coverage, and release-proof governance shipped in `v1.9.6`; GPU benchmark promotion-gate taxonomy and cold-search positioning shipped in `v1.9.7`; stale tensor-grep-owned `tg.com` bridge refresh after upgrade shipped in `v1.9.8`; agent workflow benchmark governance shipped in `v1.9.9`; capsule confidence/secrets/docs dogfood follow-ups shipped in source/GitHub assets in `v1.9.10`; and release wheel Cargo prefetch retries shipped in `v1.9.11`.
 
