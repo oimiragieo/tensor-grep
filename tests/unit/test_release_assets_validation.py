@@ -155,6 +155,40 @@ def test_should_reject_release_docs_with_stale_latest_release_labels():
     assert any("stale latest complete PyPI version" in error for error in errors)
 
 
+def test_should_allow_latest_complete_pypi_lag_when_current_tag_publication_failed():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    caveat = (
+        "`v1.11.0` asset/PyPI publication did not complete; "
+        "`publish-success-gate` failed and PyPI latest remains `1.10.10`."
+    )
+    errors = module.validate_release_docs_current_prose(
+        documents={
+            "README.md": (
+                "release_docs_current_tag: v1.11.0\n"
+                "Latest tagged GitHub release: [`v1.11.0`](https://example.test/v1.11.0).\n"
+                "Latest complete PyPI release: [`v1.10.10`](https://example.test/v1.10.10).\n"
+                f"{caveat}\n"
+            ),
+            "docs/SESSION_HANDOFF.md": (
+                "release_docs_current_tag: v1.11.0\n"
+                "- Latest tagged version: `v1.11.0`\n"
+                "- Latest complete PyPI version: `v1.10.10`\n"
+                f"{caveat}\n"
+            ),
+        },
+        expected_version="1.11.0",
+    )
+
+    assert errors == []
+
+
 def test_should_accept_readme_when_public_contract_markers_exist():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

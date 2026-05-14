@@ -1008,10 +1008,15 @@ def build_agent_capsule(
     _cap_alternative_target_confidences(alternatives, target)
     tied_alternatives = _tied_alternative_targets(query, alternatives, target)
     tie_candidates = list(tied_alternatives)
+    validation_alignment_status = str(validation_alignment.get("status") or "")
+    validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
     tie_resolved_by_validation = (
         bool(tied_alternatives)
         and bool(validation_commands)
-        and str(validation_alignment.get("status") or "") == "aligned"
+        and (
+            validation_alignment_status == "aligned"
+            or (validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0)
+        )
     )
     if tied_alternatives and tie_resolved_by_validation:
         consistency["alternative_confidence_tie_resolved_by"] = "validation"

@@ -21,11 +21,14 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "5bc5749 chore(release): v1.10.10 [skip ci]"
-CURRENT_FIX_COMMIT = "dd995fc fix: add explicit Windows subprocess launcher repair"
-CURRENT_FEATURE_COMMIT = "34fd556 feat: add agentic GPU evidence capsule"
-CURRENT_MAIN_CI = "25829350863"
-CURRENT_CODEQL = "25829350222"
+CURRENT_RELEASE_COMMIT = "46b6486 chore(release): v1.11.0 [skip ci]"
+CURRENT_FIX_COMMIT = "9ddd20b fix: expose GPU promotion blockers"
+CURRENT_FEATURE_COMMIT = "213d383 feat: add dogfood readiness verdict and checkpoint UX"
+LATEST_COMPLETE_RELEASE_TAG = "v1.10.10"
+LATEST_COMPLETE_RELEASE_COMMIT = "5bc5749 chore(release): v1.10.10 [skip ci]"
+LATEST_COMPLETE_FIX_COMMIT = "dd995fc fix: add explicit Windows subprocess launcher repair"
+LATEST_COMPLETE_MAIN_CI = "25829350863"
+LATEST_COMPLETE_CODEQL = "25829350222"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -88,6 +91,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "path_tg_launcher_warning" in contracts
     assert "tg_launcher_command_kind" in contracts
     assert "agent-capsule-mixed-language" in contracts
+    assert "agent-capsule-hardcases" in contracts
     assert "validation_alignment" in contracts
     assert 'ambiguity.status = "tie_requires_confirmation"' in contracts
     assert "GPU auto-recommendation must remain false" in contracts
@@ -120,14 +124,16 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert f"- Latest tagged version: `{CURRENT_RELEASE_TAG}`" in handoff
-    assert f"- Latest complete PyPI version: `{CURRENT_RELEASE_TAG}`" in handoff
+    assert f"- Latest complete PyPI version: `{LATEST_COMPLETE_RELEASE_TAG}`" in handoff
     assert (
         f"GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/{CURRENT_RELEASE_TAG}>"
         in handoff
     )
-    assert CURRENT_MAIN_CI in handoff
-    assert CURRENT_CODEQL in handoff
-    assert f"tensor-grep=={CURRENT_RELEASE_TAG.removeprefix('v')}" in handoff
+    assert "publish-success-gate` failed" in handoff
+    assert "PyPI latest remains `1.10.10`" in handoff
+    assert LATEST_COMPLETE_MAIN_CI in handoff
+    assert LATEST_COMPLETE_CODEQL in handoff
+    assert f"tensor-grep=={LATEST_COMPLETE_RELEASE_TAG.removeprefix('v')}" in handoff
     assert 'subprocess.run(["tg", ...])' in handoff
     assert "Closed GPU gates and launcher diagnostics gap" in handoff
     assert "Closed docs/version governance and validation placeholder gap" in handoff
@@ -187,10 +193,13 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert CURRENT_FIX_COMMIT in readme
     assert CURRENT_FEATURE_COMMIT in readme
     assert CURRENT_RELEASE_COMMIT in readme
-    assert CURRENT_MAIN_CI in readme
-    assert CURRENT_CODEQL in readme
+    assert LATEST_COMPLETE_MAIN_CI in readme
+    assert LATEST_COMPLETE_CODEQL in readme
+    assert LATEST_COMPLETE_RELEASE_COMMIT in readme
+    assert LATEST_COMPLETE_FIX_COMMIT in readme
     assert "GitHub release assets for `v1.10.10`" in readme
     assert "tensor-grep==1.10.10" in readme
+    assert "PyPI latest remains `1.10.10`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "fresh quoted no-match phrase" in readme
@@ -222,7 +231,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_heading = "What `v1.9.4` closed:"
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = "Active post-`v1.10.10` follow-up:"
+    follow_up_heading = f"Active post-`{CURRENT_RELEASE_TAG}` follow-up:"
     current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1109_heading, 1)[0]
     v1109_closed_block = readme.split(v1109_heading, 1)[1].split(v1108_heading, 1)[0]
     v1108_closed_block = readme.split(v1108_heading, 1)[1].split(v1107_heading, 1)[0]
@@ -361,8 +370,9 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "PR #101 `fix: harden gpu search accuracy contracts` merged" in skill
     assert "PR #100 `fix: harden v1.10.5 dogfood blockers` merged" in skill
     assert CURRENT_RELEASE_COMMIT in skill
-    assert CURRENT_MAIN_CI in skill
-    assert CURRENT_CODEQL in skill
+    assert LATEST_COMPLETE_MAIN_CI in skill
+    assert LATEST_COMPLETE_CODEQL in skill
+    assert LATEST_COMPLETE_RELEASE_COMMIT in skill
     assert "PR #91 `fix: harden release wheel retries` merged" in skill
     assert "PR #90 `fix: harden v1.9.9 dogfood followups` merged" in skill
     assert "PR #89 `fix: add agent workflow benchmark governance` merged" in skill
@@ -391,6 +401,7 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "MCP signatures/docs when agent-facing" in skill
     assert "this skill when repo operating practice changes" in skill
     assert "agent-capsule-mixed-language" in skill
+    assert "agent-capsule-hardcases" in skill
     assert "validation_alignment" in skill
     assert "$file" in skill
 

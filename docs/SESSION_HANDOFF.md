@@ -7,13 +7,16 @@ Last updated: 2026-05-13
 release_docs_current_tag: v1.11.0
 
 - Latest tagged version: `v1.11.0`
-- Latest complete PyPI version: `v1.11.0`
-- Latest release PR: #105 `fix: add explicit Windows subprocess launcher repair`
-- Latest merge commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
-- Latest release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
-- Latest fix commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
-- Latest feature commit: `34fd556 feat: add agentic GPU evidence capsule`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.10>
+- Latest complete PyPI version: `v1.10.10`
+- Latest tagged release PR: #107 `feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged merge commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged release commit: `46b6486 chore(release): v1.11.0 [skip ci]`
+- Latest complete public release PR: #105 `fix: add explicit Windows subprocess launcher repair`
+- Latest complete public release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
+- Latest fix commit: `9ddd20b fix: expose GPU promotion blockers`
+- Latest feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0>
+- `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
 - Main CI run `25829350863`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25829350222`: passed on the `v1.10.10` release line
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.10 tg --version` reports `tensor-grep 1.10.10`
@@ -312,7 +315,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 ## Next Highest-Value Work
 
-1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`, or `tg dogfood --output artifacts/dogfood_readiness.json` for the verdict envelope) fast and representative; it should cover context trust, `agent-capsule`, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
+1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`, or `tg dogfood --output artifacts/dogfood_readiness.json` for the verdict envelope) fast and representative; it should cover context trust, `agent-capsule`, `agent-capsule-hardcases`, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Keep dogfooding `impact --symbol` preferred-command metadata so agents consistently choose `blast-radius` for direct impact.
 4. Track AST parity roadmap gaps, GPU benchmark/no-match cleanup, and `classify` provider/cache UX as blockers for a future "world-class" claim, not as blockers for this launcher/control-plane PR.

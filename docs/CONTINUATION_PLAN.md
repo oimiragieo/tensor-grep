@@ -6,15 +6,19 @@
 
 release_docs_current_tag: v1.11.0
 
-The current tagged state is `v1.10.10`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade`, refresh of stale tensor-grep-owned `tg.com` PATH bridges after upgrade, public native-front-door parity for advertised Python-backed shapes, Windows `.cmd` quoted-pattern handling, fresh-shell launcher diagnostics, Python-subprocess launcher diagnostics, top-level `validation_commands`, deterministic local `classify`, GPU scale correctness gates, benchmark launcher attribution, scoped GPU device probing, `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, edit JSON/rollback safety, ambiguous capsule tie metadata, workflow benchmark governance, release-doc synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, and explicit Windows Python subprocess launcher repair. Public v1.10.10 dogfood verified PyPI, GitHub assets, `uvx`, the pinned managed installer, fresh `cmd`, fresh unprofiled `pwsh`, managed native `tg.exe`, and Python `subprocess.run(["tg", ...])` after `tg repair-launcher --allow-foreign-rename` backed up the operator-owned foreign executable before installing the managed native front door into that PATH slot. Public GPU remains experimental because managed GPU requests still route through `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU behavior is the near-term performance story. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current tagged state is `v1.11.0`, but the latest complete public PyPI/release-asset distribution remains `v1.10.10` because `v1.11.0` asset/PyPI publication did not complete. Stable installer and sidecar upgrade hardening shipped through `v1.10.10`, including managed-native front-door refresh after `tg upgrade`, refresh of stale tensor-grep-owned `tg.com` PATH bridges after upgrade, public native-front-door parity for advertised Python-backed shapes, Windows `.cmd` quoted-pattern handling, fresh-shell launcher diagnostics, Python-subprocess launcher diagnostics, top-level `validation_commands`, deterministic local `classify`, GPU scale correctness gates, benchmark launcher attribution, scoped GPU device probing, `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, edit JSON/rollback safety, ambiguous capsule tie metadata, workflow benchmark governance, release-doc synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, and explicit Windows Python subprocess launcher repair. Public v1.10.10 dogfood verified PyPI, GitHub assets, `uvx`, the pinned managed installer, fresh `cmd`, fresh unprofiled `pwsh`, managed native `tg.exe`, and Python `subprocess.run(["tg", ...])` after `tg repair-launcher --allow-foreign-rename` backed up the operator-owned foreign executable before installing the managed native front door into that PATH slot. Public GPU remains experimental because managed GPU requests still route through `GpuSidecar` / unsupported instead of qualifying `NativeGpuBackend`, while large-file CPU behavior is the near-term performance story. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release PR: #105 `fix: add explicit Windows subprocess launcher repair`
-- Merge commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
-- Release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
-- Latest merged fix commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
-- Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
+- Latest tagged release PR: #107 `feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged merge commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged release commit: `46b6486 chore(release): v1.11.0 [skip ci]`
+- Latest complete public release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
+- Latest merged fix commit: `9ddd20b fix: expose GPU promotion blockers`
+- Latest merged feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- Latest complete public release PR: #105 `fix: add explicit Windows subprocess launcher repair`
+- Latest complete public merge commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
+- `v1.11.0` main CI run `25834508800` passed pre-release checks and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
 - Main CI run `25829350863`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
 - CodeQL run `25829350222`: passed on the v1.10.10 release line.
 - PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.10 tg --version` reports `tensor-grep 1.10.10`.
@@ -53,7 +57,7 @@ Current product read:
 
 Current next work:
 
-1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`, or `tg dogfood --output artifacts/dogfood_readiness.json` for the verdict envelope) covering context-render trust, `context_consistency`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, Python subprocess version probes, launcher route diagnostics, and docs claim checks.
+1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`, or `tg dogfood --output artifacts/dogfood_readiness.json` for the verdict envelope) covering context-render trust, `context_consistency`, `agent-capsule-hardcases`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, Python subprocess version probes, launcher route diagnostics, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 4. Track AST parity roadmap, GPU readiness, and model-backed classify provider/cache UX as blockers for a future "100% ready" claim.

@@ -18,14 +18,17 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 release_docs_current_tag: v1.11.0
 
-As of 2026-05-13, the current tagged release state is `v1.11.0`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, and explicit Windows Python subprocess launcher repair are released through GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-05-13, the current tagged source release state is `v1.11.0`, but the latest complete public PyPI/release-asset distribution remains `v1.10.10` because `v1.11.0` asset/PyPI publication did not complete. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, and explicit Windows Python subprocess launcher repair are released through `v1.10.10` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, ambiguous multi-language capsule ranking, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Release PR: #105 `fix: add explicit Windows subprocess launcher repair`
-- Merge commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
-- Release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
-- Latest merged fix commit: `dd995fc fix: add explicit Windows subprocess launcher repair`
-- Latest merged feature commit: `34fd556 feat: add agentic GPU evidence capsule`
+- Latest tagged release PR: #107 `feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged merge commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged release commit: `46b6486 chore(release): v1.11.0 [skip ci]`
+- Latest complete public release PR: #105 `fix: add explicit Windows subprocess launcher repair`
+- Latest complete public release commit: `5bc5749 chore(release): v1.10.10 [skip ci]`
+- Latest merged fix commit: `9ddd20b fix: expose GPU promotion blockers`
+- Latest merged feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
 - Recent fix commits:
+  - `9ddd20b fix: expose GPU promotion blockers`
   - `dd995fc fix: add explicit Windows subprocess launcher repair`
   - `b0df720 fix: harden v1.10.8 release docs governance`
   - `6ee1d53 fix: harden v1.10.7 dogfood followups`
@@ -64,6 +67,7 @@ As of 2026-05-13, the current tagged release state is `v1.11.0`. The stable inst
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
+- `v1.11.0` GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0> exists, but main CI run `25834508800` was cancelled during release-native asset publication; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
 - Main CI run `25829350863`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25829350222`: passed on the `v1.10.10` release line
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.10.10 tg --version` reports `tensor-grep 1.10.10`
@@ -154,7 +158,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This 3-5 minute gate checks public shell version resolution, `public-version-python-subprocess`, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene. `tg dogfood` wraps the same readiness gate with a one-page verdict and JSON envelope. It complements, not replaces, the full local validation gate.
+This 3-5 minute gate checks public shell version resolution, `public-version-python-subprocess`, `public-windows-launcher-quoted-patterns`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene. `tg dogfood` wraps the same readiness gate with a one-page verdict and JSON envelope. It complements, not replaces, the full local validation gate.
 
 For release dogfood, include this compact public path checklist:
 

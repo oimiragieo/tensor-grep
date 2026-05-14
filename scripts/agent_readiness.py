@@ -121,7 +121,13 @@ def validate_windows_launcher_quoted_patterns(
             )
 
 
-def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str) -> None:
+def _validate_doctor_payload(
+    stdout: str,
+    _repo_root: Path,
+    expected_version: str,
+    *,
+    require_fresh_shell_match: bool,
+) -> None:
     payload = _json_from_stdout(stdout)
     if not isinstance(payload, dict):
         raise ReadinessError("doctor JSON must be an object")
@@ -156,7 +162,9 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
             message = f"{message}: {warning}"
         if remediation := payload.get("fresh_shell_path_tg_foreign_remediation"):
             message = f"{message} Remediation: {remediation}"
-        raise ReadinessError(message)
+        fresh_is_foreign = payload.get("fresh_shell_path_tg_first_is_foreign") is True
+        if require_fresh_shell_match or fresh_is_foreign:
+            raise ReadinessError(message)
     if IS_WINDOWS:
         python_launcher_kind = payload.get("python_subprocess_path_tg_first_launcher_kind")
         if not isinstance(python_launcher_kind, str):
@@ -179,6 +187,24 @@ def validate_doctor_payload(stdout: str, _repo_root: Path, expected_version: str
             f"rust_binary_version_matches={rust_matches!r}, "
             f"rust_binary_version_status={rust_status!r}"
         )
+
+
+def validate_doctor_payload(stdout: str, repo_root: Path, expected_version: str) -> None:
+    _validate_doctor_payload(
+        stdout,
+        repo_root,
+        expected_version,
+        require_fresh_shell_match=True,
+    )
+
+
+def validate_repo_doctor_payload(stdout: str, repo_root: Path, expected_version: str) -> None:
+    _validate_doctor_payload(
+        stdout,
+        repo_root,
+        expected_version,
+        require_fresh_shell_match=False,
+    )
 
 
 def validate_context_render_payload(
@@ -280,6 +306,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         "python scripts/agent_readiness.py",
         "context_consistency",
         "tg agent",
+        "agent-capsule-hardcases",
         "validated compatibility set",
         "broad generated-root scan",
         "rg` remains",
@@ -306,6 +333,18 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
             ),
         ),
     ]
+
+    def allows_complete_public_release_lag(content: str, found_version: str) -> bool:
+        publication_failed = (
+            "asset/PyPI publication did not complete" in content
+            or "`publish-pypi` did not complete" in content
+        )
+        return (
+            publication_failed
+            and "`publish-success-gate` failed" in content
+            and f"PyPI latest remains `{found_version}`" in content
+        )
+
     for path in required_docs:
         content = path.read_text(encoding="utf-8")
         for fragment in required_fragments:
@@ -322,6 +361,11 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
             for match in pattern.finditer(content):
                 found = match.group("version")
                 if found != expected_version:
+                    if (
+                        subject == "latest complete PyPI release"
+                        and allows_complete_public_release_lag(content, found)
+                    ):
+                        continue
                     missing.append(
                         f"{path.relative_to(repo_root)} contains stale {subject} "
                         f"`v{found}`; expected `v{expected_version}`"
@@ -493,7 +537,7 @@ def build_check_plan(
             command=["uv", "run", "tg", "doctor", "--json", "--no-lsp"],
             description="Verify repo tg doctor reports version and PATH parity.",
             timeout_s=90,
-            validator=validate_doctor_payload,
+            validator=validate_repo_doctor_payload,
         ),
         Check(
             name="context-render-trust",
@@ -600,6 +644,21 @@ def build_check_plan(
                 ),
             ],
             description="Verify mixed-language invoice capsule and validation trust stay aligned.",
+            timeout_s=120,
+        ),
+        Check(
+            name="agent-capsule-hardcases",
+            command=[
+                "uv",
+                "run",
+                "pytest",
+                "tests/unit/test_agent_capsule_hardcases.py",
+                "-q",
+            ],
+            description=(
+                "Verify polyglot monorepo, generated-noise, and Rust/Python/JS/TS "
+                "agent capsule hardcases."
+            ),
             timeout_s=120,
         ),
         Check(

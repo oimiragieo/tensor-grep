@@ -1923,6 +1923,19 @@ def validate_release_docs_current_prose(
 ) -> list[str]:
     errors: list[str] = []
     expected_tag = f"v{expected_version}"
+
+    def allows_complete_public_release_lag(content: str, found_tag: str) -> bool:
+        found_version = found_tag.removeprefix("v")
+        publication_failed = (
+            "asset/PyPI publication did not complete" in content
+            or "`publish-pypi` did not complete" in content
+        )
+        return (
+            publication_failed
+            and "`publish-success-gate` failed" in content
+            and f"PyPI latest remains `{found_version}`" in content
+        )
+
     current_patterns = [
         re.compile(
             r"current `(?P<tag>v\d+\.\d+\.\d+)` "
@@ -1979,6 +1992,10 @@ def validate_release_docs_current_prose(
             for match in pattern.finditer(content):
                 found = match.group("tag")
                 if found != expected_tag:
+                    if subject.startswith(
+                        "latest complete PyPI"
+                    ) and allows_complete_public_release_lag(content, found):
+                        continue
                     errors.append(
                         f"{path} contains stale {subject} `{found}`; expected `{expected_tag}`"
                     )
