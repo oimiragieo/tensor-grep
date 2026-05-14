@@ -32,7 +32,8 @@ use tensor_grep_rs::index::TrigramIndex;
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::native_search::smart_case_pattern_is_case_insensitive;
 use tensor_grep_rs::native_search::{
-    run_native_search, NativeOutputTarget, NativeSearchConfig, SearchStats,
+    run_native_fixed_multi_pattern_search, run_native_search, NativeOutputTarget,
+    NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
@@ -2711,6 +2712,21 @@ fn collect_native_multi_pattern_matches(
     mut base_config: NativeSearchConfig,
 ) -> anyhow::Result<Vec<SearchMatchJson>> {
     let include_pattern_metadata = patterns.len() > 1;
+    if let Some(matches) = run_native_fixed_multi_pattern_search(base_config.clone(), patterns)? {
+        return Ok(matches
+            .into_iter()
+            .map(|matched| SearchMatchJson {
+                file: matched.path.to_string_lossy().into_owned(),
+                line: matched.line_number as usize,
+                text: matched.text,
+                range: None,
+                meta_variables: None,
+                pattern_id: include_pattern_metadata.then_some(matched.pattern_id),
+                pattern_text: include_pattern_metadata.then_some(matched.pattern_text),
+            })
+            .collect());
+    }
+
     base_config.json = false;
     base_config.ndjson = false;
     base_config.count = false;

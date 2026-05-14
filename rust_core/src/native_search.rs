@@ -1,3 +1,4 @@
+use aho_corasick::{AhoCorasick, MatchKind};
 use anyhow::{anyhow, Context, Result};
 use grep_matcher::{LineTerminator, Matcher};
 use grep_printer::StandardBuilder;
@@ -30,6 +31,15 @@ pub struct NativeSearchMatch {
     pub path: PathBuf,
     pub line_number: Option<u64>,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NativeMultiPatternMatch {
+    pub path: PathBuf,
+    pub line_number: u64,
+    pub text: String,
+    pub pattern_id: usize,
+    pub pattern_text: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -679,6 +689,137 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     }
 
     Ok(stats)
+}
+
+pub fn run_native_fixed_multi_pattern_search(
+    config: NativeSearchConfig,
+    patterns: &[String],
+) -> Result<Option<Vec<NativeMultiPatternMatch>>> {
+    if !supports_native_fixed_multi_pattern_search(&config, patterns) {
+        return Ok(None);
+    }
+
+    let inputs = split_search_inputs(&config)?;
+    let mut files = inputs.files;
+    if !inputs.roots.is_empty() {
+        files.extend(collect_walked_files(&config, &inputs.roots)?);
+    }
+    files.sort_unstable();
+    files.dedup();
+
+    let matcher = AhoCorasick::builder()
+        .match_kind(MatchKind::Standard)
+        .build(patterns)
+        .context("failed to build native fixed multi-pattern matcher")?;
+    let mut matches = Vec::new();
+    for file_path in files {
+        let contents = fs::read(&file_path).with_context(|| {
+            format!("failed to read native search path {}", file_path.display())
+        })?;
+        if !config.text && memchr(0, &contents).is_some() {
+            return Ok(None);
+        }
+        collect_fixed_multi_pattern_file_matches(
+            &matcher,
+            patterns,
+            &file_path,
+            &contents,
+            &mut matches,
+        );
+    }
+
+    matches.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.line_number.cmp(&right.line_number))
+            .then(left.pattern_id.cmp(&right.pattern_id))
+            .then(left.text.cmp(&right.text))
+    });
+    Ok(Some(matches))
+}
+
+fn supports_native_fixed_multi_pattern_search(
+    config: &NativeSearchConfig,
+    patterns: &[String],
+) -> bool {
+    patterns.len() > 1
+        && config.fixed_strings
+        && !patterns.iter().any(|pattern| pattern.is_empty())
+        && !config.ignore_case
+        && !config.smart_case
+        && !config.word_boundary
+        && !config.invert_match
+        && config.before_context == 0
+        && config.after_context == 0
+        && config.max_count.is_none()
+        && !config.quiet
+        && !config.only_matching
+        && !config.null_data
+        && !config.crlf
+        && config.replace.is_none()
+}
+
+fn collect_fixed_multi_pattern_file_matches(
+    matcher: &AhoCorasick,
+    patterns: &[String],
+    path: &Path,
+    contents: &[u8],
+    matches: &mut Vec<NativeMultiPatternMatch>,
+) {
+    let mut line_start = 0usize;
+    let mut line_number = 1u64;
+    for newline_index in memchr_iter(b'\n', contents) {
+        collect_fixed_multi_pattern_line_matches(
+            matcher,
+            patterns,
+            path,
+            line_number,
+            &contents[line_start..newline_index],
+            matches,
+        );
+        line_start = newline_index + 1;
+        line_number += 1;
+    }
+
+    if line_start < contents.len() {
+        collect_fixed_multi_pattern_line_matches(
+            matcher,
+            patterns,
+            path,
+            line_number,
+            &contents[line_start..],
+            matches,
+        );
+    }
+}
+
+fn collect_fixed_multi_pattern_line_matches(
+    matcher: &AhoCorasick,
+    patterns: &[String],
+    path: &Path,
+    line_number: u64,
+    raw_line: &[u8],
+    matches: &mut Vec<NativeMultiPatternMatch>,
+) {
+    let line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
+    let mut pattern_ids = std::collections::BTreeSet::new();
+    for matched in matcher.find_overlapping_iter(line) {
+        pattern_ids.insert(matched.pattern().as_usize());
+    }
+    if pattern_ids.is_empty() {
+        return;
+    }
+
+    let text = String::from_utf8_lossy(line).into_owned();
+    for pattern_id in pattern_ids {
+        matches.push(NativeMultiPatternMatch {
+            path: path.to_path_buf(),
+            line_number,
+            text: text.clone(),
+            pattern_id,
+            pattern_text: patterns[pattern_id].clone(),
+        });
+    }
 }
 
 fn run_native_search_files(

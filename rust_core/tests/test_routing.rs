@@ -1822,6 +1822,66 @@ fn test_rust_control_plane_positional_word_regexp_uses_word_boundaries() {
 }
 
 #[test]
+fn test_native_cpu_fixed_multi_pattern_uses_single_pass_fast_path() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("multi.txt");
+    fs::write(
+        &file,
+        "alpha and beta\n\nbeta after blank\nalpha after beta\n",
+    )
+    .unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("-e")
+        .arg("alpha")
+        .arg("-e")
+        .arg("beta")
+        .arg(&file)
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "sequential native search path used",
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let matches = payload["matches"].as_array().unwrap();
+    let tuples = matches
+        .iter()
+        .map(|entry| {
+            (
+                entry["line"].as_u64().unwrap(),
+                entry["text"].as_str().unwrap().to_string(),
+                entry["pattern_id"].as_u64().unwrap(),
+                entry["pattern_text"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        tuples,
+        vec![
+            (1, "alpha and beta".to_string(), 0, "alpha".to_string()),
+            (1, "alpha and beta".to_string(), 1, "beta".to_string()),
+            (3, "beta after blank".to_string(), 1, "beta".to_string()),
+            (4, "alpha after beta".to_string(), 0, "alpha".to_string()),
+            (4, "alpha after beta".to_string(), 1, "beta".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn test_rust_control_plane_rejection() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
