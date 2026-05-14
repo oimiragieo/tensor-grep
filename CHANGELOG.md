@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.11.1 (2026-05-14)
+
+### Bug Fixes
+
+- Expose GPU promotion blockers
+  ([`9ddd20b`](https://github.com/oimiragieo/tensor-grep/commit/9ddd20baad4fce5b2166f5b4838c35029df2feb5))
+
+- Harden agent capsule hardcases ([#109](https://github.com/oimiragieo/tensor-grep/pull/109),
+  [`6ad69b5`](https://github.com/oimiragieo/tensor-grep/commit/6ad69b512e0f54f53c4228263cad17853c70f712))
+
+
 ## v1.11.0 (2026-05-14)
 
 ### Documentation
