@@ -57,6 +57,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
 
 def _get_native_binary() -> str | None:
     try:
+        resolve_native_tg_binary.cache_clear()
         native_binary = resolve_native_tg_binary()
     except FileNotFoundError:
         return None

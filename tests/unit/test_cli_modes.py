@@ -2102,7 +2102,7 @@ def test_safe_stdout_line_writes_utf8_when_console_encoding_rejects_unicode(monk
 
     _safe_stdout_line("symbol: \u25cf")
 
-    assert stdout.buffer.getvalue() == "symbol: \u25cf\n".encode("utf-8")
+    assert stdout.buffer.getvalue() == "symbol: \u25cf\n".encode()
 
 
 def test_safe_stdout_line_prefers_utf8_buffer_for_non_utf_text(monkeypatch):
@@ -2126,7 +2126,7 @@ def test_safe_stdout_line_prefers_utf8_buffer_for_non_utf_text(monkeypatch):
     _safe_stdout_line("a \u2014 b")
 
     assert stdout.writes == []
-    assert stdout.buffer.getvalue() == "a \u2014 b\n".encode("utf-8")
+    assert stdout.buffer.getvalue() == "a \u2014 b\n".encode()
 
 
 def test_write_path_list_prefers_utf8_buffer_for_non_utf_paths(monkeypatch):
@@ -2150,7 +2150,7 @@ def test_write_path_list_prefers_utf8_buffer_for_non_utf_paths(monkeypatch):
     _write_path_list(["ascii.txt", "unicode/\u25cf.py"], use_nul=False)
 
     assert stdout.writes == []
-    assert stdout.buffer.getvalue() == "ascii.txt\nunicode/\u25cf.py\n".encode("utf-8")
+    assert stdout.buffer.getvalue() == "ascii.txt\nunicode/\u25cf.py\n".encode()
 
 
 def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatch):
@@ -3125,6 +3125,7 @@ def test_agent_capsule_gpu_evidence_rejects_sidecar_route(monkeypatch, tmp_path)
         }
         return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
 
+    monkeypatch.setattr(agent_capsule, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
 
     payload = agent_capsule.build_agent_capsule(

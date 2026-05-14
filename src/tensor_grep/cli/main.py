@@ -6378,22 +6378,23 @@ def classify(
     import json
 
     from tensor_grep.io.reader_fallback import FallbackReader
-    from tensor_grep.sidecar import _classify_lines, _enrich_classifications
+    from tensor_grep.sidecar import _classify_lines_with_metadata, _enrich_classifications
 
     reader = FallbackReader()
     lines = list(reader.read_lines(file_path))
     if not lines:
         sys.exit(1)
 
-    results = _classify_lines(lines)
+    results, classification_backend = _classify_lines_with_metadata(lines)
 
     if format_type == "json":
         data = {
+            "classification_backend": classification_backend,
             "classifications": _enrich_classifications(
                 results,
                 lines,
                 source_path=file_path,
-            )
+            ),
         }
         print(json.dumps(data))
     else:
