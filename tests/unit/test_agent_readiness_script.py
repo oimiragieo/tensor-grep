@@ -22,6 +22,7 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         "python scripts/agent_readiness.py",
         "context_consistency",
         "tg agent",
+        "agent-capsule-hardcases",
         "validated compatibility set",
         "broad generated-root scan",
         "rg` remains",
@@ -95,6 +96,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "mcp-context-render-smoke" in names
     assert "agent-capsule" in names
     assert "agent-capsule-mixed-language" in names
+    assert "agent-capsule-hardcases" in names
     assert "docs-claim-check" in names
 
     rg_check = next(check for check in checks if check.name == "rg-parity-edges")
@@ -148,6 +150,15 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "edit_plan_filters_pytest_only_validation_for_typescript_primary" in (
         mixed_capsule_command
     )
+
+    hardcase_check = next(check for check in checks if check.name == "agent-capsule-hardcases")
+    assert hardcase_check.timeout_s <= 120
+    assert hardcase_check.command[:4] == [
+        "uv",
+        "run",
+        "pytest",
+        "tests/unit/test_agent_capsule_hardcases.py",
+    ]
 
 
 def test_agent_readiness_docs_claims_cover_gpu_taxonomy(tmp_path) -> None:
@@ -215,6 +226,24 @@ def test_agent_readiness_docs_claims_reject_stale_latest_release_labels(tmp_path
         assert "stale latest complete PyPI release" in message
     else:
         raise AssertionError("expected stale latest release labels to fail")
+
+
+def test_agent_readiness_docs_claims_allow_latest_complete_pypi_lag_when_current_tag_publication_failed(
+    tmp_path,
+) -> None:
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path, version="1.11.0")
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text(
+        readme_path.read_text(encoding="utf-8")
+        + "\nLatest tagged GitHub release: [`v1.11.0`](https://example.test/v1.11.0).\n"
+        + "Latest complete PyPI release: [`v1.10.10`](https://example.test/v1.10.10).\n"
+        + "`v1.11.0` asset/PyPI publication did not complete; "
+        + "`publish-success-gate` failed and PyPI latest remains `1.10.10`.\n",
+        encoding="utf-8",
+    )
+
+    module.validate_docs_claims("", tmp_path, "1.11.0")
 
 
 def test_agent_readiness_docs_claims_reject_stale_gpu_dogfood_label(tmp_path) -> None:
@@ -434,6 +463,44 @@ def test_agent_readiness_should_accept_stale_skipped_in_tree_native_binary() -> 
     }
 
     module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.9.0")
+
+
+def test_agent_readiness_repo_doctor_should_allow_public_shell_version_lag_when_shell_probes_are_disabled() -> (
+    None
+):
+    module = _load_script_module()
+    payload = {
+        "version": "1.11.0",
+        "path_tg_first_version_matches": True,
+        "path_tg_first_launcher_kind": "python-entrypoint",
+        "fresh_shell_path_tg_first_launcher_kind": "managed-native",
+        "fresh_shell_path_tg_first_version_matches": False,
+        "fresh_shell_path_tg_first_is_foreign": False,
+        "fresh_shell_path_tg_first_version": "tg 1.10.10",
+        "python_subprocess_path_tg_first_launcher_kind": "python-entrypoint",
+        "python_subprocess_path_tg_first_version_matches": True,
+        "search_acceleration_backend": "standalone-native-tg",
+        "rust_binary_version_matches": True,
+        "rust_binary_version_status": "matches",
+    }
+
+    checks = module.build_check_plan(
+        repo_root=Path("C:/repo"),
+        expected_version="1.11.0",
+        include_shell_probes=False,
+        include_wsl_probe=False,
+    )
+    repo_doctor = next(check for check in checks if check.name == "repo-doctor")
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.11.0")
+    except module.ReadinessError as exc:
+        assert "fresh-shell tg version does not match" in str(exc)
+    else:
+        raise AssertionError("expected public doctor validation to reject stale fresh-shell tg")
+
+    assert repo_doctor.validator is not None
+    repo_doctor.validator(json.dumps(payload), Path("C:/repo"), "1.11.0")
 
 
 def test_agent_readiness_should_accept_native_and_python_version_prefixes() -> None:

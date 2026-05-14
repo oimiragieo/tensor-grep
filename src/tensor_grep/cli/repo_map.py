@@ -4930,8 +4930,8 @@ def _build_context_pack_from_map(
                     if direct_test_count <= 0:
                         continue
                     file_scores[current_path] = file_scores.get(current_path, 0) + min(
-                        32,
-                        20 + direct_test_count * 4,
+                        64,
+                        40 + direct_test_count * 8,
                     )
                     _append_reason(file_reasons, current_path, "validation-direct-definition")
 

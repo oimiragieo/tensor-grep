@@ -43,8 +43,8 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.11.0
 
-Latest tagged GitHub release: [`v1.11.0`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0).
-Latest complete PyPI release: [`v1.11.0`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0).
+Latest tagged GitHub release: [`v1.11.0`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0). This tag exists, but its asset/PyPI publication did not complete.
+Latest complete PyPI release: [`v1.10.10`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.10.10). This is also the latest complete release-asset distribution.
 
 Current positioning:
 
@@ -57,6 +57,13 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.11.0` tagged but did not complete:
+
+- PR #107 `feat: add dogfood readiness verdict and checkpoint UX` shipped to main as merge commit `213d383 feat: add dogfood readiness verdict and checkpoint UX` and release commit `46b6486 chore(release): v1.11.0 [skip ci]`
+- main CI run `25834508800` passed the pre-release matrix and semantic-release, but the release workflow was cancelled during release-native asset publication; `publish-success-gate` failed and `publish-github-release-assets` / `publish-pypi` did not complete
+- the GitHub release record for `v1.11.0` exists without uploaded public assets, and PyPI latest remains `1.10.10`; do not treat `v1.11.0` as a complete public distribution
+- PR #108 `fix: expose GPU promotion blockers` later merged as `9ddd20b fix: expose GPU promotion blockers`; its main CI exposed stale docs-governance release proof, which is tracked as a follow-up rather than a GPU or Python test failure
 
 What `v1.10.10` closed:
 
@@ -334,7 +341,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This checks the current `v1.11.0` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs.
+This checks the current `v1.11.0` shell/version resolution, `public-windows-launcher-quoted-patterns`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
