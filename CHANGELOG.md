@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.11.5 (2026-05-14)
+
+### Bug Fixes
+
+- Harden post-release docs governance
+  ([`a78e33c`](https://github.com/oimiragieo/tensor-grep/commit/a78e33cbf8807b15b3c1c8a3753ea588834a4b9e))
+
+Record v1.11.4 release proof and keep docs-governance checks stable after semantic-release bumps the
+  current tag.
+
+
 ## v1.11.4 (2026-05-14)
 
 ### Bug Fixes
