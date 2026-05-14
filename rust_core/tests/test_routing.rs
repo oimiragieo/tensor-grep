@@ -1756,6 +1756,34 @@ fn test_routing_explicit_gpu_device_ids_override_warm_index() {
     }
 }
 
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_public_gpu_request_without_explicit_sidecar_falls_back_to_native_cpu() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .env("TG_SIDECAR_PYTHON", "definitely-missing-python")
+        .output()
+        .unwrap();
+
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "gpu-auto-fallback-cpu", false);
+    assert_eq!(payload["total_matches"], 3);
+    assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("native GPU unavailable"), "stderr={stderr}");
+}
+
 #[test]
 fn test_rust_control_plane_plain_explicit() {
     let dir = tempdir().unwrap();

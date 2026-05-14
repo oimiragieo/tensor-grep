@@ -2664,7 +2664,6 @@ fn native_search_config_for_command(
     }
 }
 
-#[cfg(feature = "cuda")]
 fn native_search_config_for_gpu_params(
     params: &GpuSearchParams<'_>,
     pattern: &str,
@@ -5319,7 +5318,57 @@ fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
 
 #[cfg(not(feature = "cuda"))]
 fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
-    handle_gpu_sidecar_search(params)
+    if explicit_gpu_sidecar_is_available() {
+        return handle_gpu_sidecar_search(params);
+    }
+
+    handle_native_gpu_unavailable_cpu_fallback(
+        params,
+        "native GPU unavailable in this binary; no CUDA-native front door is available",
+    )
+}
+
+#[cfg(not(feature = "cuda"))]
+fn handle_native_gpu_unavailable_cpu_fallback(
+    params: GpuSearchParams<'_>,
+    warning: &str,
+) -> anyhow::Result<()> {
+    eprintln!("warning: {warning}; falling back to native CPU search");
+    let decision = RoutingDecision::native_cpu_gpu_fallback(
+        ripgrep_is_available(),
+        params.json || params.ndjson,
+    );
+    let pattern = params.patterns.first().map_or(params.query, String::as_str);
+    let cpu_config = native_search_config_for_gpu_params(&params, pattern, decision);
+    if cpu_config.verbose {
+        emit_verbose_metadata(decision);
+    }
+    if params.patterns.len() > 1 {
+        let matches = collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
+        return emit_multi_pattern_native_results(
+            NativeSearchOutputOptions {
+                decision,
+                query: params.query,
+                path: params.path,
+                requested_gpu_device_ids: params.gpu_device_ids,
+                json: params.json,
+                ndjson: params.ndjson,
+                count: params.count,
+            },
+            matches,
+        );
+    }
+    run_native_search_with_optional_rg_fallback(cpu_config, None)
+}
+
+#[cfg(not(feature = "cuda"))]
+fn explicit_gpu_sidecar_is_available() -> bool {
+    if env::var_os("TG_SIDECAR_SCRIPT").is_some() {
+        return true;
+    }
+    env::var_os("TG_SIDECAR_PYTHON")
+        .map(PathBuf::from)
+        .is_some_and(|path| path.exists())
 }
 
 #[cfg(feature = "cuda")]
