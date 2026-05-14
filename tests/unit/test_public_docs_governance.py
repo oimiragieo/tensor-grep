@@ -21,14 +21,14 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "01a255e chore(release): v1.11.1 [skip ci]"
-CURRENT_FIX_COMMIT = "6ad69b5 fix: harden agent capsule hardcases (#109)"
+CURRENT_RELEASE_COMMIT = "5679b22 chore(release): v1.11.2 [skip ci]"
+CURRENT_FIX_COMMIT = "ada6a47 fix: expose classify provider provenance (#110)"
 CURRENT_FEATURE_COMMIT = "213d383 feat: add dogfood readiness verdict and checkpoint UX"
-LATEST_COMPLETE_RELEASE_TAG = "v1.11.1"
-LATEST_COMPLETE_RELEASE_COMMIT = "01a255e chore(release): v1.11.1 [skip ci]"
-LATEST_COMPLETE_FIX_COMMIT = "6ad69b5 fix: harden agent capsule hardcases (#109)"
-LATEST_COMPLETE_MAIN_CI = "25836697091"
-LATEST_COMPLETE_CODEQL = "25836696835"
+LATEST_COMPLETE_RELEASE_TAG = "v1.11.2"
+LATEST_COMPLETE_RELEASE_COMMIT = "5679b22 chore(release): v1.11.2 [skip ci]"
+LATEST_COMPLETE_FIX_COMMIT = "ada6a47 fix: expose classify provider provenance (#110)"
+LATEST_COMPLETE_MAIN_CI = "25839425530"
+LATEST_COMPLETE_CODEQL = "25839425282"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -198,8 +198,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert LATEST_COMPLETE_CODEQL in readme
     assert LATEST_COMPLETE_RELEASE_COMMIT in readme
     assert LATEST_COMPLETE_FIX_COMMIT in readme
-    assert "GitHub release assets for `v1.11.1`" in readme
-    assert "tensor-grep==1.11.1" in readme
+    assert f"GitHub release assets for `{LATEST_COMPLETE_RELEASE_TAG}`" in readme
+    assert f"tensor-grep=={LATEST_COMPLETE_RELEASE_TAG.removeprefix('v')}" in readme
     assert "PyPI latest remains `1.10.10`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
@@ -216,7 +216,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.11.1` closed:"
+    current_closed_heading = "What `v1.11.2` closed:"
+    v1111_heading = "What `v1.11.1` closed:"
     v1110_failed_heading = "What `v1.11.0` tagged but did not complete:"
     v11010_heading = "What `v1.10.10` closed:"
     v1109_heading = "What `v1.10.9` closed:"
@@ -236,9 +237,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
     follow_up_heading = f"Active post-`{CURRENT_RELEASE_TAG}` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(
-        v1110_failed_heading, 1
-    )[0]
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1111_heading, 1)[0]
+    v1111_closed_block = readme.split(v1111_heading, 1)[1].split(v1110_failed_heading, 1)[0]
     v1110_failed_block = readme.split(v1110_failed_heading, 1)[1].split(v11010_heading, 1)[0]
     v11010_closed_block = readme.split(v11010_heading, 1)[1].split(v1109_heading, 1)[0]
     v1109_closed_block = readme.split(v1109_heading, 1)[1].split(v1108_heading, 1)[0]
@@ -257,9 +257,12 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "agent capsule hardcases" in current_closed_block
-    assert "implementation files outrank preview/mention files" in current_closed_block
-    assert "release docs governance" in current_closed_block
+    assert "classify provider provenance" in current_closed_block
+    assert "classification_backend" in current_closed_block
+    assert "tg classify --format json" in current_closed_block
+    assert "agent capsule hardcases" in v1111_closed_block
+    assert "implementation files outrank preview/mention files" in v1111_closed_block
+    assert "release docs governance" in v1111_closed_block
     assert "publish-success-gate" in v1110_failed_block
     assert "PyPI latest remains `1.10.10`" in v1110_failed_block
     assert "GpuSidecar" in v11010_closed_block

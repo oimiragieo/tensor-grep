@@ -43,7 +43,7 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.11.2
 
-Latest tagged GitHub release: [`v1.11.2`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.2). GitHub assets and PyPI publication completed in main CI run `25836697091`; CodeQL run `25836696835` passed.
+Latest tagged GitHub release: [`v1.11.2`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.2). GitHub assets and PyPI publication completed in main CI run `25839425530`; CodeQL run `25839425282` passed.
 Latest complete PyPI release: [`v1.11.2`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.2). This is also the latest complete release-asset distribution.
 
 Current positioning:
@@ -57,6 +57,15 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.11.2` closed:
+
+- PR #110 `fix: expose classify provider provenance` shipped the release as merge commit `ada6a47 fix: expose classify provider provenance (#110)` and release commit `5679b22 chore(release): v1.11.2 [skip ci]`
+- main CI run `25839425530` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25839425282` passed
+- GitHub release assets for `v1.11.2` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.11.2 tg --version` reports `tensor-grep 1.11.2`
+- `tg classify --format json` now exposes explicit provider provenance, including `classification_backend`, so harnesses can distinguish local deterministic classification from opt-in provider-backed classification
+- release docs governance now records `v1.11.2` as both the latest tagged release and the latest complete public PyPI/release-asset distribution
+- public GPU remains experimental: managed GPU requests still route through `GpuSidecar` / unsupported rather than public `NativeGpuBackend` evidence
 
 What `v1.11.1` closed:
 
