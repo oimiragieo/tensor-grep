@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.11.4 (2026-05-14)
+
+### Bug Fixes
+
+- Harden public GPU unavailable routing
+  ([`361e0db`](https://github.com/oimiragieo/tensor-grep/commit/361e0db9fb677b92ccf6d6c342f1bb6b7d86099f))
+
+Route public non-CUDA GPU requests to an explicit unavailable/native CPU fallback unless an explicit
+  sidecar is configured. Preserves sidecar dev routing while preventing sidecar fallback from
+  looking like native GPU proof.
+
+- Harden release docs stamp governance
+  ([`2100122`](https://github.com/oimiragieo/tensor-grep/commit/210012240c193835032b1cfa16481d01626000de))
+
+Keep release-stamped docs and docs-governance tests aligned after semantic-release advances the
+  public release tag.
+
+
 ## v1.11.3 (2026-05-14)
 
 ### Bug Fixes
