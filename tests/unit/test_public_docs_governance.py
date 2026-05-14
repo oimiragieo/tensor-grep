@@ -21,14 +21,16 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-CURRENT_RELEASE_COMMIT = "2731659 chore(release): v1.11.3 [skip ci]"
-CURRENT_FIX_COMMIT = "87d4ca4 fix: accelerate fixed multi-pattern native search"
+CURRENT_RELEASE_COMMIT = "49a7c9a chore(release): v1.11.4 [skip ci]"
+CURRENT_FIX_COMMIT = "2100122 fix: harden release docs stamp governance"
+CURRENT_GPU_FIX_COMMIT = "361e0db fix: harden public GPU unavailable routing"
+CURRENT_MULTIPATTERN_FIX_COMMIT = "87d4ca4 fix: accelerate fixed multi-pattern native search"
 CURRENT_FEATURE_COMMIT = "213d383 feat: add dogfood readiness verdict and checkpoint UX"
 LATEST_COMPLETE_RELEASE_TAG = CURRENT_RELEASE_TAG
 LATEST_COMPLETE_RELEASE_COMMIT = CURRENT_RELEASE_COMMIT
 LATEST_COMPLETE_FIX_COMMIT = CURRENT_FIX_COMMIT
-LATEST_COMPLETE_MAIN_CI = "25860914920"
-LATEST_COMPLETE_CODEQL = "25860914488"
+LATEST_COMPLETE_MAIN_CI = "25863754902"
+LATEST_COMPLETE_CODEQL = "25863751937"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -132,6 +134,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     ):
         assert CURRENT_RELEASE_COMMIT in content
         assert CURRENT_FIX_COMMIT in content
+        assert CURRENT_GPU_FIX_COMMIT in content
+        assert CURRENT_MULTIPATTERN_FIX_COMMIT in content
         assert CURRENT_FEATURE_COMMIT in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
@@ -146,6 +150,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert LATEST_COMPLETE_MAIN_CI in handoff
     assert LATEST_COMPLETE_CODEQL in handoff
     assert f"tensor-grep=={LATEST_COMPLETE_RELEASE_TAG.removeprefix('v')}" in handoff
+    assert "post-release-safe docs governance" in handoff
+    assert "native GPU unavailable" in handoff
     assert 'subprocess.run(["tg", ...])' in handoff
     assert "Closed GPU gates and launcher diagnostics gap" in handoff
     assert "Closed docs/version governance and validation placeholder gap" in handoff
@@ -209,6 +215,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert LATEST_COMPLETE_CODEQL in readme
     assert LATEST_COMPLETE_RELEASE_COMMIT in readme
     assert LATEST_COMPLETE_FIX_COMMIT in readme
+    assert CURRENT_GPU_FIX_COMMIT in readme
+    assert CURRENT_MULTIPATTERN_FIX_COMMIT in readme
     assert f"GitHub release assets for `{LATEST_COMPLETE_RELEASE_TAG}`" in readme
     assert f"tensor-grep=={LATEST_COMPLETE_RELEASE_TAG.removeprefix('v')}" in readme
     assert "PyPI latest remains `1.10.10`" in readme
@@ -227,7 +235,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
-    current_closed_heading = "What `v1.11.3` closed:"
+    current_closed_heading = "What `v1.11.4` closed:"
+    v1113_heading = "What `v1.11.3` closed:"
     v1112_heading = "What `v1.11.2` closed:"
     v1111_heading = "What `v1.11.1` closed:"
     v1110_failed_heading = "What `v1.11.0` tagged but did not complete:"
@@ -249,7 +258,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v193_heading = "What `v1.9.3` closed:"
     v192_heading = "What `v1.9.2` closed:"
     follow_up_heading = f"Active post-`{CURRENT_RELEASE_TAG}` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1112_heading, 1)[0]
+    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1113_heading, 1)[0]
+    v1113_closed_block = readme.split(v1113_heading, 1)[1].split(v1112_heading, 1)[0]
     v1112_closed_block = readme.split(v1112_heading, 1)[1].split(v1111_heading, 1)[0]
     v1111_closed_block = readme.split(v1111_heading, 1)[1].split(v1110_failed_heading, 1)[0]
     v1110_failed_block = readme.split(v1110_failed_heading, 1)[1].split(v11010_heading, 1)[0]
@@ -270,9 +280,12 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
     v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
     follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "fixed multi-pattern" in current_closed_block
-    assert "Aho-Corasick" in current_closed_block
-    assert "100 fixed no-match patterns over 1GB" in current_closed_block
+    assert "post-release-safe docs governance" in current_closed_block
+    assert "native GPU unavailable" in current_closed_block
+    assert "NativeCpuBackend" in current_closed_block
+    assert "fixed multi-pattern" in v1113_closed_block
+    assert "Aho-Corasick" in v1113_closed_block
+    assert "100 fixed no-match patterns over 1GB" in v1113_closed_block
     assert "classify provider provenance" in v1112_closed_block
     assert "classification_backend" in v1112_closed_block
     assert "tg classify --format json" in v1112_closed_block

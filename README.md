@@ -43,8 +43,9 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.11.4
 
-Latest tagged GitHub release: [`v1.11.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.4). GitHub assets and PyPI publication completed in main CI run `25860914920`; CodeQL run `25860914488` passed.
+Latest tagged GitHub release: [`v1.11.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.4). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.11.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.4). This is also the latest complete release-asset distribution.
+Latest verified release proof: `v1.11.4` completed in main CI run `25863754902`; CodeQL run `25863751937` passed.
 
 Current positioning:
 
@@ -57,6 +58,15 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.11.4` closed:
+
+- PR #114 `fix: harden public GPU unavailable routing` merged as `361e0db fix: harden public GPU unavailable routing`
+- PR #115 `fix: harden release docs stamp governance` shipped the release as merge commit `2100122 fix: harden release docs stamp governance` and release commit `49a7c9a chore(release): v1.11.4 [skip ci]`
+- main CI run `25863754902` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25863751937` passed
+- GitHub release assets for `v1.11.4` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.11.4 tg --version` reports `tensor-grep 1.11.4`
+- explicit public GPU requests without an explicit sidecar now report native GPU unavailable and fall back to `NativeCpuBackend` instead of making sidecar routing look like promotion evidence
+- post-release-safe docs governance: current tag labels can move with semantic-release while detailed proof blocks keep the last verified CI/CodeQL/release evidence accurate
 
 What `v1.11.3` closed:
 
