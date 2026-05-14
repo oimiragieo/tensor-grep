@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.11.3 (2026-05-14)
+
+### Bug Fixes
+
+- Accelerate fixed multi-pattern native search
+  ([`87d4ca4`](https://github.com/oimiragieo/tensor-grep/commit/87d4ca453f13839bd07c44785099de97281cee6d))
+
+Add a safe Aho-Corasick single-pass native CPU route for fixed multi-pattern search while preserving
+  fallback for unsupported semantics. Includes regression coverage and dogfood benchmark evidence
+  for the 100-pattern 1GB no-match lane.
+
+### Chores
+
+- Sync v1.11.2 release governance
+  ([`1c38ae1`](https://github.com/oimiragieo/tensor-grep/commit/1c38ae1a8e62038dc26ef2e0831ee5c774b7cf39))
+
+Sync v1.11.2 public release proof and governance docs; include benchmark/GPU/PAPER docs in
+  semantic-release stamping.
+
+### Documentation
+
+- Clarify public GPU many-pattern readiness
+  ([`36f600f`](https://github.com/oimiragieo/tensor-grep/commit/36f600f19bc0742622c44bc9b635d03d5758b590))
+
+Clarify that public managed GPU and many-pattern behavior are not promotion-ready yet, document fair
+  rg multi-pattern baselines, and keep agent readiness/docs governance aligned with the v1.11.2
+  dogfood evidence.
+
+
 ## v1.11.2 (2026-05-14)
 
 ### Bug Fixes
