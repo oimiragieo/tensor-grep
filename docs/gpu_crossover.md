@@ -2,17 +2,18 @@
 
 ## Current post-`v1.11.2` GPU dogfood Read
 
-The post-`v1.11.2` native CUDA work changes the GPU read: single-pattern cold grep is still not a promotion story, but high-intensity fixed-string scans now have a credible native CUDA lane.
+The post-`v1.11.2` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus fair `rg -F -e ... -e ...` multi-pattern search.
 
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
 - There is still no crossover for single-pattern literal search: GPU remains slower than `rg` and `tg_cpu` after CUDA startup, file I/O, H2D transfer, and output materialization are counted.
-- There is a measured crossover for many fixed patterns over a large corpus through the local CUDA-enabled native binary.
-- Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary.
-- The public managed binary in `v1.10.8` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
-- Native CUDA correctness and the high-intensity multi-pattern lane are real, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
+- Earlier local CUDA-native work measured a many fixed pattern win over sequential `rg`, but sequential `rg` is not the fair public baseline.
+- The fair baseline is `rg -F -e ... -e ...`. In the `v1.11.2` public managed dogfood, 100 fixed no-match patterns over 1GB were `rg` multi-pattern: `0.071s`, `tg` CPU multi-pattern: `9.89s`, and `tg --gpu-device-ids 0` did not produce promotion evidence. The mixed 100-pattern row was `rg` multi-pattern: `0.121s` versus `tg` CPU multi-pattern: `9.97s`.
+- Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary; sidecar-routed rows are unsupported for native CUDA promotion.
+- The public managed binary currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
+- Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
 - Current GPU artifacts expose `promotion_evidence_contract` and `promotion_blockers` so sidecar routing, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
 
-Native CUDA correctness passed, but speed/promotion failed remains the current promotion summary for public managed installs.
+Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary.
 
 Current benchmark taxonomy:
 
@@ -27,8 +28,8 @@ Current native evidence:
 | --- | --- | ---: | --- |
 | Single no-match fixed string, 1GB | RTX 4070 local CUDA native | `rg = 73.838ms`, `tg GPU = 1093.778ms` | no crossover |
 | Three real fixed strings, 1GB | RTX 4070 local CUDA native stats | `rg = 277.661ms`, `tg GPU = 2398.238ms` | no crossover after output materialization |
-| 100 no-match fixed strings, 1GB | RTX 4070 public `tg search -F --gpu-device-ids 0 --json -e ...` via local CUDA native binary | `rg = 7222.304ms`, `tg GPU = 1301.676ms` | `5.55x` end-to-end speedup over sequential `rg` |
-| 100 mixed fixed strings with 2665 emitted matches, 1GB | RTX 4070 public `tg search -F --gpu-device-ids 0 --json -e ...` via local CUDA native binary | `rg = 6676.904ms`, `tg GPU = 2488.768ms` | `2.68x` end-to-end speedup over sequential `rg` |
+| 100 no-match fixed strings, 1GB | Public managed `tg search -F --gpu-device-ids 0 --json -e ...` | `rg -F -e ... = 0.071s`, `tg CPU = 9.89s`, GPU request did not produce native evidence | not promotion-ready |
+| 100 mixed fixed strings with 2665 emitted matches, 1GB | Public managed `tg search -F --gpu-device-ids 0 --json -e ...` | `rg -F -e ... = 0.121s`, `tg CPU = 9.97s`, GPU request did not produce native evidence | not promotion-ready |
 | Prior 5GB single-pattern scale | RTX 4070 / RTX 5070 local CUDA native | `35.46x` / `29.91x` slower than `rg` in latest `v1.9.11` dogfood read | superseded as a single-pattern caution |
 
 The latest user dogfood also reported the native harness as `passed = false` because the speed target and error-test expectations did not pass. That is the intended decision: correctness evidence is necessary, but it is not enough to enable or market GPU auto-routing.
