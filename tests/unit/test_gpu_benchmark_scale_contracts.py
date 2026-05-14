@@ -509,6 +509,14 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
     assert "requires a CUDA-enabled native tg binary" in gpu0["stderr"]
     assert payload["scale_gate_summary"] == {
         "benchmark_surface": "python-gpu-scale",
+        "promotion_evidence_contract": {
+            "required_runtime_backend": "NativeGpuBackend",
+            "required_sidecar_used": False,
+            "required_correctness_sizes": ["1GB", "5GB"],
+            "required_speed_baselines": ["rg", "tg_cpu"],
+            "sidecar_routing_counts_as_promotion": False,
+            "public_managed_rows_must_not_be_sidecar": True,
+        },
         "native_cuda_scale_gate": {
             "status": "UNSUPPORTED",
             "required_backend": "NativeGpuBackend",
@@ -530,6 +538,12 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
             "required_baselines": ["rg", "tg_cpu"],
             "reason": "Native CUDA speed gate did not run because the native CUDA scale gate is unsupported.",
         },
+        "promotion_blockers": [
+            "native_cuda_runtime_unsupported",
+            "sidecar_routing_observed",
+            "correctness_not_run",
+            "speed_not_run",
+        ],
         "promotion_ready": False,
         "summary": (
             "Python GPU scale rows are unsupported for native CUDA promotion; run "
@@ -1307,6 +1321,14 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
     )
 
     assert summary["benchmark_surface"] == "native-cuda-scale"
+    assert summary["promotion_evidence_contract"] == {
+        "required_runtime_backend": "NativeGpuBackend",
+        "required_sidecar_used": False,
+        "required_correctness_sizes": ["1GB", "5GB"],
+        "required_speed_baselines": ["rg", "tg_cpu"],
+        "sidecar_routing_counts_as_promotion": False,
+        "public_managed_rows_must_not_be_sidecar": True,
+    }
     assert summary["native_cuda_runtime_gate"] == {
         "status": "PASS",
         "required_backend": "NativeGpuBackend",
@@ -1331,6 +1353,7 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
         },
         "reason": "Native CUDA did not beat both rg and tg_cpu at the required scale.",
     }
+    assert summary["promotion_blockers"] == ["speed_gate_failed"]
     assert summary["promotion_ready"] is False
     assert (
         summary["summary"]

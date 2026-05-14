@@ -321,6 +321,8 @@ def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogf
         assert "GpuSidecar" in doc
         assert "NativeGpuBackend" in doc
         assert "not public GPU readiness" in doc
+        assert "promotion_evidence_contract" in doc
+        assert "promotion_blockers" in doc
 
 
 def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:

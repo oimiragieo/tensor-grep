@@ -10,6 +10,7 @@ The post-`v1.10.10` native CUDA work changes the GPU read: single-pattern cold g
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary.
 - The public managed binary in `v1.10.8` currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
 - Native CUDA correctness and the high-intensity multi-pattern lane are real, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
+- Current GPU artifacts expose `promotion_evidence_contract` and `promotion_blockers` so sidecar routing, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
 
 Native CUDA correctness passed, but speed/promotion failed remains the current promotion summary for public managed installs.
 
