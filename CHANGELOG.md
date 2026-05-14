@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.11.2 (2026-05-14)
+
+### Bug Fixes
+
+- Expose classify provider provenance ([#110](https://github.com/oimiragieo/tensor-grep/pull/110),
+  [`ada6a47`](https://github.com/oimiragieo/tensor-grep/commit/ada6a4753681cf0ea724573156a56a366af6ed0a))
+
+
 ## v1.11.1 (2026-05-14)
 
 ### Bug Fixes
