@@ -735,6 +735,54 @@ def test_run_native_cpu_benchmarks_should_disable_rg_for_tg_cpu_measurements(mon
     assert row["tg_env"] == module.NATIVE_TG_ENV
 
 
+def test_run_native_cpu_benchmarks_should_build_fair_fixed_multi_pattern_commands(tmp_path):
+    module = _load_script_module(
+        "run_native_cpu_benchmarks_multi_pattern_script",
+        "benchmarks/run_native_cpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    target = tmp_path / "fixture.log"
+    patterns = ["TODO", "FIXME", "BUG"]
+
+    rg_cmd = module.build_rg_search_command("rg", patterns, target, fixed_strings=True)
+    tg_cmd = module.build_tg_cpu_search_command(tg_binary, patterns, target, fixed_strings=True)
+    rg_count_cmd = module.build_rg_count_command("rg", patterns, target, fixed_strings=True)
+    tg_count_cmd = module.build_tg_cpu_count_command(
+        tg_binary, patterns, target, fixed_strings=True
+    )
+
+    assert rg_cmd == [
+        "rg",
+        "--no-ignore",
+        "-F",
+        "-e",
+        "TODO",
+        "-e",
+        "FIXME",
+        "-e",
+        "BUG",
+        str(target),
+    ]
+    assert tg_cmd == [
+        str(tg_binary),
+        "search",
+        "--cpu",
+        "--no-ignore",
+        "-F",
+        "-e",
+        "TODO",
+        "-e",
+        "FIXME",
+        "-e",
+        "BUG",
+        str(target),
+    ]
+    assert rg_count_cmd[:3] == ["rg", "--no-ignore", "-c"]
+    assert rg_count_cmd[3:] == rg_cmd[2:]
+    assert tg_count_cmd[:5] == [str(tg_binary), "search", "--cpu", "--no-ignore", "-c"]
+    assert tg_count_cmd[5:] == tg_cmd[4:]
+
+
 def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatch, tmp_path):
     module = _load_script_module("run_benchmarks_script_rg_zip", "benchmarks/run_benchmarks.py")
     bench_dir = tmp_path / "benchmarks"
@@ -1287,6 +1335,38 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
             "counts_match": True,
         },
         {
+            "name": "large_file_200mb_fixed_multi_pattern_no_match",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "absent 001 | absent 002",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.9,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [1.9, 1.92, 1.88],
+            "ratio_vs_rg": 1.9,
+            "threshold_ratio": None,
+            "threshold_pass": None,
+            "gated": False,
+            "require_tg_faster": False,
+            "status": "DIAGNOSTIC",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb_fixed_multi_pattern_count",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "ERROR native cpu benchmark sentinel | absent 001",
+            "rg_time_s": 1.0,
+            "tg_time_s": 2.1,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [2.1, 2.12, 2.08],
+            "ratio_vs_rg": 2.1,
+            "threshold_ratio": None,
+            "threshold_pass": None,
+            "gated": False,
+            "require_tg_faster": False,
+            "status": "DIAGNOSTIC",
+            "counts_match": True,
+        },
+        {
             "name": "many_file_directory",
             "target": str(tmp_path / "many_files"),
             "pattern": "ERROR native cpu benchmark sentinel",
@@ -1319,16 +1399,28 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
         "cold_standard_corpus",
         "large_file_200mb",
         "large_file_200mb_count",
+        "large_file_200mb_fixed_multi_pattern_no_match",
+        "large_file_200mb_fixed_multi_pattern_count",
         "many_file_directory",
     ]
-    assert [row["status"] for row in payload["rows"]] == ["PASS", "PASS", "PASS", "PASS"]
+    assert [row["status"] for row in payload["rows"]] == [
+        "PASS",
+        "PASS",
+        "PASS",
+        "DIAGNOSTIC",
+        "DIAGNOSTIC",
+        "PASS",
+    ]
     assert payload["rows"][0]["ratio_vs_rg"] == 1.04
     assert payload["rows"][1]["ratio_vs_rg"] == 1.12
     assert payload["rows"][2]["ratio_vs_rg"] == 0.92
+    assert payload["rows"][3]["ratio_vs_rg"] == 1.9
+    assert payload["rows"][4]["ratio_vs_rg"] == 2.1
     assert payload["thresholds"] == {
         "cold_standard_corpus_max_ratio_vs_rg": 1.05,
         "large_file_200mb_max_ratio_vs_rg": 1.15,
         "large_file_200mb_count_requires_tg_faster": True,
+        "large_file_200mb_fixed_multi_pattern_rows_are_diagnostic": True,
         "many_file_directory_max_ratio_vs_rg": 1.05,
     }
 

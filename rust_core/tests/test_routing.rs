@@ -1910,6 +1910,125 @@ fn test_native_cpu_fixed_multi_pattern_uses_single_pass_fast_path() {
 }
 
 #[test]
+fn test_native_cpu_fixed_multi_pattern_plain_output_omits_line_numbers_by_default() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("multi.txt");
+    fs::write(
+        &file,
+        "alpha and beta\n\nbeta after blank\nalpha after beta\n",
+    )
+    .unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-e")
+        .arg("alpha")
+        .arg("-e")
+        .arg("beta")
+        .arg(&file)
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "sequential native search path used",
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        "alpha and beta\nbeta after blank\nalpha after beta\n"
+    );
+}
+
+#[test]
+fn test_native_cpu_fixed_multi_pattern_plain_output_honors_line_number_flag() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("multi.txt");
+    fs::write(
+        &file,
+        "alpha and beta\n\nbeta after blank\nalpha after beta\n",
+    )
+    .unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--line-number")
+        .arg("-e")
+        .arg("alpha")
+        .arg("-e")
+        .arg("beta")
+        .arg(&file)
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "sequential native search path used",
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        "1:alpha and beta\n3:beta after blank\n4:alpha after beta\n"
+    );
+}
+
+#[test]
+fn test_native_cpu_fixed_multi_pattern_count_counts_matching_lines_once() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("multi.txt");
+    fs::write(
+        &file,
+        "alpha and beta\n\nbeta after blank\nalpha after beta\n",
+    )
+    .unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("-e")
+        .arg("alpha")
+        .arg("-e")
+        .arg("beta")
+        .arg(&file)
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "sequential native search path used",
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        "3\n"
+    );
+}
+
+#[test]
 fn test_rust_control_plane_rejection() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

@@ -1332,6 +1332,34 @@ mod tests {
     }
 
     #[test]
+    fn search_request_resolves_multiple_regexp_patterns_and_paths() {
+        let args = parse_search_args(&[
+            "tg",
+            "search",
+            "--fixed-strings",
+            "-e",
+            "TODO",
+            "-e",
+            "FIXME",
+            "src",
+            "tests",
+        ]);
+        let request = resolve_search_request(&args).expect("expected search request");
+
+        assert_eq!(
+            request.patterns,
+            vec!["TODO".to_string(), "FIXME".to_string()]
+        );
+        assert_eq!(request.paths, vec!["src".to_string(), "tests".to_string()]);
+        assert_eq!(request.query_display(), "TODO | FIXME");
+        assert_eq!(request.path_display(), "src tests");
+        assert_eq!(
+            command_ripgrep_args(&args, &request).patterns,
+            vec!["TODO".to_string(), "FIXME".to_string()]
+        );
+    }
+
+    #[test]
     fn default_search_frontdoor_treats_format_rg_as_noop() {
         let args = parse_default_frontdoor_args(&[
             "tg",
@@ -2758,6 +2786,7 @@ struct NativeSearchOutputOptions<'a> {
     json: bool,
     ndjson: bool,
     count: bool,
+    line_number: bool,
 }
 
 fn emit_multi_pattern_native_results(
@@ -2784,7 +2813,7 @@ fn emit_multi_pattern_native_results(
     } else if options.count {
         emit_count_search_matches(options.path, &matches);
     } else {
-        emit_plain_search_matches(options.path, &matches);
+        emit_plain_search_matches_with_line_number(options.path, &matches, options.line_number);
     }
 
     if !has_matches {
@@ -3006,6 +3035,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         json: args.json,
                         ndjson: args.ndjson,
                         count: args.count,
+                        line_number: args.line_number,
                     },
                     matches,
                 );
@@ -5354,6 +5384,7 @@ fn handle_native_gpu_unavailable_cpu_fallback(
                 json: params.json,
                 ndjson: params.ndjson,
                 count: params.count,
+                line_number: params.line_number,
             },
             matches,
         );
@@ -5783,6 +5814,7 @@ fn handle_auto_gpu_search(
                                 json: params.json,
                                 ndjson: params.ndjson,
                                 count: params.count,
+                                line_number: params.line_number,
                             },
                             matches,
                         );
@@ -5885,6 +5917,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 json: params.json,
                                 ndjson: params.ndjson,
                                 count: params.count,
+                                line_number: params.line_number,
                             },
                             matches,
                         );
@@ -6048,6 +6081,14 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
 }
 
 fn emit_plain_search_matches(path: &str, matches: &[SearchMatchJson]) {
+    emit_plain_search_matches_with_line_number(path, matches, true);
+}
+
+fn emit_plain_search_matches_with_line_number(
+    path: &str,
+    matches: &[SearchMatchJson],
+    line_number: bool,
+) {
     let unique = unique_line_matches(matches);
     let with_filename = unique
         .iter()
@@ -6057,10 +6098,11 @@ fn emit_plain_search_matches(path: &str, matches: &[SearchMatchJson]) {
         > 1
         || Path::new(path).is_dir();
     for matched in unique {
-        if with_filename {
-            println!("{}:{}:{}", matched.file, matched.line, matched.text);
-        } else {
-            println!("{}:{}", matched.line, matched.text);
+        match (with_filename, line_number) {
+            (true, true) => println!("{}:{}:{}", matched.file, matched.line, matched.text),
+            (true, false) => println!("{}:{}", matched.file, matched.text),
+            (false, true) => println!("{}:{}", matched.line, matched.text),
+            (false, false) => println!("{}", matched.text),
         }
     }
 }
