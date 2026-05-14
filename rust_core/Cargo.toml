@@ -16,6 +16,7 @@ default = []
 cuda = ["dep:cudarc"]
 
 [dependencies]
+aho-corasick = "1.1.4"
 anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
 hmac = "0.12.1"
