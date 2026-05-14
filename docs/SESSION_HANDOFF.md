@@ -95,6 +95,15 @@ Active post-`v1.11.5` implementation scope:
 - Keep `tg agent --gpu-device-ids ... --json` as an opt-in agentic evidence path: batch query terms through the selected native GPU route, expose `gpu_acceleration`, and mark evidence used only when the runtime reports `NativeGpuBackend` with `sidecar_used = false`. Local dogfood on the managed Windows front door currently reports `status = "unsupported"`, `routing_backend = "GpuSidecar"`, and `sidecar_used = true`, which is the intended no-promotion behavior until the front door is a clean native CUDA route.
 - Keep AST parity roadmap work separate from `tg run`'s validated useful slice; do not imply full ast-grep replacement.
 
+Dogfood follow-up workflow:
+
+- Split future dogfood feedback into PR-sized slices with one behavioral theme per branch; do not collapse independent fixes into one broad PR.
+- Use Exa research before implementation when a slice depends on current external behavior such as `rg -F -e`, `ast-grep`, CUDA/Blackwell support, GitHub Actions, release packaging, or agent-evaluation harnesses.
+- Run a thinktank or equivalent independent planning review for benchmark interpretation, GPU promotion policy, product positioning, and release workflow changes.
+- Ask Gemini for a bounded read-only diff review before each PR merge, then verify any finding locally before changing code.
+- For each slice: write/update the contract test first, implement the smallest fix, run the targeted suite, run lint and format, push the PR, wait for PR CI, squash-merge, then watch main CI.
+- Release-bearing work is not complete until semantic-release, GitHub release assets, PyPI/package publication, and public release dogfood all pass.
+
 The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
 - Native `search` forwards `--multiline` / `-U`, `--null`, and `--files` shapes instead of rejecting Python-advertised flags.
