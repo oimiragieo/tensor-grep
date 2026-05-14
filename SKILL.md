@@ -89,6 +89,15 @@ Current product read:
 - `edit-plan` and `context-render` JSON should both expose top-level `validation_commands`; use that field first before inspecting nested `navigation_pack` or `edit_plan_seed`.
 - Broad generated roots need bounds. Unbounded `tg search --files --hidden` scans and no-ignore/unrestricted fallback scans through generated/cache/dependency directories are refused unless bounded with `--glob`, `--type`, or `--max-depth`, or explicitly opted in with `--allow-broad-generated-scan`. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in. `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 
+Dogfood follow-up workflow:
+
+- Split dogfood feedback into PR-sized slices with one behavioral theme per branch; do not collapse independent fixes into one broad PR.
+- Use Exa research before coding when the slice depends on current external behavior such as `rg -F -e`, `ast-grep`, CUDA/Blackwell support, GitHub Actions, release packaging, or agent-evaluation harnesses.
+- Run a thinktank or equivalent independent planning review for benchmark interpretation, GPU promotion policy, product positioning, and release workflow changes.
+- Ask Gemini for a bounded read-only diff review before each PR merge, then verify any finding locally before changing code.
+- For every slice: start with the contract test, implement the smallest fix, run the targeted suite, run lint and format, push the PR, wait for PR CI, squash-merge, then watch main CI.
+- For release-bearing slices, final status also requires semantic-release, GitHub release assets, PyPI/package publication, and public release dogfood evidence.
+
 Known current weak spots:
 
 - Broad `tg search --files ...` over generated artifact trees can still be expensive; the managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.

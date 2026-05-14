@@ -136,6 +136,19 @@ Known current weak spots:
 5. Reject regressions even if the code is otherwise clean.
 6. Do not change workflow, release, or docs contracts without updating the validator-backed tests.
 
+## Dogfood follow-up workflow
+
+When public dogfood identifies multiple independent fixes, preserve the process that has been working:
+
+1. Turn each concrete failure or feature gap into PR-sized slices; do not collapse independent fixes into one broad PR.
+2. Before implementation, use Exa research for current external contracts and tooling behavior that the fix depends on, especially `rg`, `ast-grep`, CUDA/GPU, packaging, GitHub Actions, and agent-evaluation surfaces.
+3. Run a thinktank or equivalent independent planning review when the dogfood item changes product positioning, benchmark interpretation, GPU promotion criteria, or release workflow.
+4. Ask Gemini for a bounded read-only review of each PR diff before merge; treat its findings as hypotheses until checked against local files and tests.
+5. For each slice, write or update the contract test first, implement the smallest fix, run the targeted suite, then run lint and format before moving on.
+6. Push each branch, wait for PR CI, squash-merge intentionally, then watch main CI. Release-bearing work is not complete until semantic-release, assets, PyPI, and public release dogfood pass.
+
+Record the plan, Exa research anchors, thinktank consensus, PR order, Gemini review result, validation commands, PR CI, main CI, and public release dogfood in `docs/SESSION_HANDOFF.md`, `SKILL.md`, and this file when operating practice changes.
+
 ## Required Local Validation
 
 Run these before push for normal code changes:

@@ -366,9 +366,11 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
     for doc in (benchmarks, gpu_doc):
         assert "fair baseline is `rg -F -e ... -e ...`" in doc
         assert "100 fixed no-match patterns over 1GB" in doc
-        assert "`rg` multi-pattern: `0.071s`" in doc
-        assert "`tg` CPU multi-pattern: `9.89s`" in doc
-        assert "`tg --gpu-device-ids 0`" in doc
+        assert "`rg` multi-pattern: `0.169s`" in doc
+        assert "`tg` CPU multi-pattern: `0.394s`" in doc
+        assert "`tg --gpu-device-ids 0`: `0.448s` via `NativeCpuBackend` CPU fallback" in doc
+        assert "`rg` mixed multi-pattern: `0.105s`" in doc
+        assert "`tg` CPU mixed multi-pattern: `2.220s`" in doc
         assert "sidecar-routed rows are unsupported for native CUDA promotion" in doc
 
     assert "diagnostic probes" in benchmarks
@@ -392,6 +394,30 @@ def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogf
         assert "promotion_blockers" in doc
         assert "rg -F -e" in doc
         assert "sequential `rg`" in doc
+
+
+def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process() -> None:
+    docs = {
+        "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
+        "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
+        "docs/SESSION_HANDOFF.md": SESSION_HANDOFF_PATH.read_text(encoding="utf-8"),
+    }
+
+    required_fragments = (
+        "Dogfood follow-up workflow",
+        "Exa research",
+        "thinktank",
+        "PR-sized slices",
+        "Gemini",
+        "lint and format",
+        "PR CI",
+        "main CI",
+        "public release dogfood",
+        "do not collapse independent fixes into one broad PR",
+    )
+    for path, content in docs.items():
+        for fragment in required_fragments:
+            assert fragment in content, f"{path} missing `{fragment}`"
 
 
 def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:
