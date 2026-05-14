@@ -43,7 +43,7 @@ These documents define the operating and governance surface for teams running `t
 
 release_docs_current_tag: v1.11.1
 
-Latest tagged GitHub release: [`v1.11.1`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.1). This tag exists, but its asset/PyPI publication did not complete.
+Latest tagged GitHub release: [`v1.11.1`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.1). GitHub assets and PyPI publication completed in main CI run `25836697091`; CodeQL run `25836696835` passed.
 Latest complete PyPI release: [`v1.11.1`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.1). This is also the latest complete release-asset distribution.
 
 Current positioning:
@@ -57,6 +57,15 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.11.1` closed:
+
+- PR #109 `fix: harden agent capsule hardcases` shipped the release as merge commit `6ad69b5 fix: harden agent capsule hardcases (#109)` and release commit `01a255e chore(release): v1.11.1 [skip ci]`
+- main CI run `25836697091` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25836696835` passed
+- GitHub release assets for `v1.11.1` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.11.1 tg --version` reports `tensor-grep 1.11.1`
+- agent capsule hardcases now cover noisy generated roots and ambiguous polyglot invoice tasks so implementation files outrank preview/mention files when validation evidence supports the implementation target
+- release docs governance now distinguishes the incomplete `v1.11.0` publication from the complete `v1.11.1` public distribution
+- public GPU remains experimental: managed GPU requests still route through `GpuSidecar` / unsupported rather than public `NativeGpuBackend` evidence
 
 What `v1.11.0` tagged but did not complete:
 
@@ -505,7 +514,7 @@ Important constraint:
 - **It has a validated compatibility set for common ripgrep use.** `tg search` has a benchmarked compatibility contract for the day-to-day flags that matter most in code and log search, with the currently validated rows documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 - **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
 - **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag.
-- **Optional log classification.** `tg classify` uses deterministic local heuristics by default and only probes `cyBERT` / Triton when `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` is set. `--format json` includes file/path/line/snippet metadata for each classification row. Treat the model-backed path as an experimental helper, not a default agent primitive or hot search path.
+- **Optional log classification.** `tg classify` uses deterministic local heuristics by default and only probes `cyBERT` / Triton when `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` is set. `--format json` includes top-level `classification_backend` provenance plus file/path/line/snippet metadata for each classification row, so agents can tell whether results came from local heuristics, the explicit provider, or a quiet provider fallback. Treat the model-backed path as an experimental helper, not a default agent primitive or hot search path.
 - **Unified Harness API.** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. GPU-aware search JSON separates `requested_gpu_device_ids` from `routing_gpu_device_ids`, and `tg doctor --json` exposes `gpu.search_runtime_probe` so sidecar-contaminated routes are visible before benchmark or agent claims. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
 - **NDJSON Streaming Output.** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
 - **Batch AST Rewrite.** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.

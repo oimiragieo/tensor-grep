@@ -47,18 +47,61 @@ def _heuristic_classify_lines(lines: list[str]) -> list[dict[str, Any]]:
     return results
 
 
-def _classify_lines(lines: list[str]) -> list[dict[str, Any]]:
-    provider = os.environ.get(_CLASSIFY_PROVIDER_ENV, "heuristic").strip().lower()
+def _classify_backend_metadata(
+    *,
+    provider_requested: str,
+    provider_used: str,
+    provider_status: str,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "provider_requested": provider_requested,
+        "provider_used": provider_used,
+        "provider_status": provider_status,
+        "fallback_reason": fallback_reason,
+        "cache": {"status": "not_applicable"},
+    }
+
+
+def _fallback_reason(exc: BaseException) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
+
+
+def _classify_lines_with_metadata(
+    lines: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    provider = os.environ.get(_CLASSIFY_PROVIDER_ENV, "heuristic").strip().lower() or "heuristic"
     if provider not in _CYBERT_CLASSIFY_PROVIDERS:
-        return _heuristic_classify_lines(lines)
+        return _heuristic_classify_lines(lines), _classify_backend_metadata(
+            provider_requested=provider,
+            provider_used="heuristic",
+            provider_status="local",
+        )
 
-    from tensor_grep.backends.cybert_backend import CybertBackend
-
-    backend = CybertBackend()
     try:
-        return backend.classify(lines)
-    except Exception:
-        return _heuristic_classify_lines(lines)
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        backend = CybertBackend()
+        return backend.classify(lines), _classify_backend_metadata(
+            provider_requested=provider,
+            provider_used="cybert",
+            provider_status="provider",
+        )
+    except Exception as exc:
+        return _heuristic_classify_lines(lines), _classify_backend_metadata(
+            provider_requested=provider,
+            provider_used="heuristic",
+            provider_status="fallback",
+            fallback_reason=_fallback_reason(exc),
+        )
+
+
+def _classify_lines(lines: list[str]) -> list[dict[str, Any]]:
+    results, _metadata = _classify_lines_with_metadata(lines)
+    return results
 
 
 def _resolved_source_path(source_path: str | None) -> str | None:
@@ -129,15 +172,16 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
     if not lines:
         return "", "", 1
 
-    results = _classify_lines(lines)
+    results, classification_backend = _classify_lines_with_metadata(lines)
     if format_type == "json":
         return (
             json.dumps({
+                "classification_backend": classification_backend,
                 "classifications": _enrich_classifications(
                     results,
                     lines,
                     source_path=source_path,
-                )
+                ),
             })
             + "\n",
             "",

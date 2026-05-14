@@ -83,6 +83,28 @@ def test_sidecar_classify_file_path_uses_fast_local_heuristics_by_default(monkey
     ]
 
 
+def test_sidecar_classify_json_reports_local_provider_metadata(monkeypatch):
+    from tensor_grep.sidecar import _classify_payload
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    stdout, stderr, exit_code = _classify_payload(
+        ["--format=json"],
+        {"content": "INFO startup ok\n"},
+    )
+
+    assert stderr == ""
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert payload["classification_backend"] == {
+        "provider_requested": "heuristic",
+        "provider_used": "heuristic",
+        "provider_status": "local",
+        "fallback_reason": None,
+        "cache": {"status": "not_applicable"},
+    }
+
+
 def test_python_cli_classify_defaults_to_fast_local_heuristics(monkeypatch, tmp_path):
     from tensor_grep.cli.main import app
 
@@ -113,6 +135,8 @@ def test_python_cli_classify_defaults_to_fast_local_heuristics(monkeypatch, tmp_
             "snippet": "fatal exception: cannot allocate memory",
         }
     ]
+    assert payload["classification_backend"]["provider_status"] == "local"
+    assert payload["classification_backend"]["provider_used"] == "heuristic"
 
 
 def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch):
@@ -147,3 +171,40 @@ def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch
             "snippet": "WARNING latency is high",
         }
     ]
+    assert payload["classification_backend"] == {
+        "provider_requested": "cybert",
+        "provider_used": "cybert",
+        "provider_status": "provider",
+        "fallback_reason": None,
+        "cache": {"status": "not_applicable"},
+    }
+
+
+def test_sidecar_classify_reports_quiet_cybert_fallback_metadata(monkeypatch):
+    from tensor_grep.sidecar import _classify_payload
+
+    class _ExplodingCybertBackend:
+        def __init__(self) -> None:
+            raise RuntimeError("triton offline")
+
+    monkeypatch.setenv("TENSOR_GREP_CLASSIFY_PROVIDER", "cybert")
+    monkeypatch.setitem(
+        sys.modules,
+        "tensor_grep.backends.cybert_backend",
+        types.SimpleNamespace(CybertBackend=_ExplodingCybertBackend),
+    )
+
+    stdout, stderr, exit_code = _classify_payload(
+        ["--format=json"],
+        {"content": "WARNING latency is high\n"},
+    )
+
+    assert stderr == ""
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert payload["classifications"][0]["label"] == "warn"
+    assert payload["classification_backend"]["provider_requested"] == "cybert"
+    assert payload["classification_backend"]["provider_used"] == "heuristic"
+    assert payload["classification_backend"]["provider_status"] == "fallback"
+    assert "RuntimeError: triton offline" in payload["classification_backend"]["fallback_reason"]
+    assert payload["classification_backend"]["cache"] == {"status": "not_applicable"}
