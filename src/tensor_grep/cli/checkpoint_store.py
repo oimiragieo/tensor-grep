@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -46,6 +48,16 @@ class CheckpointCreateResult:
     root: str
     created_at: str
     file_count: int
+    undo_argv: list[str]
+    undo_command: str
+
+
+@dataclass
+class CheckpointScopeResult:
+    root: str
+    mode: str
+    checkpoint_count: int
+    checkpoints: list[CheckpointRecord]
 
 
 @dataclass
@@ -76,6 +88,16 @@ def _detect_checkpoint_root(path: Path) -> tuple[Path, str]:
 
 def _checkpoint_storage_dir(root: Path) -> Path:
     return root / _CHECKPOINT_DIRNAME / _CHECKPOINTS_SUBDIR
+
+
+def _display_command(argv: list[str]) -> str:
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
+
+
+def _undo_argv(root: Path, checkpoint_id: str) -> list[str]:
+    return ["tg", "checkpoint", "undo", checkpoint_id, str(root)]
 
 
 def _index_path(root: Path) -> Path:
@@ -198,6 +220,8 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         root=str(root),
         created_at=created_at,
         file_count=len(entries),
+        undo_argv=_undo_argv(root, checkpoint_id),
+        undo_command=_display_command(_undo_argv(root, checkpoint_id)),
     )
     _write_checkpoint_metadata(root, result, entries)
 
@@ -220,6 +244,54 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
 def list_checkpoints(path: str = ".") -> list[CheckpointRecord]:
     root, _mode = _detect_checkpoint_root(Path(path))
     return _load_index(root)
+
+
+def describe_checkpoint_scope(path: str = ".") -> CheckpointScopeResult:
+    root, mode = _detect_checkpoint_root(Path(path))
+    records = _load_index(root)
+    return CheckpointScopeResult(
+        root=str(root),
+        mode=mode,
+        checkpoint_count=len(records),
+        checkpoints=records,
+    )
+
+
+def discover_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
+    resolved = Path(path).expanduser().resolve()
+    search_root = resolved if resolved.is_dir() else resolved.parent
+    index_paths: set[Path] = set()
+    own_index = _index_path(search_root)
+    if own_index.exists():
+        index_paths.add(own_index)
+    try:
+        index_paths.update(
+            candidate
+            for candidate in search_root.rglob(_INDEX_FILE)
+            if candidate.parent.name == _CHECKPOINTS_SUBDIR
+            and candidate.parent.parent.name == _CHECKPOINT_DIRNAME
+        )
+    except OSError:
+        pass
+
+    scopes: list[CheckpointScopeResult] = []
+    seen_roots: set[Path] = set()
+    for index_path in sorted(index_paths):
+        root = index_path.parent.parent.parent
+        if root in seen_roots:
+            continue
+        seen_roots.add(root)
+        records = _load_index(root)
+        mode = records[0].mode if records else "filesystem-snapshot"
+        scopes.append(
+            CheckpointScopeResult(
+                root=str(root),
+                mode=mode,
+                checkpoint_count=len(records),
+                checkpoints=records,
+            )
+        )
+    return scopes
 
 
 def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, Any]:

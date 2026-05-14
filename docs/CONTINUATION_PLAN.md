@@ -53,7 +53,7 @@ Current product read:
 
 Current next work:
 
-1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) covering context-render trust, `context_consistency`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, Python subprocess version probes, launcher route diagnostics, and docs claim checks.
+1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`, or `tg dogfood --output artifacts/dogfood_readiness.json` for the verdict envelope) covering context-render trust, `context_consistency`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, Python subprocess version probes, launcher route diagnostics, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 4. Track AST parity roadmap, GPU readiness, and model-backed classify provider/cache UX as blockers for a future "100% ready" claim.

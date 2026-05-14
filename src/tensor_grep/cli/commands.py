@@ -48,4 +48,5 @@ KNOWN_COMMANDS = {
     "session",
     "doctor",
     "checkpoint",
+    "dogfood",
 }

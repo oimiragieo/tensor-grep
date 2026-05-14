@@ -106,6 +106,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         assert CURRENT_RELEASE_TAG in content
         assert f"release_docs_current_tag: {_project_release_tag()}" in content
         assert "python scripts/agent_readiness.py" in content
+        assert "tg dogfood" in content
 
     for content in (
         docs["AGENTS.md"],
