@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.11.0 (2026-05-14)
+
+### Documentation
+
+- Sync v1.10.10 release proof ([#106](https://github.com/oimiragieo/tensor-grep/pull/106),
+  [`1152df4`](https://github.com/oimiragieo/tensor-grep/commit/1152df4902c432040233c770c5e46027afce133a))
+
+### Features
+
+- Add dogfood readiness verdict and checkpoint UX
+  ([`213d383`](https://github.com/oimiragieo/tensor-grep/commit/213d3834285b9fd14ab72c6cf36ed00c049ea7fd))
+
+
 ## v1.10.10 (2026-05-13)
 
 ### Bug Fixes
