@@ -52,6 +52,22 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
             rf"current tagged \1 is `{tag}`",
         ),
         (
+            r"current tagged state is `v\d+\.\d+\.\d+`",
+            f"current tagged state is `{tag}`",
+        ),
+        (
+            r"latest complete public PyPI/release-asset distribution is also `v\d+\.\d+\.\d+`",
+            f"latest complete public PyPI/release-asset distribution is also `{tag}`",
+        ),
+        (
+            r"released through `v\d+\.\d+\.\d+` GitHub assets and PyPI",
+            f"released through `{tag}` GitHub assets and PyPI",
+        ),
+        (
+            r"in the public `v\d+\.\d+\.\d+` GitHub asset and PyPI release line",
+            f"in the public `{tag}` GitHub asset and PyPI release line",
+        ),
+        (
             r"Latest tagged GitHub release: \[`v\d+\.\d+\.\d+`\]\(https://github\.com/oimiragieo/tensor-grep/releases/tag/v\d+\.\d+\.\d+\)",
             f"Latest tagged GitHub release: [`{tag}`](https://github.com/oimiragieo/tensor-grep/releases/tag/{tag})",
         ),
@@ -66,6 +82,18 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
         (
             r"(?m)^(- Latest complete PyPI version:\s*)`v\d+\.\d+\.\d+`",
             rf"\g<1>`{tag}`",
+        ),
+        (
+            r"(?m)^(- GitHub release: <https://github\.com/oimiragieo/tensor-grep/releases/tag/)v\d+\.\d+\.\d+(>)",
+            rf"\g<1>{tag}\2",
+        ),
+        (
+            r"(?m)^(- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==)\d+\.\d+\.\d+( tg --version` reports `tensor-grep )\d+\.\d+\.\d+(`)",
+            rf"\g<1>{version}\g<2>{version}\3",
+        ),
+        (
+            r"(?m)^(- GitHub release assets: `)v\d+\.\d+\.\d+(` has uploaded)",
+            rf"\g<1>{tag}\2",
         ),
         (
             r"post-`v\d+\.\d+\.\d+`",
