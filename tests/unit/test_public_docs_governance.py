@@ -321,18 +321,21 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
         assert "RTX 5070" in doc
         assert "single-pattern" in doc.lower()
         assert "many fixed" in doc.lower() or "many-pattern" in doc.lower()
-        assert "no crossover" in doc.lower()
+        assert "public managed" in doc.lower()
+        assert "not promotion-ready" in doc.lower()
 
     for doc in (benchmarks, gpu_doc):
-        assert "Python GPU scale rows are unsupported for native CUDA promotion" in doc
-        assert "100 no-match fixed strings" in doc
-        assert "5.55x" in doc
-        assert "2.68x" in doc
+        assert "fair baseline is `rg -F -e ... -e ...`" in doc
+        assert "100 fixed no-match patterns over 1GB" in doc
+        assert "`rg` multi-pattern: `0.071s`" in doc
+        assert "`tg` CPU multi-pattern: `9.89s`" in doc
+        assert "`tg --gpu-device-ids 0`" in doc
+        assert "sidecar-routed rows are unsupported for native CUDA promotion" in doc
 
     assert "diagnostic probes" in benchmarks
     assert "UNSUPPORTED" in benchmarks
-    assert "35.46x" in gpu_doc
-    assert "29.91x" in gpu_doc
+    assert "NativeGpuBackend" in gpu_doc
+    assert "sidecar_used = false" in gpu_doc
 
 
 def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogfood() -> None:
@@ -348,6 +351,8 @@ def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogf
         assert "not public GPU readiness" in doc
         assert "promotion_evidence_contract" in doc
         assert "promotion_blockers" in doc
+        assert "rg -F -e" in doc
+        assert "sequential `rg`" in doc
 
 
 def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:

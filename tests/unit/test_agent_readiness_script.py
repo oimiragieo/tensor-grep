@@ -46,7 +46,8 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         "RTX 4070",
         "RTX 5070",
         "no crossover",
-        "slower than `rg` and `tg_cpu`",
+        "public managed",
+        "not promotion-ready",
     ])
     for relative in (
         "README.md",
@@ -60,8 +61,8 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         taxonomy = ""
         if relative in {"docs/benchmarks.md", "docs/gpu_crossover.md"}:
             taxonomy = "\n".join([
-                "Python GPU scale rows are unsupported for native CUDA promotion",
-                "Native CUDA correctness passed, but speed/promotion failed",
+                "fair baseline is `rg -F -e ... -e ...`",
+                "sidecar-routed rows are unsupported for native CUDA promotion",
             ])
         path.write_text("\n".join([prefix, gpu_content, taxonomy]), encoding="utf-8")
 
@@ -174,7 +175,7 @@ def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> No
     benchmarks_path = tmp_path / "docs" / "benchmarks.md"
     benchmarks_path.write_text(
         benchmarks_path.read_text(encoding="utf-8").replace(
-            "Python GPU scale rows are unsupported for native CUDA promotion",
+            "fair baseline is `rg -F -e ... -e ...`",
             "",
         ),
         encoding="utf-8",
@@ -183,7 +184,7 @@ def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> No
     try:
         module.validate_docs_claims("", tmp_path, "1.9.6")
     except module.ReadinessError as exc:
-        assert "Python GPU scale rows are unsupported for native CUDA promotion" in str(exc)
+        assert "fair baseline is `rg -F -e ... -e ...`" in str(exc)
     else:
         raise AssertionError("expected docs claim validation to fail")
 

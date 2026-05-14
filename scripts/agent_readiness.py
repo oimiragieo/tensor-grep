@@ -383,7 +383,8 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         "RTX 4070",
         "RTX 5070",
         "no crossover",
-        "slower than `rg` and `tg_cpu`",
+        "public managed",
+        "not promotion-ready",
     ]
     banned_gpu_fragments = [
         "mathematically guaranteeing",
@@ -408,8 +409,8 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
     for path in (repo_root / "docs" / "benchmarks.md", repo_root / "docs" / "gpu_crossover.md"):
         content = path.read_text(encoding="utf-8")
         for fragment in (
-            "Python GPU scale rows are unsupported for native CUDA promotion",
-            "Native CUDA correctness passed, but speed/promotion failed",
+            "fair baseline is `rg -F -e ... -e ...`",
+            "sidecar-routed rows are unsupported for native CUDA promotion",
         ):
             if fragment not in content:
                 missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
