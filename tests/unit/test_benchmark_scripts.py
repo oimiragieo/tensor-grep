@@ -258,6 +258,112 @@ def test_build_attempt_ledger_should_normalize_payload_shape(tmp_path):
     assert payload["generated_at_epoch_s"] > 0
 
 
+def test_run_compat_checks_should_ship_default_tg_output_schema():
+    module = _load_script_module(
+        "run_compat_checks_schema_script", "benchmarks/run_compat_checks.py"
+    )
+    schema_path = module.default_schema_path()
+
+    assert schema_path.exists()
+
+    module.validate_json_instance(
+        {
+            "version": 1,
+            "routing_backend": "NativeCpuBackend",
+            "routing_reason": "json_output",
+            "sidecar_used": False,
+            "requested_gpu_device_ids": [],
+            "routing_gpu_device_ids": [],
+            "query": "ERROR",
+            "path": "bench_data",
+            "total_matches": 1,
+            "matches": [
+                {
+                    "file": "bench_data/app.log",
+                    "line": 1,
+                    "text": "ERROR timeout",
+                }
+            ],
+        },
+        schema_path,
+    )
+    module.validate_json_instance(
+        {
+            "version": 1,
+            "routing_backend": "NativeCpuBackend",
+            "routing_reason": "python-cli",
+            "sidecar_used": False,
+            "requested_gpu_device_ids": [],
+            "routing_gpu_device_ids": [],
+            "routing_gpu_chunk_plan_mb": [],
+            "routing_distributed": False,
+            "routing_worker_count": 1,
+            "total_matches": 1,
+            "total_files": 1,
+            "matched_file_paths": ["bench_data/app.log"],
+            "match_counts_by_file": {"bench_data/app.log": 1},
+            "matches": [
+                {
+                    "file": "bench_data/app.log",
+                    "line_number": 1,
+                    "text": "ERROR timeout",
+                }
+            ],
+        },
+        schema_path,
+    )
+
+
+def test_run_compat_checks_routing_metadata_probe_should_disable_ignores(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_compat_checks_routing_script", "benchmarks/run_compat_checks.py"
+    )
+    bench_data_dir = tmp_path / "bench_data"
+    bench_data_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    def _fake_run_command(cmd, *, env=None, cwd=None):
+        captured["cmd"] = cmd
+        captured["env"] = env
+        captured["cwd"] = cwd
+        return module.CommandResult(
+            0,
+            json.dumps({
+                "version": 1,
+                "routing_backend": "NativeCpuBackend",
+                "routing_reason": "json_output",
+                "sidecar_used": False,
+                "requested_gpu_device_ids": [],
+                "routing_gpu_device_ids": [],
+                "query": "ERROR",
+                "path": str(bench_data_dir),
+                "total_matches": 1,
+                "matches": [
+                    {
+                        "file": str(bench_data_dir / "app.log"),
+                        "line": 1,
+                        "text": "ERROR timeout",
+                    }
+                ],
+            }),
+            "",
+        )
+
+    monkeypatch.setattr(module, "run_command", _fake_run_command)
+
+    report = module.validate_routing_metadata(
+        Path("tg"),
+        bench_data_dir,
+        module.default_schema_path(),
+        Path("rg"),
+    )
+
+    assert report["valid"] is True
+    assert captured["cmd"] == ["tg", "--json", "--no-ignore", "ERROR", str(bench_data_dir)]
+    assert captured["env"]["TG_RG_PATH"] == "rg"
+    assert captured["cwd"] == module.ROOT_DIR
+
+
 def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):
     module = _load_script_module(
         "build_attempt_ledger_cli_script", "benchmarks/build_attempt_ledger.py"
