@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.11.7 (2026-05-15)
+
+### Bug Fixes
+
+- Clarify GPU CPU fallback routing
+  ([`e24abc1`](https://github.com/oimiragieo/tensor-grep/commit/e24abc1138616d5df0f2c201e256a7c70060fd0a))
+
+Clarify explicit GPU requests that fall back to CPU by preserving requested GPU IDs separately from
+  routed GPU IDs in JSON/NDJSON, updating docs/examples/schema tests, and ensuring cross-backend GPU
+  parity skips CPU fallback instead of treating it as NativeGpuBackend evidence.\n\nValidation:\n-
+  uv run ruff check .\n- uv run ruff format --check --preview .\n- uv run mypy src/tensor_grep\n-
+  cargo fmt --manifest-path rust_core/Cargo.toml --check\n- cargo test --manifest-path
+  rust_core/Cargo.toml --all-targets\n- uv run pytest -q\n- PR CI green
+
+
 ## v1.11.6 (2026-05-15)
 
 ### Bug Fixes
