@@ -58,6 +58,8 @@ pub struct RipgrepSearchArgs {
     pub patterns: Vec<String>,
     pub paths: Vec<String>,
     pub pcre2: bool,
+    pub auto_hybrid_regex: bool,
+    pub unicode: bool,
     pub max_filesize: Option<String>,
 }
 
@@ -76,6 +78,12 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
 
     if args.pcre2 {
         command.arg("-P");
+    }
+    if args.auto_hybrid_regex {
+        command.arg("--auto-hybrid-regex");
+    }
+    if args.unicode {
+        command.arg("--unicode");
     }
     if args.files {
         command.arg("--files");

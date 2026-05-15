@@ -190,6 +190,27 @@ def test_passthrough_should_forward_multiline_flags():
     assert exit_code == 0
 
 
+def test_passthrough_should_forward_advertised_regex_mode_flags():
+    backend = RipgrepBackend()
+    config = SearchConfig(auto_hybrid_regex=True, unicode=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--auto-hybrid-regex" in cmd
+    assert "--unicode" in cmd
+    assert exit_code == 0
+
+
 def test_passthrough_should_forward_passthru_flag():
     backend = RipgrepBackend()
     config = SearchConfig(passthru=True)

@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-14
+Last updated: 2026-05-15
 
 ## Current Release State
 
@@ -75,6 +75,9 @@ The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in
 
 Active post-`v1.12.6` implementation scope:
 
+- In-progress v1.12.6 dogfood follow-up branch `fix/v1126-dogfood-cli-contracts` addresses public native/dev CLI drift and agent command-surface consistency. Exa research anchors used for planning: ripgrep GUIDE/FAQ for flag/schema expectations, ast-grep CLI/JSON docs for AST-surface positioning, Sourcegraph Cody context docs for agent context/evidence framing, and CUDA-grep notes for GPU-positioning caution. Thinktank/read-only reviewer consensus: fix concrete public CLI drift with contract tests, prevent `tg new` from silently scaffolding CWD, keep `tg search --json` documented as tensor-grep aggregate JSON rather than rg JSON Lines, normalize edit-plan budget flags with `agent`/`context-render`, and keep AST/GPU claims conservative.
+- Current branch validation evidence so far: `uv run ruff check .`, `uv run ruff format --check --preview .`, `uv run mypy src/tensor_grep`, and `cargo fmt --manifest-path rust_core/Cargo.toml --check` pass; `cargo test --manifest-path rust_core/Cargo.toml --test test_public_native_cli_parity -- --nocapture` passes `13` tests; `cargo test --manifest-path rust_core/Cargo.toml --test test_routing -- --nocapture` passes `60` tests; focused Python contracts for search help/flags/version, edit-plan budgets, `tg new`, MCP edit-plan, and ripgrep passthrough pass `25` tests; final full `uv run pytest -q` passes `2107 passed, 16 skipped`. Gemini pasted-diff read-only review reported no blocking findings; its LOW finding about ignored `tg new project NAME` names was fixed by failing before writes. PR CI, merge, main CI, and public release dogfood are still pending.
+- Current branch fixes in scope: `tg search --passthrough`, `--unicode`, `--auto-hybrid-regex`, and `tg search --version` are accepted consistently by Python/dev and native/public entrypoints; top-level structured `tg --json --no-ignore PATTERN PATH` is accepted by the native front door; `tg new rule NAME --lang ... --base-dir ... --yes` writes only the requested scaffold under `--base-dir`; unsupported `tg new` shapes and ignored `tg new project NAME` names now fail instead of writing root scaffold files; `edit-plan`, MCP `tg_edit_plan`, and session edit-plan accept `--max-sources`/`--max-tokens` for command-surface parity while still emitting no rendered source text; help/docs clarify that search `--json`/`--ndjson` are tensor-grep schemas, not rg JSON event compatibility.
 - Continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language intent, token economy, follow-up reads, call-site evidence, and workflow benchmarks without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 - Agents must inspect top-level `ambiguity` before editing. `ambiguity.status = "tie_requires_confirmation"` is a hard stop for autonomous edits; `tie_resolved` is acceptable only when `resolved_by` evidence is explicit.
 - Keep Windows public launcher dogfood checking shell routes, sidecar-backed commands, and Python `subprocess.run(["tg", ...])`. Python subprocess resolution can differ from shell `PATHEXT` resolution and should be reported in `tg doctor --json` as its own route.

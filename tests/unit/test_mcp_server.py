@@ -2899,9 +2899,20 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
         encoding="utf-8",
     )
 
-    payload = json.loads(mcp_server.tg_edit_plan("create invoice", str(project)))
+    payload = json.loads(
+        mcp_server.tg_edit_plan(
+            "create invoice",
+            str(project),
+            max_files=2,
+            max_sources=1,
+            max_tokens=64,
+        )
+    )
 
     assert payload["routing_reason"] == "context-edit-plan"
+    assert payload["max_files"] == 2
+    assert payload["max_sources"] == 1
+    assert payload["max_tokens"] == 64
     assert "rendered_context" not in payload
     assert "sources" not in payload
     assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"

@@ -250,6 +250,12 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--multiline")
             if config.multiline_dotall:
                 cmd.append("--multiline-dotall")
+            if config.auto_hybrid_regex:
+                cmd.append("--auto-hybrid-regex")
+            if config.unicode:
+                cmd.append("--unicode")
+            if config.no_unicode:
+                cmd.append("--no-unicode")
             if config.no_ignore:
                 cmd.append("--no-ignore")
             if config.no_ignore_dot:

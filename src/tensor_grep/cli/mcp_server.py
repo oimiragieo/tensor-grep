@@ -1074,6 +1074,8 @@ def tg_edit_plan(
     query: str,
     path: str = ".",
     max_files: int = 3,
+    max_sources: int = 5,
+    max_tokens: int | None = None,
     max_symbols: int = 5,
 ) -> str:
     """
@@ -1083,6 +1085,8 @@ def tg_edit_plan(
         query: Query text used to rank edit targets.
         path: File or directory to inventory.
         max_files: Maximum files to include in the plan.
+        max_sources: Maximum related source/span records to retain.
+        max_tokens: Accepted for command-surface parity; no rendered source text is emitted.
         max_symbols: Maximum ranked symbols to retain.
     """
     from tensor_grep.cli.repo_map import build_context_edit_plan
@@ -1093,6 +1097,8 @@ def tg_edit_plan(
                 query,
                 path,
                 max_files=max_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
                 max_symbols=max_symbols,
             ),
             indent=2,
@@ -1240,6 +1246,8 @@ def tg_session_edit_plan(
     query: str,
     path: str = ".",
     max_files: int = 3,
+    max_sources: int = 5,
+    max_tokens: int | None = None,
     max_symbols: int = 5,
     refresh_on_stale: bool = False,
     auto_refresh: bool | None = None,
@@ -1252,6 +1260,8 @@ def tg_session_edit_plan(
         query: Query text used to rank edit targets.
         path: File or directory rooted at the session scope.
         max_files: Maximum files to include in the plan.
+        max_sources: Maximum related source/span records to retain.
+        max_tokens: Accepted for command-surface parity; no rendered source text is emitted.
         max_symbols: Maximum ranked symbols to retain.
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
@@ -1264,6 +1274,8 @@ def tg_session_edit_plan(
                 query,
                 path,
                 max_files=max_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
                 max_symbols=max_symbols,
                 refresh_on_stale=effective_refresh,
             ),

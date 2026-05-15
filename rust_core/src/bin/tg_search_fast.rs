@@ -61,6 +61,8 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
+        auto_hybrid_regex: false,
+        unicode: false,
         max_filesize: None,
     };
 
@@ -94,6 +96,9 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
             "--no-ignore-parent" => args.no_ignore_parent = true,
             "--no-config" => args.no_config = true,
             "--passthru" => args.passthru = true,
+            "--passthrough" => args.passthru = true,
+            "--auto-hybrid-regex" => args.auto_hybrid_regex = true,
+            "--unicode" => args.unicode = true,
             "--hidden" | "-." => args.hidden = true,
             "--follow" | "-L" => args.follow = true,
             "--text" | "-a" => args.text = true,

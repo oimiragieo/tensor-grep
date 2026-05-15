@@ -486,6 +486,8 @@ def session_context_edit_plan(
     path: str = ".",
     *,
     max_files: int = 3,
+    max_sources: int | None = None,
+    max_tokens: int | None = None,
     max_symbols: int = 5,
     refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
@@ -494,6 +496,8 @@ def session_context_edit_plan(
         payload["repo_map"],
         query,
         max_files=max_files,
+        max_sources=max_sources,
+        max_tokens=max_tokens,
         max_symbols=max_symbols,
     )
     context["session_id"] = session_id
@@ -677,6 +681,12 @@ def _serve_session_request_from_payload(
             repo_map,
             query,
             max_files=int(request.get("max_files", 3)),
+            max_sources=(
+                None if request.get("max_sources") in (None, "") else int(request["max_sources"])
+            ),
+            max_tokens=(
+                None if request.get("max_tokens") in (None, "") else int(request["max_tokens"])
+            ),
             max_symbols=int(request.get("max_symbols", 5)),
         )
         response["session_id"] = session_id

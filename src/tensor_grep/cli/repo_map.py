@@ -8007,6 +8007,8 @@ def build_context_edit_plan(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    max_sources: int | None = None,
+    max_tokens: int | None = None,
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
@@ -8017,6 +8019,8 @@ def build_context_edit_plan(
         query,
         max_files=max_files,
         max_symbols=max_symbols,
+        max_sources=max_sources,
+        max_tokens=max_tokens,
         profile=profile,
         _profiling_collector=collector,
     )
@@ -8028,6 +8032,8 @@ def build_context_edit_plan_from_map(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    max_sources: int | None = None,
+    max_tokens: int | None = None,
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
@@ -8039,6 +8045,10 @@ def build_context_edit_plan_from_map(
     )
     normalized_max_files = max(1, max_files)
     normalized_max_symbols = max(1, max_symbols)
+    normalized_max_sources = (
+        max(1, max_sources) if max_sources is not None else normalized_max_symbols
+    )
+    normalized_max_tokens = max_tokens if max_tokens is not None and max_tokens > 0 else None
     payload["routing_reason"] = "context-edit-plan"
     payload["files"] = list(payload.get("files", []))[:normalized_max_files]
     payload["file_matches"] = list(payload.get("file_matches", []))[:normalized_max_files]
@@ -8050,12 +8060,14 @@ def build_context_edit_plan_from_map(
     ]
     payload["max_files"] = normalized_max_files
     payload["max_symbols"] = normalized_max_symbols
+    payload["max_sources"] = normalized_max_sources
+    payload["max_tokens"] = normalized_max_tokens
     payload = _attach_edit_plan_metadata(
         repo_map,
         payload,
         query=query,
         max_files=normalized_max_files,
-        max_symbols=normalized_max_symbols,
+        max_symbols=min(normalized_max_symbols, normalized_max_sources),
         _profiling_collector=collector,
     )
     payload["validation_commands"] = _top_level_validation_commands(payload)
@@ -8068,6 +8080,8 @@ def build_context_edit_plan_json(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    max_sources: int | None = None,
+    max_tokens: int | None = None,
     profile: bool = False,
 ) -> str:
     return json.dumps(
@@ -8076,6 +8090,8 @@ def build_context_edit_plan_json(
             path,
             max_files=max_files,
             max_symbols=max_symbols,
+            max_sources=max_sources,
+            max_tokens=max_tokens,
             profile=profile,
         ),
         indent=2,

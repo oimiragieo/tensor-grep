@@ -335,6 +335,8 @@ It reuses the Context Pack JSON shape and adds:
 | --- | --- | --- |
 | `routing_reason` | `string` | `context-edit-plan`. |
 | `max_files` | `integer` | Maximum files retained in the plan payload. |
+| `max_sources` | `integer` | Maximum related source/span records retained in `edit_plan_seed` and candidate edit spans. |
+| `max_tokens` | `integer|null` | Accepted for agent command-surface parity with `context-render` and `agent`; edit-plan emits no rendered source text. |
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, suggested edits, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
@@ -1361,7 +1363,7 @@ Current tool set:
 - `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)`
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
-- `tg_edit_plan(query, path=".", max_files=3, max_symbols=5)`
+- `tg_edit_plan(query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=512, model=None, gpu_device_ids=None, gpu_timeout_s=5.0)`
 - `tg_symbol_defs(symbol, path=".")`
@@ -1380,7 +1382,7 @@ Current tool set:
 - `tg_session_show(session_id, path=".")`
 - `tg_session_refresh(session_id, path=".")`
 - `tg_session_context(session_id, query, path=".", refresh_on_stale=False, auto_refresh=None)`
-- `tg_session_edit_plan(session_id, query, path=".", max_files=3, max_symbols=5, refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_edit_plan(session_id, query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5, refresh_on_stale=False, auto_refresh=None)`
 - `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", refresh_on_stale=False, auto_refresh=None)`
 - `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3, refresh_on_stale=False, auto_refresh=None)`
 - `tg_session_blast_radius_plan(session_id, symbol, path=".", max_depth=3, max_files=3, max_symbols=5, refresh_on_stale=False, auto_refresh=None)`
