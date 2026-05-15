@@ -23,6 +23,7 @@ These scripts and artifact paths are the accepted benchmark surface for the curr
 | Python GPU/NLP benchmark | `benchmarks/run_gpu_benchmarks.py` | `artifacts/bench_run_gpu_benchmarks.json` |
 | Native GPU crossover / throughput | `benchmarks/run_gpu_native_benchmarks.py` | `artifacts/bench_run_gpu_native_benchmarks.json` |
 | Agent capsule + edit loop workflow | `benchmarks/run_agent_workflow_benchmarks.py` | `artifacts/bench_agent_workflow.json` |
+| Agent end-to-end success harness | `benchmarks/run_agent_success_harness.py` | `artifacts/bench_agent_success_harness.json` |
 | Harness loop | `benchmarks/run_harness_loop_benchmark.py` | `artifacts/bench_harness_loop.json` |
 | Index build/query scaling | `benchmarks/run_index_scaling_benchmark.py` | `artifacts/bench_index_scaling.json` |
 
@@ -59,6 +60,8 @@ For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieva
 
 For `run_agent_workflow_benchmarks.py`, the artifact is the workflow-level product-wedge surface, not a raw grep-speed comparison. It must include the literal positioning string `agent-native workflow benchmark; not a cold exact-text speed claim`, the top-level `workflow_surfaces` list, and separate `agent_capsule` and `edit_loop` sections. The capsule section should report confidence, alternatives, validation alignment, snippets, rollback, and edit order signals; the edit-loop section should report search/plan/apply/verify medians and pass/fail state.
 
+For `run_agent_success_harness.py`, the artifact is an end-to-end agent success proof, not a raw grep-speed comparison. It must include the literal positioning string `agent-native end-to-end success harness; not a raw search speed claim`, the top-level `workflow_surfaces` list, and scenario rows that cover query intent, rendered context, edit seed, apply, verify, and rollback.
+
 ## Agent Workflow Benchmark
 
 `benchmarks/run_agent_workflow_benchmarks.py` is the canonical workflow benchmark for the post-`v1.11.7` dogfood wedge: agent capsule routing plus safe edit-loop execution. It intentionally measures an agent-native workflow benchmark; not a cold exact-text speed claim.
@@ -69,6 +72,8 @@ The default artifact is `artifacts/bench_agent_workflow.json` and exposes two su
 - `edit_loop`: reuses the AST search -> rewrite plan -> apply -> verify harness loop and records phase medians for `search_s`, `plan_s`, `apply_s`, and `verify_s`.
 
 Use this artifact when evaluating improvements to confidence honesty, alternative-target surfacing, validation-command filtering, rollback visibility, edit-order guidance, or whole-loop edit latency. Do not use it to claim that `tg` beats `rg` for cold exact-text search.
+
+`benchmarks/run_agent_success_harness.py` is the end-to-end release dogfood harness for the same product wedge. It runs a bounded scenario from query intent through `tg agent`, `context-render`, `edit-plan`, checkpoint creation, rewrite apply, verification, and checkpoint rollback. The default artifact is `artifacts/bench_agent_success_harness.json` and exposes these `workflow_surfaces`: `intent`, `context`, `edit_seed`, `apply`, `verify`, and `rollback`. Use it to prove an agent can identify the target, receive context, seed a safe edit, mutate only under checkpoint, verify the mutation, and restore the corpus. It is not a raw search speed claim.
 
 ## Accepted Repo-Map Lexical Retrieval Snapshot (2026-04-19)
 

@@ -103,6 +103,7 @@ Dogfood follow-up workflow:
 - Ask Gemini for a bounded read-only diff review before each PR merge, then verify any finding locally before changing code.
 - For each slice: write/update the contract test first, implement the smallest fix, run the targeted suite, run lint and format, push the PR, wait for PR CI, squash-merge, then watch main CI.
 - Release-bearing work is not complete until semantic-release, GitHub release assets, PyPI/package publication, and public release dogfood all pass.
+- Use `benchmarks/run_agent_success_harness.py --output artifacts/bench_agent_success_harness.json` when dogfood asks for an end-to-end agent success proof from query intent through context, edit seed, checkpointed apply, verification, and rollback. Treat the artifact as workflow evidence, not a raw search speed claim.
 
 The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
