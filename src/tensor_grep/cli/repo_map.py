@@ -32,11 +32,17 @@ _SKIP_DIR_NAMES = {
     ".pytest_cache",
     ".ruff_cache",
     "__pycache__",
+    "artifacts",
     "build",
+    "coverage",
     "dist",
+    "htmlcov",
     "node_modules",
     "target",
     "venv",
+    ".cache",
+    ".nox",
+    ".tox",
 }
 _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _TS_SUFFIXES = {".ts", ".tsx"}
@@ -8212,7 +8218,14 @@ def build_context_edit_plan_from_map(
     payload["routing_reason"] = "context-edit-plan"
     payload["files"] = list(payload.get("files", []))[:normalized_max_files]
     payload["file_matches"] = list(payload.get("file_matches", []))[:normalized_max_files]
-    payload["file_summaries"] = list(payload.get("file_summaries", []))[:normalized_max_files]
+    payload["file_summaries"] = [
+        {
+            **dict(summary),
+            "symbols": list(dict(summary).get("symbols", []))[:normalized_max_symbols],
+        }
+        for summary in list(payload.get("file_summaries", []))[:normalized_max_files]
+        if isinstance(summary, dict)
+    ]
     payload["tests"] = list(payload.get("tests", []))[:normalized_max_files]
     payload["test_matches"] = list(payload.get("test_matches", []))[:normalized_max_files]
     payload["symbols"] = _sorted_ranked_symbols(list(payload.get("symbols", [])))[

@@ -1,6 +1,6 @@
 # Harness API
 
-`tg.exe` exposes a small set of machine-readable output shapes for harnesses and agents. This document describes the current v1 JSON contracts emitted by the native Rust CLI, plus the current GPU sidecar hybrid shape.
+`tg.exe` exposes a small set of machine-readable output shapes for harnesses and agents. This document describes the current v1 JSON contracts emitted by the native Rust CLI, plus the current GPU sidecar hybrid shape. `tg.exe search --format rg --json ...` is deliberately not a tensor-grep envelope; it streams ripgrep JSON Lines events for tools that require rg's event schema.
 
 All committed examples live in [`docs/examples/`](examples/) and are valid single-document JSON files generated from real `tg.exe` commands against temporary fixtures created under `bench_data/`.
 
@@ -22,6 +22,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Shape | Trigger | Example |
 | --- | --- | --- |
 | Search JSON | `tg.exe search --json ...` | [`examples/search.json`](examples/search.json) |
+| Ripgrep JSON Lines | `tg.exe search --format rg --json ...` | Raw rg event stream; use ripgrep's JSON Lines contract. |
 | AST Run JSON | `tg.exe run --lang <lang> --json ...` | [`examples/ast_run.json`](examples/ast_run.json) |
 | Index search JSON | `tg.exe search --index --json ...` | [`examples/index_search.json`](examples/index_search.json) |
 | Rulesets JSON | `tg.exe rulesets --json` | [`examples/rulesets.json`](examples/rulesets.json) |

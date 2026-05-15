@@ -343,11 +343,13 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
     git_dir = project / ".git"
     node_modules = project / "node_modules" / "pkg"
     cache_dir = project / ".pytest_cache"
+    artifacts_dir = project / "artifacts" / "debug"
     src_dir.mkdir(parents=True)
     hidden_dir.mkdir()
     git_dir.mkdir()
     node_modules.mkdir(parents=True)
     cache_dir.mkdir()
+    artifacts_dir.mkdir(parents=True)
 
     source_path = src_dir / "payments.py"
     source_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
@@ -355,6 +357,11 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
     (git_dir / "index").write_bytes(b"binary\0index")
     (node_modules / "dep.js").write_text("export const dep = 1;\n", encoding="utf-8")
     (cache_dir / "lastfailed").write_text("{}\n", encoding="utf-8")
+    artifact_probe = artifacts_dir / "agent_probe.py"
+    artifact_probe.write_text(
+        "def create_invoice_debug_probe():\n    return 'debug artifact'\n",
+        encoding="utf-8",
+    )
     (project / "run.log").write_text("create invoice noisy log\n", encoding="utf-8")
     (project / "blob.bin").write_bytes(b"create invoice\0binary")
 
@@ -364,5 +371,6 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
     assert source_path.resolve() in files
     assert (hidden_dir / "notes.txt").resolve() not in files
     assert (node_modules / "dep.js").resolve() not in files
+    assert artifact_probe.resolve() not in files
     assert (project / "run.log").resolve() not in files
     assert (project / "blob.bin").resolve() not in files

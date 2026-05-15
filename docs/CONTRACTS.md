@@ -24,7 +24,8 @@ Current validated rows:
 - `-g/--glob`
 - `-l/--files-with-matches`
 - `--files-without-match`
-- `--json`
+- tensor-grep aggregate `--json`
+- ripgrep JSON Lines via explicit `--format rg --json`
 - `--ndjson`
 - `-F/--fixed-strings`
 - `-w/--word-regexp`
@@ -48,7 +49,8 @@ Character-for-character identity is not required for help formatting, but comman
 Agent automation contracts:
 - `tg search PATTERN` defaults to the current directory when no path is provided.
 - Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends `--fixed-strings` for literal searches.
-- `tg search --json` emits a valid aggregate JSON object even when there are zero matches.
+- `tg search --json` emits a valid tensor-grep aggregate JSON object even when there are zero matches.
+- `tg search --format rg --json` forwards to ripgrep and emits rg JSON Lines events without a tensor-grep envelope for tools that require rg's event schema.
 - `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
 - `tg search` with `--format rg` is a public exact ripgrep-style text formatter for automation that needs rg-shaped stdout. Pair it with `--sort path` when deterministic path ordering matters across backends.
 - The native front door treats `--format rg` as a no-op for rg-compatible text output and preserves `--sort path` when forwarding to ripgrep. Non-rg `--format` search output remains a Python CLI formatting surface.
@@ -100,7 +102,7 @@ Known current limitations:
 - `impact --symbol` is a broader planning signal and can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact checks.
 
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)
-The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --ndjson`, and the documented harness/editor-plane flows are considered public APIs.
+The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --ndjson`, and the documented harness/editor-plane flows are considered public APIs. `tensor-grep search --format rg --json` is a compatibility route for ripgrep's JSON Lines event schema, so consumers should use rg's event contract rather than the tensor-grep envelope for that mode.
 - Existing fields (for example `file`, `line`, `match`, `context`) will not be renamed or removed without a major version bump.
 - New fields may be added in minor versions.
 - Consumers should ignore unrecognized JSON fields.

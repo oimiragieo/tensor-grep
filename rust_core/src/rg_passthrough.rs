@@ -16,6 +16,7 @@ static RG_BINARY_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
 #[derive(Debug, Clone)]
 pub struct RipgrepSearchArgs {
     pub files: bool,
+    pub json: bool,
     pub ignore_case: bool,
     pub fixed_strings: bool,
     pub invert_match: bool,
@@ -87,6 +88,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.files {
         command.arg("--files");
+    }
+    if args.json {
+        command.arg("--json");
     }
     if let Some(size) = &args.max_filesize {
         command.arg("--max-filesize").arg(size);

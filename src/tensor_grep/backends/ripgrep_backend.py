@@ -212,7 +212,12 @@ class RipgrepBackend(ComputeBackend):
         Execute ripgrep directly and stream output to stdout/stderr without JSON re-parsing.
         Returns rg's native exit code.
         """
-        cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=False)
+        cmd = self._build_cmd(
+            file_path=file_path,
+            pattern=pattern,
+            config=config,
+            json_mode=bool(config and config.json_mode),
+        )
         result = subprocess.run(cmd, check=False)
         return int(result.returncode)
 

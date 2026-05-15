@@ -13,14 +13,15 @@ As of 2026-05-14, the current tagged version is `v1.12.8`, and the latest comple
 
 Current release facts:
 
+- PR #137 `f848748 fix: route cold rg-shaped searches to rg (#137)` merged and released as `v1.12.8`
 - PR #128 `da44a2f fix: harden v1.12.6 dogfood cli contracts` merged and released as `v1.12.7`
 - PR #116 `a78e33c fix: harden post-release docs governance` merged and released as `v1.11.5`
 - PR #114 `361e0db fix: harden public GPU unavailable routing` and PR #115 `2100122 fix: harden release docs stamp governance` merged and released as `v1.11.4`
 - PR #113 `87d4ca4 fix: accelerate fixed multi-pattern native search` merged and released as `v1.11.3`
-- Tagged merge commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
-- Tagged release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
-- Latest complete public release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
-- Latest merged fix commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Tagged merge commit: `f848748 fix: route cold rg-shaped searches to rg (#137)`
+- Tagged release commit: `cfc49b0 chore(release): v1.12.8 [skip ci]`
+- Latest complete public release commit: `cfc49b0 chore(release): v1.12.8 [skip ci]`
+- Latest merged fix commit: `f848748 fix: route cold rg-shaped searches to rg (#137)`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - PR #110 `fix: expose classify provider provenance` merged and released as `v1.11.2`
 - PR #105 `fix: add explicit Windows subprocess launcher repair` merged and released as `v1.10.10`
@@ -47,10 +48,10 @@ Current release facts:
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
 - `v1.11.0` main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `25917666403` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25917665808` passed on the `v1.12.7` release line.
-- PyPI pinned public install resolves with `uvx --refresh-package tensor-grep --from tensor-grep==1.12.7 tg --version`
-- GitHub release assets for `v1.12.7` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public `v1.12.7` dogfood verified PyPI, `uvx`, GitHub assets, public launcher resolution, accepted search/native-front-door CLI drift fixes, `tg new --base-dir`, edit-plan budget flags, and explicit JSON/NDJSON schema positioning; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
+- Main CI run `25927793134` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25927792509` passed on the `v1.12.8` release line.
+- PyPI pinned public install resolves with `uvx --refresh-package tensor-grep --from tensor-grep==1.12.8 tg --version`
+- GitHub release assets for `v1.12.8` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.12.8` dogfood verified PyPI, `uvx`, GitHub assets, public launcher resolution, bounded map/context output, `tg run --pattern`, root cold rg-shaped routing, accepted search/native-front-door CLI drift fixes, `tg new --base-dir`, edit-plan budget flags, and explicit JSON/NDJSON schema positioning; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
 - Public `v1.11.5` dogfood verified PyPI, `uvx`, GitHub assets, and post-release-safe docs governance; `v1.11.4` remains the native GPU unavailable fallback to `NativeCpuBackend` release, `v1.11.3` remains the fixed multi-pattern native CPU release, and `v1.10.10` remains the historical Windows subprocess launcher repair release.
 - Public `v1.11.2` dogfood verified PyPI, `uvx`, GitHub assets, and classify provider provenance in JSON output.
 - PR #102 `fix: harden v1.10.7 dogfood followups` merged and released as `v1.10.8`
@@ -78,7 +79,7 @@ Current product read:
 - Explicit `--gpu-device-ids` routing should only probe selected CUDA ordinals. Selecting GPU 0 must not initialize or warn about unrelated unsupported devices such as GPU 1.
 - GPU benchmark auto-recommendation must stay false unless required 1GB/5GB correctness checks pass and a selected GPU beats both `rg` and `tg_cpu` at required scale. Unsupported-device inventory warnings should stay top-level or on the unsupported device row, not on unrelated selected-GPU timing rows. GPU-requested CPU fallback or sidecar compatibility output must report `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable`, and `not_gpu_proof_reason`; unsupported rows should carry `promotion_evidence = false`.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
-- `tg search --json` is tensor-grep aggregate JSON, not rg JSON Lines. `tg search --ndjson` is tensor-grep's flattened streaming row schema, not the rg event schema. Use `--format rg` for rg-shaped text output and keep schema claims explicit.
+- `tg search --json` is tensor-grep aggregate JSON, not rg JSON Lines. `tg search --format rg --json` is the explicit rg JSON Lines compatibility route and emits raw rg events without the tensor-grep envelope. `tg search --ndjson` is tensor-grep's flattened streaming row schema, not the rg event schema. Use `--format rg` for rg-shaped output and keep schema claims explicit.
 - `tg agent` / Actionable Context Capsule is the product wedge: an opt-in workflow packet with primary file/function, route rationale, bounded snippets with line maps, validation evidence, edit order, checkpoint/rollback metadata, omission counts, confidence, call-site evidence status, and an "ask user before editing" recommendation when evidence is weak. Capsule v1 leaves `related_call_sites` empty unless verified call-site evidence is explicitly collected. Evidence labels should distinguish `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, and `stale/uncertain` conclusions.
 - Before editing from an agent capsule, inspect top-level `ambiguity`. `ambiguity.status = "tie_requires_confirmation"` is a hard stop for autonomous edits. `ambiguity.status = "tie_resolved"` is acceptable only when `ambiguity.resolved_by` contains explicit evidence.
 - `tg agent --gpu-device-ids ... --json` and MCP `tg_agent_capsule(..., gpu_device_ids=[...])` are opt-in GPU evidence paths. They should expose `gpu_acceleration`, require `NativeGpuBackend` with `sidecar_used = false` before using the evidence, and report sidecar-routed GPU as unsupported.

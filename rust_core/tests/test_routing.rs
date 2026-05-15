@@ -490,6 +490,109 @@ fn test_routing_early_rg_env_preserves_plain_search_contract() {
 }
 
 #[test]
+fn test_top_level_format_rg_fixed_string_routes_before_positional_parser() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("--format")
+        .arg("rg")
+        .arg("--color")
+        .arg("never")
+        .arg("--sort")
+        .arg("path")
+        .arg("-n")
+        .arg("-F")
+        .arg("Actionable Context")
+        .arg(dir.path().join("notes.md"))
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
+fn test_search_format_rg_json_routes_to_ripgrep_passthrough() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--format")
+        .arg("rg")
+        .arg("--json")
+        .arg("-F")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "native search should not handle explicit rg json",
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
+fn test_top_level_format_rg_json_routes_before_positional_parser() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("--format")
+        .arg("rg")
+        .arg("--json")
+        .arg("-F")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "native search should not handle explicit root rg json",
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
 fn test_routing_early_positional_rg_env_preserves_plain_search_contract() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

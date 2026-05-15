@@ -232,6 +232,7 @@ impl RustBackend {
         use crate::rg_passthrough::{execute_ripgrep_search, RipgrepSearchArgs};
         let args = RipgrepSearchArgs {
             files: false,
+            json: false,
             ignore_case,
             fixed_strings,
             invert_match,

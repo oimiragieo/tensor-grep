@@ -72,6 +72,8 @@ SEARCH_HELP_REQUIRED_SNIPPETS = (
     "Usage:",
     "search [OPTIONS]",
     "PATTERN",
+    "validated common rg-compatible subset",
+    "--format rg --json",
     "local heuristics by default",
     "--gpu-device-ids",
 )
@@ -3808,6 +3810,102 @@ def test_agent_capsule_equal_confidence_alternative_requires_confirmation(monkey
     )
 
 
+def test_agent_capsule_unrequested_marker_helper_tie_requires_confirmation(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    python_path = project / "src" / "tensor_grep" / "cli" / "main.py"
+    rust_path = project / "rust_core" / "src" / "python_sidecar.rs"
+    python_path.parent.mkdir(parents=True)
+    rust_path.parent.mkdir(parents=True)
+    python_path.write_text(
+        "def _write_windows_exe_bridge_marker(root):\n    return root / 'tg.com'\n",
+        encoding="utf-8",
+    )
+    rust_path.write_text(
+        "pub fn is_managed_windows_exe_bridge(path: &std::path::Path) -> bool {\n    true\n}\n",
+        encoding="utf-8",
+    )
+
+    validation_plan = [
+        {
+            "command": "uv run pytest tests/unit/test_cli_modes.py -q",
+            "runner": "pytest",
+            "detection": "detected",
+        }
+    ]
+
+    def _fake_context_render(*_args, **_kwargs):
+        return {
+            "navigation_pack": {
+                "primary_target": {
+                    "file": str(python_path),
+                    "symbol": "_write_windows_exe_bridge_marker",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                },
+                "follow_up_reads": [],
+                "validation_commands": [validation_plan[0]["command"]],
+            },
+            "edit_plan_seed": {
+                "primary_file": str(python_path),
+                "primary_symbol": {
+                    "name": "_write_windows_exe_bridge_marker",
+                    "kind": "function",
+                },
+                "primary_span": {"start_line": 1, "end_line": 2},
+                "confidence": {"overall": 0.9},
+                "validation_plan": validation_plan,
+                "validation_commands": [validation_plan[0]["command"]],
+                "edit_ordering": [str(python_path)],
+            },
+            "candidate_edit_targets": {
+                "symbols": [
+                    {
+                        "file": str(rust_path),
+                        "name": "is_managed_windows_exe_bridge",
+                        "kind": "function",
+                        "line": 1,
+                        "score": 90,
+                    }
+                ]
+            },
+            "file_matches": [
+                {
+                    "path": str(rust_path),
+                    "score": 90,
+                    "reasons": ["source"],
+                    "provenance": ["parser-backed"],
+                }
+            ],
+            "validation_commands": [validation_plan[0]["command"]],
+            "sources": [
+                {
+                    "file": str(python_path),
+                    "symbol": "_write_windows_exe_bridge_marker",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "source": python_path.read_text(encoding="utf-8"),
+                }
+            ],
+            "context_consistency": {"primary_file_included": True},
+        }
+
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        "harden Windows subprocess exe bridge",
+        project,
+        max_tokens=400,
+    )
+
+    assert payload["ambiguity"]["status"] == "tie_requires_confirmation"
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert (
+        "primary target is an unrequested marker helper with equal-confidence alternatives"
+        in payload["context_consistency"]["downgrade_reasons"]
+    )
+
+
 def test_agent_capsule_exact_camel_symbol_stays_above_snake_case_bridge(tmp_path):
     paths = _write_mixed_invoice_fixture(tmp_path, package_json=True)
 
@@ -4430,6 +4528,41 @@ def test_build_context_edit_plan_uses_bounded_repo_map(monkeypatch, tmp_path):
     assert payload["edit_plan_seed"]["dependent_files"] == [str(service_path.resolve())]
     assert payload["scan_limit"]["max_repo_files"] == 2
     assert unbounded_walks == 0
+
+
+def test_build_context_edit_plan_caps_file_summary_symbols(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "\n".join([
+            "def create_invoice(total):",
+            "    return total + 1",
+            "",
+            "def invoice_tax(total):",
+            "    return total * 0.1",
+            "",
+            "def invoice_discount(total):",
+            "    return total - 1",
+            "",
+            "def invoice_receipt(total):",
+            "    return str(total)",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_edit_plan(
+        "invoice",
+        project,
+        max_files=1,
+        max_symbols=2,
+        max_sources=1,
+    )
+
+    assert payload["file_summaries"][0]["path"] == str(module_path.resolve())
+    assert len(payload["file_summaries"][0]["symbols"]) <= 2
 
 
 def test_context_render_skips_blast_radius_for_low_confidence_fuzzy_symbol(
@@ -5742,7 +5875,66 @@ def test_cli_pcre2_rg_format_is_passthrough_eligible() -> None:
     assert _can_passthrough_rg(
         config,
         format_type="rg",
+        explicit_rg_format=False,
         json_mode=False,
+        ndjson_mode=False,
+        files_mode=False,
+        files_with_matches=False,
+        files_without_match=False,
+        only_matching=False,
+        stats_mode=False,
+    )
+
+
+def test_cli_uses_ripgrep_passthrough_for_explicit_rg_json(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        calls["paths"] = list(paths)
+        calls["pattern"] = pattern
+        calls["json_mode"] = config.json_mode
+        calls["fixed_strings"] = config.fixed_strings
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    runner = CliRunner()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "--format", "rg", "--json", "--fixed-strings", "ERROR", "."],
+    )
+    result = runner.invoke(
+        app,
+        ["search", "--format", "rg", "--json", "--fixed-strings", "ERROR", "."],
+    )
+
+    assert result.exit_code == 0
+    assert calls == {
+        "paths": ["."],
+        "pattern": "ERROR",
+        "json_mode": True,
+        "fixed_strings": True,
+    }
+
+
+def test_cli_does_not_treat_default_json_as_rg_json_passthrough() -> None:
+    from tensor_grep.cli.main import _can_passthrough_rg
+
+    config = SearchConfig(json_mode=True)
+
+    assert not _can_passthrough_rg(
+        config,
+        format_type="rg",
+        explicit_rg_format=False,
+        json_mode=True,
         ndjson_mode=False,
         files_mode=False,
         files_with_matches=False,
