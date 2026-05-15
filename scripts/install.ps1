@@ -605,17 +605,41 @@ exec "`$TG_FRONTDOOR" "`$@"
         if (!(Test-Path $shimDir)) {
             New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
         }
+        $foreignExeInShimDir = $false
         foreach ($staleShimName in @("tg.com", "tg.exe", "tg.bat", "tg.ps1", "tg")) {
             $staleShimPath = Join-Path $shimDir $staleShimName
             if (Test-Path -LiteralPath $staleShimPath) {
+                if ($staleShimName -eq "tg.exe") {
+                    $staleVersion = ""
+                    try {
+                        $staleVersion = (& $staleShimPath --version 2>$null | Select-Object -First 1)
+                    } catch {
+                        $staleVersion = ""
+                    }
+                    if (!(Test-TensorGrepLauncher -CandidatePath $staleShimPath -VersionLine $staleVersion)) {
+                        $foreignExeInShimDir = $true
+                        Write-Warning "Skipping foreign tg.exe in tensor-grep shim dir: $staleShimPath"
+                        continue
+                    }
+                }
                 Remove-Item -LiteralPath $staleShimPath -Force
                 Write-Host "Removed stale tg launcher shadowing managed shim: $staleShimPath"
             }
         }
         $cmdShimPath = "$shimDir\tg.cmd"
+        $exeShimPath = "$shimDir\tg.exe"
+        $exeShimMarkerPath = "$shimDir\tg.exe.tensor-grep-bridge"
         $ps1ShimPath = "$shimDir\tg.ps1"
         $bashShimPath = "$shimDir\tg"
         Write-AsciiFile -Path $cmdShimPath -Value $cmdShimContent
+        if ((Test-Path -LiteralPath $nativeFrontdoorPath) -and !$foreignExeInShimDir) {
+            Copy-Item -LiteralPath $nativeFrontdoorPath -Destination $exeShimPath -Force
+            Write-AsciiFile -Path $exeShimMarkerPath -Value "tensor-grep managed tg.exe bridge`r`n"
+            Write-Host "Installed Python subprocess tg.exe bridge: $exeShimPath"
+            $installedShimPaths += $exeShimPath
+        } elseif ($foreignExeInShimDir) {
+            Write-Warning "Python subprocess tg.exe bridge was not installed because a foreign tg.exe already exists: $exeShimPath"
+        }
         Write-AsciiFile -Path $ps1ShimPath -Value $ps1ShimContent
         Write-BashFile -Path $bashShimPath -Value $bashShimContent
         $installedShimPaths += $cmdShimPath

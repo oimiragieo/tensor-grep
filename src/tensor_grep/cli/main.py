@@ -520,15 +520,70 @@ def _same_path(left: Path, right: Path) -> bool:
         return left == right
 
 
+_WINDOWS_EXE_BRIDGE_MARKER = "tg.exe.tensor-grep-bridge"
+_WINDOWS_EXE_BRIDGE_MARKER_CONTENT = "tensor-grep managed tg.exe bridge\n"
+
+
+def _windows_exe_bridge_marker_path(path: Path) -> Path:
+    return path.with_name(_WINDOWS_EXE_BRIDGE_MARKER)
+
+
+def _write_windows_exe_bridge_marker(path: Path) -> None:
+    if path.name.lower() == "tg.exe":
+        _windows_exe_bridge_marker_path(path).write_text(
+            _WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+            encoding="ascii",
+        )
+
+
+def _windows_managed_compat_shim_dirs() -> set[str]:
+    if not sys.platform.startswith("win"):
+        return set()
+    homes: list[Path] = []
+    for env_name in ("USERPROFILE", "HOME"):
+        value = os.environ.get(env_name)
+        if not value:
+            continue
+        home = Path(value)
+        if home not in homes:
+            homes.append(home)
+    dirs: set[str] = set()
+    for home in homes:
+        dirs.add(_windows_path_part_key(str(home / "bin")))
+        dirs.add(_windows_path_part_key(str(home / ".local" / "bin")))
+    return dirs
+
+
 def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: Path) -> list[Path]:
     if not sys.platform.startswith("win"):
         return []
+
+    def _add_path(path: Path) -> None:
+        try:
+            key = str(path.resolve()).lower()
+        except OSError:
+            key = str(path).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        bridges.append(path)
+
+    def _directory_has_tensor_grep_shim(directory: Path) -> bool:
+        for shim_name in ("tg.cmd", "tg.ps1", "tg"):
+            shim_path = directory / shim_name
+            if not shim_path.is_file():
+                continue
+            version = _doctor_tg_candidate_version(shim_path)
+            if _doctor_tg_version_looks_like_tensor_grep(version):
+                return True
+        return False
 
     path_values = [os.environ.get("PATH", "")]
     fresh_path = _doctor_fresh_shell_path_value()
     if fresh_path and fresh_path not in path_values:
         path_values.append(fresh_path)
 
+    managed_compat_dirs = _windows_managed_compat_shim_dirs()
     bridges: list[Path] = []
     seen: set[str] = set()
     for path_value in path_values:
@@ -539,12 +594,6 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
                 continue
             if _same_path(candidate_path, native_path):
                 continue
-            try:
-                key = str(candidate_path.resolve()).lower()
-            except OSError:
-                key = str(candidate_path).lower()
-            if key in seen:
-                continue
             version = candidate.get("version")
             if not _doctor_tg_version_looks_like_tensor_grep(version):
                 continue
@@ -552,8 +601,19 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
                 continue
             if _native_tg_version_matches(expected_version, version):
                 continue
-            seen.add(key)
-            bridges.append(candidate_path)
+            _add_path(candidate_path)
+
+        for entry in path_value.split(_doctor_path_list_separator(path_value)):
+            if not entry:
+                continue
+            directory = Path(entry)
+            if _windows_path_part_key(str(directory)) not in managed_compat_dirs:
+                continue
+            target = directory / "tg.exe"
+            if _same_path(target, native_path) or target.exists():
+                continue
+            if _directory_has_tensor_grep_shim(directory):
+                _add_path(target)
     return bridges
 
 
@@ -571,6 +631,7 @@ def _refresh_windows_tensor_grep_com_bridges(
     refreshed: list[Path] = []
     for bridge_path in paths:
         shutil.copy2(native_path, bridge_path)
+        _write_windows_exe_bridge_marker(bridge_path)
         installed_version = _native_tg_version(bridge_path)
         if not _native_tg_version_matches(expected_version, installed_version):
             raise RuntimeError(
