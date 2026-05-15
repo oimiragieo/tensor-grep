@@ -91,6 +91,7 @@ class SearchConfig:
     replace_str: str | None = None
     sort_by: str = "none"
     sort_by_reverse: str = "none"
+    sort_files: bool = False
     trim: bool = False
     vimgrep: bool = False
     with_filename: bool = False

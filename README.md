@@ -45,7 +45,7 @@ release_docs_current_tag: v1.12.9
 
 Latest tagged GitHub release: [`v1.12.9`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.9). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.12.9`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.9). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.12.8` completed in main CI run `25927793134`; CodeQL run `25927792509` passed.
+Latest verified release proof: `v1.12.9` completed in main CI run `25941933937`; CodeQL run `25941933444` passed.
 
 Current positioning:
 
@@ -53,18 +53,18 @@ Current positioning:
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
-- Public GPU note: in `v1.12.8`, public managed GPU is not promotion-ready. The public managed binary falls back to `NativeCpuBackend` or reports unsupported for explicit GPU requests unless a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. GPU benchmark artifacts expose `promotion_evidence_contract` and `promotion_blockers` so fallback or sidecar rows cannot look like promotion proof. The latest public managed many-pattern dogfood is not promotion-ready for GPU: the accepted improvement is a native CPU fixed multi-pattern fast path, not public GPU readiness. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce 1GB and 5GB correctness and speed wins for the declared workload on RTX 4070 / RTX 5070 class devices.
+- Public GPU note: in `v1.12.9`, public managed GPU is not promotion-ready. The public managed binary falls back to `NativeCpuBackend` or reports unsupported for explicit GPU requests unless a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. GPU benchmark artifacts expose `promotion_evidence_contract` and `promotion_blockers` so fallback or sidecar rows cannot look like promotion proof. The latest public managed many-pattern dogfood is not promotion-ready for GPU: the accepted improvement is a native CPU fixed multi-pattern fast path, not public GPU readiness. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce 1GB and 5GB correctness and speed wins for the declared workload on RTX 4070 / RTX 5070 class devices.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 
-What `v1.12.8` closed:
+What `v1.12.9` closed:
 
-- PR #137 `fix: route cold rg-shaped searches to rg` shipped the release as merge commit `f848748 fix: route cold rg-shaped searches to rg (#137)` and release commit `cfc49b0 chore(release): v1.12.8 [skip ci]`
+- PR #138 `fix: harden v1.12.8 dogfood contracts` shipped the release as merge commit `21627d2 fix: harden v1.12.8 dogfood contracts` and release commit `b15f71a chore(release): v1.12.9 [skip ci]`
 - Latest merged feature commit before this release line: `a518cc6 feat: add agent success harness`
-- main CI run `25927793134` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25927792509` passed
-- GitHub release assets for `v1.12.8` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.12.8 tg --version` reports `tensor-grep 1.12.8`
+- main CI run `25941933937` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25941933444` passed
+- GitHub release assets for `v1.12.9` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.12.9 tg --version` reports `tensor-grep 1.12.9`
 - public native/dev CLI drift remains closed for accepted search flags and option-first structured search: `tg --json --no-ignore ...`, `tg search --passthrough`, `--unicode`, `--auto-hybrid-regex`, `--type-list`, `--pcre2-version`, and `tg search --version` execute or route intentionally
 - root-level cold rg-shaped searches route through the rg-compatible front door for accepted common flags so benchmark rows do not pay Python/control-plane overhead when the requested contract is ripgrep-shaped stdout
 - `tg run --pattern ...`, bounded `tg map`/`tg context`, and conservative Windows subprocess bridge ranking hardening shipped in the release line; `tg search --json` is tensor-grep aggregate JSON, `tg search --format rg --json` is the explicit ripgrep JSON Lines compatibility route, and `tg search --ndjson` remains tensor-grep flattened streaming rows, not the rg event schema

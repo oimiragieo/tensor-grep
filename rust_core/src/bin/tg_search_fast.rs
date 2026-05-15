@@ -53,6 +53,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         no_config: false,
         sort: None,
         sort_reverse: None,
+        sort_files: false,
         max_depth: None,
         null: false,
         null_data: false,
@@ -141,7 +142,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                     .context("invalid max-count value")?;
                 args.max_count = Some(value);
             }
-            "-d" | "--max-depth" => {
+            "-d" | "--max-depth" | "--maxdepth" => {
                 index += 1;
                 let value = tokens
                     .get(index)
@@ -149,6 +150,12 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                     .parse::<usize>()
                     .context("invalid max-depth value")?;
                 args.max_depth = Some(value);
+            }
+            _ if token.starts_with("--maxdepth=") => {
+                let (_, value) = token
+                    .split_once('=')
+                    .context("invalid maxdepth argument shape")?;
+                args.max_depth = Some(value.parse::<usize>().context("invalid maxdepth value")?);
             }
             "-g" | "--glob" => {
                 index += 1;
@@ -185,6 +192,8 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                     .context("invalid sortr argument shape")?;
                 args.sort_reverse = Some(value.to_string());
             }
+            "--sort-files" => args.sort_files = true,
+            "--no-sort-files" => args.sort_files = false,
             _ if token.starts_with("--glob=") => {
                 let (_, value) = token
                     .split_once('=')

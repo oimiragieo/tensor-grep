@@ -52,11 +52,20 @@ def test_should_forward_no_ignore_flag():
 def test_should_forward_advertised_ignore_and_config_flags():
     backend = RipgrepBackend()
     config = SearchConfig(
+        ignore_file=[".custom-ignore", ".repo-ignore"],
+        ignore_file_case_insensitive=True,
+        max_depth=2,
         no_ignore_dot=True,
         no_ignore_exclude=True,
         no_ignore_files=True,
         no_ignore_global=True,
         no_ignore_parent=True,
+        no_ignore_vcs=True,
+        no_require_git=True,
+        one_file_system=True,
+        type_not=["python"],
+        type_add=["logs:*.log"],
+        type_clear="web",
         no_config=True,
     )
 
@@ -75,14 +84,28 @@ def test_should_forward_advertised_ignore_and_config_flags():
 
     cmd = run.call_args[0][0]
     for flag in (
+        "--ignore-file",
+        "--ignore-file-case-insensitive",
+        "--max-depth",
         "--no-ignore-dot",
         "--no-ignore-exclude",
         "--no-ignore-files",
         "--no-ignore-global",
         "--no-ignore-parent",
+        "--no-ignore-vcs",
+        "--no-require-git",
+        "--one-file-system",
+        "-T",
+        "--type-add",
+        "--type-clear",
         "--no-config",
     ):
         assert flag in cmd
+    assert cmd.count("--ignore-file") == 2
+    assert ["--max-depth", "2"] == cmd[cmd.index("--max-depth") :][:2]
+    assert ["-T", "python"] == cmd[cmd.index("-T") :][:2]
+    assert ["--type-add", "logs:*.log"] == cmd[cmd.index("--type-add") :][:2]
+    assert ["--type-clear", "web"] == cmd[cmd.index("--type-clear") :][:2]
 
 
 def test_should_forward_glob_flags():
@@ -147,7 +170,24 @@ def test_passthrough_should_forward_count_flag_and_exit_code():
 
 def test_passthrough_should_forward_editor_output_flags():
     backend = RipgrepBackend()
-    config = SearchConfig(column=True, path_separator="/", vimgrep=True)
+    config = SearchConfig(
+        block_buffered=True,
+        byte_offset=True,
+        column=True,
+        colors=["match:fg:red"],
+        context_separator="@@",
+        field_context_separator="~",
+        field_match_separator="|",
+        heading=False,
+        include_zero=True,
+        line_buffered=True,
+        max_columns=120,
+        max_columns_preview=True,
+        path_separator="/",
+        sort_files=True,
+        trim=True,
+        vimgrep=True,
+    )
 
     mock_result = MagicMock()
     mock_result.returncode = 0
@@ -161,8 +201,21 @@ def test_passthrough_should_forward_editor_output_flags():
         exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
 
     cmd = run.call_args[0][0]
+    assert "--block-buffered" in cmd
+    assert "-b" in cmd
     assert "--column" in cmd
+    assert ["--colors", "match:fg:red"] == cmd[cmd.index("--colors") :][:2]
+    assert ["--context-separator", "@@"] == cmd[cmd.index("--context-separator") :][:2]
+    assert ["--field-context-separator", "~"] == cmd[cmd.index("--field-context-separator") :][:2]
+    assert ["--field-match-separator", "|"] == cmd[cmd.index("--field-match-separator") :][:2]
+    assert "--no-heading" in cmd
+    assert "--include-zero" in cmd
+    assert "--line-buffered" in cmd
+    assert ["--max-columns", "120"] == cmd[cmd.index("--max-columns") :][:2]
+    assert "--max-columns-preview" in cmd
     assert ["--path-separator", "/"] == cmd[cmd.index("--path-separator") :][:2]
+    assert "--sort-files" in cmd
+    assert "--trim" in cmd
     assert "--vimgrep" in cmd
     assert exit_code == 0
 

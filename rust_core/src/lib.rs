@@ -267,6 +267,7 @@ impl RustBackend {
             no_config,
             sort: None,
             sort_reverse: None,
+            sort_files: false,
             max_depth: None,
             null: false,
             null_data: false,

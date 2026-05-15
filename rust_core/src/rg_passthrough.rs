@@ -51,6 +51,7 @@ pub struct RipgrepSearchArgs {
     pub no_config: bool,
     pub sort: Option<String>,
     pub sort_reverse: Option<String>,
+    pub sort_files: bool,
     pub max_depth: Option<usize>,
     pub null: bool,
     pub null_data: bool,
@@ -208,6 +209,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if let Some(sort_reverse) = &args.sort_reverse {
         command.arg("--sortr").arg(sort_reverse);
+    }
+    if args.sort_files {
+        command.arg("--sort-files");
     }
     for glob in &args.globs {
         command.arg("-g").arg(glob);

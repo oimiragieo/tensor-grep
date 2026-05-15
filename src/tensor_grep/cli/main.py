@@ -4065,7 +4065,7 @@ def search_command(
         False, "--ignore-file-case-insensitive", help="Process ignore files case insensitively."
     ),
     max_depth: int | None = typer.Option(
-        None, "-d", "--max-depth", help="Limit depth of directory traversal."
+        None, "-d", "--max-depth", "--maxdepth", help="Limit depth of directory traversal."
     ),
     max_filesize: str | None = typer.Option(
         None, "--max-filesize", help="Ignore files larger than this size."
@@ -4189,6 +4189,11 @@ def search_command(
         "none", "--sort", help="Sort results (none, path, modified, accessed, created)."
     ),
     sortr: str = typer.Option("none", "--sortr", help="Sort results in reverse order."),
+    sort_files: bool = typer.Option(
+        False,
+        "--sort-files",
+        help="Deprecated ripgrep alias for --sort path; disables parallel traversal.",
+    ),
     trim: bool = typer.Option(False, "--trim", help="Remove leading ASCII whitespace from output."),
     vimgrep: bool = typer.Option(
         False,
@@ -4457,6 +4462,7 @@ def search_command(
         replace_str=replace,
         sort_by=sort,
         sort_by_reverse=sortr,
+        sort_files=sort_files,
         trim=trim,
         vimgrep=vimgrep,
         with_filename=with_filename or implicit_with_filename,
