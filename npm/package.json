@@ -1,6 +1,6 @@
 {
   "name": "tensor-grep",
-  "version": "1.12.9",
+  "version": "1.12.10",
   "description": "GPU-Accelerated Semantic Log Parsing CLI",
   "bin": {
     "tensor-grep": "bin/tg.js",

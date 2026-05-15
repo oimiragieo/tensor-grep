@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.10 (2026-05-15)
+
+### Bug Fixes
+
+- Harden rg flag contract aliases ([#139](https://github.com/oimiragieo/tensor-grep/pull/139),
+  [`bbc08e4`](https://github.com/oimiragieo/tensor-grep/commit/bbc08e412f103034ebf0f13703b77cad22ac7339))
+
+
 ## v1.12.9 (2026-05-15)
 
 ### Bug Fixes
