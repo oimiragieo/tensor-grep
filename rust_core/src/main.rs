@@ -424,6 +424,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub apply: bool,
 
+    /// ast-grep-compatible alias for applying all rewrite edits (requires --rewrite)
+    #[arg(short = 'U', long = "update-all")]
+    pub update_all: bool,
+
     /// Show unified diff preview of rewrites (requires --rewrite)
     #[arg(long)]
     pub diff: bool,
@@ -479,6 +483,18 @@ pub struct RunArgs {
     /// Print only paths with at least one AST match
     #[arg(long = "files-with-matches")]
     pub files_with_matches: bool,
+
+    /// Unsupported ast-grep selector option; accepted only for explicit diagnostics
+    #[arg(long)]
+    pub selector: Option<String>,
+
+    /// Unsupported ast-grep strictness option; accepted only for explicit diagnostics
+    #[arg(long)]
+    pub strictness: Option<String>,
+
+    /// Unsupported ast-grep stdin mode; accepted only for explicit diagnostics
+    #[arg(long = "stdin")]
+    pub stdin_flag: bool,
 
     /// Positional PATTERN and optional PATH, or just PATH when --pattern is used
     #[arg(value_name = "PATTERN_OR_PATH")]
@@ -2329,6 +2345,9 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         }
         Commands::New { args } => {
             use tensor_grep_rs::backend_ast_workflow::handle_ast_new;
+            if ast_new_requires_python_passthrough(&args) {
+                return handle_python_passthrough("new", args);
+            }
             handle_ast_new(args)
         }
         Commands::Worker { port, stop } => {
@@ -2462,42 +2481,20 @@ fn try_resident_execution(
 }
 
 fn ast_scan_requires_python_passthrough(args: &[String]) -> bool {
-    const FULL_CLI_FLAGS: &[&str] = &[
-        "--help",
-        "-h",
-        "--baseline",
-        "--include-evidence-snippets",
-        "--inline-rules",
-        "--json",
-        "--justification",
-        "--language",
-        "--max-evidence-snippet-chars",
-        "--max-evidence-snippets-per-file",
-        "--path",
-        "--ruleset",
-        "--suppressions",
-        "--write-baseline",
-        "--write-suppressions",
-    ];
-    const FULL_CLI_PREFIXES: &[&str] = &[
-        "--baseline=",
-        "--justification=",
-        "--language=",
-        "--max-evidence-snippet-chars=",
-        "--max-evidence-snippets-per-file=",
-        "--path=",
-        "--ruleset=",
-        "--suppressions=",
-        "--write-baseline=",
-        "--write-suppressions=",
-    ];
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--config" | "-c" => index += 2,
+            arg if arg.starts_with("--config=") => index += 1,
+            _ => return true,
+        }
+    }
+    false
+}
 
-    args.iter().any(|arg| {
-        FULL_CLI_FLAGS.contains(&arg.as_str())
-            || FULL_CLI_PREFIXES
-                .iter()
-                .any(|prefix| arg.starts_with(prefix))
-    })
+fn ast_new_requires_python_passthrough(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--config" || arg == "-c" || arg.starts_with("--config="))
 }
 
 fn ast_test_requires_python_passthrough(args: &[String]) -> bool {
@@ -4189,6 +4186,22 @@ fn ast_match_to_search_json(
 }
 
 fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
+    let mut unsupported_flags = Vec::new();
+    if args.selector.is_some() {
+        unsupported_flags.push("--selector");
+    }
+    if args.strictness.is_some() {
+        unsupported_flags.push("--strictness");
+    }
+    if args.stdin_flag {
+        unsupported_flags.push("--stdin");
+    }
+    if !unsupported_flags.is_empty() {
+        anyhow::bail!(
+            "{} is not supported by tg run yet. Use ast-grep directly for this semantic matcher.",
+            unsupported_flags.join(", ")
+        );
+    }
     if args.batch_rewrite.is_some() && args.pattern_option.is_some() {
         anyhow::bail!("tg run --batch-rewrite uses the positional argument as PATH and does not accept --pattern");
     }
@@ -5290,7 +5303,13 @@ fn emit_validation_status(summary: &ValidationSummary) {
     }
 }
 
-fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
+fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
+    if args.update_all {
+        if args.rewrite.is_none() {
+            anyhow::bail!("tg run --update-all requires --rewrite");
+        }
+        args.apply = true;
+    }
     validate_run_args(&args)?;
     let backend = AstBackend::new();
 
