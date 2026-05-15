@@ -915,6 +915,32 @@ def test_doctor_json_includes_gpu_search_runtime_probe(monkeypatch, tmp_path: Pa
     assert "NativeGpuBackend" in probe["error"]
 
 
+def test_doctor_gpu_runtime_probe_redacts_temp_probe_path(monkeypatch, tmp_path: Path) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        payload = {
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "routing_gpu_device_ids": [],
+            "path": str(command[-1]),
+            "matches": [{"file": str(command[-1]), "line": 1, "text": "probe"}],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+    serialized = json.dumps(probe)
+
+    assert probe["status"] == "unsupported"
+    assert "tg-doctor-gpu-probe" not in serialized
+    assert "probe.log" not in serialized
+    assert "<doctor-gpu-probe-file>" in probe["command"]
+
+
 def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.1")
     monkeypatch.setattr(
@@ -2306,6 +2332,28 @@ def test_map_json_emits_repo_inventory_envelope(tmp_path):
     assert str(module_path.resolve()) in payload["related_paths"]
 
 
+def test_map_json_accepts_agent_output_bounds(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    first_path = src_dir / "alpha.py"
+    first_path.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    (src_dir / "beta.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["map", "--json", "--max-files", "1", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["files"] == [str(first_path.resolve())]
+    assert payload["output_limit"] == {
+        "max_files": 1,
+        "emitted_files": 1,
+        "original_files": 2,
+        "possibly_truncated": True,
+    }
+
+
 def test_context_json_ranks_related_files_symbols_and_tests(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -2352,6 +2400,42 @@ def test_context_json_ranks_related_files_symbols_and_tests(tmp_path):
     )
     assert payload["related_paths"][0] == str(module_path.resolve())
     assert str(test_path.resolve()) in payload["related_paths"]
+
+
+def test_context_json_accepts_agent_output_bounds(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "users.py"
+    other_path.write_text("def invoice_user(user_id):\n    return user_id\n", encoding="utf-8")
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text("from src.payments import create_invoice\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["context", "--query", "invoice payment", "--json", "--max-files", "1", str(project)],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["files"] == [str(module_path.resolve())]
+    assert str(other_path.resolve()) not in payload["files"]
+    assert payload["tests"] == [str(test_path.resolve())]
+    assert payload["output_limit"] == {
+        "max_files": 1,
+        "emitted_files": 1,
+        "original_files": 2,
+        "possibly_truncated": True,
+    }
 
 
 def test_defs_json_returns_exact_symbol_definitions(tmp_path):
@@ -3227,6 +3311,59 @@ def test_agent_capsule_gpu_evidence_rejects_sidecar_route(monkeypatch, tmp_path)
     assert acceleration["sidecar_used"] is True
     assert "sidecar-routed" in acceleration["reason"]
     assert len(calls) == 1
+
+
+def test_agent_capsule_gpu_probe_summary_redacts_probe_paths(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "def create_invoice(total):\n    return total\n",
+        encoding="utf-8",
+    )
+
+    def _fake_gpu_run(command, **_kwargs):
+        payload = {
+            "routing_backend": "GpuSidecar",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": True,
+            "path": str(command[-1]),
+            "total_matches": 1,
+            "matches": [{"file": str(command[-1]) + "/probe.log", "line": 1, "text": "probe"}],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(agent_capsule, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        gpu_device_ids=[0],
+        gpu_timeout_s=1,
+    )
+
+    probe = payload["gpu_acceleration"]["probe"]
+    serialized = json.dumps(probe)
+    assert "tg-agent-gpu-probe" not in serialized
+    assert "probe.log" not in serialized
+    assert probe["payload"]["path"] == "<agent-gpu-probe-root>"
+    assert probe["payload"]["matches_preview"][0]["file"] == "<agent-gpu-probe-file>"
+
+
+def test_agent_capsule_gpu_probe_failure_redacts_probe_command_path(tmp_path):
+    probe_root = tmp_path / "tg-agent-gpu-probe-secret"
+    probe = agent_capsule._summarize_agent_gpu_json_result(
+        {
+            "status": "timeout",
+            "command": f"tg search --json {probe_root}",
+            "argv": ["tg", "search", "--json", str(probe_root)],
+        },
+        redact_probe_paths=True,
+    )
+    serialized = json.dumps(probe)
+
+    assert "tg-agent-gpu-probe" not in serialized
+    assert probe["argv"][-1] == "<agent-gpu-probe-root>"
 
 
 def test_agent_capsule_cli_accepts_gpu_device_ids(monkeypatch, tmp_path):

@@ -399,12 +399,24 @@ def _summarize_agent_gpu_json_result(
     result: dict[str, Any],
     *,
     match_preview_limit: int = 3,
+    redact_probe_paths: bool = False,
 ) -> dict[str, Any]:
+    summary = {key: value for key, value in result.items() if key != "payload"}
+    if redact_probe_paths:
+        if "argv" in summary:
+            summary["argv"] = [
+                "<agent-gpu-probe-root>" if "tg-agent-gpu-probe-" in str(arg) else str(arg)
+                for arg in _as_list_of_strings(summary.get("argv"))
+            ]
+        if "command" in summary:
+            summary["command"] = subprocess.list2cmdline([
+                str(arg) for arg in summary.get("argv", [])
+            ])
+
     payload = _as_dict(result.get("payload"))
     if not payload:
-        return result
+        return summary
 
-    summary = {key: value for key, value in result.items() if key != "payload"}
     payload_summary: dict[str, Any] = {}
     for key in (
         "version",
@@ -419,7 +431,10 @@ def _summarize_agent_gpu_json_result(
         "routing_gpu_device_ids",
     ):
         if key in payload:
-            payload_summary[key] = payload[key]
+            if redact_probe_paths and key == "path":
+                payload_summary[key] = "<agent-gpu-probe-root>"
+            else:
+                payload_summary[key] = payload[key]
 
     pipeline = _as_dict(payload.get("pipeline"))
     if pipeline:
@@ -443,7 +458,11 @@ def _summarize_agent_gpu_json_result(
     for match in matches[:match_preview_limit]:
         text = str(match.get("text") or "")
         preview.append({
-            "file": match.get("file") or match.get("path"),
+            "file": (
+                "<agent-gpu-probe-file>"
+                if redact_probe_paths
+                else match.get("file") or match.get("path")
+            ),
             "line": match.get("line") or match.get("line_number"),
             "pattern_id": match.get("pattern_id"),
             "pattern_text": match.get("pattern_text") or match.get("pattern"),
@@ -552,7 +571,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": str(probe.get("reason") or "GPU route probe failed."),
-            "probe": _summarize_agent_gpu_json_result(probe),
+            "probe": _summarize_agent_gpu_json_result(probe, redact_probe_paths=True),
         }
 
     probe_payload = _as_dict(probe.get("payload"))
@@ -565,7 +584,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": route_rejection,
-            "probe": _summarize_agent_gpu_json_result(probe),
+            "probe": _summarize_agent_gpu_json_result(probe, redact_probe_paths=True),
             **route_fields,
         }
 
@@ -577,7 +596,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": "Native GPU route passed, but the query produced no evidence terms.",
-            "probe": _summarize_agent_gpu_json_result(probe),
+            "probe": _summarize_agent_gpu_json_result(probe, redact_probe_paths=True),
             **route_fields,
         }
 
@@ -604,7 +623,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": str(evidence.get("reason") or "GPU evidence scan failed."),
-            "probe": _summarize_agent_gpu_json_result(probe),
+            "probe": _summarize_agent_gpu_json_result(probe, redact_probe_paths=True),
             "evidence": _summarize_agent_gpu_json_result(evidence),
             **route_fields,
         }
@@ -619,7 +638,7 @@ def _agent_gpu_evidence(
             "used_for_evidence": False,
             "promotion_claim": False,
             "reason": evidence_route_rejection,
-            "probe": _summarize_agent_gpu_json_result(probe),
+            "probe": _summarize_agent_gpu_json_result(probe, redact_probe_paths=True),
             "evidence": _summarize_agent_gpu_json_result(evidence),
             **evidence_route_fields,
         }
@@ -657,7 +676,7 @@ def _agent_gpu_evidence(
         "matched_files": matched_files[:max_files],
         "total_matches": total_matches,
         "matches": evidence_matches,
-        "probe": _summarize_agent_gpu_json_result(probe),
+        "probe": _summarize_agent_gpu_json_result(probe, redact_probe_paths=True),
         "evidence": _summarize_agent_gpu_json_result(evidence),
         **evidence_route_fields,
     }

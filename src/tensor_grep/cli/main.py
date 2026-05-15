@@ -1767,7 +1767,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             sentinel,
             str(probe_file),
         ]
-        base["command"] = " ".join(command)
+        base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])
         try:
             result = subprocess.run(
                 command,
@@ -4926,17 +4926,34 @@ def devices(
 @app.command()
 def map(
     path: str = typer.Argument(".", help="File or directory to inventory"),
+    max_files: int | None = typer.Option(
+        None, "--max-files", min=1, help="Maximum source files to include in output."
+    ),
+    max_repo_files: int | None = typer.Option(
+        None, "--max-repo-files", min=1, help="Maximum repo files to scan before returning."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a deterministic repository map for AI editing workflows."""
-    from tensor_grep.cli.repo_map import build_repo_map, build_repo_map_json
+    from tensor_grep.cli.repo_map import (
+        apply_repo_map_output_limits,
+        build_repo_map,
+        build_repo_map_json,
+    )
 
     try:
         if json_output:
-            typer.echo(build_repo_map_json(path))
+            typer.echo(
+                build_repo_map_json(
+                    path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_repo_map(path)
+        payload = build_repo_map(path, max_repo_files=max_repo_files)
+        payload = apply_repo_map_output_limits(payload, max_files=max_files)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -4952,6 +4969,12 @@ def context(
     query: str = typer.Option(
         ..., "--query", help="Query text used to rank relevant repo context."
     ),
+    max_files: int | None = typer.Option(
+        None, "--max-files", min=1, help="Maximum ranked source files to include."
+    ),
+    max_repo_files: int | None = typer.Option(
+        None, "--max-repo-files", min=1, help="Maximum repo files to scan before ranking."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a ranked repository context pack for edit planning."""
@@ -4959,10 +4982,22 @@ def context(
 
     try:
         if json_output:
-            typer.echo(build_context_pack_json(query, path))
+            typer.echo(
+                build_context_pack_json(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_context_pack(query, path)
+        payload = build_context_pack(
+            query,
+            path,
+            max_files=max_files,
+            max_repo_files=max_repo_files,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

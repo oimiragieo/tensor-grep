@@ -4062,8 +4062,72 @@ def build_repo_map_incremental(
     return payload
 
 
-def build_repo_map_json(path: str | Path = ".") -> str:
-    return json.dumps(build_repo_map(path), indent=2)
+def apply_repo_map_output_limits(
+    payload: dict[str, Any],
+    *,
+    max_files: int | None = None,
+) -> dict[str, Any]:
+    if max_files is None:
+        return payload
+
+    normalized_max_files = max(1, int(max_files))
+    limited = dict(payload)
+    original_files = [str(current) for current in payload.get("files", [])]
+    selected_files = original_files[:normalized_max_files]
+    selected_file_set = set(selected_files)
+    original_tests = [str(current) for current in payload.get("tests", [])]
+    selected_tests = original_tests[:normalized_max_files]
+    selected_test_set = set(selected_tests)
+
+    limited["files"] = selected_files
+    limited["tests"] = selected_tests
+    limited["symbols"] = [
+        dict(symbol)
+        for symbol in payload.get("symbols", [])
+        if str(symbol.get("file", "")) in selected_file_set
+    ]
+    limited["imports"] = [
+        dict(entry)
+        for entry in payload.get("imports", [])
+        if str(entry.get("file", "")) in selected_file_set
+    ]
+    for key in ("file_matches", "file_summaries", "sources"):
+        if key in payload:
+            limited[key] = [
+                dict(entry)
+                for entry in payload.get(key, [])
+                if str(entry.get("path", entry.get("file", ""))) in selected_file_set
+            ]
+    if "test_matches" in payload:
+        limited["test_matches"] = [
+            dict(entry)
+            for entry in payload.get("test_matches", [])
+            if str(entry.get("path", entry.get("file", ""))) in selected_test_set
+        ]
+    if "related_paths" in payload:
+        allowed_related_paths = selected_file_set | selected_test_set
+        limited["related_paths"] = [
+            str(path)
+            for path in payload.get("related_paths", [])
+            if str(path) in allowed_related_paths
+        ]
+    limited["output_limit"] = {
+        "max_files": normalized_max_files,
+        "emitted_files": len(selected_files),
+        "original_files": len(original_files),
+        "possibly_truncated": len(original_files) > normalized_max_files,
+    }
+    return limited
+
+
+def build_repo_map_json(
+    path: str | Path = ".",
+    *,
+    max_files: int | None = None,
+    max_repo_files: int | None = None,
+) -> str:
+    payload = build_repo_map(path, max_repo_files=max_repo_files)
+    return json.dumps(apply_repo_map_output_limits(payload, max_files=max_files), indent=2)
 
 
 def _query_terms(query: str) -> list[str]:
@@ -4989,18 +5053,34 @@ def build_context_pack(
     query: str,
     path: str | Path = ".",
     *,
+    max_files: int | None = None,
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    payload = build_repo_map(path, _profiling_collector=_profiling_collector)
-    return build_context_pack_from_map(
+    payload = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=_profiling_collector,
+    )
+    context_payload = build_context_pack_from_map(
         payload,
         query,
         _profiling_collector=_profiling_collector,
     )
+    return apply_repo_map_output_limits(context_payload, max_files=max_files)
 
 
-def build_context_pack_json(query: str, path: str | Path = ".") -> str:
-    return json.dumps(build_context_pack(query, path), indent=2)
+def build_context_pack_json(
+    query: str,
+    path: str | Path = ".",
+    *,
+    max_files: int | None = None,
+    max_repo_files: int | None = None,
+) -> str:
+    return json.dumps(
+        build_context_pack(query, path, max_files=max_files, max_repo_files=max_repo_files),
+        indent=2,
+    )
 
 
 def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
