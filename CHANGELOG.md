@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.12.4 (2026-05-15)
+
+### Bug Fixes
+
+- Keep rust validation for agent cli intents
+  ([#125](https://github.com/oimiragieo/tensor-grep/pull/125),
+  [`affe7a7`](https://github.com/oimiragieo/tensor-grep/commit/affe7a7056874346dec745e8ea3fde418140d039))
+
+
 ## v1.12.3 (2026-05-15)
 
 ### Bug Fixes
