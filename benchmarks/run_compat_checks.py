@@ -313,7 +313,7 @@ def validate_routing_metadata(
 ) -> dict[str, Any]:
     env = os.environ.copy()
     env["TG_RG_PATH"] = str(rg_binary)
-    command = [str(tg_binary), "--json", "ERROR", str(bench_data_dir)]
+    command = [str(tg_binary), "--json", "--no-ignore", "ERROR", str(bench_data_dir)]
     result = run_command(command, env=env, cwd=ROOT_DIR)
 
     report: dict[str, Any] = {

@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tensor-grep.dev/schemas/tg_output.schema.json",
+  "title": "tensor-grep search JSON output",
+  "type": "object",
+  "required": [
+    "version",
+    "routing_backend",
+    "routing_reason",
+    "sidecar_used",
+    "requested_gpu_device_ids",
+    "routing_gpu_device_ids",
+    "total_matches",
+    "matches"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "routing_backend": {
+      "type": "string",
+      "minLength": 1
+    },
+    "routing_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sidecar_used": {
+      "type": "boolean"
+    },
+    "requested_gpu_device_ids": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "routing_gpu_device_ids": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "routing_gpu_chunk_plan_mb": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["device_id", "chunk_mb"],
+        "properties": {
+          "device_id": {
+            "type": "integer"
+          },
+          "chunk_mb": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "routing_distributed": {
+      "type": "boolean"
+    },
+    "routing_worker_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "query": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "total_matches": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_files": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "matched_file_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "match_counts_by_file": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/match"
+      }
+    }
+  },
+  "$defs": {
+    "match": {
+      "type": "object",
+      "required": ["file", "text"],
+      "anyOf": [
+        {
+          "required": ["line"]
+        },
+        {
+          "required": ["line_number"]
+        }
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "pattern_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pattern_text": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "metaVariables": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "range": {
+      "type": "object",
+      "properties": {
+        "byteOffset": {
+          "$ref": "#/$defs/span"
+        },
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      },
+      "additionalProperties": true
+    },
+    "span": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "position": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
