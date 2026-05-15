@@ -49,6 +49,42 @@ def test_should_forward_no_ignore_flag():
     assert "--no-ignore" in cmd
 
 
+def test_should_forward_advertised_ignore_and_config_flags():
+    backend = RipgrepBackend()
+    config = SearchConfig(
+        no_ignore_dot=True,
+        no_ignore_exclude=True,
+        no_ignore_files=True,
+        no_ignore_global=True,
+        no_ignore_parent=True,
+        no_config=True,
+    )
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search("test.log", "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    for flag in (
+        "--no-ignore-dot",
+        "--no-ignore-exclude",
+        "--no-ignore-files",
+        "--no-ignore-global",
+        "--no-ignore-parent",
+        "--no-config",
+    ):
+        assert flag in cmd
+
+
 def test_should_forward_glob_flags():
     backend = RipgrepBackend()
     config = SearchConfig(glob=["*.log", "!*.tmp"])
@@ -151,6 +187,26 @@ def test_passthrough_should_forward_multiline_flags():
     cmd = run.call_args[0][0]
     assert "--multiline" in cmd
     assert "--multiline-dotall" in cmd
+    assert exit_code == 0
+
+
+def test_passthrough_should_forward_passthru_flag():
+    backend = RipgrepBackend()
+    config = SearchConfig(passthru=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--passthru" in cmd
     assert exit_code == 0
 
 
