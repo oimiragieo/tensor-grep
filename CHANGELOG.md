@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.11.6 (2026-05-15)
+
+### Bug Fixes
+
+- Harden fair fixed multi-pattern search
+  ([`27386f8`](https://github.com/oimiragieo/tensor-grep/commit/27386f8af58d1b916324041cf760e919a4ace070))
+
+Harden fair fixed multi-pattern search by preserving rg-compatible multi-pattern argv construction,
+  adding native CPU output parity coverage, and keeping many-pattern benchmark rows diagnostic
+  against fair rg -F -e baselines.
+
+### Documentation
+
+- Preserve dogfood PR workflow governance
+  ([`7287d38`](https://github.com/oimiragieo/tensor-grep/commit/7287d38054fbf8cef91491ef2150ff1fac2ce22a))
+
+Preserve the dogfood follow-up workflow in agent docs and refresh post-v1.11.5 many-pattern public
+  managed benchmark prose.
+
+### Testing
+
+- Harden post-release governance assertions
+  ([`3d7cced`](https://github.com/oimiragieo/tensor-grep/commit/3d7cced7ea9f32f37ebb5bb9e43d9a60ded90fdc))
+
+Split current release labels from verified proof blocks so semantic-release tag bumps do not make
+  release docs governance tests depend on a not-yet-written historical block.
+
+
 ## v1.11.5 (2026-05-14)
 
 ### Bug Fixes
