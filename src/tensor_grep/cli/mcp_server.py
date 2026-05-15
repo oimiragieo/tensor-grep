@@ -1074,6 +1074,7 @@ def tg_edit_plan(
     query: str,
     path: str = ".",
     max_files: int = 3,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     max_sources: int = 5,
     max_tokens: int | None = None,
     max_symbols: int = 5,
@@ -1085,6 +1086,7 @@ def tg_edit_plan(
         query: Query text used to rank edit targets.
         path: File or directory to inventory.
         max_files: Maximum files to include in the plan.
+        max_repo_files: Maximum repository files to scan before ranking edit targets.
         max_sources: Maximum related source/span records to retain.
         max_tokens: Accepted for command-surface parity; no rendered source text is emitted.
         max_symbols: Maximum ranked symbols to retain.
@@ -1097,6 +1099,7 @@ def tg_edit_plan(
                 query,
                 path,
                 max_files=max_files,
+                max_repo_files=max_repo_files,
                 max_sources=max_sources,
                 max_tokens=max_tokens,
                 max_symbols=max_symbols,

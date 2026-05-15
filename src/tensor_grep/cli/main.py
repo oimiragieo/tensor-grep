@@ -5161,6 +5161,12 @@ def edit_plan(
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repository files to scan before ranking edit targets.",
+    ),
     max_sources: int | None = typer.Option(
         None,
         "--max-sources",
@@ -5191,6 +5197,7 @@ def edit_plan(
                     query,
                     path,
                     max_files=max_files,
+                    max_repo_files=max_repo_files,
                     max_sources=max_sources,
                     max_tokens=max_tokens,
                     max_symbols=max_symbols,
@@ -5203,6 +5210,7 @@ def edit_plan(
             query,
             path,
             max_files=max_files,
+            max_repo_files=max_repo_files,
             max_sources=max_sources,
             max_tokens=max_tokens,
             max_symbols=max_symbols,
