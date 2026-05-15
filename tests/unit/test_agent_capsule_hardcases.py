@@ -3,6 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from tensor_grep.cli import repo_map
 from tensor_grep.cli.main import app
 
 
@@ -215,3 +216,60 @@ def test_agent_capsule_keeps_rust_validation_for_cli_parser_intent_with_python_t
     assert payload["context_consistency"]["primary_target_language"] == "rust"
     assert payload["validation_commands"] == ["cargo test --manifest-path rust_core/Cargo.toml"]
     assert payload["context_consistency"]["validation_alignment"]["kept_count"] == 1
+
+
+def test_agent_capsule_prefers_windows_exe_bridge_implementation_over_marker_helpers(
+    tmp_path,
+):
+    project = tmp_path / "workspace"
+    python_src = project / "src" / "tensor_grep" / "cli"
+    rust_src = project / "rust_core" / "src"
+    noise_src = project / "src" / "noise"
+    python_src.mkdir(parents=True)
+    rust_src.mkdir(parents=True)
+    noise_src.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (project / "rust_core" / "Cargo.toml").write_text(
+        '[package]\nname = "sample-rust-core"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    python_file = python_src / "main.py"
+    python_file.write_text(
+        "def _windows_exe_bridge_marker_path(root):\n"
+        "    return root / 'tg.com'\n\n"
+        "def _write_windows_exe_bridge_marker(root):\n"
+        "    return _windows_exe_bridge_marker_path(root)\n\n"
+        "def _windows_python_subprocess_resolution_blocker(path):\n"
+        "    return path.name == 'tg.exe'\n",
+        encoding="utf-8",
+    )
+    rust_file = rust_src / "python_sidecar.rs"
+    rust_file.write_text(
+        "pub fn is_external_windows_exe_bridge(path: &std::path::Path) -> bool {\n"
+        '    let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or("");\n'
+        '    filename.eq_ignore_ascii_case("tg.exe") && !is_managed_windows_exe_bridge(path)\n'
+        "}\n\n"
+        "pub fn is_managed_windows_exe_bridge(path: &std::path::Path) -> bool {\n"
+        '    let parent = path.parent().and_then(|value| value.file_name()).and_then(|value| value.to_str()).unwrap_or("");\n'
+        '    path.file_name().and_then(|value| value.to_str()).unwrap_or("").eq_ignore_ascii_case("tg.exe")\n'
+        '        && parent == "bin"\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    (noise_src / "executor.py").write_text(
+        "def execute_noise_bridge():\n    return 'not a windows exe bridge implementation'\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_payload(project, "harden Windows subprocess exe bridge")
+
+    assert payload["primary_target"]["file"] == str(rust_file.resolve())
+    assert payload["primary_target"]["symbol"] == "is_managed_windows_exe_bridge"
+
+
+def test_agent_capsule_short_exe_term_does_not_match_execute_noise():
+    assert repo_map._score_text_terms("execute_noise_bridge", ["exe"]) == 0
+    assert repo_map._score_text_terms("tg.exe bridge", ["exe"]) == 1

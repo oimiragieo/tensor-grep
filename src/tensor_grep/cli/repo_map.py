@@ -4209,7 +4209,34 @@ def _query_file_name_hint_score(path: str | Path, query: str) -> int:
 
 def _score_text_terms(text: str, terms: list[str]) -> int:
     haystack = text.lower()
-    return sum(1 for term in terms if term in haystack)
+    haystack_terms = set(split_terms(text))
+    score = 0
+    for term in terms:
+        normalized = term.lower()
+        if len(normalized) <= 3:
+            if normalized in haystack_terms:
+                score += 1
+        elif normalized in haystack or normalized in haystack_terms:
+            score += 1
+    return score
+
+
+def _symbol_span_length(symbol: dict[str, Any]) -> int:
+    line = int(symbol.get("line", symbol.get("start_line", 0)) or 0)
+    start_line = int(symbol.get("start_line", line) or line)
+    end_line = int(symbol.get("end_line", start_line) or start_line)
+    return max(1, end_line - start_line + 1)
+
+
+def _symbol_rank_key(symbol: dict[str, Any]) -> tuple[int, int, int, str, int, str]:
+    return (
+        -int(symbol.get("score", 0)),
+        0 if str(symbol.get("kind")) == "function" else 1,
+        -_symbol_span_length(symbol),
+        str(symbol.get("file")),
+        int(symbol.get("line", 0)),
+        str(symbol.get("name")),
+    )
 
 
 def _symbol_lookup_key(text: str) -> str:
@@ -4835,14 +4862,7 @@ def _build_context_pack_from_map(
                 _append_reason(file_reasons, current_path, "definition")
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
-        scored_symbols.sort(
-            key=lambda item: (
-                -int(item["score"]),
-                str(item["file"]),
-                int(item["line"]),
-                str(item["name"]),
-            )
-        )
+        scored_symbols.sort(key=_symbol_rank_key)
         for symbol in scored_symbols:
             current = str(symbol["file"])
             exact_symbol_bonus = 36 if bool(symbol.get("exact_query_match")) else 0
@@ -7589,6 +7609,49 @@ def _preferred_edit_anchor_symbol(
     return primary_symbol
 
 
+def _promote_substantive_symbol_for_edit_seed(
+    primary_symbol: dict[str, Any] | None,
+    ranked_symbols: list[dict[str, Any]],
+    *,
+    selected_files: set[str],
+    query_language_hints: list[str],
+    primary_file_reasons: set[str],
+) -> dict[str, Any] | None:
+    if primary_symbol is None:
+        return None
+    primary_file = str(primary_symbol.get("file", "") or "")
+    if not primary_file:
+        return primary_symbol
+    if "validation-direct-definition" in primary_file_reasons:
+        return primary_symbol
+    primary_score = int(primary_symbol.get("score", 0) or 0)
+    primary_span = _symbol_span_length(primary_symbol)
+    primary_language_matches_hint = bool(
+        query_language_hints
+        and _path_matches_query_language_hints(primary_file, query_language_hints)
+    )
+    for candidate in ranked_symbols:
+        candidate_file = str(candidate.get("file", "") or "")
+        if not candidate_file or candidate_file not in selected_files:
+            continue
+        if _is_test_file(Path(candidate_file)):
+            continue
+        if primary_language_matches_hint and not _path_matches_query_language_hints(
+            candidate_file, query_language_hints
+        ):
+            continue
+        if candidate_file == primary_file:
+            return primary_symbol
+        candidate_score = int(candidate.get("score", 0) or 0)
+        candidate_span = _symbol_span_length(candidate)
+        if candidate_score > primary_score or (
+            candidate_score == primary_score and candidate_span >= primary_span + 2
+        ):
+            return candidate
+        return primary_symbol
+    return primary_symbol
+
+
 def _should_build_edit_plan_blast_radius(
     symbol: dict[str, Any] | None,
     file_match: dict[str, Any] | None,
@@ -7662,7 +7725,6 @@ def _build_edit_plan_seed(
             current for current in ranked_symbols if str(current.get("file")) == str(primary_file)
         ]
         primary_symbol = next(iter(primary_file_symbols), None)
-
     primary_file_match = next(
         (
             match
@@ -7671,6 +7733,28 @@ def _build_edit_plan_seed(
         ),
         payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
     )
+    selected_files = {
+        str(current) for current in list(payload.get("files", []))[: max(1, int(max_files))]
+    }
+    promoted_symbol = _promote_substantive_symbol_for_edit_seed(
+        primary_symbol,
+        ranked_symbols,
+        selected_files=selected_files,
+        query_language_hints=_query_language_hints(query),
+        primary_file_reasons={str(reason) for reason in primary_file_match.get("reasons", [])},
+    )
+    if promoted_symbol is not None and promoted_symbol is not primary_symbol:
+        primary_symbol = promoted_symbol
+        if primary_symbol.get("file"):
+            primary_file = str(primary_symbol["file"])
+            primary_file_match = next(
+                (
+                    match
+                    for match in payload.get("file_matches", [])
+                    if str(match.get("path")) == str(primary_file)
+                ),
+                payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+            )
     validation_tests = list(payload.get("tests", []))[: max(1, min(max_files, 3))]
     primary_symbol_name = (
         str(primary_symbol.get("name"))
@@ -7812,16 +7896,7 @@ def _build_edit_plan_seed(
 
 
 def _sorted_ranked_symbols(symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(
-        symbols,
-        key=lambda symbol: (
-            -int(symbol.get("score", 0)),
-            0 if str(symbol.get("kind")) == "function" else 1,
-            str(symbol.get("file")),
-            int(symbol.get("line", 0)),
-            str(symbol.get("name")),
-        ),
-    )
+    return sorted(symbols, key=_symbol_rank_key)
 
 
 def _attach_edit_plan_metadata(
