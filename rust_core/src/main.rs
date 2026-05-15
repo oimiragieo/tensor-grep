@@ -444,7 +444,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub verbose: bool,
 
-    /// The structural ast-grep pattern
+    /// The structural pattern to match
     pub pattern: Option<String>,
 
     /// File or directory to search
@@ -498,7 +498,7 @@ pub enum Commands {
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
     Classify(ClassifyArgs),
-    /// Run AST structural search and optional rewrites (ast-grep parity)
+    /// Run a validated AST slice for structural search and guarded rewrites
     Run(RunArgs),
     /// Scan code by configuration
     Scan {

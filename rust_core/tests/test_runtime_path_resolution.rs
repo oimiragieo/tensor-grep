@@ -221,6 +221,23 @@ fn test_help_documents_runtime_override_env_vars() {
 }
 
 #[test]
+fn test_run_help_positions_ast_as_validated_slice_not_ast_grep_parity() {
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root()).arg("run").arg("--help");
+    let output = run_with_timeout(tg, Duration::from_secs(5));
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let normalized_stdout = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized_stdout.contains("validated AST slice"),
+        "stdout={stdout}"
+    );
+    assert!(!stdout.contains("ast-grep parity"), "stdout={stdout}");
+    assert!(!stdout.contains("ast-grep replacement"), "stdout={stdout}");
+}
+
+#[test]
 fn test_tg_classify_uses_tg_sidecar_python_override() {
     let dir = tempdir().unwrap();
     let file_path = write_sample_log(dir.path());

@@ -244,6 +244,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
+
     current_closed_heading = f"What `{LATEST_VERIFIED_RELEASE_TAG}` closed:"
     v1114_heading = "What `v1.11.4` closed:"
     v1113_heading = "What `v1.11.3` closed:"
@@ -345,6 +346,25 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "rolls changed files back" in v192_closed_block
     assert "GPU benchmark auto-recommendation disabled" in follow_up_block
     assert "subprocess.run" in follow_up_block
+
+
+def test_public_ast_positioning_should_not_claim_ast_grep_parity() -> None:
+    public_surfaces = {
+        "README.md": README_PATH.read_text(encoding="utf-8"),
+        "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
+        "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
+        "src/tensor_grep/cli/main.py": Path("src/tensor_grep/cli/main.py").read_text(
+            encoding="utf-8"
+        ),
+        "rust_core/src/main.rs": Path("rust_core/src/main.rs").read_text(encoding="utf-8"),
+    }
+
+    for path, text in public_surfaces.items():
+        assert "ast-grep parity" not in text, path
+
+    assert "validated useful slice" in public_surfaces["README.md"]
+    assert "validated useful slice" in public_surfaces["SKILL.md"]
+    assert "useful validated AST slice" in public_surfaces["AGENTS.md"]
 
 
 def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:

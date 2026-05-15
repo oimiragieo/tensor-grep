@@ -3840,7 +3840,7 @@ The stable text-search contract is the validated rg-compatible surface documente
 - `tg devices`: Print routable GPU device IDs and VRAM inventory
 - `tg mcp`: Start the AI-assistant Model Context Protocol (MCP) server
 - `tg classify`: Run log classification with local heuristics by default, or CyBERT when explicitly enabled
-- `tg run`: Run AST structural search and optional rewrites (ast-grep parity)
+- `tg run`: Run a validated AST slice for structural search and guarded rewrites
 - `tg scan` / `tg test` / `tg lsp`: Auxiliary AST workflows
 - `tg upgrade` / `tg update`: Upgrade tensor-grep in place
 """,
@@ -7786,7 +7786,7 @@ def ast_info(
 
 @app.command(
     name="run",
-    help="Run AST structural search and optional rewrites.",
+    help="Run a validated AST slice for structural search and guarded rewrites.",
 )
 def run(
     pattern: str = typer.Argument(..., help="The AST pattern to search for."),
