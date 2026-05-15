@@ -111,6 +111,20 @@ def native_gpu_available(
     )
     if result.returncode != 0:
         pytest.skip(f"native GPU backend unavailable: {result.stderr.strip()}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        pytest.skip(f"native GPU backend probe returned invalid JSON: {exc}")
+    if payload.get("routing_backend") != "NativeGpuBackend" or payload.get("sidecar_used"):
+        backend = payload.get("routing_backend", "unknown")
+        reason = payload.get("routing_reason", "unknown")
+        sidecar_used = payload.get("sidecar_used", "unknown")
+        routed_ids = payload.get("routing_gpu_device_ids", [])
+        pytest.skip(
+            "native GPU backend unavailable: "
+            f"routing_backend={backend}, routing_reason={reason}, "
+            f"sidecar_used={sidecar_used}, routing_gpu_device_ids={routed_ids}"
+        )
 
 
 def _run_command(command: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:

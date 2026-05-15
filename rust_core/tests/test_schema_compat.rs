@@ -18,6 +18,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "defs.json",
     "defs_provider_disagreement.json",
     "edit_plan.json",
+    "gpu_cpu_fallback_search.json",
     "gpu_sidecar_search.json",
     "impact.json",
     "index_search.json",
@@ -52,6 +53,8 @@ struct SearchExample {
     sidecar_used: bool,
     #[serde(default)]
     requested_gpu_device_ids: Vec<u32>,
+    #[serde(default)]
+    routing_gpu_device_ids: Vec<u32>,
     query: String,
     path: String,
     total_matches: usize,
@@ -685,6 +688,10 @@ struct SearchNdjsonExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    #[serde(default)]
+    requested_gpu_device_ids: Vec<u32>,
+    #[serde(default)]
+    routing_gpu_device_ids: Vec<u32>,
     query: String,
     path: String,
     file: String,
@@ -1111,6 +1118,7 @@ fn test_docs_examples_match_v1_schema() {
             "rewrite_plan.json" => assert_rewrite_plan_example(path),
             "rewrite_apply_verify.json" => assert_apply_verify_example(path),
             "audit_manifest_verify.json" => assert_audit_manifest_verify_example(path),
+            "gpu_cpu_fallback_search.json" => assert_gpu_cpu_fallback_example(path),
             "gpu_sidecar_search.json" => assert_gpu_sidecar_example(path),
             "calibrate.json" => assert_calibrate_example(path),
             "mcp_rewrite_diff.json" => assert_mcp_rewrite_diff_example(path),
@@ -1316,6 +1324,49 @@ fn assert_search_example(path: &Path) {
             );
         }
     }
+}
+
+fn assert_gpu_cpu_fallback_example(path: &Path) {
+    let example: SearchExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_backend,
+        "NativeCpuBackend",
+        "{} should make CPU fallback backend explicit",
+        path.display()
+    );
+    assert_eq!(
+        example.routing_reason,
+        "gpu-auto-fallback-cpu",
+        "{} should make CPU fallback reason explicit",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} CPU fallback example must not claim sidecar GPU routing",
+        path.display()
+    );
+    assert!(
+        !example.requested_gpu_device_ids.is_empty(),
+        "{} should preserve caller-requested GPU ids",
+        path.display()
+    );
+    assert!(
+        example.routing_gpu_device_ids.is_empty(),
+        "{} should not list routed GPU ids for CPU fallback",
+        path.display()
+    );
+    assert_eq!(
+        example.total_matches,
+        example.matches.len(),
+        "{} total_matches mismatch",
+        path.display()
+    );
 }
 
 fn assert_rulesets_example(path: &Path) {

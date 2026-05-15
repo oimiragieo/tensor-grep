@@ -102,6 +102,8 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "validation_alignment" in contracts
     assert 'ambiguity.status = "tie_requires_confirmation"' in contracts
     assert "GPU auto-recommendation must remain false" in contracts
+    assert "`routing_gpu_device_ids = []`" in contracts
+    assert "CPU fallback, not GPU acceleration proof" in contracts
     assert "classification_backend" in contracts
 
 
@@ -507,6 +509,8 @@ def test_routing_policy_should_describe_current_native_and_fallback_routes() -> 
     assert "--force-cpu" in doc
     assert "Warm non-stale compatible `.tg_index`" in doc
     assert "calibrated threshold" in doc
+    assert "`routing_gpu_device_ids = []`" in doc
+    assert "normal output and docs must call it CPU fallback" in doc
 
 
 def test_post_100_roadmap_should_record_closed_statuses_for_remaining_programs() -> None:
