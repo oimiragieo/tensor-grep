@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.1 (2026-05-15)
+
+### Bug Fixes
+
+- Align public search flag routing
+  ([`aeead68`](https://github.com/oimiragieo/tensor-grep/commit/aeead68b9859993690cc961c63397a0c619a9643))
+
+Align public native tg search routing with the flags advertised by tg search --help. Adds contract
+  coverage so public flag rows either execute semantic parity scenarios or are treated as
+  informational rows.
+
+
 ## v1.12.0 (2026-05-15)
 
 ### Features
