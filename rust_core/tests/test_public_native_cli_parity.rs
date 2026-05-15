@@ -288,6 +288,43 @@ fn test_top_level_structured_search_accepts_no_ignore() {
 }
 
 #[test]
+fn test_top_level_format_rg_search_is_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_script(dir.path(), "app.log:ERROR failed\n");
+    fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
+
+    for args in [
+        vec!["--format", "rg", "ERROR", "."],
+        vec!["--format=rg", "ERROR", "."],
+    ] {
+        let output = tg()
+            .current_dir(dir.path())
+            .args(&args)
+            .env("TG_RG_PATH", &fake_rg)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "args={args:?} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("app.log:ERROR failed"),
+            "args={args:?} stdout={}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("unexpected argument"),
+            "args={args:?} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn test_top_level_type_list_is_accepted_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_script(dir.path(), "rust: *.rs\n");

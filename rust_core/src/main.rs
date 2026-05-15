@@ -1020,11 +1020,9 @@ fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Re
 }
 
 fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<String>> {
-    if raw_args.get(1).and_then(|arg| arg.to_str()) != Some("search") {
-        return None;
-    }
+    let search_args = normalize_top_level_format_search_args(raw_args)?;
 
-    let args = raw_args
+    let args = search_args
         .iter()
         .skip(2)
         .map(|arg| arg.to_string_lossy().to_string())
@@ -1084,6 +1082,32 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
         index += 1;
     }
     None
+}
+
+fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
+    if raw_args.get(1).and_then(|arg| arg.to_str()) == Some("search") {
+        return Some(raw_args.to_vec());
+    }
+    if !raw_args.iter().skip(1).any(|arg| {
+        let token = arg.to_string_lossy();
+        token == "--format" || token.starts_with("--format=")
+    }) {
+        return None;
+    }
+    if raw_args
+        .get(1)
+        .and_then(|arg| arg.to_str())
+        .map(is_known_python_command)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let mut search_args = Vec::with_capacity(raw_args.len() + 1);
+    search_args.push(raw_args.first()?.clone());
+    search_args.push(OsString::from("search"));
+    search_args.extend(raw_args.iter().skip(1).cloned());
+    Some(search_args)
 }
 
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
@@ -1262,10 +1286,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
 }
 
 fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
-    if raw_args.get(1).and_then(|arg| arg.to_str()) != Some("search") {
-        return None;
-    }
-    let args = parse_early_ripgrep_args(raw_args)?;
+    let search_args = normalize_top_level_format_search_args(raw_args)?;
+    let args = parse_early_ripgrep_args(&search_args)?;
     should_use_early_ripgrep_fast_path(&args).then_some(args)
 }
 
@@ -1480,6 +1502,22 @@ mod tests {
     }
 
     #[test]
+    fn top_level_search_frontdoor_treats_format_rg_as_noop() {
+        let args = parse_default_frontdoor_args(&["tg", "--format", "rg", "ERROR", "bench_data"]);
+
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn top_level_search_frontdoor_accepts_format_rg_equals_form() {
+        let args = parse_default_frontdoor_args(&["tg", "--format=rg", "ERROR", "bench_data"]);
+
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
     fn default_search_frontdoor_rejects_non_rg_format() {
         let raw_args = ["tg", "search", "--format=json", "ERROR", "bench_data"]
             .iter()
@@ -1548,6 +1586,34 @@ mod tests {
             .map(OsString::from)
             .collect::<Vec<_>>();
 
+        assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn top_level_search_format_python_passthrough_args_detects_non_rg_formats() {
+        let raw_args = ["tg", "--format=json", "ERROR", "bench_data"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            search_format_python_passthrough_args(&raw_args),
+            Some(vec![
+                "--format=json".to_string(),
+                "ERROR".to_string(),
+                "bench_data".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn top_level_format_normalization_does_not_capture_known_commands() {
+        let raw_args = ["tg", "classify", "--format", "json", "sample.log"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_default_search_frontdoor_args(&raw_args).is_none());
         assert_eq!(search_format_python_passthrough_args(&raw_args), None);
     }
 
@@ -2419,17 +2485,20 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         if token.starts_with('-') {
             continue;
         }
-        const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
-        let is_known = RAW_PY.lines().any(|line| {
-            let t = line.trim();
-            t.starts_with('"')
-                && (t.ends_with(r#"","#) || t.ends_with(r#"""#))
-                && t.contains(&format!("\"{token}\""))
-        });
-        return !is_known;
+        return !is_known_python_command(&token);
     }
 
     false
+}
+
+fn is_known_python_command(token: &str) -> bool {
+    const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
+    RAW_PY.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with('"')
+            && (t.ends_with(r#"","#) || t.ends_with(r#"""#))
+            && t.contains(&format!("\"{token}\""))
+    })
 }
 
 fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchRequest> {
