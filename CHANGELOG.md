@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.11 (2026-05-15)
+
+### Bug Fixes
+
+- Harden ast cli contract hygiene ([#140](https://github.com/oimiragieo/tensor-grep/pull/140),
+  [`2aebac6`](https://github.com/oimiragieo/tensor-grep/commit/2aebac6e90d9574ba8eae73c082a0424bfc48f8d))
+
+
 ## v1.12.10 (2026-05-15)
 
 ### Bug Fixes
