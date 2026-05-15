@@ -931,10 +931,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "CI workflow publish-github-release-assets job must include "
                         "step `Upload GitHub release native assets`"
                     )
-                elif upload_step.get("uses") != "softprops/action-gh-release@v2":
+                elif upload_step.get("uses") != "softprops/action-gh-release@v3":
                     errors.append(
                         "CI workflow publish-github-release-assets "
-                        "`Upload GitHub release native assets` step must use `softprops/action-gh-release@v2`"
+                        "`Upload GitHub release native assets` step must use `softprops/action-gh-release@v3`"
                     )
                 else:
                     with_block = upload_step.get("with", {})
@@ -2545,9 +2545,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             )
         else:
             uses_value = github_release_step.get("uses")
-            if uses_value != "softprops/action-gh-release@v2":
+            if uses_value != "softprops/action-gh-release@v3":
                 errors.append(
-                    "Release workflow create-release `Create GitHub Release` step must use `softprops/action-gh-release@v2`"
+                    "Release workflow create-release `Create GitHub Release` step must use `softprops/action-gh-release@v3`"
                 )
             with_block = github_release_step.get("with")
             if not isinstance(with_block, dict):

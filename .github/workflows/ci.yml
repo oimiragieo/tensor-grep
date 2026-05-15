@@ -908,7 +908,7 @@ jobs:
             --expected-version "${{ needs.release.outputs.release_version }}"
 
       - name: Upload GitHub release native assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.release.outputs.release_version }}
           fail_on_unmatched_files: true
