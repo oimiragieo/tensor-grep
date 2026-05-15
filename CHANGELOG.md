@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.3 (2026-05-15)
+
+### Bug Fixes
+
+- Clarify ast subset positioning ([#124](https://github.com/oimiragieo/tensor-grep/pull/124),
+  [`6b2016c`](https://github.com/oimiragieo/tensor-grep/commit/6b2016cc1bf48337fa400280c6562cf6408df9fc))
+
+
 ## v1.12.2 (2026-05-15)
 
 ### Bug Fixes
