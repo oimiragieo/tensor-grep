@@ -6185,6 +6185,123 @@ def _rust_uses_nested_test_target(test_path: Path, repo_root: Path) -> bool:
     return len(parts[tests_index + 1 :]) > 1
 
 
+def _nearest_cargo_manifest_for_path(path: str | Path, repo_root: Path) -> Path | None:
+    try:
+        current = Path(path).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    if current.is_file() or current.suffix:
+        current = current.parent
+    try:
+        boundary = repo_root.expanduser().resolve()
+    except (OSError, RuntimeError):
+        boundary = repo_root
+    while True:
+        manifest = current / "Cargo.toml"
+        if manifest.is_file():
+            return manifest
+        if current == boundary or current.parent == current:
+            break
+        current = current.parent
+    return None
+
+
+def _cargo_test_command_for_primary_file(
+    primary_file: str | Path | None,
+    repo_root: Path,
+) -> str | None:
+    if primary_file is None or _target_language_for_path(primary_file) != "rust":
+        return None
+    manifest = _nearest_cargo_manifest_for_path(primary_file, repo_root)
+    if manifest is None:
+        return None
+    try:
+        if manifest.parent.resolve() == repo_root.resolve():
+            return "cargo test"
+    except (OSError, RuntimeError):
+        pass
+    relative_manifest = _relative_validation_path(manifest, repo_root)
+    return f"cargo test --manifest-path {relative_manifest}"
+
+
+def _primary_language_fallback_validation_steps(
+    *,
+    repo_root: str | Path,
+    primary_file: str | Path | None,
+) -> list[dict[str, Any]]:
+    if primary_file is None:
+        return []
+    root = _validation_repo_root(repo_root)
+    primary_language = _target_language_for_path(primary_file)
+    steps: list[dict[str, Any]] = []
+    if primary_language == "rust":
+        command = _cargo_test_command_for_primary_file(primary_file, root)
+        if command is not None:
+            steps.append({
+                "command": command,
+                "scope": "repo",
+                "runner": "cargo",
+                "confidence": 0.5,
+                "detection": "detected",
+            })
+    return steps
+
+
+def _ensure_primary_language_validation_fallback(
+    validation_plan: list[dict[str, Any]],
+    *,
+    repo_root: str | Path,
+    primary_file: str | Path | None,
+) -> list[dict[str, Any]]:
+    primary_language = _target_language_for_path(primary_file)
+    if primary_language is None:
+        return validation_plan
+    fallback_steps = _primary_language_fallback_validation_steps(
+        repo_root=repo_root,
+        primary_file=primary_file,
+    )
+    if any(
+        _validation_step_matches_primary_language(step, primary_language)
+        for step in validation_plan
+    ):
+        fallback_commands = {str(step.get("command") or "") for step in fallback_steps}
+        if (
+            primary_language == "rust"
+            and fallback_commands
+            and not any(
+                str(step.get("command") or "") in fallback_commands for step in validation_plan
+            )
+            and any(
+                str(step.get("runner") or "") == "cargo"
+                and str(step.get("command") or "") == "cargo test"
+                and str(step.get("detection") or "") == "heuristic"
+                for step in validation_plan
+            )
+        ):
+            augmented = [
+                dict(step)
+                for step in validation_plan
+                if not (
+                    str(step.get("runner") or "") == "cargo"
+                    and str(step.get("command") or "") == "cargo test"
+                    and str(step.get("detection") or "") == "heuristic"
+                )
+            ]
+            augmented.extend(dict(step) for step in fallback_steps)
+            return augmented
+        return validation_plan
+    if not fallback_steps:
+        return validation_plan
+    seen = {str(step.get("command") or "") for step in validation_plan}
+    augmented = [dict(step) for step in validation_plan]
+    for step in fallback_steps:
+        command = str(step.get("command") or "")
+        if command and command not in seen:
+            seen.add(command)
+            augmented.append(dict(step))
+    return augmented
+
+
 def _validation_commands_for_tests(
     tests: list[str],
     *,
@@ -6579,6 +6696,11 @@ def _validation_plan_and_alignment_for_tests(
         str(primary_symbol.get("file"))
         if isinstance(primary_symbol, dict) and primary_symbol.get("file")
         else (str(primary_file) if primary_file is not None and str(primary_file) else None)
+    )
+    raw_plan = _ensure_primary_language_validation_fallback(
+        raw_plan,
+        repo_root=repo_root,
+        primary_file=resolved_primary_file,
     )
     return _align_validation_plan_for_primary_language(raw_plan, resolved_primary_file)
 

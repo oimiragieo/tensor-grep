@@ -178,3 +178,40 @@ def test_agent_capsule_hardcase_rust_language_hint_selects_rust_target(tmp_path)
     assert payload["primary_target"]["symbol"] == "create_invoice"
     assert payload["context_consistency"]["query_language_hints"] == ["rust"]
     assert payload["context_consistency"]["primary_target_language"] == "rust"
+
+
+def test_agent_capsule_keeps_rust_validation_for_cli_parser_intent_with_python_tests(
+    tmp_path,
+):
+    project = tmp_path / "workspace"
+    rust_src = project / "rust_core" / "src"
+    rust_src.mkdir(parents=True)
+    tests_dir = project / "tests" / "unit"
+    tests_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (project / "rust_core" / "Cargo.toml").write_text(
+        '[package]\nname = "sample-rust-core"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    rust_file = rust_src / "main.rs"
+    rust_file.write_text(
+        "pub fn parse_native_cli_flags_passthru() -> bool {\n    true\n}\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_cli_modes.py").write_text(
+        "def test_cli_flags_passthru_parser_error():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_payload(
+        project,
+        "rust parse_native_cli_flags_passthru CLI parser passthru failure",
+    )
+
+    assert payload["primary_target"]["file"] == str(rust_file.resolve())
+    assert payload["context_consistency"]["primary_target_language"] == "rust"
+    assert payload["validation_commands"] == ["cargo test --manifest-path rust_core/Cargo.toml"]
+    assert payload["context_consistency"]["validation_alignment"]["kept_count"] == 1

@@ -532,6 +532,76 @@ def test_multi_language_repo_includes_commands_for_all_detected_languages(tmp_pa
     ]
 
 
+def test_rust_primary_keeps_manifest_validation_when_python_cli_tests_match(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    rust_src = project / "rust_core" / "src"
+    rust_src.mkdir(parents=True)
+    tests_dir = project / "tests" / "unit"
+    tests_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (project / "rust_core" / "Cargo.toml").write_text(
+        '[package]\nname = "sample-rust-core"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    primary_file = rust_src / "main.rs"
+    primary_file.write_text(
+        "pub fn parse_native_search_flags_passthru() -> bool {\n    true\n}\n",
+        encoding="utf-8",
+    )
+    python_test = tests_dir / "test_cli_modes.py"
+    python_test.write_text(
+        "def test_cli_parser_rejects_passthru_flag():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [str(python_test.resolve())],
+        repo_root=project,
+        primary_file=str(primary_file.resolve()),
+        query="rust native CLI parser passthru flag failure",
+    )
+
+    assert [step["command"] for step in plan] == ["cargo test --manifest-path rust_core/Cargo.toml"]
+    assert alignment["primary_target_language"] == "rust"
+    assert alignment["kept_count"] == 1
+    assert alignment["filtered_count"] >= 1
+    assert any("filtered pytest validation for rust" in issue for issue in alignment["issues"])
+
+
+def test_rust_primary_replaces_heuristic_repo_fallback_with_nested_manifest(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    rust_src = project / "rust_core" / "src"
+    rust_src.mkdir(parents=True)
+    (project / "rust_core" / "Cargo.toml").write_text(
+        '[package]\nname = "sample-rust-core"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    primary_file = rust_src / "main.rs"
+    primary_file.write_text(
+        "pub fn parse_native_search_flags_passthru() -> bool {\n    true\n}\n",
+        encoding="utf-8",
+    )
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [],
+        repo_root=project,
+        primary_file=str(primary_file.resolve()),
+        query="rust native CLI parser passthru flag failure",
+    )
+
+    assert [step["command"] for step in plan] == ["cargo test --manifest-path rust_core/Cargo.toml"]
+    assert alignment["status"] == "aligned"
+    assert alignment["kept_count"] == 1
+    assert alignment["filtered_count"] == 0
+
+
 def test_detect_validation_runners_is_cached_per_repo_root(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
