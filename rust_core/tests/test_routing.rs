@@ -1779,9 +1779,57 @@ fn test_public_gpu_request_without_explicit_sidecar_falls_back_to_native_cpu() {
     let payload = assert_json_routing(&output, "NativeCpuBackend", "gpu-auto-fallback-cpu", false);
     assert_eq!(payload["total_matches"], 3);
     assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
+    assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([]));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("native GPU unavailable"), "stderr={stderr}");
+    assert!(
+        stderr.contains("falling back to native CPU search"),
+        "stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("routing_backend=NativeGpuBackend"),
+        "stderr={stderr}"
+    );
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_public_gpu_ndjson_fallback_reports_no_routed_gpu_devices() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--ndjson")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .env("TG_SIDECAR_PYTHON", "definitely-missing-python")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut rows = 0usize;
+    for line in stdout.lines() {
+        let payload: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(payload["routing_backend"], "NativeCpuBackend");
+        assert_eq!(payload["routing_reason"], "gpu-auto-fallback-cpu");
+        assert_eq!(payload["sidecar_used"], false);
+        assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
+        assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([]));
+        rows += 1;
+    }
+    assert_eq!(rows, 3);
 }
 
 #[test]

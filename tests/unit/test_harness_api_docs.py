@@ -59,6 +59,12 @@ EXPECTED_EXAMPLES = {
     "multi_task_attempt_ledger.json": ("artifact", "attempts", "final_outcome", "replay"),
     "patch_bakeoff.json": ("summary", "rows"),
     "audit_manifest_verify.json": ("manifest_path", "checks", "valid"),
+    "gpu_cpu_fallback_search.json": (
+        "total_matches",
+        "requested_gpu_device_ids",
+        "routing_gpu_device_ids",
+        "matches",
+    ),
     "gpu_sidecar_search.json": ("sidecar_used", "matches"),
     "calibrate.json": ("corpus_size_breakpoint_bytes", "measurements"),
     "mcp_rewrite_diff.json": ("sidecar_used", "diff"),
@@ -93,6 +99,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Attempt Ledger JSON" in doc
     assert "## Patch Bakeoff JSON" in doc
     assert "## Audit Manifest Verify JSON" in doc
+    assert "## GPU CPU Fallback JSON" in doc
     assert "## GPU Sidecar JSON" in doc
     assert "## Calibrate JSON" in doc
     assert "## Search NDJSON" in doc
@@ -360,6 +367,12 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
             if file_name == "context_render.json":
                 assert payload["context_consistency"]["primary_file_included"] is True
                 assert payload["context_consistency"]["render_matches_primary_target"] is True
+            if file_name == "gpu_cpu_fallback_search.json":
+                assert payload["routing_backend"] == "NativeCpuBackend"
+                assert payload["routing_reason"] == "gpu-auto-fallback-cpu"
+                assert payload["sidecar_used"] is False
+                assert payload["requested_gpu_device_ids"] == [0]
+                assert payload["routing_gpu_device_ids"] == []
 
         for key in required_keys:
             assert key in payload

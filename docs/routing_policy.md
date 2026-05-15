@@ -64,6 +64,7 @@ The smart router chooses `NativeGpuBackend` for both explicit and calibrated aut
 - **Auto GPU routing:** `handle_auto_gpu_search(...)`
   - only attempted when the router already proved the search is GPU-native compatible
   - if CUDA is unavailable, falls back to `NativeCpuBackend` with `routing_reason = "gpu-auto-fallback-cpu"`
+  - CPU fallback emits `requested_gpu_device_ids` for the user request and `routing_gpu_device_ids = []`; normal output and docs must call it CPU fallback, not GPU acceleration
   - if GPU initialization fails fatally, exits with a user-facing error instead of silently changing backends
 
 ## AST commands

@@ -33,6 +33,8 @@ def test_routing_policy_doc_covers_current_routing_tree() -> None:
     assert "gpu-device-ids-explicit-native" in doc
     assert "gpu-auto-size-threshold" in doc
     assert "cpu-auto-size-threshold" in doc
+    assert "`routing_gpu_device_ids = []`" in doc
+    assert "normal output and docs must call it CPU fallback" in doc
     assert "gpu-device-ids-explicit" in doc
     assert "rg_passthrough" in doc
     assert "handle_ripgrep_search" in doc

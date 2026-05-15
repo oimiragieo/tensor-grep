@@ -37,6 +37,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Multi-session attempt ledger JSON | multi-session replay and handoff ledger | [`examples/multi_session_attempt_ledger.json`](examples/multi_session_attempt_ledger.json) |
 | Multi-task attempt ledger JSON | multi-task replay chain ledger | [`examples/multi_task_attempt_ledger.json`](examples/multi_task_attempt_ledger.json) |
 | Audit manifest verify JSON | `tg.exe audit-verify <manifest> --json` | [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.json) |
+| GPU CPU fallback JSON | `tg.exe search --gpu-device-ids ... --json ...` on a CPU fallback route | [`examples/gpu_cpu_fallback_search.json`](examples/gpu_cpu_fallback_search.json) |
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
 | Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
 | Search NDJSON | `tg.exe search --ndjson ...` | [`examples/search.ndjson`](examples/search.ndjson) |
@@ -65,6 +66,7 @@ Example: [`examples/search.json`](examples/search.json)
 | `routing_reason` | `string` | `cpu-native` for the committed example. |
 | `sidecar_used` | `boolean` | `false` for native CPU search. |
 | `requested_gpu_device_ids` | `array<integer>` | Explicit GPU IDs requested by the caller; empty for CPU search. |
+| `routing_gpu_device_ids` | `array<integer>` | GPU IDs actually used by the runtime route. Empty for native CPU, index, and CPU fallback routes. |
 | `query` | `string` | Search pattern exactly as passed on the command line. |
 | `path` | `string` | Search root passed to the command. |
 | `total_matches` | `integer` | Number of materialized matches in `matches`. |
@@ -118,6 +120,7 @@ The shape matches Search JSON exactly; only the routing envelope changes.
 | `routing_backend` | `string` | `TrigramIndex` in the example. |
 | `routing_reason` | `string` | `index-accelerated` in the example. |
 | `sidecar_used` | `boolean` | Always `false` for the native index path. |
+| `routing_gpu_device_ids` | `array<integer>` | Empty for the native index path. |
 | `query` | `string` | Original literal/regex query. |
 | `path` | `string` | Indexed search root. |
 | `total_matches` | `integer` | Number of returned index matches. |
@@ -822,6 +825,27 @@ Example: [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.
 
 `checks` currently contains `digest_valid`, `chain_valid`, and `signature_valid`.
 
+## GPU CPU Fallback JSON
+
+Emitted by `tg.exe search --gpu-device-ids <ids> --json ...` when the request cannot use `NativeGpuBackend` and the runtime falls back to native CPU search instead of the Python sidecar.
+
+Example: [`examples/gpu_cpu_fallback_search.json`](examples/gpu_cpu_fallback_search.json)
+
+This is not GPU acceleration proof. It preserves the requested devices for observability while making the actual route unambiguous:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Always `1` for the current contract. |
+| `routing_backend` | `string` | `NativeCpuBackend` for CPU fallback. |
+| `routing_reason` | `string` | `gpu-auto-fallback-cpu`. |
+| `sidecar_used` | `boolean` | `false`; no Python sidecar handled the search. |
+| `requested_gpu_device_ids` | `array<integer>` | GPU IDs requested by the caller. |
+| `routing_gpu_device_ids` | `array<integer>` | Empty because no GPU handled the route. |
+| `query` | `string` | Search pattern exactly as passed on the command line. |
+| `path` | `string` | Search root passed to the command. |
+| `total_matches` | `integer` | Number of materialized matches in `matches`. |
+| `matches` | `array<object>` | Native CPU match rows using `file`, `line`, and `text`. |
+
 ## GPU Sidecar JSON
 
 Emitted by `tg.exe search --gpu-device-ids <ids> --json ...`.
@@ -901,6 +925,8 @@ This is the streaming variant of Search JSON. Each line is a standalone JSON obj
 | `routing_backend` | `string` | Backend selected by the Rust router. |
 | `routing_reason` | `string` | Stable reason for the route. |
 | `sidecar_used` | `boolean` | `false` for the committed native example. |
+| `requested_gpu_device_ids` | `array<integer>` | Explicit GPU IDs requested by the caller; empty for CPU search. |
+| `routing_gpu_device_ids` | `array<integer>` | GPU IDs actually used by the runtime route. Empty for native CPU, index, and CPU fallback routes. |
 | `query` | `string` | Search pattern. |
 | `path` | `string` | Search root. |
 | `file` | `string` | Absolute path of the matched file for this row. |
@@ -1459,7 +1485,7 @@ The current codebase still exposes a few shape differences between native Rust J
 | Area | Native Rust output | Python-originated output |
 | --- | --- | --- |
 | Match line field | `line` | `line_number` |
-| Search metadata | `query`, `path`, `total_matches`, `requested_gpu_device_ids` | Python CLI/search sidecar payloads may also include `total_files`, `matched_file_paths`, `match_counts_by_file`, and GPU worker metadata |
+| Search metadata | `query`, `path`, `total_matches`, `requested_gpu_device_ids`, `routing_gpu_device_ids` | Python CLI/search sidecar payloads may also include `total_files`, `matched_file_paths`, `match_counts_by_file`, and GPU worker metadata |
 | GPU search envelope | Rust adds `version`, `routing_backend`, `routing_reason`, `sidecar_used`, and caller-requested GPU IDs | Python provides the nested match payload and routed GPU IDs that Rust augments rather than reshaping |
 
 In practice:

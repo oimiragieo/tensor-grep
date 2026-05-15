@@ -50,19 +50,25 @@ class TestGpuSidecarRouting:
         )
         assert result.returncode == 0
 
-    def test_tg_gpu_device_ids_emits_explicit_routing_metadata_with_verbose(self):
+    def test_tg_gpu_device_ids_emits_explicit_routing_metadata_with_verbose(self, tmp_path: Path):
         binary = _default_tg_binary()
         if not binary.exists():
             pytest.skip(f"tg binary not found: {binary}")
+        (tmp_path / "probe.log").write_text("ERROR gpu probe\n", encoding="utf-8")
 
         result = subprocess.run(
-            [str(binary), "--gpu-device-ids", "0", "--verbose", "ERROR", "."],
+            [str(binary), "--gpu-device-ids", "0", "--verbose", "ERROR", str(tmp_path)],
             capture_output=True,
             text=True,
             check=False,
         )
         if "routing_backend=NativeGpuBackend" in result.stderr:
             assert "gpu-device-ids-explicit-native" in result.stderr
+            assert "sidecar_used=false" in result.stderr
+        elif "routing_backend=NativeCpuBackend" in result.stderr:
+            assert "gpu-auto-fallback-cpu" in result.stderr
+            assert "native GPU unavailable" in result.stderr
+            assert "falling back to native CPU search" in result.stderr
             assert "sidecar_used=false" in result.stderr
         else:
             assert "GpuSidecar" in result.stderr
