@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.12.8 (2026-05-15)
+
+### Bug Fixes
+
+- Accept ast run pattern aliases ([#135](https://github.com/oimiragieo/tensor-grep/pull/135),
+  [`cdbdfcc`](https://github.com/oimiragieo/tensor-grep/commit/cdbdfccfb453c7aef040e2cd13a9aa6c3203316b))
+
+- Accept option-first rg format search ([#130](https://github.com/oimiragieo/tensor-grep/pull/130),
+  [`0235e8c`](https://github.com/oimiragieo/tensor-grep/commit/0235e8c9e56f77f2a803f9e74e2d9a15f905dfb7))
+
+- Bound edit-plan repo scans ([#131](https://github.com/oimiragieo/tensor-grep/pull/131),
+  [`b746dec`](https://github.com/oimiragieo/tensor-grep/commit/b746dec12b75e741bf9fa3979851ab609a1ab723))
+
+- Bound map and context agent outputs ([#134](https://github.com/oimiragieo/tensor-grep/pull/134),
+  [`3940b15`](https://github.com/oimiragieo/tensor-grep/commit/3940b158b53374f42ce85ad9d39acdb9dba34db9))
+
+- Cap compat routing artifact payloads ([#132](https://github.com/oimiragieo/tensor-grep/pull/132),
+  [`0f03e58`](https://github.com/oimiragieo/tensor-grep/commit/0f03e58478c3ee99de2603def20b08554092659f))
+
+- Harden exe bridge agent ranking ([#136](https://github.com/oimiragieo/tensor-grep/pull/136),
+  [`c2e483a`](https://github.com/oimiragieo/tensor-grep/commit/c2e483a1053a5869aab748adf0d39689ee438dda))
+
+- Harden v1.12.7 release positioning governance
+  ([#133](https://github.com/oimiragieo/tensor-grep/pull/133),
+  [`55c1f1d`](https://github.com/oimiragieo/tensor-grep/commit/55c1f1da529bccc60138830dda288b17a3b0f6bd))
+
+- Route cold rg-shaped searches to rg ([#137](https://github.com/oimiragieo/tensor-grep/pull/137),
+  [`f848748`](https://github.com/oimiragieo/tensor-grep/commit/f848748f0ab075e5b2eadb52bd1ed7bd492f3b8c))
+
+### Continuous Integration
+
+- Move release upload action to node 24
+  ([`9328ef4`](https://github.com/oimiragieo/tensor-grep/commit/9328ef47e7b78851b2b9c8578cf1148825face39))
+
+Move softprops/action-gh-release to v3 and update the release workflow validators/tests so CI no
+  longer relies on the Node 20 action runtime.
+
+
 ## v1.12.7 (2026-05-15)
 
 ### Bug Fixes
