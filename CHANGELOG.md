@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.5 (2026-05-15)
+
+### Bug Fixes
+
+- Harden gpu proof benchmark hygiene
+  ([`f75e24a`](https://github.com/oimiragieo/tensor-grep/commit/f75e24ac7ed98d39808f44970b4f4b3fb86a4cad))
+
+Harden GPU proof metadata, stale benchmark binary warnings, and stale tensor-grep launcher cleanup.
+
+
 ## v1.12.4 (2026-05-15)
 
 ### Bug Fixes
