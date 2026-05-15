@@ -8018,8 +8018,16 @@ def ast_info(
     help="Run a validated AST slice for structural search and guarded rewrites.",
 )
 def run(
-    pattern: str = typer.Argument(..., help="The AST pattern to search for."),
-    path: str | None = typer.Argument(None, help="The path to search in."),
+    arguments: list[str] | None = typer.Argument(
+        None,
+        help="The positional AST pattern and optional path, or just path when --pattern is used.",
+    ),
+    pattern_option: str | None = typer.Option(
+        None,
+        "--pattern",
+        "-p",
+        help="The AST pattern to search for, matching ast-grep's option form.",
+    ),
     rewrite: str | None = typer.Option(None, "--rewrite", "-r", help="Replacement pattern."),
     lang: str | None = typer.Option(None, "--lang", "-l", help="Language for AST parsing."),
     apply: bool = typer.Option(False, "--apply", help="Apply the rewrite to files."),
@@ -8032,12 +8040,40 @@ def run(
     filter_regex: str | None = typer.Option(
         None, "--filter", help="Filter matched AST nodes by text regex"
     ),
+    files_with_matches: bool = typer.Option(
+        False,
+        "--files-with-matches",
+        help="Print only paths with at least one AST match.",
+    ),
 ) -> None:
     from tensor_grep.cli.ast_workflows import run_command as execute_run
 
+    positional_args = list(arguments or [])
+    if pattern_option:
+        if len(positional_args) > 1:
+            typer.echo(
+                "Error: tg run --pattern accepts at most one positional PATH argument.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        resolved_pattern = pattern_option
+        resolved_path = positional_args[0] if positional_args else None
+    else:
+        if not positional_args:
+            typer.echo(
+                "Error: tg run requires --pattern <PATTERN> or positional PATTERN.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        if len(positional_args) > 2:
+            typer.echo("Error: tg run accepts at most PATTERN and PATH positionals.", err=True)
+            raise typer.Exit(code=2)
+        resolved_pattern = positional_args[0]
+        resolved_path = positional_args[1] if len(positional_args) > 1 else None
+
     exit_code = execute_run(
-        pattern=pattern,
-        path=path,
+        pattern=resolved_pattern,
+        path=resolved_path,
         rewrite=rewrite,
         lang=lang,
         apply=apply,
@@ -8046,6 +8082,7 @@ def run(
         checkpoint=checkpoint,
         interactive=interactive,
         filter_regex=filter_regex,
+        files_with_matches=files_with_matches,
     )
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

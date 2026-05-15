@@ -404,6 +404,10 @@ pub struct RunArgs {
     #[arg(long, default_value = "python")]
     pub lang: String,
 
+    /// The structural pattern to match
+    #[arg(short = 'p', long = "pattern")]
+    pub pattern_option: Option<String>,
+
     /// Rewrite matched nodes with this replacement pattern (metavar substitution supported)
     #[arg(short = 'r', long, conflicts_with = "batch_rewrite")]
     pub rewrite: Option<String>,
@@ -468,11 +472,13 @@ pub struct RunArgs {
     #[arg(long)]
     pub verbose: bool,
 
-    /// The structural pattern to match
-    pub pattern: Option<String>,
+    /// Print only paths with at least one AST match
+    #[arg(long = "files-with-matches")]
+    pub files_with_matches: bool,
 
-    /// File or directory to search
-    pub path: Option<String>,
+    /// Positional PATTERN and optional PATH, or just PATH when --pattern is used
+    #[arg(value_name = "PATTERN_OR_PATH")]
+    pub positional: Vec<String>,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -1797,6 +1803,72 @@ mod tests {
             select_rewrite_apply_mode(&json),
             RewriteApplyMode::PlanThenApply
         );
+    }
+
+    #[test]
+    fn run_accepts_ast_grep_pattern_option() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "fixture.py",
+        ]);
+
+        assert_eq!(run_pattern(&args).unwrap(), "class $NAME: $$$BODY");
+        assert_eq!(run_search_path(&args), "fixture.py");
+    }
+
+    #[test]
+    fn run_rejects_duplicate_pattern_forms() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "def $F(): $$$BODY",
+            "fixture.py",
+        ]);
+
+        let error = run_pattern(&args).unwrap_err().to_string();
+        assert!(error.contains("--pattern accepts at most one positional PATH"));
+    }
+
+    #[test]
+    fn run_files_with_matches_is_read_only() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "--files-with-matches",
+            "fixture.py",
+        ]);
+
+        assert!(args.files_with_matches);
+        assert!(validate_run_args(&args).is_ok());
+
+        let rewrite = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "--files-with-matches",
+            "--rewrite",
+            "class $NAME: pass",
+            "fixture.py",
+        ]);
+
+        let error = validate_run_args(&rewrite).unwrap_err().to_string();
+        assert!(error.contains("read-only search output mode"));
     }
 
     #[test]
@@ -3767,21 +3839,34 @@ struct GpuSidecarSearchMatch {
 }
 
 fn run_search_path(args: &RunArgs) -> &str {
-    args.path.as_deref().unwrap_or(".")
+    if args.pattern_option.is_some() {
+        args.positional.first().map(String::as_str).unwrap_or(".")
+    } else {
+        args.positional.get(1).map(String::as_str).unwrap_or(".")
+    }
 }
 
 fn run_batch_path(args: &RunArgs) -> anyhow::Result<&str> {
-    if args.path.is_some() {
+    if args.positional.len() > 1 {
         anyhow::bail!("tg run --batch-rewrite accepts exactly one PATH argument")
     }
 
-    Ok(args.pattern.as_deref().unwrap_or("."))
+    Ok(args.positional.first().map(String::as_str).unwrap_or("."))
 }
 
 fn run_pattern(args: &RunArgs) -> anyhow::Result<&str> {
-    args.pattern.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("tg run requires PATTERN unless --batch-rewrite <config.json> is provided")
-    })
+    if let Some(pattern) = args.pattern_option.as_deref() {
+        if args.positional.len() > 1 {
+            anyhow::bail!("tg run --pattern accepts at most one positional PATH argument");
+        }
+        return Ok(pattern);
+    }
+    match args.positional.first().map(String::as_str) {
+        Some(pattern) => Ok(pattern),
+        None => anyhow::bail!(
+            "tg run requires --pattern <PATTERN> or positional PATTERN unless --batch-rewrite <config.json> is provided"
+        ),
+    }
 }
 
 fn build_search_line_starts(source: &str) -> Vec<usize> {
@@ -3893,6 +3978,25 @@ fn ast_match_to_search_json(
 }
 
 fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
+    if args.batch_rewrite.is_some() && args.pattern_option.is_some() {
+        anyhow::bail!("tg run --batch-rewrite uses the positional argument as PATH and does not accept --pattern");
+    }
+    if args.files_with_matches
+        && (args.rewrite.is_some()
+            || args.batch_rewrite.is_some()
+            || args.apply
+            || args.diff
+            || args.verify
+            || args.checkpoint
+            || args.audit_manifest.is_some()
+            || args.audit_signing_key.is_some()
+            || !args.apply_edit_ids.is_empty()
+            || !args.reject_edit_ids.is_empty()
+            || args.lint_cmd.is_some()
+            || args.test_cmd.is_some())
+    {
+        anyhow::bail!("tg run --files-with-matches is a read-only search output mode");
+    }
     if (args.lint_cmd.is_some() || args.test_cmd.is_some()) && !args.apply {
         anyhow::bail!("--lint-cmd and --test-cmd require --apply");
     }
@@ -5022,6 +5126,15 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
 
     let stdout = io::stdout();
     let mut stdout = io::BufWriter::new(stdout.lock());
+    if args.files_with_matches {
+        for file_matches in matches {
+            if !file_matches.matches.is_empty() {
+                writeln!(stdout, "{}", file_matches.file.display())?;
+            }
+        }
+        return Ok(());
+    }
+
     for file_matches in matches {
         for matched in file_matches.matches {
             writeln!(

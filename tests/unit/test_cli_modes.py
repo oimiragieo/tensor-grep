@@ -9895,7 +9895,40 @@ def test_full_cli_run_help_should_not_expose_config_option() -> None:
     result = runner.invoke(app, ["run", "--help"])
 
     assert result.exit_code == 0
-    assert "--config" not in _strip_ansi(result.stdout)
+    help_text = _strip_ansi(result.stdout)
+    assert "--config" not in help_text
+    assert "--pattern" in help_text
+    assert "--files-with-matches" in help_text
+
+
+def test_full_cli_run_accepts_ast_grep_pattern_option(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_command(pattern: str, path: str | None = None, **kwargs: object) -> int:
+        seen["pattern"] = pattern
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr("tensor_grep.cli.ast_workflows.run_command", fake_run_command)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "--files-with-matches",
+            str(tmp_path),
+            "--lang",
+            "python",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen["pattern"] == "class $NAME: $$$BODY"
+    assert seen["path"] == str(tmp_path)
+    assert seen["kwargs"]["files_with_matches"] is True
 
 
 def test_app_help_should_expose_the_python_public_top_level_surface():

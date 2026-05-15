@@ -590,6 +590,7 @@ def build_check_plan(
                 "run",
                 "tg",
                 "run",
+                "--pattern",
                 "class $NAME: $$$BODY",
                 "tests/unit/test_trust_planning.py",
                 "--lang",
