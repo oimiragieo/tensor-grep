@@ -26,6 +26,7 @@ from native_cpu_benchmark_utils import (  # noqa: E402
     ensure_many_file_fixture,
     resolve_native_cpu_bench_data_dir,
 )
+from tensor_grep.cli.runtime_paths import inspect_native_tg_binary  # noqa: E402
 from tensor_grep.perf_guard import benchmark_host_key  # noqa: E402
 
 # Scenarios to test
@@ -181,6 +182,24 @@ def benchmark_launcher_warnings(*, command_kind: str, launcher_mode: str) -> lis
             f"{command_kind} via launcher_mode={launcher_mode}; timings include "
             "wrapper/interpreter overhead. Use an explicit native executable "
             "for benchmark-quality cold-search measurements."
+        )
+    ]
+
+
+def benchmark_binary_warnings(tg_binary: Path) -> list[str]:
+    metadata = inspect_native_tg_binary(tg_binary, repo_root=ROOT_DIR)
+    kind = str(metadata.get("kind") or "")
+    version_status = str(metadata.get("version_status") or "")
+    if not kind.startswith("in-tree-") or version_status == "matches":
+        return []
+    version_text = metadata.get("version") or "unknown"
+    expected_version = metadata.get("expected_version") or "unknown"
+    return [
+        (
+            "tensor-grep benchmark warning: stale in-tree native tg binary "
+            f"{metadata.get('path')} reports {version_text!r}, expected "
+            f"{expected_version!r}. Rebuild it or pass a verified release-native "
+            "binary before using this artifact for benchmark claims."
         )
     ]
 
@@ -719,6 +738,8 @@ def main() -> int:
         command_kind=tg_launcher_command_kind,
         launcher_mode=tg_launcher_mode,
     )
+    tg_binary_metadata = inspect_native_tg_binary(tg_binary, repo_root=ROOT_DIR)
+    warnings.extend(benchmark_binary_warnings(tg_binary))
     for warning in warnings:
         print(f"[warning] {warning}", file=sys.stderr)
 
@@ -816,6 +837,10 @@ def main() -> int:
             "tg_binary_source": tg_binary_source,
             "tg_launcher_mode": tg_launcher_mode,
             "tg_launcher_command_kind": tg_launcher_command_kind,
+            "tg_binary_kind": str(tg_binary_metadata.get("kind") or ""),
+            "tg_binary_version": str(tg_binary_metadata.get("version") or ""),
+            "tg_binary_expected_version": str(tg_binary_metadata.get("expected_version") or ""),
+            "tg_binary_version_status": str(tg_binary_metadata.get("version_status") or ""),
         },
         "host_provenance": _build_host_provenance({
             "platform": platform.system().lower(),
@@ -824,6 +849,10 @@ def main() -> int:
             "tg_binary_source": tg_binary_source,
             "tg_launcher_mode": tg_launcher_mode,
             "tg_launcher_command_kind": tg_launcher_command_kind,
+            "tg_binary_kind": str(tg_binary_metadata.get("kind") or ""),
+            "tg_binary_version": str(tg_binary_metadata.get("version") or ""),
+            "tg_binary_expected_version": str(tg_binary_metadata.get("expected_version") or ""),
+            "tg_binary_version_status": str(tg_binary_metadata.get("version_status") or ""),
         }),
         "warnings": warnings,
         "rows": rows,

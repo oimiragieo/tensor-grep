@@ -45,7 +45,7 @@ Environment blocks should at minimum record:
 - `machine`
 - `python_version` when Python orchestrates the benchmark
 
-For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also include a top-level `warnings` array when the timed `tg` entrypoint is a shim or interpreter route.
+For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also record `tg_binary_kind`, `tg_binary_version`, `tg_binary_expected_version`, and `tg_binary_version_status` so stale in-tree native binaries are visible. A top-level `warnings` array is required when the timed `tg` entrypoint is a shim/interpreter route or when a stale in-tree native tg binary is being timed.
 
 For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:
 
@@ -636,7 +636,7 @@ Native CUDA correctness passed, but speed/promotion failed remains the public pr
 
 The implementation changes behind that lane are measurable: CPU preprocessing moved off pinned pages into pageable staging before the accepted text is copied into pinned DMA buffers; NVRTC PTX is cached by architecture and kernel hash; and output materialization reuses line descriptors collected during GPU dispatch setup. On the 1GB corpus, host preprocessing dropped from about `15195.926ms` to `71.510ms`; on 5GB it dropped from about `77161.298ms` to `359.224ms`. A warm PTX cache reduced an isolated 100MB local CUDA-native CLI run from about `1149.117ms` cold to `672.116ms` warm.
 
-A 2026-05-11 managed-front-door route audit still confirmed that the public Windows `tg.exe --gpu-device-ids 0 --json ...` path reports `routing_backend = "GpuSidecar"` and `sidecar_used = true`, so public managed rows remain sidecar-contaminated and unsupported as native CUDA speed proof. The native benchmark must keep exposing `scale_gate_summary.native_cuda_runtime_gate`, a separate `correctness_gate`, a separate `speed_gate`, and `promotion_ready`; sidecar-routed rows produce `native_cuda_runtime_gate.status = "UNSUPPORTED"` and do not run the native speed gate.
+A 2026-05-11 managed-front-door route audit still confirmed that the public Windows `tg.exe --gpu-device-ids 0 --json ...` path reports `routing_backend = "GpuSidecar"` and `sidecar_used = true`, so public managed rows remain sidecar-contaminated and unsupported as native CUDA speed proof. The native benchmark must keep exposing `scale_gate_summary.native_cuda_runtime_gate`, a separate `correctness_gate`, a separate `speed_gate`, and `promotion_ready`; sidecar-routed rows produce `native_cuda_runtime_gate.status = "UNSUPPORTED"` and do not run the native speed gate. Current artifacts also expose `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` at the top level, and unsupported GPU rows carry `promotion_evidence = false` plus `not_gpu_proof_reason` so CPU fallback or sidecar compatibility output cannot look like GPU acceleration proof.
 
 ### Python GPU/NLP sidecar benchmark (`run_gpu_benchmarks.py`)
 
@@ -648,7 +648,9 @@ The Python benchmark now exposes the distinction directly:
 - `scale_gate_summary.native_cuda_scale_gate.status = "UNSUPPORTED"` when only sidecar backends are observed
 - `scale_gate_summary.speed_gate.status = "NOT_RUN"` when native CUDA scale proof is unavailable
 - `scale_gate_summary.promotion_evidence_contract` records the required `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and `rg`/`tg_cpu` speed baselines
+- `scale_gate_summary.promotion_evidence_contract.fallback_or_sidecar_counts_as_gpu_proof = false`
 - `scale_gate_summary.promotion_blockers` names blocking states such as `sidecar_routing_observed`, `correctness_not_run`, and `speed_not_run`
+- top-level `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` summarize whether any row is usable as native GPU proof
 - `promotion_ready = false` unless native CUDA correctness and speed evidence both pass
 
 If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, and empty timing rows. The Python GPU scale script defaults to 5GB and checks exact rg-vs-GPU match/file sets for every >=1GB corpus, but those rows still need native backend support before they can feed a routing promotion.

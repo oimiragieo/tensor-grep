@@ -125,6 +125,10 @@ def test_install_ps1_should_scan_earlier_path_entries_for_stale_tg_launchers():
     content = _read_script("scripts/install.ps1")
 
     assert "Remove-StalePathLauncher" in content
+    assert "Test-TensorGrepLauncher" in content
+    assert 'StartsWith("tg ")' in content
+    assert "& $CandidatePath --help" in content
+    assert '$helpText -match "tensor-grep"' in content
     assert "$effectivePathParts" in content
     assert "$managedPathSet" in content
     assert "& $candidatePath --version" in content

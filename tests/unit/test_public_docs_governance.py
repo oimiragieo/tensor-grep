@@ -97,6 +97,8 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "python_subprocess_path_tg_first_launcher_kind" in contracts
     assert "path_tg_launcher_warning" in contracts
     assert "tg_launcher_command_kind" in contracts
+    assert "tg_binary_version_status" in contracts
+    assert "stale in-tree native tg binary" in contracts
     assert "agent-capsule-mixed-language" in contracts
     assert "agent-capsule-hardcases" in contracts
     assert "validation_alignment" in contracts
@@ -104,6 +106,11 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "GPU auto-recommendation must remain false" in contracts
     assert "`routing_gpu_device_ids = []`" in contracts
     assert "CPU fallback, not GPU acceleration proof" in contracts
+    assert "gpu_evidence_status" in contracts
+    assert "gpu_proof" in contracts
+    assert "native_gpu_unavailable" in contracts
+    assert "not_gpu_proof_reason" in contracts
+    assert "fallback_or_sidecar_counts_as_gpu_proof" in contracts
     assert "classification_backend" in contracts
 
 
@@ -394,8 +401,15 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
         assert "`rg` mixed multi-pattern: `0.105s`" in doc
         assert "`tg` CPU mixed multi-pattern: `2.220s`" in doc
         assert "sidecar-routed rows are unsupported for native CUDA promotion" in doc
+        assert "gpu_evidence_status" in doc
+        assert "gpu_proof" in doc
+        assert "native_gpu_unavailable" in doc
+        assert "not_gpu_proof_reason" in doc
+        assert "fallback_or_sidecar_counts_as_gpu_proof" in doc
 
     assert "diagnostic probes" in benchmarks
+    assert "tg_binary_version_status" in benchmarks
+    assert "stale in-tree native tg binary" in benchmarks
     assert "UNSUPPORTED" in benchmarks
     assert "NativeGpuBackend" in gpu_doc
     assert "sidecar_used = false" in gpu_doc

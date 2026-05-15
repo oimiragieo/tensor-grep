@@ -66,6 +66,83 @@ def test_benchmark_launcher_warnings_should_flag_non_native_timed_entrypoints():
     assert "native executable" in shim_warnings[0]
 
 
+def test_benchmark_binary_warnings_should_flag_stale_in_tree_native_binary(monkeypatch, tmp_path):
+    module = _load_run_benchmarks_module()
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("stale\n", encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "inspect_native_tg_binary",
+        lambda *_args, **_kwargs: {
+            "path": str(tg_binary),
+            "kind": "in-tree-release",
+            "version": "tg 1.12.0",
+            "expected_version": "1.12.4",
+            "version_status": "stale",
+        },
+    )
+
+    warnings = module.benchmark_binary_warnings(tg_binary)
+
+    assert warnings
+    assert "stale in-tree native tg binary" in warnings[0]
+    assert "tg 1.12.0" in warnings[0]
+    assert "1.12.4" in warnings[0]
+
+
+def test_run_benchmarks_should_record_tg_binary_version_metadata(monkeypatch, tmp_path):
+    module = _load_run_benchmarks_module()
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("native\n", encoding="utf-8")
+    output_path = tmp_path / "bench.json"
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda *_args, **_kwargs: (tg_binary, "default_binary_path"),
+    )
+    monkeypatch.setattr(
+        module,
+        "inspect_native_tg_binary",
+        lambda *_args, **_kwargs: {
+            "path": str(tg_binary),
+            "kind": "in-tree-release",
+            "version": "tg 1.12.0",
+            "expected_version": "1.12.4",
+            "version_status": "stale",
+        },
+    )
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "run_cmd_timing", lambda *_args, **_kwargs: 0.1)
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *_args, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(sys, "argv", ["run_benchmarks.py", "--output", str(output_path)])
+
+    exit_code = module.main()
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["environment"]["tg_binary_kind"] == "in-tree-release"
+    assert payload["environment"]["tg_binary_version_status"] == "stale"
+    assert payload["environment"]["tg_binary_expected_version"] == "1.12.4"
+    assert payload["environment"]["tg_binary_version"] == "tg 1.12.0"
+    assert any("stale in-tree native tg binary" in warning for warning in payload["warnings"])
+
+
 def test_run_benchmarks_should_record_launcher_command_kind_in_environment(monkeypatch, tmp_path):
     module = _load_run_benchmarks_module()
     tg_binary = tmp_path / "tg.cmd"

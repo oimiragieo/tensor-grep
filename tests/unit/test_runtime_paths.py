@@ -122,6 +122,50 @@ def test_resolve_native_tg_binary_uses_matching_in_tree_binary(monkeypatch, tmp_
     assert resolve_native_tg_binary() == native_binary.resolve()
 
 
+def test_inspect_native_tg_binary_reports_stale_in_tree_binary(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    native_binary = repo_root / "rust_core" / "target" / "release" / binary_name
+    native_binary.parent.mkdir(parents=True, exist_ok=True)
+    native_binary.write_text("stale\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.12.0")
+
+    inspected = runtime_paths.inspect_native_tg_binary(
+        native_binary,
+        repo_root=repo_root,
+        expected_version="1.12.4",
+    )
+
+    assert inspected == {
+        "path": str(native_binary.resolve()),
+        "kind": "in-tree-release",
+        "version": "tg 1.12.0",
+        "expected_version": "1.12.4",
+        "version_status": "stale",
+    }
+
+
+def test_inspect_native_tg_binary_reports_matching_in_tree_binary(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    native_binary = repo_root / "rust_core" / "target" / "debug" / binary_name
+    native_binary.parent.mkdir(parents=True, exist_ok=True)
+    native_binary.write_text("current\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tensor-grep 1.12.4")
+
+    inspected = runtime_paths.inspect_native_tg_binary(
+        native_binary,
+        repo_root=repo_root,
+        expected_version="1.12.4",
+    )
+
+    assert inspected["kind"] == "in-tree-debug"
+    assert inspected["version_status"] == "matches"
+    assert inspected["version"] == "tensor-grep 1.12.4"
+
+
 def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, tmp_path):
     repo_root = tmp_path / "repo"
     runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"

@@ -174,6 +174,26 @@ function Remove-StalePythonPackageLauncher {
     }
 }
 
+function Test-TensorGrepLauncher {
+    param(
+        [Parameter(Mandatory = $true)][string]$CandidatePath,
+        [Parameter(Mandatory = $true)][string]$VersionLine
+    )
+
+    if ($VersionLine.StartsWith("tensor-grep ")) {
+        return $true
+    }
+    if (!$VersionLine.StartsWith("tg ")) {
+        return $false
+    }
+    try {
+        $helpText = (& $CandidatePath --help 2>$null | Select-Object -First 8) -join "`n"
+        return $helpText -match "tensor-grep"
+    } catch {
+        return $false
+    }
+}
+
 function Remove-StalePathLauncher {
     param(
         [Parameter(Mandatory = $true)][string[]]$effectivePathParts,
@@ -219,7 +239,7 @@ function Remove-StalePathLauncher {
             } catch {
                 continue
             }
-            if (!$candidateVersion.StartsWith("tensor-grep ")) {
+            if (!(Test-TensorGrepLauncher -CandidatePath $candidatePath -VersionLine $candidateVersion)) {
                 continue
             }
             try {

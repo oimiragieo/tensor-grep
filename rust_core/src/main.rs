@@ -2344,7 +2344,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason
             {
                 eprintln!(
-                    "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search"
+                    "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search; this CPU fallback output is not GPU acceleration proof"
                 );
             }
             if cli.verbose {
@@ -3115,7 +3115,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason
             {
                 eprintln!(
-                    "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search"
+                    "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search; this CPU fallback output is not GPU acceleration proof"
                 );
             }
             if args.verbose {
@@ -5475,7 +5475,9 @@ fn handle_native_gpu_unavailable_cpu_fallback(
     params: GpuSearchParams<'_>,
     warning: &str,
 ) -> anyhow::Result<()> {
-    eprintln!("warning: {warning}; falling back to native CPU search");
+    eprintln!(
+        "warning: {warning}; falling back to native CPU search; this CPU fallback output is not GPU acceleration proof"
+    );
     let decision = RoutingDecision::native_cpu_gpu_fallback(
         ripgrep_is_available(),
         params.json || params.ndjson,
@@ -5900,7 +5902,7 @@ fn handle_auto_gpu_search(
             match failure.kind {
                 GpuRouteFailureKind::Unavailable => {
                     eprintln!(
-                        "warning: {}; falling back to native CPU search",
+                        "warning: {}; falling back to native CPU search; this CPU fallback output is not GPU acceleration proof",
                         failure.message
                     );
                     if cpu_fallback_config.verbose {
@@ -5959,7 +5961,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
             match failure.kind {
                 GpuRouteFailureKind::Unavailable => {
                     eprintln!(
-                        "warning: {}; falling back to native CPU search",
+                        "warning: {}; falling back to native CPU search; this CPU fallback output is not GPU acceleration proof",
                         failure.message
                     );
                     let rg_available = ripgrep_is_available();

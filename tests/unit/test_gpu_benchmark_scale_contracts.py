@@ -507,6 +507,12 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
     assert gpu0["tg_runtime_backend"] == "NativeGpuBackend"
     assert gpu0["tg_runtime_sidecar_used"] is True
     assert "requires a CUDA-enabled native tg binary" in gpu0["stderr"]
+    assert gpu0["promotion_evidence"] is False
+    assert "not GPU acceleration proof" in gpu0["not_gpu_proof_reason"]
+    assert payload["gpu_evidence_status"] == "unsupported"
+    assert payload["gpu_proof"] is False
+    assert payload["native_gpu_unavailable"] is True
+    assert "sidecar" in payload["not_gpu_proof_reason"]
     assert payload["scale_gate_summary"] == {
         "benchmark_surface": "python-gpu-scale",
         "promotion_evidence_contract": {
@@ -515,6 +521,7 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
             "required_correctness_sizes": ["1GB", "5GB"],
             "required_speed_baselines": ["rg", "tg_cpu"],
             "sidecar_routing_counts_as_promotion": False,
+            "fallback_or_sidecar_counts_as_gpu_proof": False,
             "public_managed_rows_must_not_be_sidecar": True,
         },
         "native_cuda_scale_gate": {
@@ -963,6 +970,12 @@ def test_run_gpu_native_benchmarks_should_not_time_sidecar_routed_gpu_rows(monke
     assert tg_gpu["routing_backend"] == "GpuSidecar"
     assert tg_gpu["sidecar_used"] is True
     assert "not native CUDA scale proof" in tg_gpu["stderr"]
+    assert tg_gpu["promotion_evidence"] is False
+    assert "not GPU acceleration proof" in tg_gpu["not_gpu_proof_reason"]
+    assert payload["gpu_evidence_status"] == "unsupported"
+    assert payload["gpu_proof"] is False
+    assert payload["native_gpu_unavailable"] is True
+    assert "sidecar" in payload["not_gpu_proof_reason"]
     assert payload["scale_gate_summary"]["native_cuda_runtime_gate"] == {
         "status": "UNSUPPORTED",
         "required_backend": "NativeGpuBackend",
@@ -1327,6 +1340,7 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
         "required_correctness_sizes": ["1GB", "5GB"],
         "required_speed_baselines": ["rg", "tg_cpu"],
         "sidecar_routing_counts_as_promotion": False,
+        "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
     }
     assert summary["native_cuda_runtime_gate"] == {

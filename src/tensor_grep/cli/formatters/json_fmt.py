@@ -27,7 +27,7 @@ def _match_payload(match: MatchLine) -> dict[str, object]:
 
 
 def _routing_envelope(result: SearchResult) -> dict[str, object]:
-    return {
+    envelope: dict[str, object] = {
         "version": JSON_OUTPUT_VERSION,
         "sidecar_used": result.sidecar_used,
         "routing_backend": result.routing_backend,
@@ -37,6 +37,34 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
         "routing_gpu_chunk_plan_mb": _routing_gpu_chunk_plan(result),
         "routing_distributed": result.routing_distributed,
         "routing_worker_count": result.routing_worker_count,
+    }
+    envelope.update(_gpu_proof_payload(result))
+    return envelope
+
+
+def _gpu_proof_payload(result: SearchResult) -> dict[str, object]:
+    if not result.requested_gpu_device_ids:
+        return {}
+
+    native_gpu_proof = result.routing_backend == "NativeGpuBackend" and result.sidecar_used is False
+    if native_gpu_proof:
+        return {
+            "gpu_evidence_status": "native",
+            "gpu_proof": True,
+            "native_gpu_unavailable": False,
+            "not_gpu_proof_reason": None,
+        }
+
+    return {
+        "gpu_evidence_status": "unsupported",
+        "gpu_proof": False,
+        "native_gpu_unavailable": True,
+        "not_gpu_proof_reason": (
+            "Requested GPU execution did not produce NativeGpuBackend with "
+            f"sidecar_used=false (routing_backend={result.routing_backend or 'unknown'}, "
+            f"sidecar_used={result.sidecar_used}); this is CPU/sidecar compatibility "
+            "output, not GPU acceleration proof."
+        ),
     }
 
 
@@ -58,6 +86,14 @@ class JsonFormatter(OutputFormatter):
             "routing_worker_count": envelope["routing_worker_count"],
             "matches": [_match_payload(match) for match in result.matches],
         }
+        for key in (
+            "gpu_evidence_status",
+            "gpu_proof",
+            "native_gpu_unavailable",
+            "not_gpu_proof_reason",
+        ):
+            if key in envelope:
+                data[key] = envelope[key]
         data = {"version": envelope["version"], **data}
         return json.dumps(data)
 

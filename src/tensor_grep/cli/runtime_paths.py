@@ -113,6 +113,49 @@ def _native_candidate_matches_current_package(candidate: Path, *, expected_versi
     return _native_tg_version_matches(expected_version, _native_tg_version(candidate))
 
 
+def inspect_native_tg_binary(
+    candidate: Path,
+    *,
+    repo_root: Path | None = None,
+    expected_version: str | None = None,
+) -> dict[str, str | None]:
+    """Return non-destructive native tg version metadata for diagnostics."""
+    root = repo_root or _repo_root()
+    expected = expected_version or _expected_tg_version()
+    try:
+        resolved = candidate.expanduser().resolve()
+    except OSError:
+        resolved = candidate.expanduser().absolute()
+
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    release_binary = (root / "rust_core" / "target" / "release" / binary_name).resolve()
+    debug_binary = (root / "rust_core" / "target" / "debug" / binary_name).resolve()
+    if resolved == release_binary:
+        kind = "in-tree-release"
+    elif resolved == debug_binary:
+        kind = "in-tree-debug"
+    else:
+        kind = "external"
+
+    version_text = _native_tg_version(resolved) if resolved.is_file() else None
+    if not resolved.is_file():
+        version_status = "missing"
+    elif _native_tg_version_matches(expected, version_text):
+        version_status = "matches"
+    elif version_text:
+        version_status = "stale"
+    else:
+        version_status = "unknown"
+
+    return {
+        "path": str(resolved),
+        "kind": kind,
+        "version": version_text,
+        "expected_version": expected,
+        "version_status": version_status,
+    }
+
+
 @lru_cache(maxsize=1)
 def resolve_native_tg_binary() -> Path | None:
     repo_root = _repo_root()
