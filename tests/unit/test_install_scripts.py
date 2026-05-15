@@ -163,11 +163,32 @@ def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim()
     content = _read_script("scripts/install.ps1")
 
     assert '"tg.com", "tg.exe", "tg.bat", "tg.ps1"' in content
+    assert 'if ($staleShimName -eq "tg.exe") {' in content
+    assert "Test-TensorGrepLauncher -CandidatePath $staleShimPath" in content
+    assert "Skipping foreign tg.exe in tensor-grep shim dir" in content
+    assert (
+        "Python subprocess tg.exe bridge was not installed because a foreign tg.exe already exists"
+        in content
+    )
     assert "Remove-Item -LiteralPath $staleShimPath -Force" in content
     assert "Removed stale tg launcher shadowing managed shim" in content
     assert content.index("Remove-Item -LiteralPath $staleShimPath -Force") < content.index(
         "Write-AsciiFile -Path $cmdShimPath"
     )
+
+
+def test_install_ps1_should_write_exe_bridge_for_python_subprocess_in_shim_dirs():
+    content = _read_script("scripts/install.ps1")
+
+    assert '$exeShimPath = "$shimDir\\tg.exe"' in content
+    assert '$exeShimMarkerPath = "$shimDir\\tg.exe.tensor-grep-bridge"' in content
+    assert "Copy-Item -LiteralPath $nativeFrontdoorPath -Destination $exeShimPath -Force" in content
+    assert (
+        'Write-AsciiFile -Path $exeShimMarkerPath -Value "tensor-grep managed tg.exe bridge`r`n"'
+        in content
+    )
+    assert "$installedShimPaths += $exeShimPath" in content
+    assert "Python subprocess tg.exe bridge" in content
 
 
 def test_install_ps1_should_create_argv_safe_utf8_powershell_shims():

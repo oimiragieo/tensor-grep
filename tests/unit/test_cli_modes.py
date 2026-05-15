@@ -6606,6 +6606,118 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
     assert str(repaired_tg) in result.stdout
 
 
+def test_upgrade_targets_current_cmd_shim_dir_for_python_subprocess_bridge(
+    monkeypatch,
+    tmp_path,
+):
+    from tensor_grep.cli import main as cli_main
+
+    install_dir = tmp_path / ".tensor-grep"
+    native_binary = install_dir / "bin" / "tg.exe"
+    shim_dir = tmp_path / "bin"
+    shim_cmd = shim_dir / "tg.cmd"
+    native_binary.parent.mkdir(parents=True)
+    shim_dir.mkdir(parents=True)
+    native_binary.write_text("new native", encoding="utf-8")
+    shim_cmd.write_text("@echo off\n", encoding="utf-8")
+
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate in {native_binary, shim_cmd, shim_dir / "tg.exe"}:
+            return "tg 0.33.0"
+        return None
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.setenv("PATH", str(shim_dir))
+    monkeypatch.setattr(cli_main, "_doctor_fresh_shell_path_value", lambda: None)
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+    monkeypatch.setattr(cli_main, "_native_tg_version", lambda path: _fake_candidate_version(path))
+
+    targets = cli_main._windows_stale_tensor_grep_com_bridges("0.33.0", native_binary)
+
+    assert targets == [shim_dir / "tg.exe"]
+    refreshed = cli_main._refresh_windows_tensor_grep_com_bridges(
+        "0.33.0",
+        native_binary,
+        targets,
+    )
+    assert refreshed == [shim_dir / "tg.exe"]
+    assert (shim_dir / "tg.exe").read_text(encoding="utf-8") == "new native"
+    assert (shim_dir / "tg.exe.tensor-grep-bridge").read_text(encoding="ascii") == (
+        "tensor-grep managed tg.exe bridge\n"
+    )
+
+
+def test_upgrade_does_not_create_python_subprocess_bridge_for_foreign_cmd(
+    monkeypatch,
+    tmp_path,
+):
+    from tensor_grep.cli import main as cli_main
+
+    native_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    shim_dir = tmp_path / "bin"
+    foreign_cmd = shim_dir / "tg.cmd"
+    native_binary.parent.mkdir(parents=True)
+    shim_dir.mkdir(parents=True)
+    native_binary.write_text("new native", encoding="utf-8")
+    foreign_cmd.write_text("@echo off\n", encoding="utf-8")
+
+    def _fake_candidate_version(path):
+        if Path(path) == foreign_cmd:
+            return "Together CLI (v2.12.0)"
+        if Path(path) == native_binary:
+            return "tg 0.33.0"
+        return None
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.setenv("PATH", str(shim_dir))
+    monkeypatch.setattr(cli_main, "_doctor_fresh_shell_path_value", lambda: None)
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+
+    targets = cli_main._windows_stale_tensor_grep_com_bridges("0.33.0", native_binary)
+
+    assert targets == []
+    assert not (shim_dir / "tg.exe").exists()
+
+
+def test_upgrade_does_not_create_python_subprocess_bridge_outside_managed_shim_dirs(
+    monkeypatch,
+    tmp_path,
+):
+    from tensor_grep.cli import main as cli_main
+
+    native_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    tool_dir = tmp_path / "tools"
+    wrapper_cmd = tool_dir / "tg.cmd"
+    native_binary.parent.mkdir(parents=True)
+    tool_dir.mkdir(parents=True)
+    native_binary.write_text("new native", encoding="utf-8")
+    wrapper_cmd.write_text("@echo off\n", encoding="utf-8")
+
+    def _fake_candidate_version(path):
+        if Path(path) == wrapper_cmd:
+            return "tg 0.33.0"
+        if Path(path) == native_binary:
+            return "tg 0.33.0"
+        return None
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.setenv("PATH", str(tool_dir))
+    monkeypatch.setattr(cli_main, "_doctor_fresh_shell_path_value", lambda: None)
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+
+    targets = cli_main._windows_stale_tensor_grep_com_bridges("0.33.0", native_binary)
+
+    assert targets == []
+    assert not (tool_dir / "tg.exe").exists()
+
+
 def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(monkeypatch, tmp_path):
     install_dir = tmp_path / ".tensor-grep"
     python_executable = install_dir / ".venv" / "Scripts" / "python.exe"

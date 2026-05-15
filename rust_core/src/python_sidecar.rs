@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -19,6 +20,8 @@ const TG_NATIVE_TG_BINARY_ENV: &str = "TG_NATIVE_TG_BINARY";
 const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HELP_PROBE_TIMEOUT_MS: u64 = 750;
 const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
+const WINDOWS_EXE_BRIDGE_MARKER: &str = "tg.exe.tensor-grep-bridge";
+const WINDOWS_EXE_BRIDGE_MARKER_CONTENT: &str = "tensor-grep managed tg.exe bridge";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SidecarRequest {
@@ -536,6 +539,14 @@ fn resolve_python_command_for_context(
         }
     }
 
+    if current_exe.is_some_and(|path| is_managed_windows_exe_bridge(path, home_dirs)) {
+        for home_dir in home_dirs {
+            if let Some(managed_python) = managed_install_python_from_home(home_dir) {
+                return managed_python.into_os_string();
+            }
+        }
+    }
+
     OsString::from("python")
 }
 
@@ -543,6 +554,32 @@ fn is_windows_com_bridge(path: &Path) -> bool {
     path.file_name()
         .and_then(OsStr::to_str)
         .is_some_and(|name| name.eq_ignore_ascii_case("tg.com"))
+}
+
+fn is_external_windows_exe_bridge(path: &Path) -> bool {
+    if !cfg!(windows) {
+        return false;
+    }
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| name.eq_ignore_ascii_case("tg.exe"))
+}
+
+fn is_managed_windows_exe_bridge(path: &Path, home_dirs: &[PathBuf]) -> bool {
+    if !is_external_windows_exe_bridge(path) {
+        return false;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if !home_dirs.iter().any(|home_dir| {
+        paths_equivalent(parent, &home_dir.join("bin"))
+            || paths_equivalent(parent, &home_dir.join(".local").join("bin"))
+    }) {
+        return false;
+    }
+    fs::read_to_string(path.with_file_name(WINDOWS_EXE_BRIDGE_MARKER))
+        .is_ok_and(|content| content.trim() == WINDOWS_EXE_BRIDGE_MARKER_CONTENT)
 }
 
 fn managed_home_dirs_from_env() -> Vec<PathBuf> {
@@ -634,7 +671,31 @@ fn native_tg_binary_env_override_for_context(
             }
         }
     }
+    if current_exe
+        .as_ref()
+        .is_some_and(|path| is_managed_windows_exe_bridge(path, home_dirs))
+    {
+        for home_dir in home_dirs {
+            if let Some(managed_native) = managed_install_native_binary_from_home(home_dir) {
+                if !paths_equivalent(
+                    current_exe.as_ref().expect("checked current_exe"),
+                    &managed_native,
+                ) {
+                    return Some(managed_native.into_os_string());
+                }
+            }
+        }
+    }
     current_exe.map(Into::into)
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
 }
 
 fn resolve_repo_source_root() -> Option<PathBuf> {
@@ -741,11 +802,12 @@ mod tests {
         gpu_device_ids_env_value, managed_install_native_binary_from_home,
         managed_install_python_from_home, merged_pythonpath, native_tg_binary_env_override,
         native_tg_binary_env_override_for_context, resolve_python_command_for_context,
-        resolve_repo_source_root_relative_to_exe, SidecarRequest,
+        resolve_repo_source_root_relative_to_exe, SidecarRequest, WINDOWS_EXE_BRIDGE_MARKER,
+        WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
     };
     use serde_json::json;
     use std::env;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -851,6 +913,16 @@ mod tests {
         fs::write(&python, b"python").unwrap();
         fs::write(&bridge, b"native").unwrap();
         fs::write(
+            bridge.with_file_name(WINDOWS_EXE_BRIDGE_MARKER),
+            WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+        )
+        .unwrap();
+        fs::write(
+            bridge.with_file_name(WINDOWS_EXE_BRIDGE_MARKER),
+            WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+        )
+        .unwrap();
+        fs::write(
             bridge
                 .parent()
                 .unwrap()
@@ -884,6 +956,11 @@ mod tests {
         fs::create_dir_all(bridge.parent().unwrap()).unwrap();
         fs::write(&managed_native, b"native").unwrap();
         fs::write(&bridge, b"bridge").unwrap();
+        fs::write(
+            bridge.with_file_name(WINDOWS_EXE_BRIDGE_MARKER),
+            WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+        )
+        .unwrap();
 
         assert_eq!(
             managed_install_native_binary_from_home(&home).as_deref(),
@@ -892,6 +969,86 @@ mod tests {
         assert_eq!(
             native_tg_binary_env_override_for_context(None, Some(bridge), &[home]).as_deref(),
             Some(managed_native.as_os_str())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_exe_bridge_resolves_managed_home_python() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let python = home
+            .join(".tensor-grep")
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe");
+        let bridge = home.join("bin").join("tg.exe");
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        fs::write(&python, b"python").unwrap();
+        fs::write(&bridge, b"native").unwrap();
+        fs::write(
+            bridge.with_file_name(WINDOWS_EXE_BRIDGE_MARKER),
+            WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_python_command_for_context(Some(&bridge), &[home]).as_os_str(),
+            python.as_os_str()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_exe_bridge_points_sidecar_back_to_managed_native_frontdoor() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let managed_native = home.join(".tensor-grep").join("bin").join("tg.exe");
+        let bridge = home.join("bin").join("tg.exe");
+        fs::create_dir_all(managed_native.parent().unwrap()).unwrap();
+        fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        fs::write(&managed_native, b"native").unwrap();
+        fs::write(&bridge, b"bridge").unwrap();
+        fs::write(
+            bridge.with_file_name(WINDOWS_EXE_BRIDGE_MARKER),
+            WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+        )
+        .unwrap();
+
+        assert_eq!(
+            native_tg_binary_env_override_for_context(None, Some(bridge), &[home]).as_deref(),
+            Some(managed_native.as_os_str())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unmarked_home_bin_exe_does_not_redirect_to_managed_install() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let python = home
+            .join(".tensor-grep")
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe");
+        let managed_native = home.join(".tensor-grep").join("bin").join("tg.exe");
+        let local_exe = home.join("bin").join("tg.exe");
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::create_dir_all(managed_native.parent().unwrap()).unwrap();
+        fs::create_dir_all(local_exe.parent().unwrap()).unwrap();
+        fs::write(&python, b"python").unwrap();
+        fs::write(&managed_native, b"managed").unwrap();
+        fs::write(&local_exe, b"local").unwrap();
+
+        assert_eq!(
+            resolve_python_command_for_context(Some(&local_exe), &[home.clone()]).as_os_str(),
+            OsStr::new("python")
+        );
+        assert_eq!(
+            native_tg_binary_env_override_for_context(None, Some(local_exe.clone()), &[home])
+                .as_deref(),
+            Some(local_exe.as_os_str())
         );
     }
 }
