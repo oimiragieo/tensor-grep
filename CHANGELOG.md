@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.12.7 (2026-05-15)
+
+### Bug Fixes
+
+- Harden v1.12.6 dogfood cli contracts
+  ([`da44a2f`](https://github.com/oimiragieo/tensor-grep/commit/da44a2f65b80bd84c6da48cc2b2ad13e7a1dcacd))
+
+Harden public native/Python CLI contracts from the v1.12.6 dogfood feedback.
+
+Local validation: - uv run ruff check . - uv run ruff format --check --preview . - uv run mypy
+  src/tensor_grep - uv run pytest -q - cargo fmt --manifest-path rust_core/Cargo.toml --check -
+  cargo test --manifest-path rust_core/Cargo.toml --test test_public_native_cli_parity --
+  --nocapture - cargo test --manifest-path rust_core/Cargo.toml --test test_routing -- --nocapture
+
+PR CI: all required checks passed.
+
+
 ## v1.12.6 (2026-05-15)
 
 ### Bug Fixes
