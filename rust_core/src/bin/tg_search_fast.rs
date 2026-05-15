@@ -19,6 +19,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
 
     let mut args = RipgrepSearchArgs {
         files: false,
+        json: false,
         ignore_case: false,
         fixed_strings: false,
         invert_match: false,

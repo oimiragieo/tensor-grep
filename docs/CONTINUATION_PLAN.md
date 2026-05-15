@@ -10,21 +10,21 @@ The current tagged state is `v1.12.8`, and the latest complete public PyPI/relea
 
 Current release facts:
 
-- Latest tagged release PR: #128 `fix: harden v1.12.6 dogfood cli contracts`
-- Latest tagged merge commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
-- Latest tagged release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
-- Latest complete public release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
-- Latest merged fix commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Latest tagged release PR: #137 `fix: route cold rg-shaped searches to rg`
+- Latest tagged merge commit: `f848748 fix: route cold rg-shaped searches to rg (#137)`
+- Latest tagged release commit: `cfc49b0 chore(release): v1.12.8 [skip ci]`
+- Latest complete public release commit: `cfc49b0 chore(release): v1.12.8 [skip ci]`
+- Latest merged fix commit: `f848748 fix: route cold rg-shaped searches to rg (#137)`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
-- Latest complete public release PR: #128 `fix: harden v1.12.6 dogfood cli contracts`
-- Latest complete public merge commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Latest complete public release PR: #137 `fix: route cold rg-shaped searches to rg`
+- Latest complete public merge commit: `f848748 fix: route cold rg-shaped searches to rg (#137)`
 - `v1.11.0` main CI run `25834508800` passed pre-release checks and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `25917666403`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- Main CI run `25927793134`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
-- CodeQL run `25917665808`: passed on the v1.12.7 release line.
-- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.7 tg --version` reports `tensor-grep 1.12.7`.
-- GitHub release assets for `v1.12.7` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Public `v1.12.7` dogfood verified post-release-safe docs governance, public launcher resolution, accepted native/dev CLI flag alignment, `tg new --base-dir`, edit-plan budget flags, and explicit JSON/NDJSON schema positioning; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
+- CodeQL run `25927792509`: passed on the v1.12.8 release line.
+- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.8 tg --version` reports `tensor-grep 1.12.8`.
+- GitHub release assets for `v1.12.8` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Public `v1.12.8` dogfood verified post-release-safe docs governance, public launcher resolution, bounded map/context output, `tg run --pattern`, root cold rg-shaped routing, accepted native/dev CLI flag alignment, `tg new --base-dir`, edit-plan budget flags, and explicit JSON/NDJSON schema positioning; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
 - Current retained release-baseline commits: `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and `87d4ca4 fix: accelerate fixed multi-pattern native search`.
 - Historical `v1.10.10` launcher dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version`, fresh `cmd`, unprofiled `pwsh`, and Python `subprocess.run(["tg", "--version"])` all reported `tg 1.10.10` after the explicit repair command.
 - Prior managed native-upgrade dogfood: `tg update` from `v1.9.3` installed sidecar `tensor-grep==1.9.4` and refreshed the native front door to `tg 1.9.4` after transient PyPI propagation lag.

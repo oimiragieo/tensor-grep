@@ -8,6 +8,7 @@ from typing import Any
 
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
+from tensor_grep.core.retrieval_lexical import split_terms
 
 
 def _as_dict(value: object) -> dict[str, Any]:
@@ -85,6 +86,18 @@ def _tied_alternative_targets(
             "confidence": round(alternative_confidence, 3),
         })
     return tied
+
+
+def _primary_target_is_unrequested_marker_helper(
+    query: str,
+    primary_target: dict[str, Any],
+) -> bool:
+    symbol = str(primary_target.get("symbol") or "")
+    if not symbol:
+        return False
+    query_terms = set(repo_map._query_terms(query))
+    symbol_terms = set(split_terms(symbol))
+    return "marker" in symbol_terms and "marker" not in query_terms
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -1027,16 +1040,27 @@ def build_agent_capsule(
     _cap_alternative_target_confidences(alternatives, target)
     tied_alternatives = _tied_alternative_targets(query, alternatives, target)
     tie_candidates = list(tied_alternatives)
+    marker_helper_tie = bool(tied_alternatives) and _primary_target_is_unrequested_marker_helper(
+        query,
+        target,
+    )
     validation_alignment_status = str(validation_alignment.get("status") or "")
     validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
     tie_resolved_by_validation = (
         bool(tied_alternatives)
+        and not marker_helper_tie
         and bool(validation_commands)
         and (
             validation_alignment_status == "aligned"
             or (validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0)
         )
     )
+    if marker_helper_tie:
+        consistency["confidence_downgraded"] = True
+        consistency["downgrade_reasons"] = _dedupe([
+            *list(consistency.get("downgrade_reasons") or []),
+            "primary target is an unrequested marker helper with equal-confidence alternatives",
+        ])
     if tied_alternatives and tie_resolved_by_validation:
         consistency["alternative_confidence_tie_resolved_by"] = "validation"
         tied_alternatives = []

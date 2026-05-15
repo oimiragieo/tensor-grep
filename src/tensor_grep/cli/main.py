@@ -135,6 +135,8 @@ persisted repeated-query acceleration, and optional GPU routing.
 
 **Search and safety**
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
+- The search surface is a validated common rg-compatible subset, not a full ripgrep replacement.
+- Use `--format rg --json` for ripgrep JSON Lines events; plain `--json` is tensor-grep aggregate JSON.
 - Broad generated-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
 - `--smart-case`, `--hidden`, `--max-depth`, and `--text` are honored by structured CPU and sidecar search; native GPU falls back when a requested switch changes semantics it cannot safely execute yet.
 - `--gpu-device-ids` pins selected GPUs for explicit search, benchmark, and agent evidence probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
@@ -142,7 +144,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 
 **Notes**
 - Bare patterns are treated as `tg search`.
-- Use `tg search --help` for ripgrep-compatible flags.
+- Use `tg search --help` for the current validated rg-compatible flag subset.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
@@ -2560,6 +2562,7 @@ def _can_passthrough_rg(
     config: "SearchConfig",
     *,
     format_type: str,
+    explicit_rg_format: bool,
     json_mode: bool,
     ndjson_mode: bool,
     files_mode: bool,
@@ -2568,6 +2571,7 @@ def _can_passthrough_rg(
     only_matching: bool,
     stats_mode: bool,
 ) -> bool:
+    rg_json_passthrough = bool(json_mode and explicit_rg_format)
     # Keep passthrough only for modes where rg semantics are fully compatible
     # with tensor-grep output and feature behavior.
     return bool(
@@ -2575,12 +2579,42 @@ def _can_passthrough_rg(
         and not config.ltl
         and not config.force_cpu
         and format_type == "rg"
-        and not json_mode
+        and (not json_mode or rg_json_passthrough)
         and not ndjson_mode
         and not files_mode
         and not only_matching
+        and not (rg_json_passthrough and stats_mode)
+        and not (rg_json_passthrough and (config.count or config.count_matches))
+        and not (rg_json_passthrough and (files_with_matches or files_without_match))
+        and not (rg_json_passthrough and config.replace_str is not None)
+        and not (rg_json_passthrough and config.passthru)
         and not (files_with_matches and (config.count or config.count_matches))
     )
+
+
+def _explicit_rg_format_requested(
+    argv: list[str] | None = None,
+    *,
+    format_value: str | None = None,
+) -> bool:
+    del format_value
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if argv is None:
+        if not tokens or tokens[0] != "search":
+            return False
+        tokens = tokens[1:]
+    elif tokens and tokens[0] == "search":
+        tokens = tokens[1:]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--format":
+            index += 1
+            return index < len(tokens) and tokens[index] == "rg"
+        if token.startswith("--format="):
+            return token.split("=", 1)[1] == "rg"
+        index += 1
+    return False
 
 
 def _selected_route_supports_rg_passthrough(
@@ -3896,7 +3930,8 @@ def _select_ast_backend_for_pattern(
 @app.command(
     name="search",
     help="""Search files for a regex pattern, with GPU acceleration when applicable.
-The stable text-search contract is the validated rg-compatible surface documented in docs/CONTRACTS.md.
+The stable text-search contract is the validated common rg-compatible subset documented in docs/CONTRACTS.md.
+Use --format rg --json when a tool needs ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.
 
 **Other Available Subcommands:**
 - `tg calibrate`: Measure CPU vs GPU crossover thresholds
@@ -4184,7 +4219,7 @@ def search_command(
         "--json",
         help=(
             "Print results as one tensor-grep aggregate JSON object, not rg JSON Lines. "
-            "Use --ndjson for tensor-grep streaming output."
+            "Use --format rg --json for ripgrep JSON Lines or --ndjson for tensor-grep streaming output."
         ),
     ),
     ndjson: bool = typer.Option(
@@ -4472,11 +4507,13 @@ def search_command(
         typer.echo(_format_broad_generated_scan_error(generated_scan_dirs), err=True)
         raise typer.Exit(2)
 
+    explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
     native_tg_binary = resolve_native_tg_binary()
     if (
         native_tg_binary is not None
         and not guarded_broad_root
         and not explicit_hidden_search_root
+        and not (json and explicit_rg_format)
         and _can_delegate_to_native_tg_search(
             config,
             ndjson=ndjson,
@@ -4506,6 +4543,7 @@ def search_command(
         and _can_passthrough_rg(
             config,
             format_type=format_type,
+            explicit_rg_format=explicit_rg_format,
             json_mode=json,
             ndjson_mode=ndjson,
             files_mode=files,

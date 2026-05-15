@@ -48,7 +48,7 @@ use tensor_grep_rs::routing::{
     SearchRoutingConfig,
 };
 
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nLauncher repair:\n  tg repair-launcher --allow-foreign-rename\n                                      Explicitly back up a foreign Windows tg.exe that blocks Python subprocess resolution and replace it with the verified tensor-grep front door.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  tg search                           Validated common rg-compatible subset, not a full ripgrep replacement.\n  --format rg --json                  Emit ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nLauncher repair:\n  tg repair-launcher --allow-foreign-rename\n                                      Explicitly back up a foreign Windows tg.exe that blocks Python subprocess resolution and replace it with the verified tensor-grep front door.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -1116,6 +1116,27 @@ fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<O
     Some(search_args)
 }
 
+fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
+    let tokens = raw_args
+        .iter()
+        .skip(2)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if token == "--format" {
+            index += 1;
+            return tokens.get(index).map(String::as_str) == Some("rg");
+        }
+        if token.starts_with("--format=") {
+            return token.split_once('=').map(|(_, value)| value) == Some("rg");
+        }
+        index += 1;
+    }
+    false
+}
+
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
     args.globs.is_empty() && !args.word_regexp && !args.fixed_strings
 }
@@ -1123,6 +1144,7 @@ fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
 fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let mut args = RipgrepSearchArgs {
         files: false,
+        json: false,
         ignore_case: false,
         fixed_strings: false,
         invert_match: false,
@@ -1184,6 +1206,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-F" | "--fixed-strings" => args.fixed_strings = true,
             "-v" | "--invert-match" => args.invert_match = true,
             "-c" | "--count" => args.count = true,
+            "--json" => args.json = true,
             "-n" | "--line-number" => args.line_number = true,
             "-o" | "--only-matching" => args.only_matching = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
@@ -1293,8 +1316,12 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
 
 fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let search_args = normalize_top_level_format_search_args(raw_args)?;
+    let explicit_rg_format = requests_explicit_rg_format(&search_args);
     let args = parse_early_ripgrep_args(&search_args)?;
-    should_use_early_ripgrep_fast_path(&args).then_some(args)
+    if args.json && !explicit_rg_format {
+        return None;
+    }
+    (explicit_rg_format || should_use_early_ripgrep_fast_path(&args)).then_some(args)
 }
 
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
@@ -1521,6 +1548,67 @@ mod tests {
 
         assert_eq!(args.patterns, vec!["ERROR".to_string()]);
         assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn top_level_search_frontdoor_accepts_explicit_format_rg_fixed_string() {
+        let args = parse_default_frontdoor_args(&[
+            "tg",
+            "--format",
+            "rg",
+            "--color",
+            "never",
+            "--sort",
+            "path",
+            "-n",
+            "-F",
+            "ERROR",
+            "bench_data",
+        ]);
+
+        assert!(args.fixed_strings);
+        assert!(args.line_number);
+        assert_eq!(args.color.as_deref(), Some("never"));
+        assert_eq!(args.sort.as_deref(), Some("path"));
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn search_frontdoor_rejects_plain_json_without_explicit_rg_format() {
+        for tokens in [
+            vec!["tg", "search", "--json", "ERROR", "bench_data"],
+            vec!["tg", "--json", "ERROR", "bench_data"],
+        ] {
+            let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+            assert!(
+                parse_default_search_frontdoor_args(&raw_args).is_none(),
+                "plain --json must stay on tensor-grep aggregate JSON path for {tokens:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn search_frontdoor_accepts_json_when_rg_format_is_explicit() {
+        for tokens in [
+            vec![
+                "tg",
+                "search",
+                "--format",
+                "rg",
+                "--json",
+                "ERROR",
+                "bench_data",
+            ],
+            vec!["tg", "--format", "rg", "--json", "ERROR", "bench_data"],
+        ] {
+            let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+            let parsed = parse_default_search_frontdoor_args(&raw_args)
+                .expect("explicit --format rg --json should use rg JSON Lines passthrough");
+            assert!(parsed.json);
+            assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
+            assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
+        }
     }
 
     #[test]
@@ -2826,6 +2914,7 @@ fn positional_ripgrep_args(
 ) -> RipgrepSearchArgs {
     RipgrepSearchArgs {
         files: false,
+        json: false,
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
@@ -2877,6 +2966,7 @@ fn positional_ripgrep_args(
 fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> RipgrepSearchArgs {
     RipgrepSearchArgs {
         files: false,
+        json: args.json && args.format.as_deref() == Some("rg"),
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
         invert_match: args.invert_match,
@@ -2926,32 +3016,33 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
 }
 
 fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
-    !args.json
-        && !args.ndjson
-        && (args.count_matches
-            || args.column
-            || args.smart_case
-            || args.hidden
-            || args.follow
-            || args.text
-            || args.passthru
-            || args.no_config
-            || args.auto_hybrid_regex
-            || args.no_ignore_dot
-            || args.no_ignore_exclude
-            || args.no_ignore_files
-            || args.no_ignore_global
-            || args.no_ignore_parent
-            || args.files_with_matches
-            || args.files_without_match
-            || args.sort.is_some()
-            || args.sort_reverse.is_some()
-            || args.max_depth.is_some()
-            || args.null
-            || args.null_data
-            || args.multiline
-            || args.multiline_dotall
-            || !args.file_type.is_empty())
+    (args.json && args.format.as_deref() == Some("rg"))
+        || (!args.json
+            && !args.ndjson
+            && (args.count_matches
+                || args.column
+                || args.smart_case
+                || args.hidden
+                || args.follow
+                || args.text
+                || args.passthru
+                || args.no_config
+                || args.auto_hybrid_regex
+                || args.no_ignore_dot
+                || args.no_ignore_exclude
+                || args.no_ignore_files
+                || args.no_ignore_global
+                || args.no_ignore_parent
+                || args.files_with_matches
+                || args.files_without_match
+                || args.sort.is_some()
+                || args.sort_reverse.is_some()
+                || args.max_depth.is_some()
+                || args.null
+                || args.null_data
+                || args.multiline
+                || args.multiline_dotall
+                || !args.file_type.is_empty()))
 }
 
 fn search_prefers_ripgrep_passthrough(
@@ -6305,6 +6396,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                             .allow_rg_fallback
                             .then(|| RipgrepSearchArgs {
                                 files: false,
+                                json: false,
                                 ignore_case: params.ignore_case,
                                 fixed_strings: params.fixed_strings,
                                 invert_match: params.invert_match,

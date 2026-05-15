@@ -214,8 +214,18 @@ fn test_help_documents_runtime_override_env_vars() {
     assert!(stdout.contains("repair-launcher"), "stdout={stdout}");
     assert!(stdout.contains("--allow-foreign-rename"), "stdout={stdout}");
     let normalized_stdout = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized_lower = normalized_stdout.to_lowercase();
     assert!(
         normalized_stdout.contains("native GPU falls back"),
+        "stdout={stdout}"
+    );
+    assert!(
+        normalized_lower.contains("validated common")
+            && normalized_lower.contains("compatible subset"),
+        "stdout={stdout}"
+    );
+    assert!(
+        normalized_stdout.contains("--format rg --json"),
         "stdout={stdout}"
     );
 }
