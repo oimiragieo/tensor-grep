@@ -422,6 +422,26 @@ def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process()
             assert fragment in content, f"{path} missing `{fragment}`"
 
 
+def test_agent_success_harness_should_remain_workflow_not_search_speed_contract() -> None:
+    docs = {
+        "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
+        "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
+        "docs/SESSION_HANDOFF.md": SESSION_HANDOFF_PATH.read_text(encoding="utf-8"),
+        "docs/benchmarks.md": BENCHMARKS_DOC_PATH.read_text(encoding="utf-8"),
+        "docs/CONTRACTS.md": CONTRACTS_DOC_PATH.read_text(encoding="utf-8"),
+    }
+
+    for path, content in docs.items():
+        assert "run_agent_success_harness.py" in content, f"{path} missing harness command"
+        assert "bench_agent_success_harness.json" in content, f"{path} missing harness artifact"
+
+    for path in ("docs/benchmarks.md", "docs/CONTRACTS.md"):
+        content = docs[path]
+        assert "agent-native end-to-end success harness; not a raw search speed claim" in content
+        for surface in ("intent", "context", "edit_seed", "apply", "verify", "rollback"):
+            assert surface in content
+
+
 def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() -> None:
     docs = {
         "README.md": README_PATH.read_text(encoding="utf-8"),

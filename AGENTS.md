@@ -251,6 +251,7 @@ Use this for:
 
 ```powershell
 python benchmarks/run_agent_workflow_benchmarks.py --output artifacts/bench_agent_workflow.json
+python benchmarks/run_agent_success_harness.py --output artifacts/bench_agent_success_harness.json
 ```
 
 Use this for:
@@ -259,6 +260,7 @@ Use this for:
 - confidence / alternative target surfacing
 - validation alignment and filtering
 - rollback, edit order, and whole-loop edit latency
+- end-to-end query intent -> context -> edit seed -> apply -> verify -> rollback success
 
 This is workflow evidence, not a cold exact-text search speed claim.
 

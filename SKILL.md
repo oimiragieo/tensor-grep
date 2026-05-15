@@ -253,6 +253,7 @@ python benchmarks/check_regression.py --baseline auto --current artifacts/bench_
 python benchmarks/run_hot_query_benchmarks.py --output artifacts/bench_hot_query_benchmarks.json
 python benchmarks/run_ast_benchmarks.py --output artifacts/bench_run_ast_benchmarks.json
 python benchmarks/run_ast_workflow_benchmarks.py --output artifacts/bench_run_ast_workflow_benchmarks.json
+python benchmarks/run_agent_success_harness.py --output artifacts/bench_agent_success_harness.json
 python benchmarks/run_gpu_benchmarks.py --output artifacts/bench_run_gpu_benchmarks.json
 ```
 
