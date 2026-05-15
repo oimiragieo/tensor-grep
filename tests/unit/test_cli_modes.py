@@ -5636,6 +5636,31 @@ def test_tg_run_uses_typer_help():
     assert "positional arguments:" not in result.stdout
 
 
+def test_tg_run_help_should_position_ast_as_validated_slice_not_ast_grep_parity():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["run", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    normalized_help = re.sub(r"\s+", " ", help_text)
+    assert "validated AST slice" in normalized_help
+    assert "ast-grep parity" not in help_text
+    assert "ast-grep replacement" not in help_text
+
+
+def test_tg_search_help_should_not_claim_tg_run_ast_grep_parity():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["search", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    normalized_help = re.sub(r"\s+", " ", help_text)
+    assert "tg run: Run a validated AST slice" in normalized_help
+    assert "ast-grep parity" not in help_text
+
+
 def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):
     calls: dict[str, object] = {}
 
