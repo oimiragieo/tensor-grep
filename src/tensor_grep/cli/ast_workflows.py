@@ -511,6 +511,7 @@ def run_command(
     policy: str | None = None,
     interactive: bool = False,
     filter_regex: str | None = None,
+    files_with_matches: bool = False,
 ) -> int:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
@@ -531,6 +532,22 @@ def run_command(
         return 1
     if interactive and not rewrite:
         print("--interactive requires --rewrite.", file=sys.stderr)
+        return 1
+
+    if files_with_matches and (
+        rewrite is not None
+        or apply
+        or verify
+        or checkpoint
+        or audit_manifest is not None
+        or audit_signing_key is not None
+        or lint_cmd is not None
+        or test_cmd is not None
+        or policy is not None
+        or interactive
+        or json_mode
+    ):
+        print("--files-with-matches is a read-only text output mode.", file=sys.stderr)
         return 1
 
     if rewrite is not None and not apply and not interactive:
@@ -569,7 +586,7 @@ def run_command(
     backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
 
-    if not json_mode:
+    if not json_mode and not files_with_matches:
         _safe_stdout_line(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
 
         if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
@@ -696,6 +713,22 @@ def run_command(
             ],
         }
         _safe_stdout_line(json.dumps(payload))
+        return 0
+
+    if files_with_matches:
+        seen_paths: set[str] = set()
+        ordered_paths: list[str] = []
+        for match in all_results.matches:
+            if match.file and match.file not in seen_paths:
+                seen_paths.add(match.file)
+                ordered_paths.append(match.file)
+        if not ordered_paths:
+            for matched_path in all_results.matched_file_paths:
+                if matched_path not in seen_paths:
+                    seen_paths.add(matched_path)
+                    ordered_paths.append(matched_path)
+        for matched_path in ordered_paths:
+            _safe_stdout_line(matched_path)
         return 0
 
     from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
@@ -1291,8 +1324,8 @@ def main_entry(argv: list[str] | None = None) -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run")
-    run_parser.add_argument("pattern")
-    run_parser.add_argument("path", nargs="?")
+    run_parser.add_argument("positionals", nargs="*")
+    run_parser.add_argument("--pattern", "-p", dest="pattern_option", default=None)
     run_parser.add_argument("--rewrite", "-r", default=None)
     run_parser.add_argument("--lang", "-l", default=None)
     run_parser.add_argument("--apply", action="store_true")
@@ -1304,6 +1337,7 @@ def main_entry(argv: list[str] | None = None) -> None:
     run_parser.add_argument("--lint-cmd", default=None)
     run_parser.add_argument("--test-cmd", default=None)
     run_parser.add_argument("--policy", default=None)
+    run_parser.add_argument("--files-with-matches", action="store_true")
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("path", nargs="?", default=".")
@@ -1323,10 +1357,23 @@ def main_entry(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     if args.command == "run":
+        positionals = list(args.positionals or [])
+        if args.pattern_option:
+            if len(positionals) > 1:
+                parser.error("run --pattern accepts at most one positional PATH argument")
+            pattern = args.pattern_option
+            path = positionals[0] if positionals else None
+        else:
+            if len(positionals) > 2:
+                parser.error("run accepts at most PATTERN and PATH positionals")
+            pattern = positionals[0] if positionals else None
+            path = positionals[1] if len(positionals) > 1 else None
+        if not pattern:
+            parser.error("run requires --pattern <PATTERN> or positional PATTERN")
         raise SystemExit(
             run_command(
-                args.pattern,
-                args.path,
+                pattern,
+                path,
                 rewrite=args.rewrite,
                 lang=args.lang,
                 apply=args.apply,
@@ -1338,6 +1385,7 @@ def main_entry(argv: list[str] | None = None) -> None:
                 lint_cmd=args.lint_cmd,
                 test_cmd=args.test_cmd,
                 policy=args.policy,
+                files_with_matches=args.files_with_matches,
             )
         )
     if args.command == "scan":

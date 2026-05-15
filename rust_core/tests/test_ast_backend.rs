@@ -147,6 +147,35 @@ fn test_tg_run_json_metadata_uses_ast_backend_routing() {
 }
 
 #[test]
+fn test_tg_run_accepts_ast_grep_pattern_option_and_files_with_matches() {
+    let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--pattern")
+        .arg("def $F($$$ARGS): $$$BODY")
+        .arg("--files-with-matches")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        file_path.to_string_lossy()
+    );
+}
+
+#[test]
 fn test_tg_run_json_metadata_preserves_ast_match_details() {
     let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
 

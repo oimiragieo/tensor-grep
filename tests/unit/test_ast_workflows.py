@@ -567,3 +567,73 @@ def test_run_command_should_escape_unencodable_ast_output_without_binary_buffer(
         "Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes
     )
     assert "1:def \\u6f22():\n" in stdout.text_writes
+
+
+def test_run_command_files_with_matches_outputs_only_paths(tmp_path, monkeypatch, capsys):
+    """Verify AST file-list mode stays quiet and deduplicates matched files."""
+    from tensor_grep.cli.ast_workflows import run_command
+
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(
+                matches=[
+                    MatchLine(line_number=1, text="class First: pass", file=str(first)),
+                    MatchLine(line_number=2, text="class FirstAgain: pass", file=str(first)),
+                    MatchLine(line_number=1, text="class Second: pass", file=str(second)),
+                ],
+                matched_file_paths=[str(first), str(second)],
+                total_files=2,
+                total_matches=3,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command(
+        pattern="class $NAME: $$$BODY",
+        path=str(tmp_path),
+        lang="python",
+        files_with_matches=True,
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.splitlines() == [str(first), str(second)]
+
+
+def test_ast_workflow_entry_accepts_ast_grep_pattern_option(monkeypatch):
+    """Verify the lightweight workflow parser accepts `run --pattern`, like ast-grep."""
+    from tensor_grep.cli import ast_workflows
+
+    seen: dict[str, object] = {}
+
+    def fake_run_command(pattern: str, path: str | None = None, **kwargs: object) -> int:
+        seen["pattern"] = pattern
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(ast_workflows, "run_command", fake_run_command)
+
+    with pytest.raises(SystemExit) as raised:
+        ast_workflows.main_entry([
+            "run",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "--files-with-matches",
+            "src",
+            "--lang",
+            "python",
+        ])
+
+    assert raised.value.code == 0
+    assert seen["pattern"] == "class $NAME: $$$BODY"
+    assert seen["path"] == "src"
+    assert seen["kwargs"]["files_with_matches"] is True
