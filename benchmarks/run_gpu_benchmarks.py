@@ -1097,6 +1097,7 @@ def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object
         "required_correctness_sizes": required_labels,
         "required_speed_baselines": ["rg", "tg_cpu"],
         "sidecar_routing_counts_as_promotion": False,
+        "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
     }
 
@@ -1140,6 +1141,46 @@ def _uses_native_cuda_runtime(device: dict[str, object]) -> bool:
         and device.get("tg_runtime_backend") == "NativeGpuBackend"
         and device.get("tg_runtime_sidecar_used") is False
     )
+
+
+def _not_gpu_proof_reason(*, backend: object, sidecar_used: object) -> str:
+    return (
+        "Requested GPU execution did not produce NativeGpuBackend with "
+        f"sidecar_used=false (routing_backend={backend or 'unknown'}, "
+        f"sidecar_used={bool(sidecar_used)}); this is CPU/sidecar compatibility "
+        "output, not GPU acceleration proof."
+    )
+
+
+def _gpu_proof_status_from_summary(summary: dict[str, object]) -> dict[str, object]:
+    runtime_gate = summary.get("native_cuda_scale_gate")
+    runtime_status = runtime_gate.get("status") if isinstance(runtime_gate, dict) else "UNSUPPORTED"
+    promotion_ready = bool(summary.get("promotion_ready", False))
+    if promotion_ready:
+        return {
+            "gpu_evidence_status": "promotion_ready",
+            "gpu_proof": True,
+            "native_gpu_unavailable": False,
+            "not_gpu_proof_reason": None,
+        }
+    if runtime_status != "SUPPORTED":
+        reason = (
+            str(runtime_gate.get("reason") or summary.get("summary") or "")
+            if isinstance(runtime_gate, dict)
+            else str(summary.get("summary") or "")
+        )
+        return {
+            "gpu_evidence_status": "unsupported",
+            "gpu_proof": False,
+            "native_gpu_unavailable": True,
+            "not_gpu_proof_reason": reason,
+        }
+    return {
+        "gpu_evidence_status": "experimental",
+        "gpu_proof": False,
+        "native_gpu_unavailable": False,
+        "not_gpu_proof_reason": str(summary.get("summary") or ""),
+    }
 
 
 def build_scale_gate_summary(
@@ -1295,6 +1336,12 @@ def run_gpu_scale_benchmarks(
             "winning_rows": [],
         }
         gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks([])
+        scale_gate_summary = build_scale_gate_summary(
+            devices=devices,
+            correctness_checks=[],
+            gpu_auto_recommendation=recommendation,
+            correctness_patterns=correctness_patterns,
+        )
         return {
             "bench_dir": str(bench_dir),
             "corpus_sizes": [
@@ -1307,12 +1354,8 @@ def run_gpu_scale_benchmarks(
             "gpu_auto_recommendation": recommendation,
             "gpu_bottleneck_summary": gpu_bottleneck_summary,
             "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
-            "scale_gate_summary": build_scale_gate_summary(
-                devices=devices,
-                correctness_checks=[],
-                gpu_auto_recommendation=recommendation,
-                correctness_patterns=correctness_patterns,
-            ),
+            "scale_gate_summary": scale_gate_summary,
+            **_gpu_proof_status_from_summary(scale_gate_summary),
             "warnings": warnings,
             "errors": errors,
             "benchmark_pattern": benchmark_pattern,
@@ -1399,6 +1442,11 @@ def run_gpu_scale_benchmarks(
                     "median_s": None,
                     "samples_s": [],
                     "stderr": device.get("error", "device probe failed"),
+                    "promotion_evidence": False,
+                    "not_gpu_proof_reason": _not_gpu_proof_reason(
+                        backend=device.get("tg_runtime_backend"),
+                        sidecar_used=device.get("tg_runtime_sidecar_used"),
+                    ),
                 })
             elif not _uses_native_cuda_runtime(device):
                 runtime_probe = runtime_probes.get(int(device["device_id"]), {})
@@ -1413,6 +1461,11 @@ def run_gpu_scale_benchmarks(
                         f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
                     ),
                     "command": runtime_probe.get("command"),
+                    "promotion_evidence": False,
+                    "not_gpu_proof_reason": _not_gpu_proof_reason(
+                        backend=runtime_probe.get("routing_backend"),
+                        sidecar_used=runtime_probe.get("sidecar_used"),
+                    ),
                 })
             else:
                 result = benchmark_search_command(
@@ -1433,6 +1486,7 @@ def run_gpu_scale_benchmarks(
                     warnings=warnings,
                 )
                 entry.update(result)
+                entry["promotion_evidence"] = True
                 native_stats_probe = probe_tg_gpu_native_stats_pipeline(
                     tg_binary=tg_binary,
                     corpus_dir=corpus_dir,
@@ -1546,6 +1600,13 @@ def run_gpu_scale_benchmarks(
     pipeline_samples = scale_pipeline_samples or runtime_pipeline_samples
     gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks(pipeline_samples)
 
+    scale_gate_summary = build_scale_gate_summary(
+        devices=devices,
+        correctness_checks=correctness_checks,
+        gpu_auto_recommendation=gpu_auto_recommendation,
+        correctness_patterns=correctness_patterns,
+    )
+
     return {
         "bench_dir": str(bench_dir),
         "corpus_sizes": [
@@ -1558,12 +1619,8 @@ def run_gpu_scale_benchmarks(
         "gpu_auto_recommendation": gpu_auto_recommendation,
         "gpu_bottleneck_summary": gpu_bottleneck_summary,
         "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
-        "scale_gate_summary": build_scale_gate_summary(
-            devices=devices,
-            correctness_checks=correctness_checks,
-            gpu_auto_recommendation=gpu_auto_recommendation,
-            correctness_patterns=correctness_patterns,
-        ),
+        "scale_gate_summary": scale_gate_summary,
+        **_gpu_proof_status_from_summary(scale_gate_summary),
         "warnings": warnings,
         "errors": errors,
         "benchmark_pattern": benchmark_pattern,

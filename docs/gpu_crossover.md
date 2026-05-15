@@ -11,7 +11,7 @@ The post-`v1.12.4` dogfood keeps public GPU not promotion-ready. Single-pattern 
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary; sidecar-routed rows are unsupported for native CUDA promotion.
 - The public managed binary currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
 - Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
-- Current GPU artifacts expose `promotion_evidence_contract` and `promotion_blockers` so sidecar routing, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
+- Current GPU artifacts expose `promotion_evidence_contract`, `fallback_or_sidecar_counts_as_gpu_proof`, `promotion_blockers`, `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` so sidecar routing, CPU fallback, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
 
 Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary.
 
@@ -36,7 +36,7 @@ The latest user dogfood also reported the native harness as `passed = false` bec
 
 ## 2026-05-11 Route And CPU-Staging Audit
 
-The latest local route audit found that the public managed Windows front door is not a clean native CUDA timing source for `--gpu-device-ids`: a direct JSON probe reports `routing_backend = "GpuSidecar"` and `sidecar_used = true`. An in-tree debug binary without the CUDA feature also falls through the Python sidecar and can time out there. Treat any artifact without explicit `NativeGpuBackend` / `sidecar_used = false` route metadata as sidecar-contaminated and unsupported for native CUDA speed proof.
+The latest local route audit found that the public managed Windows front door is not a clean native CUDA timing source for `--gpu-device-ids`: a direct JSON probe reports `routing_backend = "GpuSidecar"` and `sidecar_used = true`. An in-tree debug binary without the CUDA feature also falls through the Python sidecar and can time out there. Treat any artifact without explicit `NativeGpuBackend` / `sidecar_used = false` route metadata as sidecar-contaminated and unsupported for native CUDA speed proof. Benchmark rows and JSON envelopes should say this directly through `gpu_evidence_status`, `gpu_proof = false`, `native_gpu_unavailable`, and `not_gpu_proof_reason`.
 
 The accepted remediation is now threefold:
 

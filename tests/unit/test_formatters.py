@@ -71,6 +71,24 @@ class TestFormatters:
             {"device_id": 3, "chunk_mb": 512},
         ]
 
+    def test_json_output_marks_gpu_fallback_as_not_proof(self):
+        result = SearchResult(
+            matches=[],
+            total_files=0,
+            total_matches=0,
+            routing_backend="NativeCpuBackend",
+            routing_reason="gpu-auto-fallback-cpu",
+            requested_gpu_device_ids=[0],
+            sidecar_used=False,
+        )
+
+        parsed = json.loads(JsonFormatter().format(result))
+
+        assert parsed["gpu_proof"] is False
+        assert parsed["gpu_evidence_status"] == "unsupported"
+        assert parsed["native_gpu_unavailable"] is True
+        assert "not GPU acceleration proof" in parsed["not_gpu_proof_reason"]
+
     def test_table_output_has_headers(self):
         fmt = TableFormatter()
         output = fmt.format(self.result)

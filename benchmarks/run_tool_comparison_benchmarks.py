@@ -23,6 +23,7 @@ from native_cpu_benchmark_utils import (
     resolve_native_cpu_bench_data_dir,
 )
 from run_benchmarks import (
+    benchmark_binary_warnings,
     benchmark_launcher_warnings,
     classify_tg_launcher_command,
     collect_timing_samples,
@@ -51,10 +52,13 @@ def resolve_optional_tool(name: str) -> str | None:
 
 def tg_launcher_warnings_for_binary(tg_binary: Path) -> list[str]:
     command_kind = classify_tg_launcher_command([str(tg_binary), "search"])
-    return benchmark_launcher_warnings(
-        command_kind=command_kind,
-        launcher_mode="explicit_binary",
-    )
+    return [
+        *benchmark_launcher_warnings(
+            command_kind=command_kind,
+            launcher_mode="explicit_binary",
+        ),
+        *benchmark_binary_warnings(tg_binary),
+    ]
 
 
 def build_tool_commands(

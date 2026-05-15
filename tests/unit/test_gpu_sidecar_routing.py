@@ -69,6 +69,7 @@ class TestGpuSidecarRouting:
             assert "gpu-auto-fallback-cpu" in result.stderr
             assert "native GPU unavailable" in result.stderr
             assert "falling back to native CPU search" in result.stderr
+            assert "not GPU acceleration proof" in result.stderr
             assert "sidecar_used=false" in result.stderr
         else:
             assert "GpuSidecar" in result.stderr

@@ -344,6 +344,13 @@ def _native_gpu_route_failure(payload: dict[str, object]) -> dict[str, object] |
         "routing_backend": routing_backend,
         "routing_reason": routing_reason,
         "sidecar_used": sidecar_used,
+        "promotion_evidence": False,
+        "not_gpu_proof_reason": (
+            "Requested GPU execution did not produce NativeGpuBackend with "
+            f"sidecar_used=false (routing_backend={routing_backend}, "
+            f"sidecar_used={sidecar_used}); this is CPU/sidecar compatibility "
+            "output, not GPU acceleration proof."
+        ),
         "error": (
             "GPU route did not use NativeGpuBackend "
             f"(routing_backend={routing_backend}, sidecar_used={sidecar_used}); "
@@ -956,6 +963,7 @@ def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object
         "required_correctness_sizes": required_labels,
         "required_speed_baselines": ["rg", "tg_cpu"],
         "sidecar_routing_counts_as_promotion": False,
+        "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
     }
 
@@ -1287,6 +1295,37 @@ def build_native_scale_gate_summary(
     }
 
 
+def _gpu_proof_status_from_native_summary(summary: dict[str, object]) -> dict[str, object]:
+    runtime_gate = summary.get("native_cuda_runtime_gate")
+    runtime_status = runtime_gate.get("status") if isinstance(runtime_gate, dict) else "UNSUPPORTED"
+    promotion_ready = bool(summary.get("promotion_ready", False))
+    if promotion_ready:
+        return {
+            "gpu_evidence_status": "promotion_ready",
+            "gpu_proof": True,
+            "native_gpu_unavailable": False,
+            "not_gpu_proof_reason": None,
+        }
+    if runtime_status in {"UNSUPPORTED", "NOT_RUN"}:
+        reason = (
+            str(runtime_gate.get("reason") or summary.get("summary") or "")
+            if isinstance(runtime_gate, dict)
+            else str(summary.get("summary") or "")
+        )
+        return {
+            "gpu_evidence_status": "unsupported",
+            "gpu_proof": False,
+            "native_gpu_unavailable": True,
+            "not_gpu_proof_reason": reason,
+        }
+    return {
+        "gpu_evidence_status": "experimental",
+        "gpu_proof": False,
+        "native_gpu_unavailable": False,
+        "not_gpu_proof_reason": str(summary.get("summary") or ""),
+    }
+
+
 def run_gpu_native_benchmarks(
     *,
     tg_binary: Path,
@@ -1397,6 +1436,16 @@ def run_gpu_native_benchmarks(
                 "routing_backend": runtime_probe.get("routing_backend"),
                 "routing_reason": runtime_probe.get("routing_reason"),
                 "sidecar_used": runtime_probe.get("sidecar_used"),
+                "promotion_evidence": False,
+                "not_gpu_proof_reason": (
+                    str(runtime_probe.get("not_gpu_proof_reason"))
+                    if runtime_probe.get("not_gpu_proof_reason")
+                    else (
+                        "Requested GPU execution did not produce NativeGpuBackend "
+                        "with sidecar_used=false; this is CPU/sidecar compatibility "
+                        "output, not GPU acceleration proof."
+                    )
+                ),
             }
             if isinstance(runtime_probe.get("pipeline"), dict):
                 tg_gpu_result["runtime_probe_pipeline"] = runtime_probe["pipeline"]
@@ -1516,6 +1565,11 @@ def run_gpu_native_benchmarks(
     gpu_pipeline_samples = collect_gpu_native_pipeline_samples(rows, advanced_payload)
     gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks(gpu_pipeline_samples)
 
+    scale_gate_summary = build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+    )
+
     return {
         "bench_dir": str(bench_dir),
         "corpus_sizes": [
@@ -1527,10 +1581,8 @@ def run_gpu_native_benchmarks(
         "error_tests": error_tests,
         "crossover": crossover,
         "throughput_target": throughput_target,
-        "scale_gate_summary": build_native_scale_gate_summary(
-            rows,
-            correctness_checks=correctness_checks,
-        ),
+        "scale_gate_summary": scale_gate_summary,
+        **_gpu_proof_status_from_native_summary(scale_gate_summary),
         "gpu_bottleneck_summary": gpu_bottleneck_summary,
         "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
         "advanced": advanced_payload,
