@@ -4249,6 +4249,52 @@ def test_build_context_render_full_seed_reuses_bounded_repo_map(monkeypatch, tmp
     assert unbounded_walks == 0
 
 
+def test_build_context_edit_plan_uses_bounded_repo_map(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def build_receipt(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    (src_dir / "z_outside_cap.py").write_text(
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def outside_receipt(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    original_iter_repo_files = repo_map._iter_repo_files
+    unbounded_walks = 0
+
+    def _bounded_iter_guard(root, **kwargs):
+        nonlocal unbounded_walks
+        if kwargs.get("max_files") is None:
+            unbounded_walks += 1
+            raise AssertionError("bounded edit-plan must not recrawl the physical repo")
+        return original_iter_repo_files(root, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_iter_repo_files", _bounded_iter_guard)
+
+    payload = repo_map.build_context_edit_plan(
+        "create invoice",
+        project,
+        max_repo_files=2,
+        max_files=2,
+    )
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert payload["edit_plan_seed"]["dependent_files"] == [str(service_path.resolve())]
+    assert payload["scan_limit"]["max_repo_files"] == 2
+    assert unbounded_walks == 0
+
+
 def test_context_render_skips_blast_radius_for_low_confidence_fuzzy_symbol(
     monkeypatch, tmp_path: Path
 ):
@@ -4816,6 +4862,7 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["routing_reason"] == "context-edit-plan"
+    assert payload["scan_limit"]["max_repo_files"] == 512
     assert "rendered_context" not in payload
     assert "sources" not in payload
     assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
@@ -4865,6 +4912,8 @@ def test_edit_plan_json_accepts_agent_budget_flags(tmp_path):
             "create invoice",
             "--max-files",
             "2",
+            "--max-repo-files",
+            "2",
             "--max-sources",
             "1",
             "--max-tokens",
@@ -4877,6 +4926,7 @@ def test_edit_plan_json_accepts_agent_budget_flags(tmp_path):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["max_files"] == 2
+    assert payload["scan_limit"]["max_repo_files"] == 2
     assert payload["max_sources"] == 1
     assert payload["max_tokens"] == 64
     assert "rendered_context" not in payload

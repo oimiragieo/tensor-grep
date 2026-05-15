@@ -8006,6 +8006,7 @@ def build_context_edit_plan(
     path: str | Path = ".",
     *,
     max_files: int = 3,
+    max_repo_files: int | None = None,
     max_symbols: int = 5,
     max_sources: int | None = None,
     max_tokens: int | None = None,
@@ -8013,7 +8014,11 @@ def build_context_edit_plan(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    repo_map = build_repo_map(path, _profiling_collector=collector)
+    repo_map = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=collector,
+    )
     return build_context_edit_plan_from_map(
         repo_map,
         query,
@@ -8079,6 +8084,7 @@ def build_context_edit_plan_json(
     path: str | Path = ".",
     *,
     max_files: int = 3,
+    max_repo_files: int | None = None,
     max_symbols: int = 5,
     max_sources: int | None = None,
     max_tokens: int | None = None,
@@ -8089,6 +8095,7 @@ def build_context_edit_plan_json(
             query,
             path,
             max_files=max_files,
+            max_repo_files=max_repo_files,
             max_symbols=max_symbols,
             max_sources=max_sources,
             max_tokens=max_tokens,

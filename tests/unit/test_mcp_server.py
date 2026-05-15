@@ -2904,6 +2904,7 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
             "create invoice",
             str(project),
             max_files=2,
+            max_repo_files=2,
             max_sources=1,
             max_tokens=64,
         )
@@ -2911,6 +2912,7 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
 
     assert payload["routing_reason"] == "context-edit-plan"
     assert payload["max_files"] == 2
+    assert payload["scan_limit"]["max_repo_files"] == 2
     assert payload["max_sources"] == 1
     assert payload["max_tokens"] == 64
     assert "rendered_context" not in payload
