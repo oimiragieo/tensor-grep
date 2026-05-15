@@ -359,9 +359,56 @@ def test_run_compat_checks_routing_metadata_probe_should_disable_ignores(monkeyp
     )
 
     assert report["valid"] is True
+    assert "payload" not in report
+    assert report["payload_elided"] is True
+    assert report["payload_summary"]["total_matches"] == 1
+    assert report["payload_summary"]["matches_preview"] == [
+        {
+            "file": str(bench_data_dir / "app.log"),
+            "line": 1,
+            "text": "ERROR timeout",
+        }
+    ]
+    assert report["payload_summary"]["matches_omitted"] == 0
     assert captured["cmd"] == ["tg", "--json", "--no-ignore", "ERROR", str(bench_data_dir)]
     assert captured["env"]["TG_RG_PATH"] == "rg"
     assert captured["cwd"] == module.ROOT_DIR
+
+
+def test_run_compat_checks_routing_metadata_report_caps_payload_previews():
+    module = _load_script_module(
+        "run_compat_checks_routing_cap_script", "benchmarks/run_compat_checks.py"
+    )
+    payload = {
+        "version": 1,
+        "routing_backend": "NativeCpuBackend",
+        "routing_reason": "json_output",
+        "sidecar_used": False,
+        "query": "ERROR",
+        "path": "bench_data",
+        "total_matches": 5,
+        "total_files": 3,
+        "matched_file_paths": ["a.log", "b.log", "c.log"],
+        "match_counts_by_file": {"a.log": 2, "b.log": 2, "c.log": 1},
+        "matches": [
+            {"file": f"file_{index}.log", "line": index + 1, "text": "ERROR"} for index in range(5)
+        ],
+    }
+
+    summary = module.summarize_routing_payload(
+        payload,
+        match_preview_limit=2,
+        path_preview_limit=1,
+    )
+
+    assert summary["matched_file_paths_preview"] == ["a.log"]
+    assert summary["matched_file_paths_omitted"] == 2
+    assert [match["file"] for match in summary["matches_preview"]] == [
+        "file_0.log",
+        "file_1.log",
+    ]
+    assert summary["matches_omitted"] == 3
+    assert summary["match_counts_by_file_count"] == 3
 
 
 def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):

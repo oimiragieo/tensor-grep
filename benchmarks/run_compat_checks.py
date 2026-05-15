@@ -27,6 +27,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
+ROUTING_MATCH_PREVIEW_LIMIT = 20
+ROUTING_PATH_PREVIEW_LIMIT = 50
 
 
 class CommandResult(NamedTuple):
@@ -308,6 +310,43 @@ def validate_json_instance(payload: dict[str, Any], schema_path: Path) -> None:
     validate(instance=payload, schema=schema)
 
 
+def summarize_routing_payload(
+    payload: dict[str, Any],
+    *,
+    match_preview_limit: int = ROUTING_MATCH_PREVIEW_LIMIT,
+    path_preview_limit: int = ROUTING_PATH_PREVIEW_LIMIT,
+) -> dict[str, Any]:
+    matches = payload.get("matches")
+    match_list = matches if isinstance(matches, list) else []
+    matched_paths = payload.get("matched_file_paths")
+    matched_path_list = matched_paths if isinstance(matched_paths, list) else []
+    summary: dict[str, Any] = {
+        "version": payload.get("version"),
+        "routing_backend": payload.get("routing_backend"),
+        "routing_reason": payload.get("routing_reason"),
+        "sidecar_used": payload.get("sidecar_used"),
+        "query": payload.get("query"),
+        "path": payload.get("path"),
+        "total_matches": payload.get("total_matches"),
+        "total_files": payload.get("total_files"),
+        "match_counts_by_file_count": len(payload.get("match_counts_by_file", {}) or {}),
+        "matched_file_paths_preview": matched_path_list[:path_preview_limit],
+        "matched_file_paths_omitted": max(0, len(matched_path_list) - path_preview_limit),
+        "matches_preview": match_list[:match_preview_limit],
+        "matches_omitted": max(0, len(match_list) - match_preview_limit),
+    }
+    for key in (
+        "requested_gpu_device_ids",
+        "routing_gpu_device_ids",
+        "native_gpu_unavailable",
+        "gpu_proof",
+        "not_gpu_proof_reason",
+    ):
+        if key in payload:
+            summary[key] = payload[key]
+    return summary
+
+
 def validate_routing_metadata(
     tg_binary: Path, bench_data_dir: Path, schema_path: Path, rg_binary: Path
 ) -> dict[str, Any]:
@@ -336,7 +375,8 @@ def validate_routing_metadata(
         return report
 
     report["valid"] = True
-    report["payload"] = payload
+    report["payload_summary"] = summarize_routing_payload(payload)
+    report["payload_elided"] = True
     return report
 
 
