@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.2 (2026-05-15)
+
+### Bug Fixes
+
+- Restore compat schema governance
+  ([`b038ed5`](https://github.com/oimiragieo/tensor-grep/commit/b038ed5301d52096860a313e469325d999509118))
+
+
 ## v1.12.1 (2026-05-15)
 
 ### Bug Fixes
