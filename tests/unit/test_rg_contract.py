@@ -29,6 +29,15 @@ EXPECTED_ROWS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "count": (("-c", "--count"), ("--count",)),
     "count-matches": (("--count-matches",), ("--count-matches",)),
     "text": (("-a", "--text"), ("--text",)),
+    "passthru": (("--passthru",), ("--passthru",)),
+    "no-ignore-dot": (("--no-ignore-dot",), ("--no-ignore-dot",)),
+    "no-ignore-exclude": (("--no-ignore-exclude",), ("--no-ignore-exclude",)),
+    "no-ignore-files": (("--no-ignore-files",), ("--no-ignore-files",)),
+    "no-ignore-global": (("--no-ignore-global",), ("--no-ignore-global",)),
+    "no-ignore-parent": (("--no-ignore-parent",), ("--no-ignore-parent",)),
+    "no-config": (("--no-config",), ("--no-config",)),
+    "type-list": (("--type-list",), ("--type-list",)),
+    "pcre2-version": (("--pcre2-version",), ("--pcre2-version",)),
 }
 
 

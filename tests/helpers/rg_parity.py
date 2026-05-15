@@ -95,13 +95,20 @@ ROW_SCENARIOS: dict[str, _ScenarioSpec] = {
     "count": _ScenarioSpec("count sentinel", ("count-a.txt", "count-b.txt")),
     "count-matches": _ScenarioSpec("count-match sentinel", ("count-matches.txt",)),
     "text": _ScenarioSpec("text sentinel", ("binary.bin",)),
+    "passthru": _ScenarioSpec("context sentinel", ("context.txt",)),
+    "no-ignore-dot": _ScenarioSpec("files match sentinel", ("files-match.txt",)),
+    "no-ignore-exclude": _ScenarioSpec("files match sentinel", ("files-match.txt",)),
+    "no-ignore-files": _ScenarioSpec("files match sentinel", ("files-match.txt",)),
+    "no-ignore-global": _ScenarioSpec("files match sentinel", ("files-match.txt",)),
+    "no-ignore-parent": _ScenarioSpec("files match sentinel", ("files-match.txt",)),
+    "no-config": _ScenarioSpec("files match sentinel", ("files-match.txt",)),
 }
 
 
 def build_rg_parity_cases(rows: tuple[RGContractRow, ...]) -> tuple[RGParityCase, ...]:
     cases: list[RGParityCase] = []
     for row in rows:
-        if row["parity_expectation"] == "unsupported":
+        if row["parity_expectation"] == "unsupported" or row["output_mode"] in {"help", "error"}:
             continue
         spec = ROW_SCENARIOS[row["id"]]
         cases.append(

@@ -168,6 +168,86 @@ fn test_search_files_and_null_path_output_work_on_public_native_frontdoor() {
 }
 
 #[test]
+fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_script(dir.path(), "accepted\n");
+    let fake_python = fake_python_passthrough_script(dir.path(), "accepted");
+    fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
+
+    let flag_cases: &[(&str, &[&str])] = &[
+        ("--passthru", &["search", "--passthru", "ERROR", "."]),
+        (
+            "--no-ignore-dot",
+            &["search", "--no-ignore-dot", "ERROR", "."],
+        ),
+        (
+            "--no-ignore-exclude",
+            &["search", "--no-ignore-exclude", "ERROR", "."],
+        ),
+        (
+            "--no-ignore-files",
+            &["search", "--no-ignore-files", "ERROR", "."],
+        ),
+        (
+            "--no-ignore-global",
+            &["search", "--no-ignore-global", "ERROR", "."],
+        ),
+        (
+            "--no-ignore-parent",
+            &["search", "--no-ignore-parent", "ERROR", "."],
+        ),
+        ("--no-config", &["search", "--no-config", "ERROR", "."]),
+        ("--type-list", &["search", "--type-list"]),
+        ("--pcre2-version", &["search", "--pcre2-version"]),
+    ];
+
+    for (flag, args) in flag_cases {
+        let output = tg()
+            .current_dir(dir.path())
+            .args(*args)
+            .env("TG_RG_PATH", &fake_rg)
+            .env("TG_SIDECAR_PYTHON", &fake_python)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "flag={flag} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("unexpected argument"),
+            "flag={flag} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn test_top_level_type_list_is_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_script(dir.path(), "rust: *.rs\n");
+
+    let output = tg()
+        .current_dir(dir.path())
+        .arg("--type-list")
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("rust:"));
+}
+
+#[test]
 fn test_run_short_rewrite_alias_is_accepted_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let file = dir.path().join("sample.py");

@@ -40,7 +40,8 @@ use tensor_grep_rs::python_sidecar::{
     execute_sidecar_command, SidecarError,
 };
 use tensor_grep_rs::rg_passthrough::{
-    execute_ripgrep_pcre2_version, execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs,
+    execute_ripgrep_pcre2_version, execute_ripgrep_search, execute_ripgrep_type_list,
+    ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
     route_search, BackendSelection, IndexRoutingState, RoutingDecision, SearchRoutingCalibration,
@@ -256,6 +257,26 @@ pub struct SearchArgs {
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
 
+    /// Don't respect .ignore or .rgignore files
+    #[arg(long = "no-ignore-dot")]
+    pub no_ignore_dot: bool,
+
+    /// Don't respect .git/info/exclude
+    #[arg(long = "no-ignore-exclude")]
+    pub no_ignore_exclude: bool,
+
+    /// Ignore any --ignore-file flags
+    #[arg(long = "no-ignore-files")]
+    pub no_ignore_files: bool,
+
+    /// Don't respect global gitignore
+    #[arg(long = "no-ignore-global")]
+    pub no_ignore_global: bool,
+
+    /// Don't respect ignore files in parent directories
+    #[arg(long = "no-ignore-parent")]
+    pub no_ignore_parent: bool,
+
     /// Search hidden files and directories
     #[arg(short = '.', long)]
     pub hidden: bool,
@@ -300,6 +321,10 @@ pub struct SearchArgs {
     #[arg(short = 'o', long)]
     pub only_matching: bool,
 
+    /// Print both matching and non-matching lines
+    #[arg(long = "passthru")]
+    pub passthru: bool,
+
     /// Emit machine-readable routing metadata as JSON
     #[arg(long, conflicts_with = "ndjson")]
     pub json: bool,
@@ -317,7 +342,7 @@ pub struct SearchArgs {
     pub regexp: Vec<String>,
 
     /// The search pattern (regex or string)
-    #[arg(required_unless_present = "regexp")]
+    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list"])]
     pub pattern: Option<String>,
 
     /// Paths to search
@@ -336,9 +361,17 @@ pub struct SearchArgs {
     #[arg(long)]
     pub no_ignore_vcs: bool,
 
+    /// Never read configuration files
+    #[arg(long = "no-config")]
+    pub no_config: bool,
+
     /// Show the version of PCRE2 used
     #[arg(long)]
     pub pcre2_version: bool,
+
+    /// Show all supported file types
+    #[arg(long = "type-list")]
+    pub type_list: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -774,6 +807,13 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if is_top_level_type_list_invocation(&raw_args) {
+        let exit_code = execute_ripgrep_type_list()?;
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
 
     if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
         if exit_code != 0 {
@@ -844,6 +884,10 @@ fn env_flag_enabled(name: &str) -> bool {
 
 fn is_top_level_pcre2_version_invocation(raw_args: &[OsString]) -> bool {
     raw_args.len() == 2 && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("--pcre2-version")
+}
+
+fn is_top_level_type_list_invocation(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 2 && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("--type-list")
 }
 
 fn parse_public_help_passthrough(raw_args: &[OsString]) -> Option<(&str, Vec<String>)> {
@@ -976,6 +1020,22 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
         && args.iter().any(|arg| {
             matches!(
                 arg.as_str(),
+                "--passthru"
+                    | "--no-ignore-dot"
+                    | "--no-ignore-exclude"
+                    | "--no-ignore-files"
+                    | "--no-ignore-global"
+                    | "--no-ignore-parent"
+                    | "--no-config"
+            )
+        })
+    {
+        return Some(args);
+    }
+    if structured_output
+        && args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
                 "-U" | "--multiline" | "--multiline-dotall" | "--null-data"
             )
         })
@@ -1023,6 +1083,11 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         smart_case: false,
         globs: Vec::new(),
         no_ignore: false,
+        no_ignore_dot: false,
+        no_ignore_exclude: false,
+        no_ignore_files: false,
+        no_ignore_global: false,
+        no_ignore_parent: false,
         hidden: false,
         follow: false,
         text: false,
@@ -1031,6 +1096,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         file_types: Vec::new(),
         color: None,
         replace: None,
+        passthru: false,
+        no_config: false,
         sort: None,
         sort_reverse: None,
         max_depth: None,
@@ -1067,6 +1134,13 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-U" | "--multiline" => args.multiline = true,
             "--multiline-dotall" => args.multiline_dotall = true,
             "--no-ignore" => args.no_ignore = true,
+            "--no-ignore-dot" => args.no_ignore_dot = true,
+            "--no-ignore-exclude" => args.no_ignore_exclude = true,
+            "--no-ignore-files" => args.no_ignore_files = true,
+            "--no-ignore-global" => args.no_ignore_global = true,
+            "--no-ignore-parent" => args.no_ignore_parent = true,
+            "--no-config" => args.no_config = true,
+            "--passthru" => args.passthru = true,
             "-C" | "--context" => {
                 index += 1;
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
@@ -2515,6 +2589,11 @@ fn positional_ripgrep_args(
         smart_case: false,
         globs: Vec::new(),
         no_ignore: true,
+        no_ignore_dot: false,
+        no_ignore_exclude: false,
+        no_ignore_files: false,
+        no_ignore_global: false,
+        no_ignore_parent: false,
         no_ignore_vcs: cli.no_ignore_vcs,
         hidden: false,
         follow: false,
@@ -2524,6 +2603,8 @@ fn positional_ripgrep_args(
         file_types: Vec::new(),
         color: cli.color.clone(),
         replace: cli.replace.clone(),
+        passthru: false,
+        no_config: false,
         sort: None,
         sort_reverse: None,
         max_depth: None,
@@ -2557,6 +2638,11 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         smart_case: args.smart_case,
         globs: args.globs.clone(),
         no_ignore: args.no_ignore,
+        no_ignore_dot: args.no_ignore_dot,
+        no_ignore_exclude: args.no_ignore_exclude,
+        no_ignore_files: args.no_ignore_files,
+        no_ignore_global: args.no_ignore_global,
+        no_ignore_parent: args.no_ignore_parent,
         no_ignore_vcs: args.no_ignore_vcs,
         hidden: args.hidden,
         follow: args.follow,
@@ -2566,6 +2652,8 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         file_types: args.file_type.clone(),
         color: args.color.clone(),
         replace: args.replace.clone(),
+        passthru: args.passthru,
+        no_config: args.no_config,
         sort: args.sort.clone(),
         sort_reverse: args.sort_reverse.clone(),
         max_depth: args.max_depth,
@@ -2589,6 +2677,13 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
             || args.hidden
             || args.follow
             || args.text
+            || args.passthru
+            || args.no_config
+            || args.no_ignore_dot
+            || args.no_ignore_exclude
+            || args.no_ignore_files
+            || args.no_ignore_global
+            || args.no_ignore_parent
             || args.files_with_matches
             || args.files_without_match
             || args.sort.is_some()
@@ -2857,6 +2952,21 @@ fn run_native_search_with_optional_rg_fallback(
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
+    if args.pcre2_version {
+        let exit_code = execute_ripgrep_pcre2_version()?;
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+    if args.type_list {
+        let exit_code = execute_ripgrep_type_list()?;
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
     let request = resolve_search_request(&args)?;
     let query = request.query_display();
     let path_display = request.path_display();
@@ -5883,6 +5993,11 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 smart_case: params.smart_case,
                                 globs: params.globs.clone(),
                                 no_ignore: params.no_ignore,
+                                no_ignore_dot: false,
+                                no_ignore_exclude: false,
+                                no_ignore_files: false,
+                                no_ignore_global: false,
+                                no_ignore_parent: false,
                                 hidden: params.hidden,
                                 follow: false,
                                 text: params.text,
@@ -5891,6 +6006,8 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 file_types: Vec::new(),
                                 color: None,
                                 replace: None,
+                                passthru: false,
+                                no_config: false,
                                 sort: None,
                                 sort_reverse: None,
                                 max_depth: params.max_depth,

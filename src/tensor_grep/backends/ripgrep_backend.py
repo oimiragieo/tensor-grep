@@ -252,6 +252,18 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--multiline-dotall")
             if config.no_ignore:
                 cmd.append("--no-ignore")
+            if config.no_ignore_dot:
+                cmd.append("--no-ignore-dot")
+            if config.no_ignore_exclude:
+                cmd.append("--no-ignore-exclude")
+            if config.no_ignore_files:
+                cmd.append("--no-ignore-files")
+            if config.no_ignore_global:
+                cmd.append("--no-ignore-global")
+            if config.no_ignore_parent:
+                cmd.append("--no-ignore-parent")
+            if config.no_config:
+                cmd.append("--no-config")
             if config.only_matching:
                 cmd.append("-o")
             if config.text:
@@ -312,6 +324,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--files-without-match")
             if config.replace_str is not None and not json_mode:
                 cmd.extend(["--replace", config.replace_str])
+            if config.passthru and not json_mode:
+                cmd.append("--passthru")
             if config.sort_by != "none" and not json_mode:
                 cmd.extend(["--sort", config.sort_by])
             if config.sort_by_reverse != "none" and not json_mode:

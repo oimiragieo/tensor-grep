@@ -32,6 +32,11 @@ pub struct RipgrepSearchArgs {
     pub smart_case: bool,
     pub globs: Vec<String>,
     pub no_ignore: bool,
+    pub no_ignore_dot: bool,
+    pub no_ignore_exclude: bool,
+    pub no_ignore_files: bool,
+    pub no_ignore_global: bool,
+    pub no_ignore_parent: bool,
     pub no_ignore_vcs: bool,
     pub hidden: bool,
     pub follow: bool,
@@ -41,6 +46,8 @@ pub struct RipgrepSearchArgs {
     pub file_types: Vec<String>,
     pub color: Option<String>,
     pub replace: Option<String>,
+    pub passthru: bool,
+    pub no_config: bool,
     pub sort: Option<String>,
     pub sort_reverse: Option<String>,
     pub max_depth: Option<usize>,
@@ -139,6 +146,24 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.no_ignore {
         command.arg("--no-ignore");
     }
+    if args.no_ignore_dot {
+        command.arg("--no-ignore-dot");
+    }
+    if args.no_ignore_exclude {
+        command.arg("--no-ignore-exclude");
+    }
+    if args.no_ignore_files {
+        command.arg("--no-ignore-files");
+    }
+    if args.no_ignore_global {
+        command.arg("--no-ignore-global");
+    }
+    if args.no_ignore_parent {
+        command.arg("--no-ignore-parent");
+    }
+    if args.no_config {
+        command.arg("--no-config");
+    }
     if args.hidden {
         command.arg("--hidden");
     }
@@ -162,6 +187,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if let Some(replacement) = &args.replace {
         command.arg("--replace").arg(replacement);
+    }
+    if args.passthru {
+        command.arg("--passthru");
     }
     if let Some(sort) = &args.sort {
         command.arg("--sort").arg(sort);
@@ -196,6 +224,23 @@ pub fn execute_ripgrep_pcre2_version() -> anyhow::Result<i32> {
 
     let status = Command::new(rg_binary)
         .arg("--pcre2-version")
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("failed to execute ripgrep")?;
+    Ok(status.code().unwrap_or(1))
+}
+
+pub fn execute_ripgrep_type_list() -> anyhow::Result<i32> {
+    let rg_binary = resolve_ripgrep_binary().ok_or_else(|| {
+        anyhow!(
+            "ripgrep binary not found. Install `rg`, set {TG_RG_PATH_ENV}, or place a bundled ripgrep binary next to `tg`."
+        )
+    })?;
+
+    let status = Command::new(rg_binary)
+        .arg("--type-list")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
