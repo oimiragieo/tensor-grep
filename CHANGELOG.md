@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.12.0 (2026-05-15)
+
+### Features
+
+- Add agent success harness
+  ([`a518cc6`](https://github.com/oimiragieo/tensor-grep/commit/a518cc6b68fbff613106947f4c810e5917d667ba))
+
+Add an end-to-end agent success harness that proves query intent through context, edit seed,
+  checkpointed apply, real validation, and rollback while preserving the product positioning as
+  workflow evidence rather than raw search-speed evidence.\n\nValidation:\n- uv run ruff check .\n-
+  uv run ruff format --check --preview .\n- uv run mypy src/tensor_grep\n- cargo fmt --manifest-path
+  rust_core/Cargo.toml --check\n- uv run pytest tests/unit/test_agent_success_harness.py
+  tests/unit/test_public_docs_governance.py::test_agent_success_harness_should_remain_workflow_not_search_speed_contract
+  -q\n- python benchmarks/run_agent_success_harness.py --binary rust_core\\target\\release\\tg.exe
+  --output artifacts\\bench_agent_success_harness_pr4_rebased_smoke.json --iterations 1\n- uv run
+  pytest -q -> 2040 passed, 50 skipped\n- PR CI green
+
+
 ## v1.11.7 (2026-05-15)
 
 ### Bug Fixes
