@@ -6,6 +6,7 @@ import platform
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
 from native_cpu_benchmark_utils import (  # noqa: E402
     DEFAULT_LARGE_FILE_BYTES,
     DEFAULT_MANY_FILE_COUNT,
+    NATIVE_CPU_BENCHMARK_PATTERN,
     ensure_large_file_fixture,
     ensure_many_file_fixture,
     resolve_native_cpu_bench_data_dir,
@@ -36,11 +38,46 @@ from run_benchmarks import (  # noqa: E402
 DEFAULT_TIMING_SAMPLES = 5
 DEFAULT_WARMUP_RUNS = 1
 NATIVE_TG_ENV = {"TG_DISABLE_RG": "1"}
+PatternArg = str | Sequence[str]
+
+
+def append_patterns(cmd: list[str], pattern: PatternArg) -> None:
+    if isinstance(pattern, str):
+        cmd.append(pattern)
+        return
+
+    patterns = list(pattern)
+    if not patterns:
+        raise ValueError("at least one search pattern is required")
+    if len(patterns) == 1:
+        cmd.append(patterns[0])
+        return
+    for item in patterns:
+        cmd.extend(["-e", item])
+
+
+def pattern_display(pattern: PatternArg) -> str:
+    if isinstance(pattern, str):
+        return pattern
+    return " | ".join(pattern)
+
+
+def build_fixed_multi_pattern_terms(
+    *,
+    include_matching_pattern: bool,
+    count: int = 100,
+) -> list[str]:
+    patterns = [
+        f"native cpu absent fixed pattern {index:03d} :: 6e87d59b" for index in range(count)
+    ]
+    if include_matching_pattern:
+        patterns[0] = NATIVE_CPU_BENCHMARK_PATTERN
+    return patterns
 
 
 def build_rg_search_command(
     rg_binary: str,
-    pattern: str,
+    pattern: PatternArg,
     target: Path,
     *,
     fixed_strings: bool = False,
@@ -48,13 +85,14 @@ def build_rg_search_command(
     cmd = [rg_binary, "--no-ignore"]
     if fixed_strings:
         cmd.append("-F")
-    cmd.extend([pattern, str(target)])
+    append_patterns(cmd, pattern)
+    cmd.append(str(target))
     return cmd
 
 
 def build_tg_cpu_search_command(
     tg_binary: Path,
-    pattern: str,
+    pattern: PatternArg,
     target: Path,
     *,
     fixed_strings: bool = False,
@@ -62,13 +100,14 @@ def build_tg_cpu_search_command(
     cmd = [str(tg_binary), "search", "--cpu", "--no-ignore"]
     if fixed_strings:
         cmd.append("-F")
-    cmd.extend([pattern, str(target)])
+    append_patterns(cmd, pattern)
+    cmd.append(str(target))
     return cmd
 
 
 def build_rg_count_command(
     rg_binary: str,
-    pattern: str,
+    pattern: PatternArg,
     target: Path,
     *,
     fixed_strings: bool = False,
@@ -76,13 +115,14 @@ def build_rg_count_command(
     cmd = [rg_binary, "--no-ignore", "-c"]
     if fixed_strings:
         cmd.append("-F")
-    cmd.extend([pattern, str(target)])
+    append_patterns(cmd, pattern)
+    cmd.append(str(target))
     return cmd
 
 
 def build_tg_cpu_count_command(
     tg_binary: Path,
-    pattern: str,
+    pattern: PatternArg,
     target: Path,
     *,
     fixed_strings: bool = False,
@@ -90,7 +130,8 @@ def build_tg_cpu_count_command(
     cmd = [str(tg_binary), "search", "--cpu", "--no-ignore", "-c"]
     if fixed_strings:
         cmd.append("-F")
-    cmd.extend([pattern, str(target)])
+    append_patterns(cmd, pattern)
+    cmd.append(str(target))
     return cmd
 
 
@@ -121,16 +162,17 @@ def run_match_count(
 def run_native_cpu_benchmark_case(
     *,
     name: str,
-    pattern: str,
+    pattern: PatternArg,
     target: Path,
     rg_binary: str,
     tg_binary: Path,
     sample_count: int,
     warmup_runs: int,
-    max_ratio_vs_rg: float,
+    max_ratio_vs_rg: float | None,
     require_tg_faster: bool = False,
     fixed_strings: bool = False,
     benchmark_count_mode: bool = False,
+    gated: bool = True,
 ) -> dict[str, object]:
     if benchmark_count_mode:
         rg_cmd = build_rg_count_command(rg_binary, pattern, target, fixed_strings=fixed_strings)
@@ -162,14 +204,19 @@ def run_native_cpu_benchmark_case(
     counts_match = rg_counts["total_matches"] == tg_counts["total_matches"]
 
     ratio_vs_rg = round(tg_time / rg_time, 4) if rg_time > 0 else None
-    threshold_pass = ratio_vs_rg is not None and ratio_vs_rg <= max_ratio_vs_rg
+    threshold_pass = None
+    if max_ratio_vs_rg is not None:
+        threshold_pass = ratio_vs_rg is not None and ratio_vs_rg <= max_ratio_vs_rg
     if require_tg_faster:
         threshold_pass = bool(rg_time > tg_time)
-    status = "PASS" if counts_match and threshold_pass else "FAIL"
+    if gated:
+        status = "PASS" if counts_match and threshold_pass else "FAIL"
+    else:
+        status = "DIAGNOSTIC" if counts_match else "FAIL"
 
     return {
         "name": name,
-        "pattern": pattern,
+        "pattern": pattern_display(pattern),
         "target": str(target),
         "rg_cmd": subprocess.list2cmdline(rg_cmd) if os.name == "nt" else " ".join(rg_cmd),
         "tg_cmd": subprocess.list2cmdline(tg_cmd) if os.name == "nt" else " ".join(tg_cmd),
@@ -180,6 +227,8 @@ def run_native_cpu_benchmark_case(
         "tg_time_s": tg_time,
         "ratio_vs_rg": ratio_vs_rg,
         "threshold_ratio": max_ratio_vs_rg,
+        "threshold_pass": threshold_pass,
+        "gated": gated,
         "require_tg_faster": require_tg_faster,
         "fixed_strings": fixed_strings,
         "benchmark_count_mode": benchmark_count_mode,
@@ -260,6 +309,26 @@ def main() -> int:
             "benchmark_count_mode": True,
         },
         {
+            "name": "large_file_200mb_fixed_multi_pattern_no_match",
+            "pattern": build_fixed_multi_pattern_terms(include_matching_pattern=False),
+            "target": Path(large_fixture["path"]),
+            "max_ratio_vs_rg": None,
+            "require_tg_faster": False,
+            "fixed_strings": True,
+            "benchmark_count_mode": False,
+            "gated": False,
+        },
+        {
+            "name": "large_file_200mb_fixed_multi_pattern_count",
+            "pattern": build_fixed_multi_pattern_terms(include_matching_pattern=True),
+            "target": Path(large_fixture["path"]),
+            "max_ratio_vs_rg": None,
+            "require_tg_faster": False,
+            "fixed_strings": True,
+            "benchmark_count_mode": True,
+            "gated": False,
+        },
+        {
             "name": "many_file_directory",
             "pattern": "ERROR",
             "target": Path(many_fixture["path"]),
@@ -283,10 +352,11 @@ def main() -> int:
             require_tg_faster=case["require_tg_faster"],
             fixed_strings=case["fixed_strings"],
             benchmark_count_mode=case.get("benchmark_count_mode", False),
+            gated=case.get("gated", True),
         )
         for case in cases
     ]
-    passed = all(row["status"] == "PASS" for row in rows)
+    passed = all(row["status"] != "FAIL" for row in rows)
 
     payload = {
         "artifact": "bench_run_native_cpu_benchmarks",
@@ -304,6 +374,7 @@ def main() -> int:
             "cold_standard_corpus_max_ratio_vs_rg": 1.05,
             "large_file_200mb_max_ratio_vs_rg": 1.15,
             "large_file_200mb_count_requires_tg_faster": True,
+            "large_file_200mb_fixed_multi_pattern_rows_are_diagnostic": True,
             "many_file_directory_max_ratio_vs_rg": 1.05,
         },
         "fixtures": {

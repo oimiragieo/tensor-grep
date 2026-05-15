@@ -719,6 +719,9 @@ pub fn run_native_fixed_multi_pattern_search(
         if !config.text && memchr(0, &contents).is_some() {
             return Ok(None);
         }
+        if !matcher.is_match(&contents) {
+            continue;
+        }
         collect_fixed_multi_pattern_file_matches(
             &matcher,
             patterns,
