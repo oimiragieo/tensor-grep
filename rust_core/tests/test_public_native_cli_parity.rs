@@ -176,6 +176,12 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
 
     let flag_cases: &[(&str, &[&str])] = &[
         ("--passthru", &["search", "--passthru", "ERROR", "."]),
+        ("--passthrough", &["search", "--passthrough", "ERROR", "."]),
+        ("--unicode", &["search", "--unicode", "ERROR", "."]),
+        (
+            "--auto-hybrid-regex",
+            &["search", "--auto-hybrid-regex", "ERROR", "."],
+        ),
         (
             "--no-ignore-dot",
             &["search", "--no-ignore-dot", "ERROR", "."],
@@ -226,6 +232,62 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
 }
 
 #[test]
+fn test_search_version_is_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "--version"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("tg "),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn test_top_level_structured_search_accepts_no_ignore() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("ignored.log");
+    fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+    fs::write(&file, "ERROR hidden by ignore rules\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .arg("--json")
+        .arg("--no-ignore")
+        .arg("ERROR")
+        .arg(&file)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("unexpected argument"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["total_matches"], 1);
+}
+
+#[test]
 fn test_top_level_type_list_is_accepted_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_script(dir.path(), "rust: *.rs\n");
@@ -245,6 +307,91 @@ fn test_top_level_type_list_is_accepted_on_public_native_frontdoor() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("rust:"));
+}
+
+#[test]
+fn test_new_rule_respects_base_dir_and_does_not_scaffold_cwd_root() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("ast-project");
+
+    let output = run_tg(
+        &[
+            "new",
+            "rule",
+            "demo",
+            "--lang",
+            "python",
+            "--yes",
+            "--base-dir",
+            project.to_str().unwrap(),
+        ],
+        dir.path(),
+    );
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !dir.path().join("sgconfig.yml").exists(),
+        "tg new rule must not ignore --base-dir and scaffold the current directory"
+    );
+    assert!(project.join("rules").join("demo.yml").exists());
+    assert!(
+        !project.join("rules").join("sample-rule.yml").exists(),
+        "tg new rule should create the requested rule, not the project sample rule"
+    );
+}
+
+#[test]
+fn test_new_rejects_unsupported_shapes_without_scaffolding_cwd_root() {
+    let dir = tempdir().unwrap();
+
+    let output = run_tg(&["new", "rule", "demo", "--unsupported-option"], dir.path());
+
+    assert!(
+        !output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Unsupported tg new option"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !dir.path().join("sgconfig.yml").exists(),
+        "unsupported tg new shapes must not scaffold the current directory"
+    );
+    assert!(!dir.path().join("rules").exists());
+    assert!(!dir.path().join("tests").exists());
+}
+
+#[test]
+fn test_new_project_rejects_ignored_name_without_scaffolding_cwd_root() {
+    let dir = tempdir().unwrap();
+    let output = run_tg(&["new", "project", "demo"], dir.path());
+
+    assert!(
+        !output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("does not accept a name"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!dir.path().join("sgconfig.yml").exists());
+    assert!(!dir.path().join("rules").exists());
+    assert!(!dir.path().join("tests").exists());
 }
 
 #[test]

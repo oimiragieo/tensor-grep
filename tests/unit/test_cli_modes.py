@@ -733,6 +733,42 @@ def test_search_type_list_should_not_mask_backend_failure(monkeypatch, tmp_path)
     assert "python: *.py" not in result.stdout
 
 
+def test_new_rule_should_respect_base_dir_and_requested_name(tmp_path: Path) -> None:
+    runner = CliRunner()
+    base_dir = tmp_path / "ast-project"
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "rule",
+            "demo",
+            "--lang",
+            "python",
+            "--yes",
+            "--base-dir",
+            str(base_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (base_dir / "rules" / "demo.yml").exists()
+    assert not (tmp_path / "sgconfig.yml").exists()
+    assert not (base_dir / "rules" / "sample-rule.yml").exists()
+
+
+def test_new_project_should_reject_ignored_project_name(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["new", "project", "demo", "--base-dir", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "does not accept a name" in result.stderr
+    assert not (tmp_path / "sgconfig.yml").exists()
+    assert not (tmp_path / "rules").exists()
+    assert not (tmp_path / "tests").exists()
+
+
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
     runner = CliRunner()
 
@@ -2066,10 +2102,60 @@ def test_search_help_should_describe_json_as_aggregate_json() -> None:
 
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[│┌┐└┘─]+", " ", help_text))
     assert "--json" in help_text
-    assert "aggregate JSON object." in help_text
+    assert "tensor-grep aggregate JSON object, not rg JSON Lines." in normalized_help
     assert "streaming" in help_text
     assert "Print results in JSON Lines format." not in help_text
+
+
+def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        seen["paths"] = list(paths)
+        seen["pattern"] = pattern
+        seen["config"] = config
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "--passthrough",
+            "--unicode",
+            "--auto-hybrid-regex",
+            "ERROR",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen["paths"] == [str(project)]
+    assert seen["pattern"] == "ERROR"
+    config = seen["config"]
+    assert config.passthru is True
+    assert config.unicode is True
+    assert config.auto_hybrid_regex is True
+
+
+def test_search_version_should_run_from_python_search_entrypoint() -> None:
+    result = CliRunner().invoke(app, ["search", "--version"])
+
+    assert result.exit_code == 0
+    assert "tensor-grep" in result.stdout
 
 
 def test_search_help_should_describe_rg_format_as_public_exact_output() -> None:
@@ -4749,6 +4835,55 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     assert "validation_commands" in payload
     assert payload["validation_commands"] == payload["navigation_pack"]["validation_commands"]
     assert payload["validation_commands"] == payload["edit_plan_seed"]["validation_commands"]
+
+
+def test_edit_plan_json_accepts_agent_budget_flags(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "create invoice",
+            "--max-files",
+            "2",
+            "--max-sources",
+            "1",
+            "--max-tokens",
+            "64",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["max_files"] == 2
+    assert payload["max_sources"] == 1
+    assert payload["max_tokens"] == 64
+    assert "rendered_context" not in payload
+    assert "sources" not in payload
+    assert len(payload["edit_plan_seed"]["related_spans"]) <= 1
+    assert len(payload["edit_plan_seed"]["suggested_edits"]) <= 1
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
 
 
 def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):

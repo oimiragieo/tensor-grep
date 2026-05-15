@@ -274,6 +274,8 @@ impl RustBackend {
             patterns,
             paths: vec![path],
             pcre2,
+            auto_hybrid_regex: false,
+            unicode: false,
             max_filesize,
         };
         execute_ripgrep_search(&args).map_err(|e| {

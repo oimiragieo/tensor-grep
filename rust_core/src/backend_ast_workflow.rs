@@ -507,41 +507,138 @@ fn execute_batched_tests(
     Ok(results)
 }
 
-pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("usage: tg new");
-        println!();
-        println!("Create a new AST project configuration.");
-        return Ok(());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AstNewKind {
+    Project,
+    Rule,
+    Test,
+    Util,
+}
+
+#[derive(Debug, Clone)]
+struct AstNewRequest {
+    kind: AstNewKind,
+    name: Option<String>,
+    lang: String,
+    base_dir: PathBuf,
+}
+
+fn validate_ast_new_name(name: &str) -> Result<()> {
+    if name.trim().is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name == "."
+        || name == ".."
+    {
+        anyhow::bail!("Invalid item name {name:?}; use a bare rule/test/util identifier.");
+    }
+    Ok(())
+}
+
+fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
+    let mut kind = AstNewKind::Project;
+    let mut kind_seen = false;
+    let mut name: Option<String> = None;
+    let mut lang = "python".to_string();
+    let mut base_dir = PathBuf::from(".");
+    let mut index = 0usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "project" if !kind_seen => {
+                kind = AstNewKind::Project;
+                kind_seen = true;
+            }
+            "rule" if !kind_seen => {
+                kind = AstNewKind::Rule;
+                kind_seen = true;
+            }
+            "test" if !kind_seen => {
+                kind = AstNewKind::Test;
+                kind_seen = true;
+            }
+            "util" if !kind_seen => {
+                kind = AstNewKind::Util;
+                kind_seen = true;
+            }
+            "--lang" | "-l" => {
+                index += 1;
+                lang = args
+                    .get(index)
+                    .cloned()
+                    .context("--lang requires a language value")?;
+            }
+            value if value.starts_with("--lang=") => {
+                lang = value
+                    .split_once('=')
+                    .map(|(_, value)| value.to_string())
+                    .context("--lang requires a language value")?;
+            }
+            "--base-dir" | "-b" => {
+                index += 1;
+                base_dir = PathBuf::from(
+                    args.get(index)
+                        .context("--base-dir requires a directory value")?,
+                );
+            }
+            value if value.starts_with("--base-dir=") => {
+                base_dir = PathBuf::from(
+                    value
+                        .split_once('=')
+                        .map(|(_, value)| value)
+                        .context("--base-dir requires a directory value")?,
+                );
+            }
+            "--yes" | "-y" => {}
+            value if value.starts_with('-') => {
+                anyhow::bail!("Unsupported tg new option {value:?}");
+            }
+            value => {
+                if name.is_some() {
+                    anyhow::bail!("Unexpected extra tg new argument {value:?}");
+                }
+                validate_ast_new_name(value)?;
+                name = Some(value.to_string());
+            }
+        }
+        index += 1;
     }
 
-    let config_path =
-        if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
-            PathBuf::from(&args[1])
-        } else {
-            PathBuf::from("sgconfig.yml")
-        };
+    if kind != AstNewKind::Project && name.is_none() {
+        anyhow::bail!("tg new {:?} requires a name", kind);
+    }
+    if kind == AstNewKind::Project && name.is_some() {
+        anyhow::bail!("tg new project does not accept a name; use --base-dir DIR.");
+    }
 
+    Ok(AstNewRequest {
+        kind,
+        name,
+        lang,
+        base_dir,
+    })
+}
+
+fn write_ast_project_scaffold(base_dir: &Path, lang: &str) -> Result<()> {
+    let config_path = base_dir.join("sgconfig.yml");
     if config_path.exists() {
         anyhow::bail!("Config file {:?} already exists.", config_path);
     }
-
+    fs::create_dir_all(base_dir)?;
     fs::write(
         &config_path,
-        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n",
+        format!("ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: {lang}\n"),
     )?;
 
-    let rules_dir = config_path.parent().unwrap_or(Path::new(".")).join("rules");
+    let rules_dir = base_dir.join("rules");
     fs::create_dir_all(&rules_dir)?;
-
     fs::write(
         rules_dir.join("sample-rule.yml"),
-        "id: sample-rule\nlanguage: python\nrule:\n  pattern: 'print($$$ARGS)'\n",
+        format!("id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n"),
     )?;
 
-    let tests_dir = config_path.parent().unwrap_or(Path::new(".")).join("tests");
+    let tests_dir = base_dir.join("tests");
     fs::create_dir_all(&tests_dir)?;
-
     fs::write(
         tests_dir.join("sample-test.yml"),
         "id: sample-test\nruleId: sample-rule\nvalid:\n  - 'pass'\ninvalid:\n  - 'print(\"hello\")'\n",
@@ -552,6 +649,67 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
         config_path
     );
     Ok(())
+}
+
+pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!(
+            "usage: tg new [project|rule|test|util] [NAME] [--lang LANG] [--base-dir DIR] [--yes]"
+        );
+        println!();
+        println!("Create a new AST project configuration or a named rule/test/util item.");
+        return Ok(());
+    }
+
+    let request = parse_ast_new_args(&args)?;
+    match request.kind {
+        AstNewKind::Project => write_ast_project_scaffold(&request.base_dir, &request.lang),
+        AstNewKind::Rule => {
+            let name = request.name.as_deref().expect("validated rule name");
+            let rules_dir = request.base_dir.join("rules");
+            fs::create_dir_all(&rules_dir)?;
+            let path = rules_dir.join(format!("{name}.yml"));
+            if path.exists() {
+                anyhow::bail!("Rule file {:?} already exists.", path);
+            }
+            fs::write(
+                &path,
+                format!(
+                    "id: {name}\nlanguage: {}\nrule:\n  pattern: ''\n",
+                    request.lang
+                ),
+            )?;
+            println!("Created rule scaffold in {:?}", path);
+            Ok(())
+        }
+        AstNewKind::Test => {
+            let name = request.name.as_deref().expect("validated test name");
+            let tests_dir = request.base_dir.join("tests");
+            fs::create_dir_all(&tests_dir)?;
+            let path = tests_dir.join(format!("{name}.yml"));
+            if path.exists() {
+                anyhow::bail!("Test file {:?} already exists.", path);
+            }
+            fs::write(
+                &path,
+                format!("id: {name}\nruleId: {name}\nvalid:\n  - ''\ninvalid: []\n"),
+            )?;
+            println!("Created test scaffold in {:?}", path);
+            Ok(())
+        }
+        AstNewKind::Util => {
+            let name = request.name.as_deref().expect("validated util name");
+            let utils_dir = request.base_dir.join("utils");
+            fs::create_dir_all(&utils_dir)?;
+            let path = utils_dir.join(format!("{name}.yml"));
+            if path.exists() {
+                anyhow::bail!("Util file {:?} already exists.", path);
+            }
+            fs::write(&path, format!("id: {name}\npattern: ''\n"))?;
+            println!("Created util scaffold in {:?}", path);
+            Ok(())
+        }
+    }
 }
 
 impl AstWorkflowOrchestrator {

@@ -1198,7 +1198,9 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "mmap",
     "multiline",
     "multiline_dotall",
+    "auto_hybrid_regex",
     "no_unicode",
+    "unicode",
     "null_data",
     "pcre2",
     "regex_size_limit",
@@ -3971,6 +3973,14 @@ def search_command(
     multiline_dotall: bool = typer.Option(
         False, "--multiline-dotall", help="Enable 'dot all' mode in multiline searches."
     ),
+    auto_hybrid_regex: bool = typer.Option(
+        False,
+        "--auto-hybrid-regex",
+        help="Use ripgrep's hybrid regex engine selection when rg passthrough is selected.",
+    ),
+    unicode: bool = typer.Option(
+        False, "--unicode", help="Enable Unicode mode for regex. This is the default."
+    ),
     no_unicode: bool = typer.Option(False, "--no-unicode", help="Disable Unicode mode for regex."),
     null_data: bool = typer.Option(
         False, "--null-data", help="Use NUL as a line terminator instead of \\n."
@@ -4125,7 +4135,10 @@ def search_command(
         None, "--path-separator", help="Path separator to use."
     ),
     passthru: bool = typer.Option(
-        False, "--passthru", help="Print both matching and non-matching lines."
+        False,
+        "--passthru",
+        "--passthrough",
+        help="Print both matching and non-matching lines.",
     ),
     pretty: bool = typer.Option(
         False, "-p", "--pretty", help="Alias for --color=always --heading --line-number."
@@ -4169,9 +4182,16 @@ def search_command(
     json: bool = typer.Option(
         False,
         "--json",
-        help="Print results as one aggregate JSON object. Use --ndjson for streaming output.",
+        help=(
+            "Print results as one tensor-grep aggregate JSON object, not rg JSON Lines. "
+            "Use --ndjson for tensor-grep streaming output."
+        ),
     ),
-    ndjson: bool = typer.Option(False, "--ndjson", help="Print results in newline-delimited JSON."),
+    ndjson: bool = typer.Option(
+        False,
+        "--ndjson",
+        help="Print tensor-grep newline-delimited JSON rows, not the rg event schema.",
+    ),
     # LOGGING OPTIONS
     debug: bool = typer.Option(False, "--debug", help="Show debug messages."),
     no_ignore_messages: bool = typer.Option(
@@ -4201,6 +4221,7 @@ def search_command(
     type_list: bool = typer.Option(
         False, "--type-list", help="Show all supported file types and exit."
     ),
+    version: bool = typer.Option(False, "-V", "--version", help="Show tensor-grep version."),
     # TENSOR-GREP SPECIFIC
     cpu: bool = typer.Option(
         False,
@@ -4253,6 +4274,9 @@ def search_command(
     regexp_patterns = regexp or []
     if generate is not None:
         typer.echo(_generate_shell_completion_script(generator=generate))
+        raise typer.Exit(0)
+    if version:
+        typer.echo(f"tensor-grep {_cli_package_version()}")
         raise typer.Exit(0)
     if pcre2_version:
         _run_rg_compatible_info_action(
@@ -4335,7 +4359,9 @@ def search_command(
         mmap=mmap,
         multiline=multiline,
         multiline_dotall=multiline_dotall,
+        auto_hybrid_regex=auto_hybrid_regex,
         no_unicode=no_unicode,
+        unicode=unicode,
         null_data=null_data,
         pcre2=pcre2,
         regex_size_limit=regex_size_limit,
@@ -5135,6 +5161,18 @@ def edit_plan(
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
+    max_sources: int | None = typer.Option(
+        None,
+        "--max-sources",
+        min=1,
+        help="Maximum related source/span records to retain in the plan.",
+    ),
+    max_tokens: int | None = typer.Option(
+        None,
+        "--max-tokens",
+        min=1,
+        help="Accepted for agent command-surface parity; edit-plan emits no rendered source text.",
+    ),
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
@@ -5153,6 +5191,8 @@ def edit_plan(
                     query,
                     path,
                     max_files=max_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
                     max_symbols=max_symbols,
                     profile=profile,
                 )
@@ -5163,6 +5203,8 @@ def edit_plan(
             query,
             path,
             max_files=max_files,
+            max_sources=max_sources,
+            max_tokens=max_tokens,
             max_symbols=max_symbols,
             profile=profile,
         )
@@ -5968,6 +6010,18 @@ def session_edit_plan_cmd(
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
+    max_sources: int | None = typer.Option(
+        None,
+        "--max-sources",
+        min=1,
+        help="Maximum related source/span records to retain in the plan.",
+    ),
+    max_tokens: int | None = typer.Option(
+        None,
+        "--max-tokens",
+        min=1,
+        help="Accepted for agent command-surface parity; edit-plan emits no rendered source text.",
+    ),
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
@@ -5997,6 +6051,8 @@ def session_edit_plan_cmd(
                     "path": path,
                     "query": query,
                     "max_files": max_files,
+                    "max_sources": max_sources,
+                    "max_tokens": max_tokens,
                     "max_symbols": max_symbols,
                     "refresh_on_stale": refresh_on_stale,
                 },
@@ -6007,6 +6063,8 @@ def session_edit_plan_cmd(
                 query,
                 path,
                 max_files=max_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
                 max_symbols=max_symbols,
                 refresh_on_stale=refresh_on_stale,
             )
@@ -6706,31 +6764,98 @@ def test(
         raise typer.Exit(code=exit_code)
 
 
-@app.command()
-def new() -> None:
-    """Create a new structural search project or rules/tests scaffold."""
-    import os
+def _validate_ast_new_name(name: str) -> None:
+    if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
+        raise ValueError(f"Invalid item name {name!r}; use a bare rule/test/util identifier.")
 
+
+def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
     import yaml
 
-    if os.path.exists("sgconfig.yml"):
-        typer.echo("Project already initialized (sgconfig.yml exists).", err=True)
-        sys.exit(1)
+    config_path = base_dir / "sgconfig.yml"
+    if config_path.exists():
+        raise FileExistsError(f"Project already initialized ({config_path} exists).")
 
     config_data = {
         "ruleDirs": ["rules"],
         "testDirs": ["tests"],
         "utilsDir": "utils",
-        "language": "python",
+        "language": lang,
     }
 
-    with open("sgconfig.yml", "w") as f:
-        yaml.dump(config_data, f)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.dump(config_data), encoding="utf-8")
 
-    os.makedirs("rules", exist_ok=True)
-    os.makedirs("tests", exist_ok=True)
+    rules_dir = base_dir / "rules"
+    tests_dir = base_dir / "tests"
+    rules_dir.mkdir(exist_ok=True)
+    tests_dir.mkdir(exist_ok=True)
+    (rules_dir / "sample-rule.yml").write_text(
+        f"id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "sample-test.yml").write_text(
+        'id: sample-test\nruleId: sample-rule\nvalid:\n  - "pass"\ninvalid:\n'
+        '  - "print(\\"hello\\")"\n',
+        encoding="utf-8",
+    )
+    return config_path
 
-    typer.echo("Initialized new tensor-grep structural search project.")
+
+@app.command()
+def new(
+    command: str | None = typer.Argument(None, help="Scaffold kind: project, rule, test, or util."),
+    name: str | None = typer.Argument(None, help="Name for rule/test/util scaffolds."),
+    lang: str = typer.Option("python", "--lang", "-l", help="Language for generated items."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Accept default scaffold choices without prompting."
+    ),
+    base_dir: Path = typer.Option(
+        Path("."), "--base-dir", "-b", help="Directory where scaffold files are created."
+    ),
+) -> None:
+    """Create a new structural search project or rules/tests scaffold."""
+    _ = yes
+    scaffold_kind = command or "project"
+    try:
+        if scaffold_kind == "project":
+            if name is not None:
+                raise ValueError("tg new project does not accept a name; use --base-dir DIR.")
+            config_path = _write_ast_project_scaffold(base_dir, lang)
+            typer.echo(f"Initialized new tensor-grep structural search project in {config_path}.")
+            return
+
+        if scaffold_kind not in {"rule", "test", "util"}:
+            raise ValueError(
+                "Unsupported scaffold kind "
+                f"{scaffold_kind!r}; expected project, rule, test, or util."
+            )
+        if name is None:
+            raise ValueError(f"tg new {scaffold_kind} requires a name.")
+        _validate_ast_new_name(name)
+
+        if scaffold_kind == "rule":
+            target_dir = base_dir / "rules"
+            target_path = target_dir / f"{name}.yml"
+            contents = f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: ''\n"
+        elif scaffold_kind == "test":
+            target_dir = base_dir / "tests"
+            target_path = target_dir / f"{name}.yml"
+            contents = f"id: {name}\nruleId: {name}\nvalid:\n  - ''\ninvalid: []\n"
+        else:
+            target_dir = base_dir / "utils"
+            target_path = target_dir / f"{name}.yml"
+            contents = f"id: {name}\npattern: ''\n"
+
+        if target_path.exists():
+            raise FileExistsError(f"Scaffold target already exists: {target_path}")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(contents, encoding="utf-8")
+    except (FileExistsError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Created {scaffold_kind} scaffold in {target_path}.")
 
 
 @app.command(name="dogfood")

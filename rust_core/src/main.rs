@@ -134,11 +134,11 @@ pub struct PositionalCli {
     #[arg(short = 'o', long)]
     pub only_matching: bool,
 
-    /// Emit machine-readable routing metadata as JSON
+    /// Emit tensor-grep aggregate JSON (not rg JSON Lines)
     #[arg(long, conflicts_with = "ndjson")]
     pub json: bool,
 
-    /// Emit one JSON object per matching line (newline-delimited)
+    /// Emit tensor-grep newline-delimited JSON rows (not the rg event schema)
     #[arg(long, conflicts_with = "json")]
     pub ndjson: bool,
 
@@ -150,9 +150,21 @@ pub struct PositionalCli {
     #[arg(short = 'P', long)]
     pub pcre2: bool,
 
+    /// Enable automatic hybrid regex routing when ripgrep is used
+    #[arg(long = "auto-hybrid-regex")]
+    pub auto_hybrid_regex: bool,
+
+    /// Enable Unicode regex mode. This is the default; accepted for rg CLI compatibility.
+    #[arg(long)]
+    pub unicode: bool,
+
     /// Ignore files larger than this size (e.g. 10MB)
     #[arg(long)]
     pub max_filesize: Option<String>,
+
+    /// Ignore configured ignore files
+    #[arg(long = "no-ignore")]
+    pub no_ignore: bool,
 
     /// Don't respect source control ignore files
     #[arg(long)]
@@ -322,7 +334,7 @@ pub struct SearchArgs {
     pub only_matching: bool,
 
     /// Print both matching and non-matching lines
-    #[arg(long = "passthru")]
+    #[arg(long = "passthru", alias = "passthrough")]
     pub passthru: bool,
 
     /// Emit machine-readable routing metadata as JSON
@@ -342,7 +354,7 @@ pub struct SearchArgs {
     pub regexp: Vec<String>,
 
     /// The search pattern (regex or string)
-    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list"])]
+    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list", "version"])]
     pub pattern: Option<String>,
 
     /// Paths to search
@@ -352,6 +364,14 @@ pub struct SearchArgs {
     /// Use PCRE2 regex engine
     #[arg(short = 'P', long)]
     pub pcre2: bool,
+
+    /// Enable automatic hybrid regex routing when ripgrep is used
+    #[arg(long = "auto-hybrid-regex")]
+    pub auto_hybrid_regex: bool,
+
+    /// Enable Unicode regex mode. This is the default; accepted for rg CLI compatibility.
+    #[arg(long)]
+    pub unicode: bool,
 
     /// Ignore files larger than this size (e.g. 10MB)
     #[arg(long)]
@@ -372,6 +392,10 @@ pub struct SearchArgs {
     /// Show all supported file types
     #[arg(long = "type-list")]
     pub type_list: bool,
+
+    /// Show tensor-grep version
+    #[arg(long = "version", short = 'V')]
+    pub version: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -1021,6 +1045,8 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
             matches!(
                 arg.as_str(),
                 "--passthru"
+                    | "--passthrough"
+                    | "--auto-hybrid-regex"
                     | "--no-ignore-dot"
                     | "--no-ignore-exclude"
                     | "--no-ignore-files"
@@ -1109,6 +1135,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
+        auto_hybrid_regex: false,
+        unicode: false,
         max_filesize: None,
     };
 
@@ -1141,6 +1169,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "--no-ignore-parent" => args.no_ignore_parent = true,
             "--no-config" => args.no_config = true,
             "--passthru" => args.passthru = true,
+            "--passthrough" => args.passthru = true,
+            "--auto-hybrid-regex" => args.auto_hybrid_regex = true,
+            "--unicode" => args.unicode = true,
             "-C" | "--context" => {
                 index += 1;
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
@@ -2615,6 +2646,8 @@ fn positional_ripgrep_args(
         patterns: vec![pattern.to_string()],
         paths: paths.to_vec(),
         pcre2: cli.pcre2,
+        auto_hybrid_regex: cli.auto_hybrid_regex,
+        unicode: cli.unicode,
         max_filesize: cli.max_filesize.clone(),
     }
 }
@@ -2664,6 +2697,8 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         patterns: request.patterns.clone(),
         paths: request.paths.clone(),
         pcre2: args.pcre2,
+        auto_hybrid_regex: args.auto_hybrid_regex,
+        unicode: args.unicode,
         max_filesize: args.max_filesize.clone(),
     }
 }
@@ -2679,6 +2714,7 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
             || args.text
             || args.passthru
             || args.no_config
+            || args.auto_hybrid_regex
             || args.no_ignore_dot
             || args.no_ignore_exclude
             || args.no_ignore_files
@@ -2952,6 +2988,10 @@ fn run_native_search_with_optional_rg_fallback(
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
+    if args.version {
+        println!("tg {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if args.pcre2_version {
         let exit_code = execute_ripgrep_pcre2_version()?;
         if exit_code != 0 {
@@ -6021,6 +6061,8 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 paths: vec![params.path.to_string()],
                                 no_ignore_vcs: false,
                                 pcre2: false,
+                                auto_hybrid_regex: false,
+                                unicode: false,
                                 max_filesize: None,
                             });
                     if cpu_config.verbose {

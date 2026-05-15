@@ -24,7 +24,9 @@ class SearchConfig:
     mmap: bool = True
     multiline: bool = False
     multiline_dotall: bool = False
+    auto_hybrid_regex: bool = False
     no_unicode: bool = False
+    unicode: bool = False
     null_data: bool = False
     pcre2: bool = False
     regex_size_limit: str | None = None
