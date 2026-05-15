@@ -384,6 +384,74 @@ fn test_new_rule_respects_base_dir_and_does_not_scaffold_cwd_root() {
 }
 
 #[test]
+fn test_ast_compatibility_flags_route_or_fail_explicitly_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_python = fake_python_passthrough_script(dir.path(), "python-route-ok");
+    let rule_path = dir.path().join("rule.yml");
+    fs::write(
+        &rule_path,
+        "id: no-print\nlanguage: python\nrule:\n  pattern: print($A)\n",
+    )
+    .unwrap();
+
+    let scan_output = tg()
+        .current_dir(dir.path())
+        .args(["scan", "--rule", rule_path.to_str().unwrap(), ".", "--json"])
+        .env("TG_SIDECAR_PYTHON", &fake_python)
+        .output()
+        .unwrap();
+    assert!(
+        scan_output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        scan_output.status.code(),
+        String::from_utf8_lossy(&scan_output.stdout),
+        String::from_utf8_lossy(&scan_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&scan_output.stdout).contains("python-route-ok"),
+        "stdout={}",
+        String::from_utf8_lossy(&scan_output.stdout)
+    );
+
+    let new_output = tg()
+        .current_dir(dir.path())
+        .args(["new", "rule", "demo", "--config", "sgconfig.yml", "--yes"])
+        .env("TG_SIDECAR_PYTHON", &fake_python)
+        .output()
+        .unwrap();
+    assert!(
+        new_output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        new_output.status.code(),
+        String::from_utf8_lossy(&new_output.stdout),
+        String::from_utf8_lossy(&new_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&new_output.stdout).contains("python-route-ok"),
+        "stdout={}",
+        String::from_utf8_lossy(&new_output.stdout)
+    );
+
+    let selector_output = run_tg(
+        &[
+            "run",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call_expression",
+            ".",
+        ],
+        dir.path(),
+    );
+    assert!(!selector_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&selector_output.stderr).contains("not supported by tg run yet"),
+        "stderr={}",
+        String::from_utf8_lossy(&selector_output.stderr)
+    );
+}
+
+#[test]
 fn test_new_rejects_unsupported_shapes_without_scaffolding_cwd_root() {
     let dir = tempdir().unwrap();
 

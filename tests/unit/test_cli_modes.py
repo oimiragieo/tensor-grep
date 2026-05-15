@@ -8783,6 +8783,114 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
+def test_scan_supports_single_rule_file_and_positional_path(monkeypatch, tmp_path: Path) -> None:
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+            _ = config
+            matches: list[MatchLine] = []
+            matched_file_paths: list[str] = []
+
+            for file_path in file_paths:
+                candidate = Path(file_path)
+                expanded_paths = (
+                    sorted(str(path) for path in candidate.rglob("*") if path.is_file())
+                    if candidate.is_dir()
+                    else [file_path]
+                )
+                for expanded_path in expanded_paths:
+                    content = Path(expanded_path).read_text(encoding="utf-8")
+                    if pattern == "print($A)" and "print(" in content:
+                        matched_file_paths.append(expanded_path)
+                        matches.append(
+                            MatchLine(line_number=1, text="print('hello')", file=expanded_path)
+                        )
+
+            return SearchResult(
+                matches=matches,
+                matched_file_paths=matched_file_paths,
+                total_files=len(matched_file_paths),
+                total_matches=len(matches),
+                routing_backend="AstGrepWrapperBackend",
+                routing_reason="ast_grep_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
+    )
+
+    rule_file = tmp_path / "no_print.yml"
+    rule_file.write_text(
+        "\n".join([
+            "id: no-print",
+            "language: python",
+            "rule:",
+            "  pattern: print($A)",
+        ]),
+        encoding="utf-8",
+    )
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["scan", "--rule", str(rule_file), str(source_root), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["routing_reason"] == "ast-single-rule-scan"
+    assert payload["findings"][0]["rule_id"] == "no-print"
+    assert payload["findings"][0]["matches"] == 1
+
+
+def test_scan_filter_limits_project_rules(monkeypatch, tmp_path: Path) -> None:
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+            _ = file_paths
+            _ = config
+            total = 1 if pattern == "print($A)" else 0
+            return SearchResult(
+                matches=[],
+                matched_file_paths=["app.py"] if total else [],
+                total_files=1 if total else 0,
+                total_matches=total,
+                routing_backend="AstGrepWrapperBackend",
+                routing_reason="ast_grep_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
+    )
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "no_print.yml").write_text(
+        "id: no-print\nlanguage: python\nrule:\n  pattern: print($A)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules" / "no_eval.yml").write_text(
+        "id: no-eval\nlanguage: python\nrule:\n  pattern: eval($A)\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--config", str(tmp_path / "sgconfig.yml"), "--filter", "print", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["rule_count"] == 1
+    assert [finding["rule_id"] for finding in payload["findings"]] == ["no-print"]
+
+
 def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: Path) -> None:
     class AstGrepWrapperBackend:
         def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
@@ -9864,6 +9972,65 @@ def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
 
     assert result.exit_code == 0
     assert "All tests passed. cases=2" in result.output
+
+
+def test_new_rule_uses_configured_rule_directory(tmp_path: Path) -> None:
+    config_path = tmp_path / "sgconfig.yml"
+    config_path.write_text(
+        "ruleDirs:\n  - custom-rules\ntestDirs:\n  - custom-tests\nutilsDir: custom-utils\n"
+        "language: python\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "rule", "demo", "--config", str(config_path), "--lang", "python", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "custom-rules" / "demo.yml").exists()
+    assert not (tmp_path / "rules" / "demo.yml").exists()
+
+
+def test_run_update_all_aliases_apply_for_rewrite(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_command(pattern: str, path: str | None = None, **kwargs: object) -> int:
+        seen["pattern"] = pattern
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr("tensor_grep.cli.ast_workflows.run_command", fake_run_command)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--pattern",
+            "print($A)",
+            "--rewrite",
+            "logger.info($A)",
+            "--update-all",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["pattern"] == "print($A)"
+    assert seen["path"] == str(tmp_path)
+    assert seen["kwargs"]["apply"] is True
+
+
+def test_run_ast_grep_semantic_flags_fail_explicitly() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["run", "--pattern", "print($A)", "--selector", "call", "src"],
+    )
+
+    assert result.exit_code == 2
+    assert "not supported by tg run yet" in result.output
+    assert "--selector" in result.output
 
 
 def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):

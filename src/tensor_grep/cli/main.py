@@ -2882,6 +2882,7 @@ def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
         "root_dir": resolved.parent,
         "rule_dirs": _normalize_string_list(raw.get("ruleDirs"), ["rules"]),
         "test_dirs": _normalize_string_list(raw.get("testDirs"), ["tests"]),
+        "utils_dir": str(raw.get("utilsDir") or "utils"),
         "language": str(raw.get("language") or "python"),
     }
 
@@ -3009,6 +3010,18 @@ def _load_inline_rule_specs(
         specs.append(spec)
 
     return specs
+
+
+def _filter_ast_rule_specs(
+    rules: list[dict[str, str]], filter_regex: str | None
+) -> list[dict[str, str]]:
+    if filter_regex is None:
+        return rules
+    try:
+        compiled = re.compile(filter_regex)
+    except re.error as exc:
+        raise ValueError(f"Invalid --filter regex: {exc}") from exc
+    return [rule for rule in rules if compiled.search(str(rule.get("id", "")))]
 
 
 def _suffix_for_language(language: str) -> str:
@@ -3447,6 +3460,7 @@ def _run_ast_scan_payload(
     rules: list[dict[str, str]],
     *,
     routing_reason: str,
+    scan_paths: list[str] | None = None,
     candidate_files: list[str] | None = None,
     project_scan_fast_path: bool = False,
     ruleset_name: str | None = None,
@@ -3469,6 +3483,12 @@ def _run_ast_scan_payload(
         lang=cast(str, project_cfg["language"]),
     )
     root_dir = cast(Path, project_cfg["root_dir"])
+    include_scan_paths_in_payload = bool(scan_paths)
+    resolved_scan_paths = (
+        [str(Path(scan_path).expanduser().resolve()) for scan_path in scan_paths]
+        if scan_paths
+        else [str(root_dir)]
+    )
     scanner: DirectoryScanner | None = None
     resolved_candidate_files = list(candidate_files) if candidate_files is not None else None
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
@@ -3605,7 +3625,7 @@ def _run_ast_scan_payload(
         resolved_snippets_by_file: dict[str, list[dict[str, object]]] = {}
         resolved_rule_occurrences: list[dict[str, object]] = []
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
+            result = backend.search_many(resolved_scan_paths, rule["pattern"], config=rule_cfg)
             rule_matches = result.total_matches
             resolved_matched_files.update(result.matched_file_paths)
             for file_path, count in result.match_counts_by_file.items():
@@ -3635,7 +3655,7 @@ def _run_ast_scan_payload(
             if scanner is None:
                 scanner = DirectoryScanner(cfg)
             if resolved_candidate_files is None:
-                resolved_candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+                resolved_candidate_files, _ = _collect_candidate_files(scanner, resolved_scan_paths)
             rule_matches = 0
             for current_file in resolved_candidate_files:
                 result = backend.search(current_file, rule["pattern"], config=rule_cfg)
@@ -3672,7 +3692,7 @@ def _run_ast_scan_payload(
         if scanner is None:
             scanner = DirectoryScanner(cfg)
         if resolved_candidate_files is None:
-            resolved_candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+            resolved_candidate_files, _ = _collect_candidate_files(scanner, resolved_scan_paths)
 
         pattern = re.compile(rule["pattern"])
         regex_matched_files: set[str] = set()
@@ -3736,6 +3756,8 @@ def _run_ast_scan_payload(
         "backends": sorted(backend_names_used),
         "findings": findings,
     }
+    if include_scan_paths_in_payload:
+        payload["scan_paths"] = resolved_scan_paths
     _apply_ruleset_baseline(
         payload,
         baseline_path=baseline_path,
@@ -6633,8 +6655,18 @@ def rulesets(
 
 @app.command()
 def scan(
+    paths: list[str] | None = typer.Argument(
+        None,
+        help="Optional scan paths, matching ast-grep's positional PATHS form.",
+    ),
     config: str | None = typer.Option(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
+    ),
+    rule_file: str | None = typer.Option(
+        None,
+        "--rule",
+        "-r",
+        help="Scan with a single ast-grep rule file without requiring sgconfig.",
     ),
     ruleset: str | None = typer.Option(
         None,
@@ -6645,6 +6677,12 @@ def scan(
         None,
         "--inline-rules",
         help="Scan using inline ast-grep rule YAML without requiring sgconfig.",
+    ),
+    filter_regex: str | None = typer.Option(
+        None,
+        "--filter",
+        "-f",
+        help="Filter loaded rule IDs with a regex before scanning.",
     ),
     path: str = typer.Option(
         ".",
@@ -6707,9 +6745,18 @@ def scan(
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
 
-    if ruleset and inline_rules:
-        typer.echo("Error: --inline-rules is incompatible with --ruleset.", err=True)
+    inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
+    if inline_source_count > 1:
+        typer.echo("Error: --rule, --inline-rules, and --ruleset are mutually exclusive.", err=True)
         sys.exit(1)
+    if rule_file is not None and filter_regex is not None:
+        typer.echo("Error: --filter is incompatible with --rule.", err=True)
+        sys.exit(1)
+    scan_paths = list(paths or [])
+    if scan_paths and path != ".":
+        typer.echo("Error: positional PATHS are incompatible with --path.", err=True)
+        sys.exit(1)
+    effective_scan_paths = scan_paths or [path]
 
     candidate_files: list[str] | None = None
     project_scan_fast_path = False
@@ -6721,7 +6768,7 @@ def scan(
             sys.exit(1)
         project_cfg: dict[str, object] = {
             "config_path": f"builtin:{ruleset_meta['name']}",
-            "root_dir": Path(path).resolve(),
+            "root_dir": Path(effective_scan_paths[0]).resolve(),
             "rule_dirs": [],
             "test_dirs": [],
             "language": ruleset_meta["language"],
@@ -6731,6 +6778,32 @@ def scan(
             f"{ruleset_meta['name']} ({ruleset_meta['language']})"
         )
         routing_reason = "builtin-ruleset-scan"
+    elif rule_file is not None:
+        rule_path = Path(rule_file).expanduser().resolve()
+        try:
+            rules = _load_inline_rule_specs(
+                rule_path.read_text(encoding="utf-8"),
+                default_language=language,
+            )
+        except OSError as exc:
+            typer.echo(f"Error: failed to read rule file {rule_path}: {exc}", err=True)
+            sys.exit(1)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        if not rules:
+            typer.echo(f"Error: No valid rule was found in {rule_path}.", err=True)
+            sys.exit(1)
+        inferred_language = language or str(rules[0]["language"])
+        project_cfg = {
+            "config_path": rule_path,
+            "root_dir": Path(effective_scan_paths[0]).resolve(),
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": inferred_language,
+        }
+        scan_banner = f"Scanning project using rule file {rule_path}"
+        routing_reason = "ast-single-rule-scan"
     elif inline_rules is not None:
         try:
             rules = _load_inline_rule_specs(inline_rules, default_language=language)
@@ -6743,7 +6816,7 @@ def scan(
         inferred_language = language or str(rules[0]["language"])
         project_cfg = {
             "config_path": "inline-rules",
-            "root_dir": Path(path).resolve(),
+            "root_dir": Path(effective_scan_paths[0]).resolve(),
             "rule_dirs": [],
             "test_dirs": [],
             "language": inferred_language,
@@ -6758,13 +6831,23 @@ def scan(
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(f"Error: {exc}", err=True)
             sys.exit(1)
+        try:
+            rules = _filter_ast_rule_specs(rules, filter_regex)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
 
         if not rules:
-            typer.echo("Error: No valid rules found in configured rule directories.", err=True)
+            typer.echo(
+                "Error: No valid rules found after applying configuration and filters.",
+                err=True,
+            )
             sys.exit(1)
         scan_banner = "Scanning project using adaptive AST routing"
         routing_reason = "ast-project-scan"
         project_scan_fast_path = True
+        if scan_paths:
+            project_scan_fast_path = False
 
     if not json_output:
         typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
@@ -6773,6 +6856,7 @@ def scan(
             project_cfg,
             rules,
             routing_reason=routing_reason,
+            scan_paths=scan_paths or None,
             candidate_files=candidate_files,
             project_scan_fast_path=project_scan_fast_path,
             ruleset_name=ruleset_meta["name"] if ruleset else None,
@@ -6900,6 +6984,12 @@ def new(
     base_dir: Path = typer.Option(
         Path("."), "--base-dir", "-b", help="Directory where scaffold files are created."
     ),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to sgconfig.yml for selecting configured rule/test/util directories.",
+    ),
 ) -> None:
     """Create a new structural search project or rules/tests scaffold."""
     _ = yes
@@ -6921,16 +7011,32 @@ def new(
             raise ValueError(f"tg new {scaffold_kind} requires a name.")
         _validate_ast_new_name(name)
 
+        project_cfg: dict[str, object] | None = None
+        if config is not None:
+            project_cfg = _load_sg_project_config(config)
+
         if scaffold_kind == "rule":
-            target_dir = base_dir / "rules"
+            target_dir = (
+                cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["rule_dirs"])[0]
+                if project_cfg is not None
+                else base_dir / "rules"
+            )
             target_path = target_dir / f"{name}.yml"
             contents = f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: ''\n"
         elif scaffold_kind == "test":
-            target_dir = base_dir / "tests"
+            target_dir = (
+                cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["test_dirs"])[0]
+                if project_cfg is not None
+                else base_dir / "tests"
+            )
             target_path = target_dir / f"{name}.yml"
             contents = f"id: {name}\nruleId: {name}\nvalid:\n  - ''\ninvalid: []\n"
         else:
-            target_dir = base_dir / "utils"
+            target_dir = (
+                cast(Path, project_cfg["root_dir"]) / cast(str, project_cfg["utils_dir"])
+                if project_cfg is not None
+                else base_dir / "utils"
+            )
             target_path = target_dir / f"{name}.yml"
             contents = f"id: {name}\npattern: ''\n"
 
@@ -8081,6 +8187,27 @@ def run(
     interactive: bool = typer.Option(
         False, "--interactive", "-i", help="Start interactive edit session"
     ),
+    update_all: bool = typer.Option(
+        False,
+        "--update-all",
+        "-U",
+        help="ast-grep-compatible alias for applying all rewrite edits.",
+    ),
+    selector: str | None = typer.Option(
+        None,
+        "--selector",
+        help="Unsupported ast-grep semantic matcher selector; fails explicitly.",
+    ),
+    strictness: str | None = typer.Option(
+        None,
+        "--strictness",
+        help="Unsupported ast-grep strictness control; fails explicitly.",
+    ),
+    stdin: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Unsupported ast-grep stdin mode; fails explicitly.",
+    ),
     filter_regex: str | None = typer.Option(
         None, "--filter", help="Filter matched AST nodes by text regex"
     ),
@@ -8091,6 +8218,27 @@ def run(
     ),
 ) -> None:
     from tensor_grep.cli.ast_workflows import run_command as execute_run
+
+    unsupported_semantic_flags = [
+        flag
+        for flag, value in (
+            ("--selector", selector),
+            ("--strictness", strictness),
+            ("--stdin", stdin),
+        )
+        if value
+    ]
+    if unsupported_semantic_flags:
+        typer.echo(
+            "Error: "
+            + ", ".join(unsupported_semantic_flags)
+            + " is not supported by tg run yet. Use ast-grep directly for this semantic matcher.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if update_all and rewrite is None:
+        typer.echo("Error: tg run --update-all requires --rewrite.", err=True)
+        raise typer.Exit(code=2)
 
     positional_args = list(arguments or [])
     if pattern_option:
@@ -8120,7 +8268,7 @@ def run(
         path=resolved_path,
         rewrite=rewrite,
         lang=lang,
-        apply=apply,
+        apply=apply or update_all,
         verify=verify,
         json_mode=json_output,
         checkpoint=checkpoint,
