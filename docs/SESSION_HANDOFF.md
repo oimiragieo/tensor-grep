@@ -8,20 +8,21 @@ release_docs_current_tag: v1.12.7
 
 - Latest tagged version: `v1.12.7`
 - Latest complete PyPI version: `v1.12.7`
-- Latest tagged release PR: #113 `fix: accelerate fixed multi-pattern native search`
-- Latest tagged merge commit: `a78e33c fix: harden post-release docs governance`
-- Latest tagged release commit: `e33c2ba chore(release): v1.11.5 [skip ci]`
-- Latest complete public release PR: #116 `fix: harden post-release docs governance`
-- Latest complete public release commit: `e33c2ba chore(release): v1.11.5 [skip ci]`
-- Latest fix commit: `a78e33c fix: harden post-release docs governance`
-- Latest feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged release PR: #128 `fix: harden v1.12.6 dogfood cli contracts`
+- Latest tagged merge commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Latest tagged release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
+- Latest complete public release PR: #128 `fix: harden v1.12.6 dogfood cli contracts`
+- Latest complete public release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
+- Latest fix commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Latest feature commit: `a518cc6 feat: add agent success harness`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.7>
 - `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
-- Main CI run `25860914920`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25866868462`: passed on the `v1.11.5` release line
+- Main CI run `25917666403`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25917665808`: passed on the `v1.12.7` release line
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.7 tg --version` reports `tensor-grep 1.12.7`
 - GitHub release assets: `v1.12.7` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.12.7` dogfood verified PyPI, `uvx`, release assets, public launcher resolution, accepted search/native-front-door CLI drift fixes, `tg new --base-dir`, edit-plan budget flags, and explicit JSON/NDJSON schema positioning. Public managed GPU is not promotion-ready: explicit GPU requests fall back to `NativeCpuBackend` or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
 - Public `v1.11.5` dogfood verified PyPI, `uvx`, release assets, and post-release-safe docs governance. `v1.11.4` verifies the native GPU unavailable fallback to `NativeCpuBackend`, and `v1.11.3` uses `87d4ca4 fix: accelerate fixed multi-pattern native search` to run a single Aho-Corasick pass for safe fixed-string multi-pattern searches while keeping GPU promotion separate from this CPU workload-class win.
 - Closed v1.11.5 post-release-safe docs governance gap: `a78e33c fix: harden post-release docs governance` separates auto-stamped current tag labels from latest verified release proof blocks so release commits remain locally testable after semantic-release bumps the version.
 - Closed v1.11.4 native GPU unavailable and docs-governance gap: `361e0db fix: harden public GPU unavailable routing` prevents sidecar routing from looking like native GPU proof when no explicit sidecar is configured, and `2100122 fix: harden release docs stamp governance` keeps post-release-safe docs governance aligned with semantic-release tag stamping.
@@ -69,7 +70,7 @@ release_docs_current_tag: v1.12.7
 
 ## Current Post-v1.11.3 Scope
 
-Current release branch is publication-complete for `v1.11.5`: PR #116 `fix: harden post-release docs governance` was squash-merged as `a78e33c`, release commit `e33c2ba chore(release): v1.11.5 [skip ci]` exists, main CI run `25866871838` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25866868462` passed. Public dogfood verified PyPI, release assets, `uvx`, and post-release-safe docs governance. The `v1.10.10` Windows subprocess launcher repair remains the public launcher repair baseline; keep foreign launcher handling opt-in and auditable rather than deleting unrelated tools.
+Current release branch is publication-complete for `v1.12.7`: PR #128 `fix: harden v1.12.6 dogfood cli contracts` was squash-merged as `da44a2f`, release commit `5d9a775 chore(release): v1.12.7 [skip ci]` exists, main CI run `25917666403` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25917665808` passed. Public dogfood verified PyPI, release assets, `uvx`, launcher resolution, accepted native/dev CLI flag alignment, `tg new --base-dir`, edit-plan budget flags, and explicit JSON/NDJSON schema positioning. The `v1.10.10` Windows subprocess launcher repair remains the historical public launcher repair baseline; keep foreign launcher handling opt-in and auditable rather than deleting unrelated tools.
 
 The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The Windows native-first PATH, agent JSON validation-command, local default classify, and GPU scale benchmark follow-ups shipped in `v1.8.31`. The launcher-route observability and benchmark launcher-attribution follow-up shipped in `v1.8.32`. The explicit GPU probe scoping and benchmark launcher warning follow-up shipped in `v1.8.33`. The Actionable Context Capsule v1 shipped in `v1.9.0`; mixed-language capsule trust alignment and GPU recommendation hygiene shipped in `v1.9.1`; edit JSON/rollback safety shipped in `v1.9.2`; explicit Python ranking and quoted validation commands shipped in `v1.9.3`; docs-governance and validation placeholders shipped in `v1.9.4`; native CUDA gate hardening, capsule alternatives, help diagnostics, and foreign launcher diagnostics shipped in `v1.9.5`; directory validation, CUDA 12.8 install paths, help coverage, and release-proof governance shipped in `v1.9.6`; GPU benchmark promotion-gate taxonomy and cold-search positioning shipped in `v1.9.7`; stale tensor-grep-owned `tg.com` bridge refresh after upgrade shipped in `v1.9.8`; agent workflow benchmark governance shipped in `v1.9.9`; capsule confidence/secrets/docs dogfood follow-ups shipped in source/GitHub assets in `v1.9.10`; and release wheel Cargo prefetch retries shipped in `v1.9.11`.
 

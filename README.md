@@ -45,7 +45,7 @@ release_docs_current_tag: v1.12.7
 
 Latest tagged GitHub release: [`v1.12.7`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.7). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.12.7`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.7). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.11.5` completed in main CI run `25866871838`; CodeQL run `25866868462` passed.
+Latest verified release proof: `v1.12.7` completed in main CI run `25917666403`; CodeQL run `25917665808` passed.
 
 Current positioning:
 
@@ -53,11 +53,21 @@ Current positioning:
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
-- Public GPU note: in `v1.11.3`, the public managed binary still reports explicit GPU requests through `GpuSidecar`; only a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. GPU benchmark artifacts now expose `promotion_evidence_contract` and `promotion_blockers` so sidecar rows cannot look like promotion proof. The latest public managed many-pattern dogfood is not promotion-ready for GPU: the accepted improvement is a native CPU fixed multi-pattern fast path, not public GPU readiness. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce 1GB and 5GB correctness and speed wins for the declared workload on RTX 4070 / RTX 5070 class devices.
+- Public GPU note: in `v1.12.7`, public managed GPU is not promotion-ready. The public managed binary falls back to `NativeCpuBackend` or reports unsupported for explicit GPU requests unless a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. GPU benchmark artifacts expose `promotion_evidence_contract` and `promotion_blockers` so fallback or sidecar rows cannot look like promotion proof. The latest public managed many-pattern dogfood is not promotion-ready for GPU: the accepted improvement is a native CPU fixed multi-pattern fast path, not public GPU readiness. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce 1GB and 5GB correctness and speed wins for the declared workload on RTX 4070 / RTX 5070 class devices.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
-- `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed results are reported as unsupported instead of being counted as GPU acceleration.
+- `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.12.7` closed:
+
+- PR #128 `fix: harden v1.12.6 dogfood cli contracts` shipped the release as merge commit `da44a2f fix: harden v1.12.6 dogfood cli contracts` and release commit `5d9a775 chore(release): v1.12.7 [skip ci]`
+- Latest merged feature commit before this release line: `a518cc6 feat: add agent success harness`
+- main CI run `25917666403` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25917665808` passed
+- GitHub release assets for `v1.12.7` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.12.7 tg --version` reports `tensor-grep 1.12.7`
+- public native/dev CLI drift is closed for accepted search flags and option-first structured search: `tg --json --no-ignore ...`, `tg search --passthrough`, `--unicode`, `--auto-hybrid-regex`, `--type-list`, `--pcre2-version`, and `tg search --version` execute or route intentionally
+- `tg new` fails before writing files for unsupported scaffold shapes and respects `--base-dir` for supported scaffolds; `edit-plan` and MCP/session edit-plan accept agent budget flags while keeping output source-bounded
+- `tg search --json` is tensor-grep aggregate JSON, not ripgrep JSON Lines; `tg search --ndjson` is tensor-grep flattened streaming rows, not the rg event schema
 
 What `v1.11.5` closed:
 
@@ -715,7 +725,7 @@ $ tg --gpu-device-ids 0 foobar
 $ tg --gpu-device-ids 0,1 foobar
 ```
 
-Search for multiple patterns in a single pass (GPU-accelerated):
+Search for multiple fixed patterns in one native CPU pass:
 
 ```bash
 $ tg -e "ERROR" -e "FATAL" -e "PANIC" ./logs
@@ -871,9 +881,9 @@ The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles 
 
 The native CPU engine requires only a Rust toolchain. No GPU, CUDA, or Python runtime is needed for the native binary. Current performance claims should be taken from [docs/benchmarks.md](docs/benchmarks.md), not this README.
 
-### GPU-accelerated (native CUDA)
+### Experimental Native CUDA
 
-To unlock GPU acceleration, your system must meet these requirements. End-to-end GPU routing is still benchmark-governed and host-specific; see [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current measured line.
+To evaluate native CUDA search, your system must meet these requirements. End-to-end GPU routing is still benchmark-governed and host-specific; see [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current measured line. Public managed GPU remains experimental until public binaries produce `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins over both `rg` and `tg_cpu`.
 
 * **Hardware:**
   * NVIDIA GPU (RTX 30/40 series recommended; RTX 50-series / sm_120 support depends on the CUDA/PyTorch stack described in [docs/runbooks/gpu-troubleshooting.md](docs/runbooks/gpu-troubleshooting.md))
