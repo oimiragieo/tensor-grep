@@ -1721,7 +1721,7 @@ def test_should_require_ci_release_native_assets_to_use_rust_frontdoor_not_nuitk
           - name: Validate native release asset matrix and generate checksums
             run: uv run python scripts/validate_release_binary_artifacts.py --expected-profile native-frontdoor --checksums-out artifacts/CHECKSUMS.txt
           - name: Upload GitHub release native assets
-            uses: softprops/action-gh-release@v2
+            uses: softprops/action-gh-release@v3
             with:
               tag_name: v${{ needs.release.outputs.release_version }}
               files: |
@@ -2469,7 +2469,7 @@ def test_should_require_release_to_publish_package_manager_bundle_assets():
       create-release:
         steps:
           - name: Create GitHub Release
-            uses: softprops/action-gh-release@v2
+            uses: softprops/action-gh-release@v3
             with:
               files: |
                 artifacts/**/tg-*
@@ -3462,7 +3462,7 @@ def test_should_require_release_create_github_release_step_contract():
     """
     errors = module.validate_release_workflow_content(release_workflow=release_workflow)
     assert any(
-        "create-release `Create GitHub Release` step must use `softprops/action-gh-release@v2`"
+        "create-release `Create GitHub Release` step must use `softprops/action-gh-release@v3`"
         in err
         for err in errors
     )
@@ -3513,7 +3513,7 @@ def test_should_require_release_validate_tag_version_parity_setup_and_command():
           - name: Smoke-test package-manager bundle contracts
             run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
           - name: Create GitHub Release
-            uses: softprops/action-gh-release@v2
+            uses: softprops/action-gh-release@v3
             with:
               files: |
                 artifacts/**/tg-*
@@ -3602,7 +3602,7 @@ def test_should_require_release_publish_npm_setup_node_contract():
           - name: Smoke-test package-manager bundle contracts
             run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
           - name: Create GitHub Release
-            uses: softprops/action-gh-release@v2
+            uses: softprops/action-gh-release@v3
             with:
               files: |
                 artifacts/**/tg-*
