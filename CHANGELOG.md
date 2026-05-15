@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.12.6 (2026-05-15)
+
+### Bug Fixes
+
+- Harden Windows subprocess exe bridge
+  ([`1783e92`](https://github.com/oimiragieo/tensor-grep/commit/1783e920e3fb561b942adf2fc03cc08ee7effaae))
+
+- install a marked tg.exe bridge beside managed compatibility shims for Windows Python subprocess
+  resolution - preserve foreign tg.exe owners and require an ownership marker before sidecar
+  redirection - route marked external bridges back to the managed sidecar Python and native front
+  door
+
+Validation: - uv run pytest
+  tests/unit/test_install_scripts.py::test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim
+  tests/unit/test_install_scripts.py::test_install_ps1_should_write_exe_bridge_for_python_subprocess_in_shim_dirs
+  tests/unit/test_cli_modes.py::test_upgrade_targets_current_cmd_shim_dir_for_python_subprocess_bridge
+  tests/unit/test_cli_modes.py::test_upgrade_does_not_create_python_subprocess_bridge_for_foreign_cmd
+  tests/unit/test_cli_modes.py::test_upgrade_does_not_create_python_subprocess_bridge_outside_managed_shim_dirs
+  -q - cargo test --manifest-path rust_core/Cargo.toml exe -- --nocapture - uv run ruff check . - uv
+  run ruff format --check --preview . - uv run mypy src/tensor_grep - cargo fmt --manifest-path
+  rust_core/Cargo.toml --check - cargo test --manifest-path rust_core/Cargo.toml - uv run pytest -q
+  - python scripts/agent_readiness.py --no-wsl-probe --output
+  artifacts/agent_readiness_1.12.5_bridge_marker_fix.json - PR CI
+
+
 ## v1.12.5 (2026-05-15)
 
 ### Bug Fixes
