@@ -273,6 +273,19 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--no-ignore-global")
             if config.no_ignore_parent:
                 cmd.append("--no-ignore-parent")
+            if config.no_ignore_vcs:
+                cmd.append("--no-ignore-vcs")
+            if config.no_require_git:
+                cmd.append("--no-require-git")
+            if config.one_file_system:
+                cmd.append("--one-file-system")
+            if config.ignore_file:
+                for ignore_path in config.ignore_file:
+                    cmd.extend(["--ignore-file", ignore_path])
+            if config.ignore_file_case_insensitive:
+                cmd.append("--ignore-file-case-insensitive")
+            if config.max_depth is not None:
+                cmd.extend(["--max-depth", str(config.max_depth)])
             if config.no_config:
                 cmd.append("--no-config")
             if config.only_matching:
@@ -314,6 +327,11 @@ class RipgrepBackend(ComputeBackend):
             if config.type_not:
                 for file_type in config.type_not:
                     cmd.extend(["-T", file_type])
+            if config.type_add:
+                for type_spec in config.type_add:
+                    cmd.extend(["--type-add", type_spec])
+            if config.type_clear:
+                cmd.extend(["--type-clear", config.type_clear])
 
             if config.context is not None:
                 cmd.extend(["-C", str(config.context)])
@@ -337,10 +355,41 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--replace", config.replace_str])
             if config.passthru and not json_mode:
                 cmd.append("--passthru")
+            if config.block_buffered and not json_mode:
+                cmd.append("--block-buffered")
+            if config.byte_offset and not json_mode:
+                cmd.append("-b")
+            if config.colors and not json_mode:
+                for color_spec in config.colors:
+                    cmd.extend(["--colors", color_spec])
+            if config.context_separator != "--" and not json_mode:
+                cmd.extend(["--context-separator", config.context_separator])
+            if config.field_context_separator != "-" and not json_mode:
+                cmd.extend(["--field-context-separator", config.field_context_separator])
+            if config.field_match_separator != ":" and not json_mode:
+                cmd.extend(["--field-match-separator", config.field_match_separator])
+            if not config.heading and not json_mode:
+                cmd.append("--no-heading")
+            if config.include_zero and not json_mode:
+                cmd.append("--include-zero")
+            if config.line_buffered and not json_mode:
+                cmd.append("--line-buffered")
+            if config.max_columns is not None and not json_mode:
+                cmd.extend(["--max-columns", str(config.max_columns)])
+            if config.max_columns_preview and not json_mode:
+                cmd.append("--max-columns-preview")
             if config.sort_by != "none" and not json_mode:
                 cmd.extend(["--sort", config.sort_by])
+            if config.sort_files and not json_mode:
+                cmd.append("--sort-files")
             if config.sort_by_reverse != "none" and not json_mode:
                 cmd.extend(["--sortr", config.sort_by_reverse])
+            if config.trim and not json_mode:
+                cmd.append("--trim")
+            if config.with_filename and not json_mode:
+                cmd.append("--with-filename")
+            if config.no_filename and not json_mode:
+                cmd.append("--no-filename")
             if config.debug:
                 cmd.append("--debug")
             if config.trace:

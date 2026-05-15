@@ -217,6 +217,10 @@ pub struct SearchArgs {
     #[arg(long = "sortr")]
     pub sort_reverse: Option<String>,
 
+    /// Deprecated ripgrep alias for --sort path
+    #[arg(long = "sort-files")]
+    pub sort_files: bool,
+
     /// Follow file paths with a NUL byte
     #[arg(short = '0', long = "null")]
     pub null: bool,
@@ -250,7 +254,7 @@ pub struct SearchArgs {
     pub max_count: Option<usize>,
 
     /// Limit depth of directory traversal
-    #[arg(short = 'd', long = "max-depth")]
+    #[arg(short = 'd', long = "max-depth", visible_alias = "maxdepth")]
     pub max_depth: Option<usize>,
 
     /// Show matches with word boundaries
@@ -1178,6 +1182,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         no_config: false,
         sort: None,
         sort_reverse: None,
+        sort_files: false,
         max_depth: None,
         null: false,
         null_data: false,
@@ -1245,7 +1250,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
                 args.max_count = Some(value);
             }
-            "-d" | "--max-depth" => {
+            "-d" | "--max-depth" | "--maxdepth" => {
                 index += 1;
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
                 args.max_depth = Some(value);
@@ -1257,6 +1262,12 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 args.max_count = Some(value);
             }
             _ if token.starts_with("--max-depth=") => {
+                let value = token
+                    .split_once('=')
+                    .and_then(|(_, value)| value.parse::<usize>().ok())?;
+                args.max_depth = Some(value);
+            }
+            _ if token.starts_with("--maxdepth=") => {
                 let value = token
                     .split_once('=')
                     .and_then(|(_, value)| value.parse::<usize>().ok())?;
@@ -1292,6 +1303,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 args.sort_reverse =
                     Some(token.split_once('=').map(|(_, value)| value.to_string())?);
             }
+            "--sort-files" => args.sort_files = true,
+            "--no-sort-files" => args.sort_files = false,
             "-g" | "--glob" => {
                 index += 1;
                 args.globs.push(tokens.get(index)?.clone());
@@ -2949,6 +2962,7 @@ fn positional_ripgrep_args(
         no_config: false,
         sort: None,
         sort_reverse: None,
+        sort_files: false,
         max_depth: None,
         null: false,
         null_data: false,
@@ -3001,6 +3015,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         no_config: args.no_config,
         sort: args.sort.clone(),
         sort_reverse: args.sort_reverse.clone(),
+        sort_files: args.sort_files,
         max_depth: args.max_depth,
         null: args.null,
         null_data: args.null_data,
@@ -3037,6 +3052,7 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
                 || args.files_without_match
                 || args.sort.is_some()
                 || args.sort_reverse.is_some()
+                || args.sort_files
                 || args.max_depth.is_some()
                 || args.null
                 || args.null_data
@@ -6430,6 +6446,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 no_config: false,
                                 sort: None,
                                 sort_reverse: None,
+                                sort_files: false,
                                 max_depth: params.max_depth,
                                 null: false,
                                 null_data: false,

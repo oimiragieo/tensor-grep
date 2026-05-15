@@ -2286,6 +2286,65 @@ fn test_rust_control_plane_no_ignore() {
 }
 
 #[test]
+fn test_rust_control_plane_search_accepts_rg_sort_files_and_maxdepth_aliases() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--format")
+        .arg("rg")
+        .arg("--sort-files")
+        .arg("--maxdepth")
+        .arg("1")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_root_rg_style_forwarding_accepts_sort_files_and_maxdepth_aliases() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("--format")
+        .arg("rg")
+        .arg("--sort-files")
+        .arg("--maxdepth")
+        .arg("1")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
 fn test_rust_control_plane_case_insensitive_search_dispatches_to_ripgrep() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

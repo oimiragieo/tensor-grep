@@ -74,6 +74,8 @@ SEARCH_HELP_REQUIRED_SNIPPETS = (
     "PATTERN",
     "validated common rg-compatible subset",
     "--format rg --json",
+    "--maxdepth",
+    "--sort-files",
     "local heuristics by default",
     "--gpu-device-ids",
 )
@@ -2165,6 +2167,9 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
             "--passthrough",
             "--unicode",
             "--auto-hybrid-regex",
+            "--sort-files",
+            "--maxdepth",
+            "2",
             "ERROR",
             str(project),
         ],
@@ -2177,6 +2182,8 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
     assert config.passthru is True
     assert config.unicode is True
     assert config.auto_hybrid_regex is True
+    assert config.sort_files is True
+    assert config.max_depth == 2
 
 
 def test_search_version_should_run_from_python_search_entrypoint() -> None:
