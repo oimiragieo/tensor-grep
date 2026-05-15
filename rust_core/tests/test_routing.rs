@@ -2224,6 +2224,70 @@ fn test_rust_control_plane_max_count_search_dispatches_to_ripgrep() {
 }
 
 #[test]
+fn test_rust_control_plane_count_search_dispatches_to_ripgrep() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--count")
+        .arg("ERROR")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_glob_search_dispatches_to_ripgrep() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--glob")
+        .arg("*.txt")
+        .arg("ERROR")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_many_fixed_patterns_dispatch_to_ripgrep_by_default() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-e")
+        .arg("ERROR")
+        .arg("-e")
+        .arg("WARN")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
 fn test_rust_control_plane_version() {
     let expected = format!("tg {}", env!("CARGO_PKG_VERSION"));
 

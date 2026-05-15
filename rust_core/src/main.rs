@@ -1897,6 +1897,87 @@ mod tests {
     }
 
     #[test]
+    fn cold_rg_shaped_modes_prefer_ripgrep_passthrough() {
+        let count_args = parse_search_args(&["tg", "search", "--count", "ERROR", "bench_data"]);
+        let count_request = resolve_search_request(&count_args).unwrap();
+        assert!(search_prefers_ripgrep_passthrough(
+            &count_args,
+            &count_request,
+            true
+        ));
+
+        let glob_args =
+            parse_search_args(&["tg", "search", "--glob", "*.log", "ERROR", "bench_data"]);
+        let glob_request = resolve_search_request(&glob_args).unwrap();
+        assert!(search_prefers_ripgrep_passthrough(
+            &glob_args,
+            &glob_request,
+            true
+        ));
+
+        let many_fixed_args = parse_search_args(&[
+            "tg",
+            "search",
+            "--fixed-strings",
+            "-e",
+            "ERROR",
+            "-e",
+            "WARN",
+            "bench_data",
+        ]);
+        let many_fixed_request = resolve_search_request(&many_fixed_args).unwrap();
+        assert!(search_prefers_ripgrep_passthrough(
+            &many_fixed_args,
+            &many_fixed_request,
+            true
+        ));
+        assert!(!search_prefers_ripgrep_passthrough(
+            &many_fixed_args,
+            &many_fixed_request,
+            false
+        ));
+
+        let explicit_index =
+            parse_search_args(&["tg", "search", "--index", "--count", "ERROR", "bench_data"]);
+        let explicit_index_request = resolve_search_request(&explicit_index).unwrap();
+        assert!(!search_prefers_ripgrep_passthrough(
+            &explicit_index,
+            &explicit_index_request,
+            true
+        ));
+
+        let warm_index_dir = tempfile::tempdir().unwrap();
+        std::fs::write(warm_index_dir.path().join(".tg_index"), b"stale").unwrap();
+        let warm_index_path = warm_index_dir.path().to_str().unwrap();
+        let warm_index_count =
+            parse_search_args(&["tg", "search", "--count", "ERROR", warm_index_path]);
+        let warm_index_request = resolve_search_request(&warm_index_count).unwrap();
+        assert!(!search_prefers_ripgrep_passthrough(
+            &warm_index_count,
+            &warm_index_request,
+            true
+        ));
+
+        let forced_cpu = parse_search_args(&[
+            "tg",
+            "search",
+            "--cpu",
+            "--fixed-strings",
+            "-e",
+            "ERROR",
+            "-e",
+            "WARN",
+            "bench_data",
+        ]);
+        let forced_cpu_request = resolve_search_request(&forced_cpu).unwrap();
+        assert!(!search_prefers_ripgrep_passthrough(
+            &forced_cpu,
+            &forced_cpu_request,
+            true
+        ));
+    }
+
+    #[test]
     fn early_positional_ripgrep_args_parse_plain_shapes() {
         let raw_args = ["tg", "-i", "warning", "bench_data"]
             .into_iter()
@@ -2873,6 +2954,29 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
             || !args.file_type.is_empty())
 }
 
+fn search_prefers_ripgrep_passthrough(
+    args: &SearchArgs,
+    request: &ResolvedSearchRequest,
+    rg_available: bool,
+) -> bool {
+    if search_requires_ripgrep_passthrough(args) {
+        return true;
+    }
+    if args.json
+        || args.ndjson
+        || args.index
+        || args.force_cpu
+        || !args.gpu_device_ids.is_empty()
+        || detect_warm_index_state(args, request).exists
+    {
+        return false;
+    }
+    rg_available
+        && (args.count
+            || !args.globs.is_empty()
+            || (args.fixed_strings && request.patterns.len() > 1))
+}
+
 fn search_has_context(args: &SearchArgs) -> bool {
     args.context.is_some() || args.before_context.is_some() || args.after_context.is_some()
 }
@@ -3156,7 +3260,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     let structured_output = args.json || args.ndjson;
     let auto_gpu_ids: [i32; 0] = [];
 
-    if search_requires_ripgrep_passthrough(&args) {
+    if search_prefers_ripgrep_passthrough(&args, &request, rg_available) {
         if args.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());
         }
