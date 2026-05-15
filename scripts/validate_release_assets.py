@@ -1890,6 +1890,7 @@ def validate_readme_contract(*, readme_content: str) -> list[str]:
         "faster than rg",
         "faster than `rg`",
         "GPU-ready",
+        "GPU-accelerated",
     ]
     for fragment in banned_positioning:
         if fragment in readme_content:

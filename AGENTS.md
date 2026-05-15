@@ -20,14 +20,21 @@ release_docs_current_tag: v1.12.7
 
 As of 2026-05-14, the current tagged release state is `v1.12.7`, and the latest complete public PyPI/release-asset distribution is also `v1.12.7`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, and agent capsule hardcase routing are released through `v1.12.7` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Latest tagged release PR: #113 `fix: accelerate fixed multi-pattern native search`
-- Latest tagged merge commit: `a78e33c fix: harden post-release docs governance`
-- Latest tagged release commit: `e33c2ba chore(release): v1.11.5 [skip ci]`
-- Latest complete public release PR: #116 `fix: harden post-release docs governance`
-- Latest complete public release commit: `e33c2ba chore(release): v1.11.5 [skip ci]`
-- Latest merged fix commit: `a78e33c fix: harden post-release docs governance`
-- Latest merged feature commit: `213d383 feat: add dogfood readiness verdict and checkpoint UX`
+- Latest tagged release PR: #128 `fix: harden v1.12.6 dogfood cli contracts`
+- Latest tagged merge commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Latest tagged release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
+- Latest complete public release PR: #128 `fix: harden v1.12.6 dogfood cli contracts`
+- Latest complete public release commit: `5d9a775 chore(release): v1.12.7 [skip ci]`
+- Latest merged fix commit: `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+- Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - Recent fix commits:
+  - `da44a2f fix: harden v1.12.6 dogfood cli contracts`
+  - `1783e92 fix: harden Windows subprocess exe bridge`
+  - `f75e24a fix: harden gpu proof benchmark hygiene`
+  - `affe7a7 fix: keep rust validation for agent cli intents`
+  - `6b2016c fix: clarify ast subset positioning`
+  - `b038ed5 fix: restore compat schema governance`
+  - `aeead68 fix: align public search flag routing`
   - `a78e33c fix: harden post-release docs governance`
   - `2100122 fix: harden release docs stamp governance`
   - `361e0db fix: harden public GPU unavailable routing`
@@ -74,13 +81,14 @@ As of 2026-05-14, the current tagged release state is `v1.12.7`, and the latest 
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
 - `v1.11.0` GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0> exists, but main CI run `25834508800` was cancelled during release-native asset publication; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `25860914920`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25866868462`: passed on the `v1.11.5` release line
+- Main CI run `25917666403`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25917665808`: passed on the `v1.12.7` release line
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.7 tg --version` reports `tensor-grep 1.12.7`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.7>
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.11.5`
-- Public `v1.11.5` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.11.5 tg --version` verified `tensor-grep 1.11.5`; the release includes `a78e33c fix: harden post-release docs governance` while preserving `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and the `87d4ca4 fix: accelerate fixed multi-pattern native search` CPU lane from `v1.11.3`. Explicit public GPU requests without sidecar configuration report native GPU unavailable and fall back to `NativeCpuBackend`.
+- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.7`
+- Public `v1.12.7` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.7 tg --version` verified `tensor-grep 1.12.7`; the release includes `da44a2f fix: harden v1.12.6 dogfood cli contracts` while preserving `a78e33c fix: harden post-release docs governance`, `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and the `87d4ca4 fix: accelerate fixed multi-pattern native search` CPU lane from `v1.11.3`. Explicit public GPU requests without sidecar configuration report native GPU unavailable and fall back to `NativeCpuBackend`; public managed GPU is not promotion-ready.
+- Public `v1.11.5` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.11.5 tg --version` verified `tensor-grep 1.11.5`; the release includes `a78e33c fix: harden post-release docs governance` while preserving `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and the `87d4ca4 fix: accelerate fixed multi-pattern native search` CPU lane from `v1.11.3`.
 - Public `v1.11.2` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.11.2 tg --version` verified `tensor-grep 1.11.2`; the release also exposes classify provider provenance so JSON harnesses can distinguish local deterministic classification from opt-in provider-backed classification.
 - Public `v1.10.10` GPU evidence remains experimental: explicit managed GPU requests still report `GpuSidecar` / unsupported rather than a qualifying `NativeGpuBackend` row, so no GPU speed promotion is made.
 - Public `v1.10.8` dogfood: release CI, assets, PyPI, `uvx --refresh-package tensor-grep --from tensor-grep==1.10.8 tg --version`, managed `tg upgrade`, fresh `cmd /c tg --version`, fresh `pwsh -NoProfile -Command "tg --version"`, and direct managed native `tg.exe` all verified `1.10.8`. Python `subprocess.run(["tg", "--version"])` still resolved the foreign Together CLI `tg.exe` from Machine PATH on this host; `tg doctor --json` reported the route as `foreign` with Machine PATH remediation and did not delete or overwrite unrelated launchers.

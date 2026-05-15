@@ -21,21 +21,21 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-VERIFIED_RELEASE_TAG = "v1.11.5"
-VERIFIED_RELEASE_COMMIT = "e33c2ba chore(release): v1.11.5 [skip ci]"
-VERIFIED_FIX_COMMIT = "a78e33c fix: harden post-release docs governance"
+VERIFIED_RELEASE_TAG = CURRENT_RELEASE_TAG
+VERIFIED_RELEASE_COMMIT = "5d9a775 chore(release): v1.12.7 [skip ci]"
+VERIFIED_FIX_COMMIT = "da44a2f fix: harden v1.12.6 dogfood cli contracts"
 CURRENT_RELEASE_COMMIT = VERIFIED_RELEASE_COMMIT
 CURRENT_FIX_COMMIT = VERIFIED_FIX_COMMIT
 CURRENT_GPU_FIX_COMMIT = "361e0db fix: harden public GPU unavailable routing"
 CURRENT_DOCS_STAMP_FIX_COMMIT = "2100122 fix: harden release docs stamp governance"
 CURRENT_MULTIPATTERN_FIX_COMMIT = "87d4ca4 fix: accelerate fixed multi-pattern native search"
-CURRENT_FEATURE_COMMIT = "213d383 feat: add dogfood readiness verdict and checkpoint UX"
+CURRENT_FEATURE_COMMIT = "a518cc6 feat: add agent success harness"
 LATEST_COMPLETE_RELEASE_TAG = CURRENT_RELEASE_TAG
 LATEST_COMPLETE_RELEASE_COMMIT = VERIFIED_RELEASE_COMMIT
 LATEST_COMPLETE_FIX_COMMIT = VERIFIED_FIX_COMMIT
 LATEST_VERIFIED_RELEASE_TAG = VERIFIED_RELEASE_TAG
-LATEST_VERIFIED_MAIN_CI = "25866871838"
-LATEST_VERIFIED_CODEQL = "25866868462"
+LATEST_VERIFIED_MAIN_CI = "25917666403"
+LATEST_VERIFIED_CODEQL = "25917665808"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -251,6 +251,8 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "only initialize selected devices" in readme
     assert "Actionable Context Capsule" in readme
     assert "validation_alignment" in readme
+    assert "public managed GPU is not promotion-ready" in readme
+    assert "tg search --json` is tensor-grep aggregate JSON" in readme
 
     current_closed_heading = f"What `{LATEST_VERIFIED_RELEASE_TAG}` closed:"
     v1114_heading = "What `v1.11.4` closed:"
@@ -490,6 +492,7 @@ def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() ->
         "further buries",
         "designed to win on larger files",
         "GPU-ready",
+        "GPU-accelerated",
     ]
 
     for path, doc in docs.items():
