@@ -7890,10 +7890,70 @@ def _preferred_edit_anchor_symbol(
     return primary_symbol
 
 
+def _symbol_is_unrequested_marker_helper(
+    symbol: dict[str, Any] | None,
+    query: str,
+) -> bool:
+    if symbol is None:
+        return False
+    symbol_name = str(symbol.get("name", "") or "")
+    if not symbol_name:
+        return False
+    query_terms = set(_query_terms(query))
+    symbol_terms = set(split_terms(symbol_name))
+    return "marker" in symbol_terms and "marker" not in query_terms
+
+
+def _symbol_name_mentions_marker(symbol: dict[str, Any] | None) -> bool:
+    if symbol is None:
+        return False
+    symbol_name = str(symbol.get("name", "") or "")
+    return "marker" in set(split_terms(symbol_name))
+
+
+def _non_marker_implementation_candidate(
+    primary_symbol: dict[str, Any],
+    ranked_symbols: list[dict[str, Any]],
+    *,
+    selected_files: set[str],
+    query_language_hints: list[str],
+) -> dict[str, Any] | None:
+    primary_file = str(primary_symbol.get("file", "") or "")
+    primary_score = int(primary_symbol.get("score", 0) or 0)
+    primary_span = _symbol_span_length(primary_symbol)
+    primary_language_matches_hint = bool(
+        query_language_hints
+        and _path_matches_query_language_hints(primary_file, query_language_hints)
+    )
+    for candidate in ranked_symbols:
+        candidate_file = str(candidate.get("file", "") or "")
+        if not candidate_file or candidate_file not in selected_files:
+            continue
+        if candidate_file == primary_file:
+            continue
+        if _is_test_file(Path(candidate_file)):
+            continue
+        if _symbol_name_mentions_marker(candidate):
+            continue
+        if primary_language_matches_hint and not _path_matches_query_language_hints(
+            candidate_file,
+            query_language_hints,
+        ):
+            continue
+        candidate_score = int(candidate.get("score", 0) or 0)
+        candidate_span = _symbol_span_length(candidate)
+        if candidate_score > primary_score or (
+            candidate_score == primary_score and candidate_span >= primary_span
+        ):
+            return candidate
+    return None
+
+
 def _promote_substantive_symbol_for_edit_seed(
     primary_symbol: dict[str, Any] | None,
     ranked_symbols: list[dict[str, Any]],
     *,
+    query: str,
     selected_files: set[str],
     query_language_hints: list[str],
     primary_file_reasons: set[str],
@@ -7903,6 +7963,15 @@ def _promote_substantive_symbol_for_edit_seed(
     primary_file = str(primary_symbol.get("file", "") or "")
     if not primary_file:
         return primary_symbol
+    if _symbol_is_unrequested_marker_helper(primary_symbol, query):
+        implementation_candidate = _non_marker_implementation_candidate(
+            primary_symbol,
+            ranked_symbols,
+            selected_files=selected_files,
+            query_language_hints=query_language_hints,
+        )
+        if implementation_candidate is not None:
+            return implementation_candidate
     if "validation-direct-definition" in primary_file_reasons:
         return primary_symbol
     primary_score = int(primary_symbol.get("score", 0) or 0)
@@ -8020,6 +8089,7 @@ def _build_edit_plan_seed(
     promoted_symbol = _promote_substantive_symbol_for_edit_seed(
         primary_symbol,
         ranked_symbols,
+        query=query,
         selected_files=selected_files,
         query_language_hints=_query_language_hints(query),
         primary_file_reasons={str(reason) for reason in primary_file_match.get("reasons", [])},
