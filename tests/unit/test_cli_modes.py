@@ -803,7 +803,7 @@ def test_lsp_help_mentions_provider_modes() -> None:
 
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)
-    normalized_help = re.sub(r"\s+", " ", help_text)
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[╭╮╰╯─│]+", " ", help_text))
     assert "--provider" in help_text
     assert "native=repo-map only" in normalized_help
     assert "experimental" in help_text.lower()
