@@ -48,7 +48,9 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         files_without_match: false,
         file_types: Vec::new(),
         color: None,
+        path_separator: None,
         replace: None,
+        vimgrep: false,
         passthru: false,
         no_config: false,
         sort: None,
@@ -101,11 +103,27 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
             "--passthrough" => args.passthru = true,
             "--auto-hybrid-regex" => args.auto_hybrid_regex = true,
             "--unicode" => args.unicode = true,
+            "--vimgrep" => args.vimgrep = true,
             "--hidden" | "-." => args.hidden = true,
             "--follow" | "-L" => args.follow = true,
             "--text" | "-a" => args.text = true,
             "--files-with-matches" | "-l" => args.files_with_matches = true,
             "--files-without-match" => args.files_without_match = true,
+            "--path-separator" => {
+                index += 1;
+                args.path_separator = Some(
+                    tokens
+                        .get(index)
+                        .context("missing value for path-separator")?
+                        .clone(),
+                );
+            }
+            _ if token.starts_with("--path-separator=") => {
+                let (_, value) = token
+                    .split_once('=')
+                    .context("invalid path-separator argument shape")?;
+                args.path_separator = Some(value.to_string());
+            }
             "-C" | "--context" => {
                 index += 1;
                 let value = tokens

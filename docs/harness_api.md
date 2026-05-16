@@ -955,7 +955,10 @@ Example: [`examples/defs.json`](examples/defs.json)
 | `symbol` | `string` | Exact symbol name requested. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
 | `provider_agreement` | `object` | Native-vs-provider merge summary including agreement status, counts, and fallback usage. |
-| `provider_status` | `object` | Provider health snapshot including attempted providers, capabilities, and last error. |
+| `provider_status` | `object` | Provider health snapshot including attempted providers, capabilities, `health_status`, `health_check`, and last error. `available=true` means the provider command was found; it is not proof that initialization or navigation requests succeeded. |
+| `lsp_proof` | `boolean` | `true` only when an external LSP provider contributed usable evidence for the response. |
+| `lsp_evidence_status` | `string` | LSP evidence status such as `not_requested`, `lsp_proof`, `fallback_native`, or `no_lsp_evidence`. |
+| `not_lsp_proof_reason` | `string` | Optional reason explaining why the response should not be treated as LSP-confirmed. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
 | `no_match` | `boolean` | Optional; `true` when no exact definition was found. No-match payloads intentionally keep `files`, `symbols`, `imports`, `tests`, and `related_paths` empty. |
@@ -988,6 +991,9 @@ Example: [`examples/source.json`](examples/source.json)
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
 | `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Defs JSON. |
 | `provider_status` | `object` | Same provider health snapshot exposed by Symbol Defs JSON. |
+| `lsp_proof` | `boolean` | Same provider-evidence proof flag exposed by Symbol Defs JSON. |
+| `lsp_evidence_status` | `string` | Same provider-evidence status exposed by Symbol Defs JSON. |
+| `not_lsp_proof_reason` | `string` | Optional reason explaining why the response should not be treated as LSP-confirmed. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `sources` | `array<object>` | Exact Python blocks or heuristic JS/TS/Rust blocks for the resolved symbol. |
 | `no_match` | `boolean` | Optional; `true` when no exact definition/source block was found. No-match payloads intentionally stay compact. |

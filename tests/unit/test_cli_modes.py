@@ -57,6 +57,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "TENSOR_GREP_DEVICE_IDS",
     "TENSOR_GREP_CLASSIFY_PROVIDER",
     "TENSOR_GREP_TRITON_TIMEOUT_SECONDS",
+    "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS",
     "--smart-case",
     "--hidden",
     "--max-depth",
@@ -803,6 +804,7 @@ def test_lsp_help_mentions_provider_modes() -> None:
     assert result.exit_code == 0
     assert "--provider" in result.stdout
     assert "native=repo-map only" in result.stdout
+    assert "experimental" in result.stdout.lower()
     assert "Examples:" in result.stdout
     assert "--provider hybrid" in result.stdout
 

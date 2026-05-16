@@ -25,8 +25,11 @@ from native_cpu_benchmark_utils import (  # noqa: E402
     resolve_native_cpu_bench_data_dir,
 )
 from run_benchmarks import (  # noqa: E402
+    benchmark_binary_warnings,
+    benchmark_claim_blockers,
     collect_timing_samples,
     default_binary_path,
+    emit_benchmark_claim_blockers,
     generate_test_data,
     resolve_bench_data_dir,
     resolve_rg_binary,
@@ -268,9 +271,25 @@ def main() -> int:
         default=DEFAULT_WARMUP_RUNS,
         help="Number of warmup runs before timing.",
     )
+    parser.add_argument(
+        "--allow-claim-unsafe-launcher",
+        action="store_true",
+        help=(
+            "Allow exploratory benchmark runs even when launcher provenance is unsafe "
+            "for claims, such as a stale in-tree native tg binary."
+        ),
+    )
     args = parser.parse_args()
 
     tg_binary = resolve_tg_binary(args.binary)
+    warnings = benchmark_binary_warnings(tg_binary)
+    for warning in warnings:
+        print(f"[warning] {warning}", file=sys.stderr)
+    blockers = benchmark_claim_blockers(warnings)
+    if blockers and not args.allow_claim_unsafe_launcher:
+        emit_benchmark_claim_blockers(blockers)
+        return 2
+
     rg_binary = resolve_rg_binary()
 
     bench_dir = resolve_bench_data_dir()

@@ -778,6 +778,80 @@ def test_run_benchmarks_should_fallback_from_positional_early_rg_launcher_for_un
     assert env == {"TG_RUST_EARLY_POSITIONAL_RG": "1"}
 
 
+def test_run_benchmarks_should_refuse_stale_in_tree_native_binary_by_default(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_stale_in_tree_refusal",
+        "benchmarks/run_benchmarks.py",
+    )
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("stale", encoding="utf-8")
+    output_path = tmp_path / "bench.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_benchmarks.py", "--binary", str(tg_binary), "--output", str(output_path)],
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_binary_warnings",
+        lambda _binary: ["tensor-grep benchmark warning: stale in-tree native tg binary"],
+    )
+    monkeypatch.setattr(
+        module,
+        "generate_test_data",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("stale benchmark binary should fail before generating data")
+        ),
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 2
+    assert not output_path.exists()
+
+
+def test_run_native_cpu_benchmarks_should_refuse_stale_in_tree_native_binary_by_default(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_native_cpu_benchmarks_script_stale_in_tree_refusal",
+        "benchmarks/run_native_cpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("stale", encoding="utf-8")
+    output_path = tmp_path / "native-cpu.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_native_cpu_benchmarks.py",
+            "--binary",
+            str(tg_binary),
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_binary_warnings",
+        lambda _binary: ["tensor-grep benchmark warning: stale in-tree native tg binary"],
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_rg_binary",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("stale benchmark binary should fail before resolving rg")
+        ),
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 2
+    assert not output_path.exists()
+
+
 def test_run_benchmarks_should_force_discovered_cli_binary_launcher(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_benchmarks_script_launcher_mode_forced_cli", "benchmarks/run_benchmarks.py"
@@ -1064,7 +1138,12 @@ def test_run_benchmarks_should_record_forced_launcher_mode_in_environment(monkey
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_benchmarks.py", "--launcher-mode", "python_module_launcher"],
+        [
+            "run_benchmarks.py",
+            "--launcher-mode",
+            "python_module_launcher",
+            "--allow-claim-unsafe-launcher",
+        ],
     )
 
     captured: dict[str, object] = {}
@@ -1110,7 +1189,12 @@ def test_run_benchmarks_should_record_rust_first_launcher_mode_in_environment(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_benchmarks.py", "--launcher-mode", "python_module_rust_first"],
+        [
+            "run_benchmarks.py",
+            "--launcher-mode",
+            "python_module_rust_first",
+            "--allow-claim-unsafe-launcher",
+        ],
     )
 
     captured: dict[str, object] = {}
@@ -1153,7 +1237,12 @@ def test_run_benchmarks_should_record_early_rg_launcher_mode_in_environment(monk
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_benchmarks.py", "--launcher-mode", "explicit_binary_early_rg"],
+        [
+            "run_benchmarks.py",
+            "--launcher-mode",
+            "explicit_binary_early_rg",
+            "--allow-claim-unsafe-launcher",
+        ],
     )
 
     captured: dict[str, object] = {}
@@ -1245,7 +1334,12 @@ def test_run_benchmarks_should_record_positional_launcher_mode_in_environment(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_benchmarks.py", "--launcher-mode", "explicit_binary_positional"],
+        [
+            "run_benchmarks.py",
+            "--launcher-mode",
+            "explicit_binary_positional",
+            "--allow-claim-unsafe-launcher",
+        ],
     )
 
     captured: dict[str, object] = {}
@@ -1290,7 +1384,12 @@ def test_run_benchmarks_should_record_positional_early_rg_launcher_mode_in_envir
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_benchmarks.py", "--launcher-mode", "explicit_binary_positional_early_rg"],
+        [
+            "run_benchmarks.py",
+            "--launcher-mode",
+            "explicit_binary_positional_early_rg",
+            "--allow-claim-unsafe-launcher",
+        ],
     )
 
     captured: dict[str, object] = {}
@@ -1335,6 +1434,7 @@ def test_run_benchmarks_should_honor_output_and_milestone_args(monkeypatch, tmp_
             str(output_path),
             "--milestone",
             "m2",
+            "--allow-claim-unsafe-launcher",
         ],
     )
 

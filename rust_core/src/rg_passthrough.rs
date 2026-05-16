@@ -46,7 +46,9 @@ pub struct RipgrepSearchArgs {
     pub files_without_match: bool,
     pub file_types: Vec<String>,
     pub color: Option<String>,
+    pub path_separator: Option<String>,
     pub replace: Option<String>,
+    pub vimgrep: bool,
     pub passthru: bool,
     pub no_config: bool,
     pub sort: Option<String>,
@@ -198,8 +200,14 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if let Some(color) = &args.color {
         command.arg("--color").arg(color);
     }
+    if let Some(path_separator) = &args.path_separator {
+        command.arg("--path-separator").arg(path_separator);
+    }
     if let Some(replacement) = &args.replace {
         command.arg("--replace").arg(replacement);
+    }
+    if args.vimgrep {
+        command.arg("--vimgrep");
     }
     if args.passthru {
         command.arg("--passthru");

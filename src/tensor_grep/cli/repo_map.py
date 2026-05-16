@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
@@ -22,6 +22,8 @@ from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
+_DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 8.0
+_LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
     ".tensor-grep",
     ".git",
@@ -9352,6 +9354,83 @@ def _provider_status_snapshot(
     }
 
 
+def _configured_lsp_operation_budget_seconds() -> float:
+    raw_value = os.environ.get(_LSP_OPERATION_BUDGET_ENV_VAR)
+    if raw_value is None:
+        return _DEFAULT_LSP_OPERATION_BUDGET_SECONDS
+    try:
+        return max(float(raw_value), 0.0)
+    except (TypeError, ValueError):
+        return _DEFAULT_LSP_OPERATION_BUDGET_SECONDS
+
+
+def _lsp_operation_deadline() -> float:
+    return time.monotonic() + _configured_lsp_operation_budget_seconds()
+
+
+def _remaining_lsp_budget_seconds(deadline_monotonic: float) -> float:
+    return max(0.0, deadline_monotonic - time.monotonic())
+
+
+def _run_lsp_with_operation_budget(
+    client: Any,
+    deadline_monotonic: float,
+    operation: Callable[[], Any],
+) -> Any:
+    remaining = _remaining_lsp_budget_seconds(deadline_monotonic)
+    if remaining <= 0:
+        raise LSPTransportError("LSP operation budget exhausted")
+    original_request_timeout = getattr(client, "request_timeout_seconds", None)
+    original_initialize_timeout = getattr(client, "initialize_timeout_seconds", None)
+    try:
+        if original_request_timeout is not None:
+            client.request_timeout_seconds = min(float(original_request_timeout), remaining)
+        if original_initialize_timeout is not None:
+            client.initialize_timeout_seconds = min(float(original_initialize_timeout), remaining)
+        return operation()
+    finally:
+        if original_request_timeout is not None:
+            client.request_timeout_seconds = original_request_timeout
+        if original_initialize_timeout is not None:
+            client.initialize_timeout_seconds = original_initialize_timeout
+
+
+def _attach_lsp_evidence_status(
+    payload: dict[str, Any],
+    *,
+    semantic_provider: str,
+    lsp_count: int,
+    fallback_used: bool,
+) -> None:
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    if normalized_provider == "native":
+        payload["lsp_evidence_status"] = "not_requested"
+        payload["lsp_proof"] = False
+        payload["not_lsp_proof_reason"] = "Semantic provider mode is native."
+        return
+    if lsp_count > 0:
+        payload["lsp_evidence_status"] = "lsp_proof"
+        payload["lsp_proof"] = True
+        payload.pop("not_lsp_proof_reason", None)
+        return
+    if fallback_used:
+        payload["lsp_evidence_status"] = "fallback_native"
+        payload["lsp_proof"] = False
+        payload["not_lsp_proof_reason"] = (
+            "External LSP provider returned no usable evidence; native fallback was used."
+        )
+        return
+    payload["lsp_evidence_status"] = "no_lsp_evidence"
+    payload["lsp_proof"] = False
+    payload["not_lsp_proof_reason"] = "External LSP provider returned no usable evidence."
+
+
+def _copy_lsp_evidence_status(payload: dict[str, Any], source: dict[str, Any]) -> None:
+    for key in ("lsp_evidence_status", "lsp_proof", "not_lsp_proof_reason"):
+        if key in source:
+            payload[key] = source[key]
+
+
 def _merge_agreement_status(
     *,
     semantic_provider: str,
@@ -9418,17 +9497,32 @@ def _external_workspace_symbols(
     repo_map: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
+    deadline_monotonic = _lsp_operation_deadline()
     languages = {
         _language_for_path(current.get("file", ""))
         for current in (repo_map or build_repo_map(repo_root)).get("symbols", [])
         if current.get("file")
     }
     for language in sorted(languages):
+        if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
+            break
         try:
             client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(
                 language=language, workspace_root=repo_root
             )
-            result = client.request("workspace/symbol", {"query": symbol})
+
+            def _request_symbols(
+                *,
+                current_client: Any = client,
+                query: str = symbol,
+            ) -> Any:
+                return current_client.request("workspace/symbol", {"query": query})
+
+            result = _run_lsp_with_operation_budget(
+                client,
+                deadline_monotonic,
+                _request_symbols,
+            )
         except (FileNotFoundError, LSPTransportError, ValueError):
             continue
         if not isinstance(result, list):
@@ -9485,30 +9579,59 @@ def _external_references(
     repo_root: Path, symbol: str, definitions: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
+    deadline_monotonic = _lsp_operation_deadline()
     for definition in definitions:
+        if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
+            break
         current_path = Path(str(definition["file"])).resolve()
         language = _language_for_path(current_path)
         try:
             client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(
                 language=language, workspace_root=repo_root
             )
-            client.ensure_document(
-                uri=current_path.as_uri(),
-                text=current_path.read_text(encoding="utf-8"),
-                language_id=language,
+            document_uri = current_path.as_uri()
+            document_text = current_path.read_text(encoding="utf-8")
+            definition_line = int(definition.get("line", 1))
+            definition_character = _symbol_character_in_file(current_path, definition_line, symbol)
+
+            def _ensure_document(
+                *,
+                current_client: Any = client,
+                uri: str = document_uri,
+                text: str = document_text,
+                language_id: str = language,
+            ) -> None:
+                current_client.ensure_document(uri=uri, text=text, language_id=language_id)
+
+            _run_lsp_with_operation_budget(
+                client,
+                deadline_monotonic,
+                _ensure_document,
             )
-            result = client.request(
-                "textDocument/references",
-                {
-                    "textDocument": {"uri": current_path.as_uri()},
-                    "position": {
-                        "line": int(definition.get("line", 1)) - 1,
-                        "character": _symbol_character_in_file(
-                            current_path, int(definition.get("line", 1)), symbol
-                        ),
+
+            def _request_references(
+                *,
+                current_client: Any = client,
+                uri: str = document_uri,
+                line: int = definition_line,
+                character: int = definition_character,
+            ) -> Any:
+                return current_client.request(
+                    "textDocument/references",
+                    {
+                        "textDocument": {"uri": uri},
+                        "position": {
+                            "line": line - 1,
+                            "character": character,
+                        },
+                        "context": {"includeDeclaration": True},
                     },
-                    "context": {"includeDeclaration": True},
-                },
+                )
+
+            result = _run_lsp_with_operation_budget(
+                client,
+                deadline_monotonic,
+                _request_references,
             )
         except (FileNotFoundError, OSError, UnicodeDecodeError, LSPTransportError, ValueError):
             continue
@@ -9671,6 +9794,12 @@ def build_symbol_defs_from_map(
         languages=_provider_languages_for_symbol(repo_map, symbol, definitions),
         fallback_used=fallback_used,
     )
+    _attach_lsp_evidence_status(
+        payload,
+        semantic_provider=normalized_provider,
+        lsp_count=len(external_definitions),
+        fallback_used=fallback_used,
+    )
     if not definitions:
         payload["no_match"] = True
         payload["message"] = f"No exact definition found for symbol {symbol!r}."
@@ -9781,6 +9910,7 @@ def build_symbol_source_from_map(
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
+    _copy_lsp_evidence_status(payload, defs_payload)
     _copy_scan_limit(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
@@ -9854,6 +9984,7 @@ def build_symbol_impact_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["provider_agreement"] = dict(default_agreement)
         payload["provider_status"] = dict(default_status)
+        _copy_lsp_evidence_status(payload, defs_payload)
         return _attach_profiling(payload, _profiling_collector)
     context_payload = build_context_pack_from_map(
         repo_map,
@@ -9973,6 +10104,7 @@ def build_symbol_impact_from_map(
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
+    _copy_lsp_evidence_status(payload, defs_payload)
     _copy_scan_limit(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
@@ -10172,6 +10304,12 @@ def build_symbol_refs_from_map(
         repo_root,
         semantic_provider=normalized_provider,
         languages=_provider_languages_for_symbol(repo_map, symbol, payload["definitions"]),
+        fallback_used=fallback_used,
+    )
+    _attach_lsp_evidence_status(
+        payload,
+        semantic_provider=normalized_provider,
+        lsp_count=len(external_refs),
         fallback_used=fallback_used,
     )
     return payload
@@ -10509,6 +10647,12 @@ def build_symbol_callers_from_map(
         languages=_provider_languages_for_symbol(repo_map, symbol, defs_payload["definitions"]),
         fallback_used=fallback_used,
     )
+    _attach_lsp_evidence_status(
+        payload,
+        semantic_provider=normalized_provider,
+        lsp_count=len(external_calls),
+        fallback_used=fallback_used,
+    )
     _copy_scan_limit(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
@@ -10727,6 +10871,7 @@ def build_symbol_blast_radius_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["provider_agreement"] = dict(default_agreement)
         payload["provider_status"] = dict(default_status)
+        _copy_lsp_evidence_status(payload, defs_payload)
         if "scan_limit" in repo_map:
             payload["scan_limit"] = dict(repo_map["scan_limit"])
         return _attach_profiling(payload, _profiling_collector)
@@ -11020,6 +11165,7 @@ def build_symbol_blast_radius_from_map(
         callers_payload.get("provider_agreement", default_agreement)
     )
     payload["provider_status"] = dict(callers_payload.get("provider_status", default_status))
+    _copy_lsp_evidence_status(payload, callers_payload)
     if "scan_limit" in repo_map:
         payload["scan_limit"] = dict(repo_map["scan_limit"])
     return _attach_profiling(payload, _profiling_collector)

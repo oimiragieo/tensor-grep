@@ -80,6 +80,78 @@ fn fake_sidecar_script(dir: &Path) -> PathBuf {
     output_script(dir, "fake-sidecar", format!("{response}\n").as_bytes())
 }
 
+fn fake_rg_asserting_args_script(dir: &Path, required_args: &[&str], stdout_text: &str) -> PathBuf {
+    let script = dir.join("fake-rg-assert.py");
+    let required_args_json = serde_json::to_string(required_args).unwrap();
+    let stdout_text_json = serde_json::to_string(stdout_text).unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"import json, sys
+required = json.loads({required_args_json:?})
+missing = [arg for arg in required if arg not in sys.argv[1:]]
+if missing:
+    sys.stderr.write("missing required rg args: " + ", ".join(missing) + "\n")
+    raise SystemExit(2)
+sys.stdout.write(json.loads({stdout_text_json:?}))
+"#,
+        ),
+    )
+    .unwrap();
+
+    if cfg!(windows) {
+        write_executable_script(
+            dir,
+            "fake-rg-assert.cmd",
+            &format!("@echo off\r\npython \"{}\" %*\r\n", script.display()),
+        )
+    } else {
+        write_executable_script(
+            dir,
+            "fake-rg-assert",
+            &format!("#!/bin/sh\npython \"{}\" \"$@\"\n", script.display()),
+        )
+    }
+}
+
+fn fake_python_passthrough_asserting_args_script(
+    dir: &Path,
+    required_args: &[&str],
+    stdout_text: &str,
+) -> PathBuf {
+    let script = dir.join("fake-python-passthrough-assert.py");
+    let required_args_json = serde_json::to_string(required_args).unwrap();
+    let stdout_text_json = serde_json::to_string(stdout_text).unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"import json, sys
+required = json.loads({required_args_json:?})
+missing = [arg for arg in required if arg not in sys.argv[1:]]
+if missing:
+    sys.stderr.write("missing required python passthrough args: " + ", ".join(missing) + "\n")
+    raise SystemExit(2)
+sys.stdout.write(json.loads({stdout_text_json:?}))
+"#,
+        ),
+    )
+    .unwrap();
+
+    if cfg!(windows) {
+        write_executable_script(
+            dir,
+            "fake-python-passthrough-assert.cmd",
+            &format!("@echo off\r\npython \"{}\" %*\r\n", script.display()),
+        )
+    } else {
+        write_executable_script(
+            dir,
+            "fake-python-passthrough-assert",
+            &format!("#!/bin/sh\npython \"{}\" \"$@\"\n", script.display()),
+        )
+    }
+}
+
 #[test]
 fn test_search_accepts_multiline_flags_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
@@ -111,6 +183,91 @@ fn test_search_accepts_multiline_flags_on_public_native_frontdoor() {
             String::from_utf8_lossy(&output.stdout)
         );
     }
+}
+
+#[test]
+fn test_search_editor_output_flags_are_accepted_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_asserting_args_script(
+        dir.path(),
+        &["--vimgrep", "--path-separator", "/"],
+        "src/app.log:1:1:ERROR failed\n",
+    );
+    fs::create_dir(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src").join("app.log"), "ERROR failed\n").unwrap();
+
+    for args in [
+        vec!["search", "--vimgrep", "--path-separator", "/", "ERROR", "."],
+        vec![
+            "--format",
+            "rg",
+            "--vimgrep",
+            "--path-separator",
+            "/",
+            "ERROR",
+            ".",
+        ],
+    ] {
+        let output = tg()
+            .current_dir(dir.path())
+            .args(&args)
+            .env("TG_RG_PATH", &fake_rg)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "args={args:?} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("src/app.log:1:1:ERROR failed"),
+            "args={args:?} stdout={}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("unexpected argument"),
+            "args={args:?} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn test_lsp_provider_args_are_forwarded_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_python = fake_python_passthrough_asserting_args_script(
+        dir.path(),
+        &["-m", "tensor_grep", "lsp", "--provider", "native"],
+        "lsp passthrough ok\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["lsp", "--provider", "native"])
+        .env("TG_SIDECAR_PYTHON", &fake_python)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("lsp passthrough ok"),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("unexpected argument"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
