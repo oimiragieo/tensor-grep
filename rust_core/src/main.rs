@@ -48,7 +48,7 @@ use tensor_grep_rs::routing::{
     SearchRoutingConfig,
 };
 
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  tg search                           Validated common rg-compatible subset, not a full ripgrep replacement.\n  --format rg --json                  Emit ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nLauncher repair:\n  tg repair-launcher --allow-foreign-rename\n                                      Explicitly back up a foreign Windows tg.exe that blocks Python subprocess resolution and replace it with the verified tensor-grep front door.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  tg search                           Validated common rg-compatible subset, not a full ripgrep replacement.\n  --format rg --json                  Emit ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nLSP provider status:\n  tg lsp --provider hybrid            Optional experimental semantic provider mode; provider availability is not LSP proof.\n  tg doctor --with-lsp                Report provider availability plus health_status/health_check diagnostics.\n\nLauncher repair:\n  tg repair-launcher --allow-foreign-rename\n                                      Explicitly back up a foreign Windows tg.exe that blocks Python subprocess resolution and replace it with the verified tensor-grep front door.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.\n  TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS Total per-command budget for optional external LSP provider requests.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -130,9 +130,17 @@ pub struct PositionalCli {
     #[arg(long)]
     pub color: Option<String>,
 
+    /// Path separator to use when printing file paths
+    #[arg(long = "path-separator")]
+    pub path_separator: Option<String>,
+
     /// Print only the matched parts of a line
     #[arg(short = 'o', long)]
     pub only_matching: bool,
+
+    /// Print results in Vim quickfix format
+    #[arg(long)]
+    pub vimgrep: bool,
 
     /// Emit tensor-grep aggregate JSON (not rg JSON Lines)
     #[arg(long, conflicts_with = "ndjson")]
@@ -333,9 +341,17 @@ pub struct SearchArgs {
     #[arg(long)]
     pub color: Option<String>,
 
+    /// Path separator to use when printing file paths
+    #[arg(long = "path-separator")]
+    pub path_separator: Option<String>,
+
     /// Print only the matched parts of a line
     #[arg(short = 'o', long)]
     pub only_matching: bool,
+
+    /// Print results in Vim quickfix format
+    #[arg(long)]
+    pub vimgrep: bool,
 
     /// Print both matching and non-matching lines
     #[arg(long = "passthru", alias = "passthrough")]
@@ -577,7 +593,10 @@ pub enum Commands {
         stop: bool,
     },
     /// Start the Language Server Protocol (LSP) server
-    Lsp,
+    Lsp {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Provision managed external LSP providers for optional semantic modes
     #[command(name = "lsp-setup", disable_help_flag = true)]
     LspSetup {
@@ -1193,7 +1212,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         files_without_match: false,
         file_types: Vec::new(),
         color: None,
+        path_separator: None,
         replace: None,
+        vimgrep: false,
         passthru: false,
         no_config: false,
         sort: None,
@@ -1293,6 +1314,15 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 index += 1;
                 args.color = Some(tokens.get(index)?.clone());
             }
+            "--path-separator" => {
+                index += 1;
+                args.path_separator = Some(tokens.get(index)?.clone());
+            }
+            _ if token.starts_with("--path-separator=") => {
+                args.path_separator =
+                    Some(token.split_once('=').map(|(_, value)| value.to_string())?);
+            }
+            "--vimgrep" => args.vimgrep = true,
             "--format" => {
                 index += 1;
                 if tokens.get(index)? != "rg" {
@@ -2362,7 +2392,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
                 handle_ast_worker_tcp(port)
             }
         }
-        Commands::Lsp => handle_python_passthrough("lsp", vec![]),
+        Commands::Lsp { args } => handle_python_passthrough("lsp", args),
         Commands::LspSetup { args } => handle_python_passthrough("lsp-setup", args),
         #[cfg(feature = "cuda")]
         Commands::GpuNativeStats(args) => handle_gpu_native_stats_command(args),
@@ -2954,7 +2984,9 @@ fn positional_ripgrep_args(
         files_without_match: false,
         file_types: Vec::new(),
         color: cli.color.clone(),
+        path_separator: cli.path_separator.clone(),
         replace: cli.replace.clone(),
+        vimgrep: cli.vimgrep,
         passthru: false,
         no_config: false,
         sort: None,
@@ -3007,7 +3039,9 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         files_without_match: args.files_without_match,
         file_types: args.file_type.clone(),
         color: args.color.clone(),
+        path_separator: args.path_separator.clone(),
         replace: args.replace.clone(),
+        vimgrep: args.vimgrep,
         passthru: args.passthru,
         no_config: args.no_config,
         sort: args.sort.clone(),
@@ -3040,6 +3074,8 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
                 || args.passthru
                 || args.no_config
                 || args.auto_hybrid_regex
+                || args.path_separator.is_some()
+                || args.vimgrep
                 || args.no_ignore_dot
                 || args.no_ignore_exclude
                 || args.no_ignore_files
@@ -6460,7 +6496,9 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 files_without_match: false,
                                 file_types: Vec::new(),
                                 color: None,
+                                path_separator: None,
                                 replace: None,
+                                vimgrep: false,
                                 passthru: false,
                                 no_config: false,
                                 sort: None,

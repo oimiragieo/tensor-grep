@@ -204,6 +204,22 @@ def benchmark_binary_warnings(tg_binary: Path) -> list[str]:
     ]
 
 
+def benchmark_claim_blockers(warnings: list[str]) -> list[str]:
+    return [warning for warning in warnings if "stale in-tree native tg binary" in warning]
+
+
+def emit_benchmark_claim_blockers(blockers: list[str]) -> None:
+    print(
+        "tensor-grep benchmark error: refusing claim-quality benchmark with "
+        "unsafe launcher/binary evidence. Rebuild the native binary, pass a "
+        "verified release-native --binary, or re-run with "
+        "--allow-claim-unsafe-launcher for exploratory timing only.",
+        file=sys.stderr,
+    )
+    for blocker in blockers:
+        print(f"[blocker] {blocker}", file=sys.stderr)
+
+
 def resolve_bench_data_dir() -> Path:
     """
     Resolve benchmark data location. Defaults to artifacts to avoid mutating
@@ -678,6 +694,14 @@ def main() -> int:
         default="auto",
         help="Override the tg launcher path for Roadmap 1 control-plane experiments.",
     )
+    parser.add_argument(
+        "--allow-claim-unsafe-launcher",
+        action="store_true",
+        help=(
+            "Allow exploratory benchmark runs even when launcher provenance is unsafe "
+            "for claims, such as a stale in-tree native tg binary."
+        ),
+    )
     args = parser.parse_args()
     if args.launcher_mode == "explicit_fast_binary":
         if args.binary:
@@ -688,6 +712,28 @@ def main() -> int:
         tg_binary, tg_binary_source = resolve_tg_binary_with_source(args.binary)
 
     bench_dir = resolve_bench_data_dir()
+    sample_tg_cmd, tg_launcher_mode, tg_env_overrides = build_tg_benchmark_cmd_with_mode(
+        ["ERROR", str(bench_dir)],
+        binary=tg_binary,
+        force_cpu=args.native,
+        return_mode=True,
+        return_env=True,
+        launcher_mode=args.launcher_mode,
+    )
+    tg_launcher_command_kind = classify_tg_launcher_command(sample_tg_cmd)
+    warnings = benchmark_launcher_warnings(
+        command_kind=tg_launcher_command_kind,
+        launcher_mode=tg_launcher_mode,
+    )
+    tg_binary_metadata = inspect_native_tg_binary(tg_binary, repo_root=ROOT_DIR)
+    warnings.extend(benchmark_binary_warnings(tg_binary))
+    for warning in warnings:
+        print(f"[warning] {warning}", file=sys.stderr)
+    blockers = benchmark_claim_blockers(warnings)
+    if blockers and not args.allow_claim_unsafe_launcher:
+        emit_benchmark_claim_blockers(blockers)
+        return 2
+
     generate_test_data(
         str(bench_dir), num_files=2, lines_per_file=2_000_000
     )  # ~240MB total, triggers 50MB GPU chunking bypass
@@ -725,23 +771,6 @@ def main() -> int:
         rg_binary=rg_bin,
         launcher_mode=args.launcher_mode,
     )
-    sample_tg_cmd, tg_launcher_mode, tg_env_overrides = build_tg_benchmark_cmd_with_mode(
-        ["ERROR", str(bench_dir)],
-        binary=tg_binary,
-        force_cpu=args.native,
-        return_mode=True,
-        return_env=True,
-        launcher_mode=args.launcher_mode,
-    )
-    tg_launcher_command_kind = classify_tg_launcher_command(sample_tg_cmd)
-    warnings = benchmark_launcher_warnings(
-        command_kind=tg_launcher_command_kind,
-        launcher_mode=tg_launcher_mode,
-    )
-    tg_binary_metadata = inspect_native_tg_binary(tg_binary, repo_root=ROOT_DIR)
-    warnings.extend(benchmark_binary_warnings(tg_binary))
-    for warning in warnings:
-        print(f"[warning] {warning}", file=sys.stderr)
 
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
     print("-" * 75)

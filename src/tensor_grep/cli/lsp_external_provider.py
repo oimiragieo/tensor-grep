@@ -365,6 +365,8 @@ class ExternalLSPProviderManager:
         if current is not None:
             status = current.status()
             status["available"] = True
+            status["health_status"] = _provider_health_status(status)
+            status["health_check"] = "cached-client"
             return status
         try:
             command = _provider_command(language)
@@ -373,6 +375,8 @@ class ExternalLSPProviderManager:
                 "language": language.lower(),
                 "workspace_root": str(workspace_root.resolve()),
                 "available": False,
+                "health_status": "missing",
+                "health_check": "not_run",
                 "running": False,
                 "command": [],
                 "command_source": "missing",
@@ -393,6 +397,8 @@ class ExternalLSPProviderManager:
             "language": language.lower(),
             "workspace_root": str(workspace_root.resolve()),
             "available": True,
+            "health_status": "available_unverified",
+            "health_check": "not_run",
             "running": False,
             "command": command,
             "command_source": _command_source(command),
@@ -434,3 +440,15 @@ def _command_source(command: list[str]) -> str:
     except OSError:
         return "path"
     return "managed"
+
+
+def _provider_health_status(status: dict[str, Any]) -> str:
+    if not status.get("available"):
+        return "missing"
+    if status.get("last_error"):
+        return "unhealthy"
+    if status.get("running") and status.get("capabilities"):
+        return "ready"
+    if status.get("running"):
+        return "running_unverified"
+    return "available_unverified"

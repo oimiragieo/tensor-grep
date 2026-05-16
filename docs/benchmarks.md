@@ -45,7 +45,7 @@ Environment blocks should at minimum record:
 - `machine`
 - `python_version` when Python orchestrates the benchmark
 
-For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also record `tg_binary_kind`, `tg_binary_version`, `tg_binary_expected_version`, and `tg_binary_version_status` so stale in-tree native binaries are visible. A top-level `warnings` array is required when the timed `tg` entrypoint is a shim/interpreter route or when a stale in-tree native tg binary is being timed.
+For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also record `tg_binary_kind`, `tg_binary_version`, `tg_binary_expected_version`, and `tg_binary_version_status` so stale in-tree native binaries are visible. A top-level `warnings` array is required when the timed `tg` entrypoint is a shim/interpreter route. A stale in-tree native tg binary blocks claim-quality benchmark scripts by default; pass `--allow-claim-unsafe-launcher` only for exploratory timing.
 
 For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:
 

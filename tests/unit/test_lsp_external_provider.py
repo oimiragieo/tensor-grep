@@ -16,6 +16,7 @@ def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
     status = manager.provider_status(language="definitely-not-a-language", workspace_root=tmp_path)
 
     assert status["available"] is False
+    assert status["health_status"] == "missing"
     assert status["running"] is False
     assert status["capabilities"] == {}
     assert status["last_error"]
@@ -38,6 +39,7 @@ def test_provider_status_reports_cached_client_state(
     status = manager.provider_status(language="python", workspace_root=tmp_path)
 
     assert status["available"] is True
+    assert status["health_status"] == "unhealthy"
     assert status["language"] == "python"
     assert status["capabilities"]["definitionProvider"] is True
     assert status["last_error"] == "timeout waiting for LSP response: textDocument/definition"
@@ -83,6 +85,8 @@ def test_provider_status_reports_configured_timeouts_without_cached_client(
     status = manager.provider_status(language="python", workspace_root=tmp_path)
 
     assert status["available"] is True
+    assert status["health_status"] == "available_unverified"
+    assert status["health_check"] == "not_run"
     assert status["request_timeout_seconds"] == 6.0
     assert status["initialize_timeout_seconds"] == 21.0
 

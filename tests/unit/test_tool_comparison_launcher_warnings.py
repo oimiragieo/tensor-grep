@@ -50,3 +50,35 @@ def test_tool_comparison_should_not_warn_for_native_tg_binary(tmp_path):
     tg_exe.write_text("binary\n", encoding="utf-8")
 
     assert module.tg_launcher_warnings_for_binary(tg_exe) == []
+
+
+def test_tool_comparison_should_refuse_stale_in_tree_native_binary_by_default(
+    monkeypatch, tmp_path
+):
+    module = _load_tool_comparison_module()
+    tg_exe = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_exe.parent.mkdir(parents=True, exist_ok=True)
+    tg_exe.write_text("stale\n", encoding="utf-8")
+    output_path = tmp_path / "tool-comparison.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_tool_comparison_benchmarks.py",
+            "--binary",
+            str(tg_exe),
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "tg_launcher_warnings_for_binary",
+        lambda _binary: ["tensor-grep benchmark warning: stale in-tree native tg binary"],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 2
+    assert not output_path.exists()

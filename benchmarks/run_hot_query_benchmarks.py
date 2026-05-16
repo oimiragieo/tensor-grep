@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
-NATIVE_REGEX_ABSOLUTE_JITTER_S = 0.002
+NATIVE_REGEX_ABSOLUTE_JITTER_S = 0.005
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 

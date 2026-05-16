@@ -130,7 +130,16 @@ def test_run_benchmarks_should_record_tg_binary_version_metadata(monkeypatch, tm
     monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(module, "run_cmd_timing", lambda *_args, **_kwargs: 0.1)
     monkeypatch.setattr(module, "run_cmd_capture", lambda *_args, **_kwargs: (0.0, "ok"))
-    monkeypatch.setattr(sys, "argv", ["run_benchmarks.py", "--output", str(output_path)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--allow-claim-unsafe-launcher",
+        ],
+    )
 
     exit_code = module.main()
 

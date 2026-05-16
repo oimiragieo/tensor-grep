@@ -450,6 +450,10 @@ jobs:
           uv venv --python 3.12
           uv pip install -e ".[bench,dev]"
 
+      - name: Build benchmark native binary
+        working-directory: rust_core
+        run: cargo build --release --no-default-features
+
       - name: Determine benchmark base revision
         if: github.event_name != 'schedule'
         id: benchmark-base
@@ -482,6 +486,11 @@ jobs:
           cd base-revision
           uv venv --python 3.12
           uv pip install -e ".[bench,dev]"
+
+      - name: Build base benchmark native binary
+        if: github.event_name != 'schedule'
+        working-directory: base-revision/rust_core
+        run: cargo build --release --no-default-features
 
       - name: Run core benchmark suite
         shell: bash

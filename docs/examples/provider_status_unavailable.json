@@ -2,6 +2,8 @@
   "provider_status": {
     "mode": "lsp",
     "available": false,
+    "health_status": "missing",
+    "health_check": "not_run",
     "running": false,
     "language": "python",
     "capabilities": {},

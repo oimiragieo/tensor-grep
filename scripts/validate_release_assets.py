@@ -404,6 +404,8 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "must install `.[bench,dev]`"
                     )
                 required_benchmark_step_names = {
+                    "Build benchmark native binary",
+                    "Build base benchmark native binary",
                     "Run hot-query benchmark suite",
                     "Determine benchmark base revision",
                     "Checkout base revision for same-runner benchmark comparison",
@@ -466,6 +468,50 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             "CI workflow benchmark-regression "
                             "`Install base benchmark dependencies` step must operate inside `base-revision`"
                         )
+
+                build_benchmark_step = benchmark_step_by_name.get("Build benchmark native binary")
+                build_benchmark_run = benchmark_run_by_name.get("Build benchmark native binary")
+                if build_benchmark_run is not None:
+                    if "cargo build --release --no-default-features" not in build_benchmark_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Build benchmark native binary` step must run "
+                            "`cargo build --release --no-default-features`"
+                        )
+                    if isinstance(build_benchmark_step, dict):
+                        if str(build_benchmark_step.get("working-directory")) != "rust_core":
+                            errors.append(
+                                "CI workflow benchmark-regression "
+                                "`Build benchmark native binary` step must set "
+                                "`working-directory: rust_core`"
+                            )
+
+                build_base_benchmark_step = benchmark_step_by_name.get(
+                    "Build base benchmark native binary"
+                )
+                build_base_benchmark_run = benchmark_run_by_name.get(
+                    "Build base benchmark native binary"
+                )
+                if build_base_benchmark_run is not None:
+                    if (
+                        "cargo build --release --no-default-features"
+                        not in build_base_benchmark_run
+                    ):
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Build base benchmark native binary` step must run "
+                            "`cargo build --release --no-default-features`"
+                        )
+                    if isinstance(build_base_benchmark_step, dict):
+                        if (
+                            str(build_base_benchmark_step.get("working-directory"))
+                            != "base-revision/rust_core"
+                        ):
+                            errors.append(
+                                "CI workflow benchmark-regression "
+                                "`Build base benchmark native binary` step must set "
+                                "`working-directory: base-revision/rust_core`"
+                            )
 
                 run_core_benchmark = benchmark_run_by_name.get("Run core benchmark suite")
                 if run_core_benchmark is not None:

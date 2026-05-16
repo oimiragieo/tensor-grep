@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli import mcp_server, repo_map
@@ -34,6 +35,8 @@ def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None
     assert payload["definitions"][0]["provenance"] == "lsp-python"
     assert payload["provider_agreement"]["agreement_status"] == "lsp-only"
     assert payload["provider_status"]["mode"] == "lsp"
+    assert payload["lsp_evidence_status"] == "lsp_proof"
+    assert payload["lsp_proof"] is True
 
 
 def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
@@ -97,6 +100,76 @@ def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeyp
     assert any(current["file"] == str(consumer_path.resolve()) for current in payload["references"])
     assert payload["provider_agreement"]["agreement_status"] in {"diverged", "agreed"}
     assert payload["provider_status"]["mode"] == "hybrid"
+    assert payload["lsp_evidence_status"] == "lsp_proof"
+    assert payload["lsp_proof"] is True
+
+
+def test_repo_map_lsp_fallback_reports_not_lsp_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["semantic_provider"] == "lsp"
+    assert payload["provider_agreement"]["agreement_status"] == "fallback-native"
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+    assert "native fallback" in payload["not_lsp_proof_reason"].lower()
+
+
+def test_external_lsp_workspace_symbol_queries_are_operation_budgeted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+    query_timeouts: list[tuple[float, float]] = []
+
+    class _SlowClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 15.0
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            query_timeouts.append((
+                self.request_timeout_seconds,
+                self.initialize_timeout_seconds,
+            ))
+            return []
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _SlowClient:
+            return _SlowClient()
+
+    monkeypatch.setenv("TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS", "0.25")
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    repo_map._external_workspace_symbols(
+        tmp_path,
+        "create_invoice",
+        repo_map={
+            "path": str(tmp_path),
+            "symbols": [
+                {
+                    "name": "create_invoice",
+                    "file": str(service_path),
+                    "line": 1,
+                    "kind": "function",
+                }
+            ],
+        },
+    )
+
+    assert query_timeouts
+    request_timeout, initialize_timeout = query_timeouts[0]
+    assert request_timeout <= 0.25
+    assert initialize_timeout <= 0.25
 
 
 def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:

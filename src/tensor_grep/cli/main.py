@@ -160,7 +160,8 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `TG_SIDECAR_TIMEOUT_MS`: Timeout for sidecar-backed commands.
 - `TENSOR_GREP_DEVICE_IDS`: Comma-separated GPU IDs available to tensor-grep.
 - `TENSOR_GREP_CLASSIFY_PROVIDER`: Set to `cybert` to opt into CyBERT/Triton classification.
-- `TENSOR_GREP_TRITON_TIMEOUT_SECONDS`: Timeout for Triton-backed NLP probes.""",
+- `TENSOR_GREP_TRITON_TIMEOUT_SECONDS`: Timeout for Triton-backed NLP probes.
+- `TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS`: Total per-command budget for optional external LSP provider requests before native fallback.""",
     no_args_is_help=True,
     add_completion=True,
     rich_markup_mode="markdown",
@@ -1897,6 +1898,7 @@ def _build_doctor_payload(
         "TG_RUST_EARLY_POSITIONAL_RG",
         "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS",
         "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS",
+        "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS",
     ]
     installed_version = _doctor_installed_version()
     rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
@@ -7102,7 +7104,10 @@ def lsp(
     provider: str = typer.Option(
         "native",
         "--provider",
-        help="Semantic provider mode. native=repo-map only, lsp=external provider only, hybrid=merge both.",
+        help=(
+            "Experimental semantic provider mode. native=repo-map only, "
+            "lsp=external provider only, hybrid=merge both."
+        ),
     ),
 ) -> None:
     """Start the structural search language server.
@@ -7112,6 +7117,10 @@ def lsp(
       tg lsp --provider native
       tg lsp --provider lsp
       tg lsp --provider hybrid
+
+    External LSP providers are experimental semantic evidence. Provider
+    availability means the binary was found, not that initialization or
+    navigation requests have succeeded.
 
     The provider mode is also exposed to editor clients through the
     `TG_LSP_PROVIDER` environment variable.

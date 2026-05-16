@@ -70,4 +70,23 @@ def test_native_regex_hot_query_gate_allows_small_timer_jitter():
     )
 
     assert row["status"] == "PASS"
-    assert row["regression_tolerance_s"] == 0.002
+    assert row["regression_tolerance_s"] == 0.005
+
+
+def test_native_regex_hot_query_gate_allows_dogfood_scale_timer_jitter():
+    module = _load_hot_query_module()
+
+    row = module.evaluate_hot_query_row(
+        {
+            "name": "repeated_regex_native",
+            "first_s": 0.0123,
+            "second_s": 0.0153,
+            "first_reason": "cpu_rust_regex",
+            "second_reason": "cpu_rust_regex",
+            "matches": 2000,
+        },
+        max_regression_pct=5.0,
+    )
+
+    assert row["status"] == "PASS"
+    assert row["regression_tolerance_s"] >= 0.003

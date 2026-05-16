@@ -57,6 +57,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "TENSOR_GREP_DEVICE_IDS",
     "TENSOR_GREP_CLASSIFY_PROVIDER",
     "TENSOR_GREP_TRITON_TIMEOUT_SECONDS",
+    "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS",
     "--smart-case",
     "--hidden",
     "--max-depth",
@@ -801,10 +802,13 @@ def test_lsp_help_mentions_provider_modes() -> None:
     result = runner.invoke(app, ["lsp", "--help"])
 
     assert result.exit_code == 0
-    assert "--provider" in result.stdout
-    assert "native=repo-map only" in result.stdout
-    assert "Examples:" in result.stdout
-    assert "--provider hybrid" in result.stdout
+    help_text = _strip_ansi(result.stdout)
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[╭╮╰╯─│]+", " ", help_text))
+    assert "--provider" in help_text
+    assert "native=repo-map only" in normalized_help
+    assert "experimental" in help_text.lower()
+    assert "Examples:" in help_text
+    assert "--provider hybrid" in normalized_help
 
 
 def test_lsp_setup_help_mentions_managed_provider_install() -> None:

@@ -47,6 +47,8 @@
   "provider_status": {
     "mode": "hybrid",
     "available": true,
+    "health_status": "ready",
+    "health_check": "cached-client",
     "running": true,
     "language": "python",
     "capabilities": {
@@ -54,5 +56,7 @@
     },
     "last_error": "",
     "fallback_used": false
-  }
+  },
+  "lsp_evidence_status": "lsp_proof",
+  "lsp_proof": true
 }
