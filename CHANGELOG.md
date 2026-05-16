@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.12.21 (2026-05-16)
+
+### Bug Fixes
+
+- Harden lsp provider health proof
+  ([`48631d9`](https://github.com/oimiragieo/tensor-grep/commit/48631d98ce818fc0d95320a94bea834f210fcc58))
+
+Add bounded LSP health proof, honest doctor reporting, protocol shutdown, and fallback-aware LSP
+  evidence accounting.
+
+
 ## v1.12.20 (2026-05-16)
 
 ### Bug Fixes
