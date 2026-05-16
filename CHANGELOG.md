@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.14 (2026-05-16)
+
+### Bug Fixes
+
+- Collect capsule call-site evidence
+  ([`21e5437`](https://github.com/oimiragieo/tensor-grep/commit/21e54370ec2d82657f1b47f50345a71c28683ca2))
+
+Collect bounded Actionable Context Capsule call-site evidence for explicit high-confidence symbols,
+  keep fuzzy queries from triggering blast-radius work, and sync release-governance docs to v1.12.13
+  proof.
+
+
 ## v1.12.13 (2026-05-16)
 
 ### Bug Fixes
