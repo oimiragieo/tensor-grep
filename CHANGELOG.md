@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.19 (2026-05-16)
+
+### Bug Fixes
+
+- Preserve rg files path formatting ([#148](https://github.com/oimiragieo/tensor-grep/pull/148),
+  [`b58625f`](https://github.com/oimiragieo/tensor-grep/commit/b58625f94396f6c1fb1d160960f5ec70dba27e74))
+
+
 ## v1.12.18 (2026-05-16)
 
 ### Bug Fixes
