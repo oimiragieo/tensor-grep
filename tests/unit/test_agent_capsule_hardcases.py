@@ -270,6 +270,33 @@ def test_agent_capsule_prefers_windows_exe_bridge_implementation_over_marker_hel
     assert payload["primary_target"]["symbol"] == "is_managed_windows_exe_bridge"
 
 
+def test_agent_capsule_live_repo_prefers_exe_bridge_implementation_over_marker_helper():
+    repo_root = Path(__file__).resolve().parents[2]
+
+    payload = _agent_payload(repo_root, "harden Windows subprocess exe bridge")
+
+    assert payload["primary_target"]["file"] == str(
+        (repo_root / "rust_core" / "src" / "python_sidecar.rs").resolve()
+    )
+    assert payload["primary_target"]["symbol"] in {
+        "is_managed_windows_exe_bridge",
+        "is_external_windows_exe_bridge",
+    }
+    assert payload["ambiguity"]["status"] == "tie_requires_confirmation"
+    assert payload["ask_user_before_editing"]["required"] is True
+
+
+def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():
+    repo_root = Path(__file__).resolve().parents[2]
+
+    payload = _agent_payload(repo_root, "harden Windows exe bridge marker")
+
+    assert payload["primary_target"]["file"] == str(
+        (repo_root / "src" / "tensor_grep" / "cli" / "main.py").resolve()
+    )
+    assert payload["primary_target"]["symbol"] == "_write_windows_exe_bridge_marker"
+
+
 def test_agent_capsule_short_exe_term_does_not_match_execute_noise():
     assert repo_map._score_text_terms("execute_noise_bridge", ["exe"]) == 0
     assert repo_map._score_text_terms("tg.exe bridge", ["exe"]) == 1

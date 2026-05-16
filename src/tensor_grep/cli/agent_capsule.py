@@ -201,6 +201,18 @@ def _capsule_trust_checks(
     }
 
 
+def _validation_plan_has_targeted_primary_evidence(
+    validation_plan: list[dict[str, Any]],
+) -> bool:
+    for step in validation_plan:
+        scope = str(step.get("scope") or "").strip().lower()
+        target = str(step.get("target") or "").strip()
+        confidence = _numeric_confidence(step.get("confidence"))
+        if scope in {"symbol", "file"} and target and confidence >= 0.7:
+            return True
+    return False
+
+
 def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
     navigation_pack = _as_dict(payload.get("navigation_pack"))
     target = _as_dict(navigation_pack.get("primary_target"))
@@ -1052,10 +1064,14 @@ def build_agent_capsule(
     )
     validation_alignment_status = str(validation_alignment.get("status") or "")
     validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
+    targeted_validation_evidence = _validation_plan_has_targeted_primary_evidence(
+        validation_plan,
+    )
     tie_resolved_by_validation = (
         bool(tied_alternatives)
         and not marker_helper_tie
         and bool(validation_commands)
+        and targeted_validation_evidence
         and (
             validation_alignment_status == "aligned"
             or (validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0)
