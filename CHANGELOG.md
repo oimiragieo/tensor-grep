@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.12.12 (2026-05-16)
+
+### Bug Fixes
+
+- Harden agent output budget hygiene
+  ([`b601366`](https://github.com/oimiragieo/tensor-grep/commit/b601366e9262824721175c77789a8c5ffd0b67c9))
+
+## Summary - enforce source payload budgets for context-render and capsule snippets - filter
+  generated/cache/temp probe paths from agent planning context - sync release docs governance for
+  v1.12.11
+
+## Validation - uv run pytest tests/unit/test_token_budget.py tests/unit/test_trust_planning.py
+  tests/unit/test_cli_modes.py::test_context_render_llm_profile_omits_full_inventories
+  tests/unit/test_cli_modes.py::test_context_render_llm_profile_compacts_agent_metadata
+  tests/unit/test_cli_modes.py::test_edit_plan_json_accepts_agent_budget_flags
+  tests/unit/test_cli_modes.py::test_agent_capsule_json_reports_primary_consistency_and_downgrades_when_primary_is_omitted
+  -q - uv run pytest tests/unit/test_public_docs_governance.py tests/unit/test_token_budget.py
+  tests/unit/test_trust_planning.py
+  tests/unit/test_cli_modes.py::test_agent_capsule_json_reports_primary_consistency_and_downgrades_when_primary_is_omitted
+  -q - uv run ruff check . - uv run ruff format --check --preview . - uv run mypy src/tensor_grep -
+  C:/Users/oimir/.cargo/bin/cargo.exe fmt --manifest-path rust_core/Cargo.toml --check - uv run
+  pytest -q - git diff --check
+
+PR CI passed on #141.
+
+
 ## v1.12.11 (2026-05-15)
 
 ### Bug Fixes
