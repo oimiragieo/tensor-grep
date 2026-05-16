@@ -406,6 +406,23 @@ def test_files_mode_lists_candidates_without_pattern(monkeypatch):
     assert result.stdout.strip().splitlines() == ["a.py", "b.py"]
 
 
+def test_ripgrep_backend_builds_regexp_patterns_as_e_options(monkeypatch):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    monkeypatch.setattr(RipgrepBackend, "_get_binary_name", lambda self: "rg")
+
+    cmd = RipgrepBackend()._build_cmd(
+        file_path=["."],
+        pattern="-needle",
+        config=SearchConfig(regexp=["-needle", "plain"], sort_by="path", line_number=None),
+        json_mode=False,
+    )
+
+    pattern_index = cmd.index("-needle")
+    assert cmd[pattern_index - 1 : pattern_index + 3] == ["-e", "-needle", "-e", "plain"]
+    assert cmd[-1] == "."
+
+
 def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")

@@ -403,8 +403,12 @@ class RipgrepBackend(ComputeBackend):
             if config.threads > 0:
                 cmd.extend(["-j", str(config.threads)])
 
-        # The pattern
-        cmd.append(pattern)
+        patterns = list(config.regexp or []) if config and config.regexp else [pattern]
+        for current_pattern in patterns:
+            if len(patterns) > 1 or current_pattern.startswith("-"):
+                cmd.extend(["-e", current_pattern])
+            else:
+                cmd.append(current_pattern)
         if isinstance(file_path, list):
             cmd.extend(file_path)
         else:

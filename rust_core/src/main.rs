@@ -370,7 +370,7 @@ pub struct SearchArgs {
     pub verbose: bool,
 
     /// A pattern to search for. Can be provided multiple times.
-    #[arg(short = 'e', long = "regexp")]
+    #[arg(short = 'e', long = "regexp", allow_hyphen_values = true)]
     pub regexp: Vec<String>,
 
     /// The search pattern (regex or string)
@@ -1352,6 +1352,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             }
             "--sort-files" => args.sort_files = true,
             "--no-sort-files" => args.sort_files = false,
+            "-e" | "--regexp" => {
+                index += 1;
+                args.patterns.push(tokens.get(index)?.clone());
+            }
+            _ if token.starts_with("--regexp=") => {
+                args.patterns
+                    .push(token.split_once('=').map(|(_, value)| value.to_string())?);
+            }
             "-g" | "--glob" => {
                 index += 1;
                 args.globs.push(tokens.get(index)?.clone());
@@ -1366,11 +1374,18 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         index += 1;
     }
 
-    if positionals.len() < 2 {
-        return None;
+    if args.patterns.is_empty() {
+        if positionals.len() < 2 {
+            return None;
+        }
+        args.patterns.push(positionals[0].clone());
+        args.paths = positionals[1..].to_vec();
+    } else {
+        args.paths = positionals;
+        if args.paths.is_empty() && !stdin_should_search_implicit_path() {
+            args.paths.push(".".to_string());
+        }
     }
-    args.patterns.push(positionals[0].clone());
-    args.paths = positionals[1..].to_vec();
     Some(args)
 }
 
@@ -1387,11 +1402,7 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let cli = PositionalCli::try_parse_from(raw_args).ok()?;
     let pattern = cli.pattern.clone()?;
-    let paths = if cli.path.is_empty() {
-        vec![".".to_string()]
-    } else {
-        cli.path.clone()
-    };
+    let paths = implicit_search_paths(&cli.path, stdin_should_search_implicit_path());
 
     if cli.replace.is_some() || cli.force_cpu || !cli.gpu_device_ids.is_empty() {
         return None;
@@ -1576,6 +1587,19 @@ mod tests {
         assert_eq!(
             command_ripgrep_args(&args, &request).patterns,
             vec!["TODO".to_string(), "FIXME".to_string()]
+        );
+    }
+
+    #[test]
+    fn search_request_accepts_dash_leading_regexp_pattern() {
+        let args = parse_search_args(&["tg", "search", "-e", "-needle", "--sort", "path", "."]);
+        let request = resolve_search_request(&args).expect("expected search request");
+
+        assert_eq!(request.patterns, vec!["-needle".to_string()]);
+        assert_eq!(request.paths, vec![".".to_string()]);
+        assert_eq!(
+            command_ripgrep_args(&args, &request).patterns,
+            vec!["-needle".to_string()]
         );
     }
 
@@ -2141,6 +2165,24 @@ mod tests {
     }
 
     #[test]
+    fn implicit_search_paths_follow_rg_stdin_semantics() {
+        assert_eq!(
+            implicit_search_paths(&[], false),
+            vec![".".to_string()],
+            "without readable stdin, no-path searches should default to cwd"
+        );
+        assert!(
+            implicit_search_paths(&[], true).is_empty(),
+            "with readable stdin, no-path searches should let rg read stdin"
+        );
+        assert_eq!(
+            implicit_search_paths(&["fixture.txt".to_string()], true),
+            vec!["fixture.txt".to_string()],
+            "explicit paths must beat piped stdin"
+        );
+    }
+
+    #[test]
     fn early_positional_ripgrep_args_parse_max_count_shape() {
         let raw_args = ["tg", "-m", "1", "warning", "bench_data"]
             .into_iter()
@@ -2586,11 +2628,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     }
 
     let pattern = cli.pattern.clone().unwrap();
-    let paths = if cli.path.is_empty() {
-        vec![".".to_string()]
-    } else {
-        cli.path.clone()
-    };
+    let paths = implicit_search_paths(&cli.path, stdin_should_search_implicit_path());
     let primary_path = paths.first().map(String::as_str).unwrap_or(".");
 
     let rg_available = ripgrep_is_available();
@@ -2783,14 +2821,43 @@ fn is_known_python_command(token: &str) -> bool {
     })
 }
 
+fn stdin_should_search_implicit_path() -> bool {
+    grep_cli::is_readable_stdin()
+}
+
+fn implicit_search_paths(
+    explicit_paths: &[String],
+    stdin_searches_implicit_path: bool,
+) -> Vec<String> {
+    if !explicit_paths.is_empty() {
+        return explicit_paths.to_vec();
+    }
+    if stdin_searches_implicit_path {
+        Vec::new()
+    } else {
+        vec![".".to_string()]
+    }
+}
+
 fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchRequest> {
+    resolve_search_request_with_stdin(args, stdin_should_search_implicit_path())
+}
+
+fn resolve_search_request_with_stdin(
+    args: &SearchArgs,
+    stdin_searches_implicit_path: bool,
+) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
     let paths = if args.regexp.is_empty() {
         if let Some(pattern) = args.pattern.as_ref() {
             patterns.push(pattern.clone());
         }
         if args.path.is_empty() {
-            vec![".".to_string()]
+            if stdin_searches_implicit_path {
+                Vec::new()
+            } else {
+                vec![".".to_string()]
+            }
         } else {
             args.path.clone()
         }
@@ -2801,7 +2868,11 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
         }
         paths.extend(args.path.clone());
         if paths.is_empty() {
-            vec![".".to_string()]
+            if stdin_searches_implicit_path {
+                Vec::new()
+            } else {
+                vec![".".to_string()]
+            }
         } else {
             paths
         }

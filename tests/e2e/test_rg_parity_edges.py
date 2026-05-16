@@ -23,6 +23,7 @@ def _write_edge_corpus(root: Path) -> None:
     (root / "b.txt").write_text("needle beta\n", encoding="utf-8")
     (root / "a.txt").write_text("needle alpha\n", encoding="utf-8")
     (root / "c.txt").write_text("plain text\n", encoding="utf-8")
+    (root / "dash.txt").write_text("-needle dash\nplain text\n", encoding="utf-8")
     (root / "pcre-z.txt").write_text("needle pcre\n", encoding="utf-8")
     (root / "multi.py").write_text(
         "# needle multiline fixture\n"
@@ -40,12 +41,20 @@ def _write_edge_corpus(root: Path) -> None:
     subprocess.run(["git", "init"], cwd=root, check=False, capture_output=True, text=True)
 
 
-def _run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    stdin = subprocess.DEVNULL if input_text is None else None
     return subprocess.run(
         argv,
         cwd=cwd,
         env=env,
-        stdin=subprocess.DEVNULL,
+        input=input_text,
+        stdin=stdin,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -74,9 +83,15 @@ def _assert_same_rg_behavior(
     env: dict[str, str],
     rg_binary: Path,
     compare_stdout: bool = True,
+    input_text: str | None = None,
 ) -> None:
-    rg = _run([str(rg_binary), *rg_args], cwd=root, env=env)
-    tg = _run([sys.executable, "-m", "tensor_grep", "search", *tg_args], cwd=root, env=env)
+    rg = _run([str(rg_binary), *rg_args], cwd=root, env=env, input_text=input_text)
+    tg = _run(
+        [sys.executable, "-m", "tensor_grep", "search", *tg_args],
+        cwd=root,
+        env=env,
+        input_text=input_text,
+    )
 
     assert tg.returncode == rg.returncode, (
         f"rg exit={rg.returncode} tg exit={tg.returncode}\n"
@@ -172,6 +187,83 @@ def test_rg_pcre2_sorted_output_matches(
         root=root,
         env=env,
         rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+def test_rg_dash_leading_regexp_pattern_matches(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["-e", "-needle", "--sort", "path", "."],
+        tg_args=["-e", "-needle", "--sort", "path", "."],
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+def test_rg_multiple_regexp_patterns_match(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["-e", "-needle", "-e", "plain", "--sort", "path", "."],
+        tg_args=["-e", "-needle", "-e", "plain", "--sort", "path", "."],
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+def test_rg_no_path_searches_piped_stdin(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["needle"],
+        tg_args=["needle"],
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+        input_text="stdin needle\nstdin other\n",
+    )
+
+
+@pytest.mark.characterization
+def test_rg_no_stdin_default_path_still_searches_cwd(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["--sort", "path", "needle", "."],
+        tg_args=["--sort", "path", "needle"],
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+def test_rg_explicit_path_ignores_piped_stdin(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["needle", "a.txt"],
+        tg_args=["needle", "a.txt"],
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+        input_text="stdin needle\n",
     )
 
 
