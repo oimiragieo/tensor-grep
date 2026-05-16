@@ -21,9 +21,9 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-VERIFIED_RELEASE_TAG = CURRENT_RELEASE_TAG
-VERIFIED_RELEASE_COMMIT = "044b786 chore(release): v1.12.13 [skip ci]"
-VERIFIED_FIX_COMMIT = "8a73f8d fix: harden agent bridge ranking"
+VERIFIED_RELEASE_TAG = "v1.12.14"
+VERIFIED_RELEASE_COMMIT = "3be6879 chore(release): v1.12.14 [skip ci]"
+VERIFIED_FIX_COMMIT = "21e5437 fix: collect capsule call-site evidence"
 CURRENT_RELEASE_COMMIT = VERIFIED_RELEASE_COMMIT
 CURRENT_FIX_COMMIT = VERIFIED_FIX_COMMIT
 CURRENT_GPU_FIX_COMMIT = "361e0db fix: harden public GPU unavailable routing"
@@ -34,8 +34,8 @@ LATEST_COMPLETE_RELEASE_TAG = CURRENT_RELEASE_TAG
 LATEST_COMPLETE_RELEASE_COMMIT = VERIFIED_RELEASE_COMMIT
 LATEST_COMPLETE_FIX_COMMIT = VERIFIED_FIX_COMMIT
 LATEST_VERIFIED_RELEASE_TAG = VERIFIED_RELEASE_TAG
-LATEST_VERIFIED_MAIN_CI = "25950189993"
-LATEST_VERIFIED_CODEQL = "25950454736"
+LATEST_VERIFIED_MAIN_CI = "25951521056"
+LATEST_VERIFIED_CODEQL = "25951813292"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -134,6 +134,10 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
             "latest complete public PyPI/release-asset distribution is also "
             f"`{CURRENT_RELEASE_TAG}`"
         ) in docs[path]
+
+    for path, content in docs.items():
+        assert "Latest complete public release PR" not in content, path
+        assert "Latest complete public release commit" not in content, path
 
     assert f"current tagged state is `{CURRENT_RELEASE_TAG}`" in docs["docs/CONTINUATION_PLAN.md"]
     assert (

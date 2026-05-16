@@ -20,14 +20,15 @@ release_docs_current_tag: v1.12.14
 
 As of 2026-05-14, the current tagged release state is `v1.12.14`, and the latest complete public PyPI/release-asset distribution is also `v1.12.14`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, and Windows subprocess bridge ranking hardening are released through `v1.12.14` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Latest tagged release PR: #142 `fix: harden agent bridge ranking`
-- Latest tagged merge commit: `8a73f8d fix: harden agent bridge ranking`
-- Latest tagged release commit: `044b786 chore(release): v1.12.13 [skip ci]`
-- Latest complete public release PR: #142 `fix: harden agent bridge ranking`
-- Latest complete public release commit: `044b786 chore(release): v1.12.13 [skip ci]`
-- Latest merged fix commit: `8a73f8d fix: harden agent bridge ranking`
+- Latest verified release proof PR: #143 `fix: collect capsule call-site evidence`
+- Latest verified release proof merge commit: `21e5437 fix: collect capsule call-site evidence`
+- Latest verified release proof commit: `3be6879 chore(release): v1.12.14 [skip ci]`
+- Latest verified proof public release PR: #143 `fix: collect capsule call-site evidence`
+- Latest verified proof public release commit: `3be6879 chore(release): v1.12.14 [skip ci]`
+- Latest merged fix commit: `21e5437 fix: collect capsule call-site evidence`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - Recent fix commits:
+  - `21e5437 fix: collect capsule call-site evidence`
   - `8a73f8d fix: harden agent bridge ranking`
   - `b601366 fix: harden agent output budget hygiene`
   - `2aebac6 fix: harden ast cli contract hygiene (#140)`
@@ -93,13 +94,13 @@ As of 2026-05-14, the current tagged release state is `v1.12.14`, and the latest
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
 - `v1.11.0` GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0> exists, but main CI run `25834508800` was cancelled during release-native asset publication; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `25950189993`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25950454736`: passed on the `v1.12.13` release line
+- Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.14 tg --version` reports `tensor-grep 1.12.14`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.14>
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.13`
-- Public `v1.12.13` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.13 tg --version` verified `tensor-grep 1.12.13`; the release includes `8a73f8d fix: harden agent bridge ranking` while preserving `b601366 fix: harden agent output budget hygiene`, `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, and the accepted v1.12.8-v1.12.12 dogfood contract fixes. Public managed GPU is not promotion-ready.
+- GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.14`
+- Public `v1.12.14` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.14 tg --version` verified `tensor-grep 1.12.14`; the release includes `21e5437 fix: collect capsule call-site evidence` while preserving `8a73f8d fix: harden agent bridge ranking`, `b601366 fix: harden agent output budget hygiene`, `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, and the accepted v1.12.8-v1.12.13 dogfood contract fixes. Public managed GPU is not promotion-ready.
 - Public `v1.12.12` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.12 tg --version` verified `tensor-grep 1.12.12`; the release includes `b601366 fix: harden agent output budget hygiene` while preserving `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, `21627d2 fix: harden v1.12.8 dogfood contracts`, `f848748 fix: route cold rg-shaped searches to rg (#137)`, `da44a2f fix: harden v1.12.6 dogfood cli contracts`, bounded map/context output, `tg run --pattern`, Windows subprocess bridge ranking hardening, `a78e33c fix: harden post-release docs governance`, `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and the `87d4ca4 fix: accelerate fixed multi-pattern native search` CPU lane from `v1.11.3`. Explicit public GPU requests without sidecar configuration report native GPU unavailable and fall back to `NativeCpuBackend`; public managed GPU is not promotion-ready.
 - Public `v1.11.5` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.11.5 tg --version` verified `tensor-grep 1.11.5`; the release includes `a78e33c fix: harden post-release docs governance` while preserving `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and the `87d4ca4 fix: accelerate fixed multi-pattern native search` CPU lane from `v1.11.3`.
 - Public `v1.11.2` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.11.2 tg --version` verified `tensor-grep 1.11.2`; the release also exposes classify provider provenance so JSON harnesses can distinguish local deterministic classification from opt-in provider-backed classification.
