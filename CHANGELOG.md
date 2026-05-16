@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.20 (2026-05-16)
+
+### Bug Fixes
+
+- Harden ast scan input errors ([#149](https://github.com/oimiragieo/tensor-grep/pull/149),
+  [`70b4c85`](https://github.com/oimiragieo/tensor-grep/commit/70b4c855ad08c48f5a7220afa4fc73dd1fd641b7))
+
+
 ## v1.12.19 (2026-05-16)
 
 ### Bug Fixes
