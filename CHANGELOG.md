@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.13 (2026-05-16)
+
+### Bug Fixes
+
+- Harden agent bridge ranking
+  ([`8a73f8d`](https://github.com/oimiragieo/tensor-grep/commit/8a73f8d985661c8c040c35b04002d3cecb210504))
+
+
 ## v1.12.12 (2026-05-16)
 
 ### Bug Fixes
