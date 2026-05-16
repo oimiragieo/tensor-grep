@@ -7107,6 +7107,16 @@ def dogfood(
         None, "--expected-version", help="Expected tensor-grep version. Defaults to pyproject."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    progress: str = typer.Option(
+        "auto",
+        "--progress",
+        help="Progress reporting mode: auto, always, or never. Emits to stderr only.",
+    ),
+    progress_interval_s: float = typer.Option(
+        30.0,
+        "--progress-interval-s",
+        help="Seconds between progress heartbeats for the active phase.",
+    ),
     no_shell_probes: bool = typer.Option(
         False, "--no-shell-probes", help="Skip public shell version probes."
     ),
@@ -7114,13 +7124,24 @@ def dogfood(
 ) -> None:
     """Run the agent-readiness dogfood gate and emit a release-readiness verdict."""
     from tensor_grep.cli.dogfood import run_dogfood_readiness
+    from tensor_grep.cli.progress import normalize_progress_mode
 
+    try:
+        progress_mode = normalize_progress_mode(progress)
+        if progress_interval_s <= 0:
+            raise ValueError("progress interval must be greater than 0")
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     exit_code, report = run_dogfood_readiness(
         root=root,
         output=output,
         expected_version=expected_version,
         include_shell_probes=not no_shell_probes,
         include_wsl_probe=not no_wsl_probe,
+        progress_mode=progress_mode,
+        progress_interval_s=progress_interval_s,
+        json_output=json_output,
     )
     if json_output:
         typer.echo(json.dumps(report, indent=2, sort_keys=True))

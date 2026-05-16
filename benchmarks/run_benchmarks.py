@@ -27,6 +27,11 @@ from native_cpu_benchmark_utils import (  # noqa: E402
     resolve_native_cpu_bench_data_dir,
 )
 from tensor_grep.cli.runtime_paths import inspect_native_tg_binary  # noqa: E402
+from tensor_grep.cli.progress import (  # noqa: E402
+    PROGRESS_MODES,
+    ProgressReporter,
+    positive_progress_interval_s,
+)
 from tensor_grep.perf_guard import benchmark_host_key  # noqa: E402
 
 # Scenarios to test
@@ -653,7 +658,14 @@ def compare_results(rg_out, tg_out, scenario_name):
     return True
 
 
-def main() -> int:
+def _argparse_progress_interval_s(value: str) -> float:
+    try:
+        return positive_progress_interval_s(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def main(argv: list[str] | None = None) -> int:
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
 
     parser = argparse.ArgumentParser(description="Run text-search benchmarks for tensor-grep.")
@@ -702,7 +714,24 @@ def main() -> int:
             "for claims, such as a stale in-tree native tg binary."
         ),
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--progress",
+        choices=PROGRESS_MODES,
+        default="auto",
+        help="Progress reporting mode: auto, always, or never. Emits to stderr only.",
+    )
+    parser.add_argument(
+        "--progress-interval-s",
+        type=_argparse_progress_interval_s,
+        default=30.0,
+        help="Seconds between progress heartbeats for the active phase.",
+    )
+    args = parser.parse_args(argv)
+    progress = ProgressReporter(
+        mode=args.progress,
+        interval_s=args.progress_interval_s,
+        json_output=False,
+    )
     if args.launcher_mode == "explicit_fast_binary":
         if args.binary:
             tg_binary, tg_binary_source = resolve_tg_binary_with_source(args.binary)
@@ -734,18 +763,20 @@ def main() -> int:
         emit_benchmark_claim_blockers(blockers)
         return 2
 
-    generate_test_data(
-        str(bench_dir), num_files=2, lines_per_file=2_000_000
-    )  # ~240MB total, triggers 50MB GPU chunking bypass
+    with progress.phase("generate-data"):
+        generate_test_data(
+            str(bench_dir), num_files=2, lines_per_file=2_000_000
+        )  # ~240MB total, triggers 50MB GPU chunking bypass
 
     rg_bin = resolve_rg_binary()
     native_fixture_payload: dict[str, object] | None = None
     large_file_path: Path | None = None
     many_file_dir: Path | None = None
     if args.native:
-        native_data_dir = resolve_native_cpu_bench_data_dir()
-        large_fixture = ensure_large_file_fixture(native_data_dir)
-        many_fixture = ensure_many_file_fixture(native_data_dir)
+        with progress.phase("native-fixtures"):
+            native_data_dir = resolve_native_cpu_bench_data_dir()
+            large_fixture = ensure_large_file_fixture(native_data_dir)
+            many_fixture = ensure_many_file_fixture(native_data_dir)
         large_file_path = Path(large_fixture["path"])
         many_file_dir = Path(many_fixture["path"])
         native_fixture_payload = {
@@ -780,71 +811,73 @@ def main() -> int:
     parity_failures = 0
     parity_jobs: list[tuple[str, list[str], list[str], dict[str, object]]] = []
 
-    for scenario in benchmark_scenarios:
-        rg_cmd = scenario["rg_cmd"]
-        actual_tg_cmd = scenario["tg_cmd"]
-        capture_stdout_for_timing = scenario_timing_should_capture_stdout(str(scenario["name"]))
+    with progress.phase("timing"):
+        for scenario in benchmark_scenarios:
+            rg_cmd = scenario["rg_cmd"]
+            actual_tg_cmd = scenario["tg_cmd"]
+            capture_stdout_for_timing = scenario_timing_should_capture_stdout(str(scenario["name"]))
 
-        # Warmup to reduce first-run jitter (regex compilation/import effects).
-        for _ in range(scenario_timing_warmup_runs(str(scenario["name"]))):
-            run_cmd_timing(rg_cmd, capture_stdout=capture_stdout_for_timing)
+            # Warmup to reduce first-run jitter (regex compilation/import effects).
+            for _ in range(scenario_timing_warmup_runs(str(scenario["name"]))):
+                run_cmd_timing(rg_cmd, capture_stdout=capture_stdout_for_timing)
+                if tg_env_overrides:
+                    run_cmd_timing(
+                        actual_tg_cmd,
+                        capture_stdout=capture_stdout_for_timing,
+                        env_overrides=tg_env_overrides,
+                    )
+                else:
+                    run_cmd_timing(actual_tg_cmd, capture_stdout=capture_stdout_for_timing)
+
+            # Actual benchmark
+            rg_time, rg_samples = collect_timing_samples(
+                rg_cmd,
+                capture_stdout=capture_stdout_for_timing,
+            )
+
             if tg_env_overrides:
-                run_cmd_timing(
+                tg_time, tg_samples = collect_timing_samples(
                     actual_tg_cmd,
                     capture_stdout=capture_stdout_for_timing,
                     env_overrides=tg_env_overrides,
                 )
             else:
-                run_cmd_timing(actual_tg_cmd, capture_stdout=capture_stdout_for_timing)
+                tg_time, tg_samples = collect_timing_samples(
+                    actual_tg_cmd,
+                    capture_stdout=capture_stdout_for_timing,
+                )
 
-        # Actual benchmark
-        rg_time, rg_samples = collect_timing_samples(
-            rg_cmd,
-            capture_stdout=capture_stdout_for_timing,
-        )
+            row = {
+                "name": scenario["name"],
+                "rg_samples_s": rg_samples,
+                "rg_time_s": rg_time,
+                "tg_samples_s": tg_samples,
+                "tg_time_s": tg_time,
+                "parity": "PENDING",
+            }
+            rows.append(row)
+            parity_jobs.append((str(scenario["name"]), rg_cmd, actual_tg_cmd, row))
 
-        if tg_env_overrides:
-            tg_time, tg_samples = collect_timing_samples(
-                actual_tg_cmd,
-                capture_stdout=capture_stdout_for_timing,
-                env_overrides=tg_env_overrides,
+    with progress.phase("parity"):
+        for scenario_name, rg_cmd, actual_tg_cmd, row in parity_jobs:
+            _, rg_out = run_cmd_capture(rg_cmd)
+            if tg_env_overrides:
+                _, tg_out = run_cmd_capture(actual_tg_cmd, env_overrides=tg_env_overrides)
+            else:
+                _, tg_out = run_cmd_capture(actual_tg_cmd)
+
+            parity_ok = compare_results(rg_out, tg_out, scenario_name)
+            parity_str = "PASS" if parity_ok else "FAIL"
+            row["parity"] = parity_str
+            if not parity_ok:
+                parity_failures += 1
+
+            print(
+                f"{scenario_name:<35} | {row['rg_time_s']:>8.3f}s | {row['tg_time_s']:>8.3f}s | {parity_str}"
             )
-        else:
-            tg_time, tg_samples = collect_timing_samples(
-                actual_tg_cmd,
-                capture_stdout=capture_stdout_for_timing,
-            )
-
-        row = {
-            "name": scenario["name"],
-            "rg_samples_s": rg_samples,
-            "rg_time_s": rg_time,
-            "tg_samples_s": tg_samples,
-            "tg_time_s": tg_time,
-            "parity": "PENDING",
-        }
-        rows.append(row)
-        parity_jobs.append((str(scenario["name"]), rg_cmd, actual_tg_cmd, row))
-
-    for scenario_name, rg_cmd, actual_tg_cmd, row in parity_jobs:
-        _, rg_out = run_cmd_capture(rg_cmd)
-        if tg_env_overrides:
-            _, tg_out = run_cmd_capture(actual_tg_cmd, env_overrides=tg_env_overrides)
-        else:
-            _, tg_out = run_cmd_capture(actual_tg_cmd)
-
-        parity_ok = compare_results(rg_out, tg_out, scenario_name)
-        parity_str = "PASS" if parity_ok else "FAIL"
-        row["parity"] = parity_str
-        if not parity_ok:
-            parity_failures += 1
-
-        print(
-            f"{scenario_name:<35} | {row['rg_time_s']:>8.3f}s | {row['tg_time_s']:>8.3f}s | {parity_str}"
-        )
-        del rg_out
-        del tg_out
-        gc.collect()
+            del rg_out
+            del tg_out
+            gc.collect()
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
     payload = {

@@ -411,6 +411,55 @@ def test_run_compat_checks_routing_metadata_report_caps_payload_previews():
     assert summary["match_counts_by_file_count"] == 3
 
 
+def test_run_compat_checks_progress_always_uses_stderr_without_changing_report(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_script_module(
+        "run_compat_checks_progress_script", "benchmarks/run_compat_checks.py"
+    )
+    tg_binary = tmp_path / "tg"
+    tg_binary.write_text("fake tg", encoding="utf-8")
+    bench_data_dir = tmp_path / "bench_data"
+    bench_data_dir.mkdir()
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text("{}", encoding="utf-8")
+    output_path = tmp_path / "compat_report.json"
+    expected_report = {
+        "suite": "run_compat_checks",
+        "scenarios": [],
+        "routing_metadata": {"valid": True},
+        "pytest": {"passed": True},
+        "all_passed": True,
+    }
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: Path("rg"))
+    monkeypatch.setattr(module, "run_compat_suite", lambda **_kwargs: dict(expected_report))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_compat_checks.py",
+            "--binary",
+            str(tg_binary),
+            "--bench-data-dir",
+            str(bench_data_dir),
+            "--schema",
+            str(schema_path),
+            "--output",
+            str(output_path),
+            "--progress",
+            "always",
+        ],
+    )
+
+    exit_code = module.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(output_path.read_text(encoding="utf-8")) == expected_report
+    assert "[progress]" in captured.err
+    assert "[progress]" not in captured.out
+
+
 def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):
     module = _load_script_module(
         "build_attempt_ledger_cli_script", "benchmarks/build_attempt_ledger.py"
@@ -1443,6 +1492,84 @@ def test_run_benchmarks_should_honor_output_and_milestone_args(monkeypatch, tmp_
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["milestone"] == "m2"
+
+
+def test_run_benchmarks_progress_always_uses_stderr_without_changing_report(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_script_module("run_benchmarks_progress_script", "benchmarks/run_benchmarks.py")
+    tg_binary = tmp_path / "tg"
+    tg_binary.write_text("fake tg", encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda *_args, **_kwargs: (tg_binary, "explicit_arg"),
+    )
+    monkeypatch.setattr(
+        module,
+        "inspect_native_tg_binary",
+        lambda *_args, **_kwargs: {
+            "kind": "release-native",
+            "version": "9.9.9",
+            "expected_version": "9.9.9",
+            "version_status": "matches",
+        },
+    )
+    monkeypatch.setattr(module, "benchmark_binary_warnings", lambda _binary: [])
+    monkeypatch.setattr(module, "run_cmd_timing", lambda *_args, **_kwargs: 0.1)
+    monkeypatch.setattr(
+        module,
+        "collect_timing_samples",
+        lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1]),
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *_args, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    output_path = tmp_path / "bench_run.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--progress",
+            "always",
+        ],
+    )
+
+    exit_code = module.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_run_benchmarks"
+    assert payload["rows"] == [
+        {
+            "name": "1. Simple String Match",
+            "rg_samples_s": [0.1, 0.1, 0.1],
+            "rg_time_s": 0.1,
+            "tg_samples_s": [0.1, 0.1, 0.1],
+            "tg_time_s": 0.1,
+            "parity": "PASS",
+        }
+    ]
+    assert "progress" not in json.dumps(payload).lower()
+    assert "[progress]" in captured.err
+    assert "[progress]" not in captured.out
 
 
 def test_run_hot_query_benchmarks_should_report_regression_status(monkeypatch, tmp_path):
