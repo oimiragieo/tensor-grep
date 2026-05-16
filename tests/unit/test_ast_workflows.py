@@ -161,6 +161,89 @@ def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path
     assert AstGrepWrapperBackend.search_many_calls == 0
 
 
+def test_scan_command_reports_wrapper_runtime_errors_without_traceback(
+    monkeypatch, tmp_path, capsys
+):
+    from tensor_grep.cli.ast_workflows import scan_command
+
+    class ErroringAstGrepWrapperBackend:
+        def is_available(self):
+            return True
+
+        def search_project(self, root_path: str, config_path: str):
+            _ = root_path
+            _ = config_path
+            raise RuntimeError("ast-grep failed with exit code 8: invalid language")
+
+        def search_many(self, file_paths, pattern, config=None):
+            _ = file_paths
+            _ = pattern
+            _ = config
+            raise RuntimeError("ast-grep failed with exit code 8: invalid language")
+
+    ErroringAstGrepWrapperBackend.__name__ = "AstGrepWrapperBackend"
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        AstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        ErroringAstGrepWrapperBackend,
+    )
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "a.py").write_text("ERROR in file\n", encoding="utf-8")
+
+    exit_code = scan_command(str(tmp_path / "sgconfig.yml"))
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Error: ast-grep failed with exit code 8: invalid language" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_test_command_reports_unsupported_case_language_without_traceback(tmp_path, capsys):
+    from tensor_grep.cli.ast_workflows import test_command
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "error-test.yml").write_text(
+        "\n".join([
+            "tests:",
+            "  - id: unsupported-language",
+            "    ruleId: error-rule",
+            "    language: Dart",
+            "    valid:",
+            "      - OK",
+        ]),
+        encoding="utf-8",
+    )
+
+    exit_code = test_command(str(tmp_path / "sgconfig.yml"))
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Unsupported AST language Dart" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
     import time
 

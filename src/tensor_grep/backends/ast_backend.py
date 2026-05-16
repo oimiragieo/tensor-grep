@@ -25,25 +25,109 @@ ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
 NodeTypeIndexCacheEntry = tuple[FileSignature, dict[str, list[int]]]
 
 
+_AST_LANGUAGE_ALIASES = {
+    "bash": "bash",
+    "sh": "bash",
+    "c": "c",
+    "cc": "cpp",
+    "c++": "cpp",
+    "cpp": "cpp",
+    "cxx": "cpp",
+    "c-sharp": "csharp",
+    "c#": "csharp",
+    "c_sharp": "csharp",
+    "cs": "csharp",
+    "csharp": "csharp",
+    "css": "css",
+    "elixir": "elixir",
+    "ex": "elixir",
+    "go": "go",
+    "golang": "go",
+    "haskell": "haskell",
+    "hs": "haskell",
+    "hcl": "hcl",
+    "html": "html",
+    "java": "java",
+    "python": "python",
+    "py": "python",
+    "javascript": "javascript",
+    "jsx": "javascript",
+    "js": "javascript",
+    "json": "json",
+    "kotlin": "kotlin",
+    "kt": "kotlin",
+    "lua": "lua",
+    "nix": "nix",
+    "php": "php",
+    "ruby": "ruby",
+    "rb": "ruby",
+    "scala": "scala",
+    "sol": "solidity",
+    "solidity": "solidity",
+    "swift": "swift",
+    "typescript": "typescript",
+    "ts": "typescript",
+    "tsx": "tsx",
+    "rust": "rust",
+    "rs": "rust",
+    "yaml": "yaml",
+    "yml": "yaml",
+}
+_SUPPORTED_AST_LANGUAGES = (
+    "bash",
+    "c",
+    "cpp",
+    "csharp",
+    "css",
+    "elixir",
+    "go",
+    "haskell",
+    "hcl",
+    "html",
+    "java",
+    "javascript",
+    "json",
+    "kotlin",
+    "lua",
+    "nix",
+    "php",
+    "python",
+    "ruby",
+    "rust",
+    "scala",
+    "solidity",
+    "swift",
+    "typescript",
+    "tsx",
+    "yaml",
+)
+_NATIVE_AST_LANGUAGES = ("python", "javascript", "typescript", "tsx", "rust")
+
+
+def normalize_ast_language(language: object | None, *, default: str = "python") -> str:
+    """Normalize supported ast-grep language names to tg internal identifiers."""
+    raw_language = default if language is None or not str(language).strip() else str(language)
+    normalized = _AST_LANGUAGE_ALIASES.get(raw_language.strip().lower())
+    if normalized is None:
+        supported = ", ".join(_SUPPORTED_AST_LANGUAGES)
+        raise ValueError(
+            f"Unsupported AST language {raw_language}. Supported languages: {supported}."
+        )
+    return normalized
+
+
+def is_native_ast_language(language: object | None) -> bool:
+    """Return whether tg's in-process tree-sitter backend can parse the language."""
+    try:
+        normalized = normalize_ast_language(language)
+    except ValueError:
+        return False
+    return normalized in _NATIVE_AST_LANGUAGES
+
+
 def get_supported_languages() -> list[str]:
-    """Return a list of languages with supported tree-sitter grammars."""
-    # This matches the logic in _get_parser
-    return [
-        "python",
-        "javascript",
-        "typescript",
-        "tsx",
-        "rust",
-        "go",
-        "java",
-        "c",
-        "cpp",
-        "c_sharp",
-        "ruby",
-        "php",
-        "html",
-        "css",
-    ]
+    """Return language identifiers supported by tg AST surfaces."""
+    return list(_SUPPORTED_AST_LANGUAGES)
 
 
 class AstBackend(ComputeBackend):
@@ -375,6 +459,7 @@ class AstBackend(ComputeBackend):
     def _get_parser(self, lang: str) -> Any:
         import tree_sitter
 
+        lang = normalize_ast_language(lang)
         if lang in self._parsers:
             return self._parsers[lang]
 
@@ -384,22 +469,31 @@ class AstBackend(ComputeBackend):
                 import tree_sitter_python
 
                 parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_python.language()))
-            elif lang == "javascript" or lang == "js":
+            elif lang == "javascript":
                 import tree_sitter_javascript
 
                 parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_javascript.language()))
-            elif lang == "typescript" or lang == "ts":
+            elif lang == "typescript":
                 import tree_sitter_typescript
 
                 parser = tree_sitter.Parser(
                     tree_sitter.Language(tree_sitter_typescript.language_typescript())
                 )
-            elif lang == "rust" or lang == "rs":
+            elif lang == "tsx":
+                import tree_sitter_typescript
+
+                parser = tree_sitter.Parser(
+                    tree_sitter.Language(tree_sitter_typescript.language_tsx())
+                )
+            elif lang == "rust":
                 import tree_sitter_rust
 
                 parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
             else:
-                raise ValueError(f"Language '{lang}' is not yet supported by the AstBackend.")
+                raise ValueError(
+                    f"Language '{lang}' is supported by the ast-grep wrapper but not by "
+                    "the native AstBackend."
+                )
         except Exception as e:
             raise RuntimeError(f"Failed to load tree-sitter grammar for {lang}: {e}") from e
 

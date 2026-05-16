@@ -72,7 +72,10 @@ def _has_ast_grep_binary() -> bool:
 
 
 def _skip_if_real_ruleset_scan_fixture_is_unsupported(source_file: Path) -> None:
-    payload = _scan_baseline_payload(source_file)
+    try:
+        payload = _scan_baseline_payload(source_file)
+    except RuntimeError as exc:
+        pytest.skip(f"real ruleset scan fixture unsupported on this backend: {exc}")
     findings = payload.get("findings")
     if not isinstance(findings, list):
         pytest.skip("real ruleset scan fixture unsupported on this backend")

@@ -52,6 +52,35 @@ class TestAstBackend:
 
         AstBackend._clear_shared_caches()
 
+    def test_supported_languages_should_preserve_ast_grep_wrapper_surface(self):
+        from tensor_grep.backends.ast_backend import get_supported_languages
+
+        languages = set(get_supported_languages())
+
+        assert {"python", "javascript", "typescript", "tsx", "rust", "go", "java"}.issubset(
+            languages
+        )
+
+    @pytest.mark.parametrize(
+        ("raw_language", "normalized_language"),
+        [
+            ("Python", "python"),
+            ("JavaScript", "javascript"),
+            ("TypeScript", "typescript"),
+            ("Tsx", "tsx"),
+            ("Go", "go"),
+            ("CSharp", "csharp"),
+            ("C-sharp", "csharp"),
+            ("Yaml", "yaml"),
+        ],
+    )
+    def test_normalize_ast_language_should_accept_ast_grep_aliases(
+        self, raw_language, normalized_language
+    ):
+        from tensor_grep.backends.ast_backend import normalize_ast_language
+
+        assert normalize_ast_language(raw_language) == normalized_language
+
     def test_should_report_unavailable_when_tree_sitter_missing(self, mocker):
         # Arrange
         mocker.patch.dict("sys.modules", {"tree_sitter": None})

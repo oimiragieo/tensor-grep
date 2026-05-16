@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 from tensor_grep.core.config import SearchConfig
 
@@ -185,3 +187,41 @@ def test_ast_wrapper_backend_should_group_project_scan_results_by_rule_id():
     assert results["rule-a"].matched_file_paths == ["a.py"]
     assert results["rule-b"].total_matches == 1
     assert results["rule-b"].matched_file_paths == ["b.py"]
+
+
+def test_ast_wrapper_backend_should_surface_nonzero_search_many_errors():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 2
+    mock_result.stdout = ""
+    mock_result.stderr = "invalid rule config"
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+        pytest.raises(RuntimeError, match="invalid rule config"),
+    ):
+        backend.search_many(
+            ["example.py"],
+            "def $FUNC($$$ARGS):",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+
+def test_ast_wrapper_backend_should_surface_nonzero_project_scan_errors():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 2
+    mock_result.stdout = "[]"
+    mock_result.stderr = "failed to parse config"
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+        pytest.raises(RuntimeError, match="failed to parse config"),
+    ):
+        backend.search_project("project", "sgconfig.yml")

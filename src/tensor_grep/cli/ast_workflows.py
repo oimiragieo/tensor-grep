@@ -9,6 +9,8 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
+from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
+
 if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import MatchLine, SearchResult
@@ -87,7 +89,11 @@ def _load_yaml_dict(path: Path) -> dict[str, object]:
             _reset_yaml_cache()
             yaml_mod, _loader = _get_yaml()
             handle.seek(0)
-            loaded = yaml_mod.safe_load(handle) or {}
+            try:
+                loaded = yaml_mod.safe_load(handle) or {}
+            except yaml_mod.YAMLError as exc:
+                detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
+                raise ValueError(f"Invalid YAML in {path}: {detail}") from exc
     if not isinstance(loaded, dict):
         raise ValueError(f"YAML in {path} must be a mapping.")
     return loaded
@@ -215,7 +221,7 @@ def _load_ast_project_data(
         "root_dir": str(root_dir),
         "rule_dirs": _normalize_string_list(raw_cfg.get("ruleDirs"), ["rules"]),
         "test_dirs": _normalize_string_list(raw_cfg.get("testDirs"), ["tests"]),
-        "language": str(raw_cfg.get("language") or "python"),
+        "language": normalize_ast_language(raw_cfg.get("language") or "python"),
     }
 
     # Load rule specs and track files
@@ -280,7 +286,11 @@ def _select_ast_backend_name_for_pattern(pattern: str, language: str) -> str:
             or _SUPPORTED_NATIVE_PATTERN_RE.fullmatch(stripped_pattern)
         )
     )
-    return "AstBackend" if supports_native_pattern else "AstGrepWrapperBackend"
+    return (
+        "AstBackend"
+        if supports_native_pattern and is_native_ast_language(language)
+        else "AstGrepWrapperBackend"
+    )
 
 
 def _load_rule_specs_and_meta(
@@ -309,7 +319,7 @@ def _load_rule_specs_and_meta(
                 specs.append({
                     "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
                     "pattern": pattern,
-                    "language": str(
+                    "language": normalize_ast_language(
                         item.get("language") or payload.get("language") or default_language
                     ),
                     "severity": str(item.get("severity") or payload.get("severity") or "warning"),
@@ -323,7 +333,7 @@ def _load_rule_specs_and_meta(
         specs.append({
             "id": str(payload.get("id") or rule_file.stem),
             "pattern": pattern,
-            "language": str(payload.get("language") or default_language),
+            "language": normalize_ast_language(payload.get("language") or default_language),
             "severity": str(payload.get("severity") or "warning"),
             "message": str(payload.get("message") or ""),
         })
@@ -787,7 +797,13 @@ def _select_ast_backend_for_pattern(
         )
     )
     pattern_kind = (
-        "native" if base_config.ast_prefer_native and supports_native_pattern else "wrapper"
+        "native"
+        if (
+            base_config.ast_prefer_native
+            and supports_native_pattern
+            and is_native_ast_language(base_config.lang)
+        )
+        else "wrapper"
     )
     cache_key = (base_config.lang, pattern_kind, base_config.ast_prefer_native)
     if backend_cache is not None and cache_key in backend_cache:
@@ -850,8 +866,11 @@ def scan_command(
             rules = yaml_mod.load(inline_rules, Loader=loader)
             if not isinstance(rules, list):
                 rules = [rules]
+            for rule in rules:
+                if isinstance(rule, dict):
+                    rule["language"] = normalize_ast_language(rule.get("language") or "python")
             project_cfg = {
-                "language": rules[0].get("language", "python"),
+                "language": normalize_ast_language(rules[0].get("language", "python")),
                 "root_dir": Path(path or ".").resolve(),
             }
             hints: dict[str, Any] = {}
@@ -866,8 +885,12 @@ def scan_command(
             )
             if not json_mode:
                 print("Scanning project using inline rules...")
-        except Exception as exc:
-            print(f"Error parsing inline rules: {exc}", file=sys.stderr)
+        except yaml_mod.YAMLError as exc:
+            detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
+            print(f"Error: Invalid inline rules YAML: {detail}", file=sys.stderr)
+            return 1
+        except (AttributeError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
             return 1
     elif ruleset:
         from tensor_grep.cli.rule_packs import resolve_rule_pack
@@ -1037,9 +1060,13 @@ def scan_command(
         matched_files: set[str] = set()
 
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = cast(Any, backend).search_many(
-                [str(root_dir)], rule["pattern"], config=rule_cfg
-            )
+            try:
+                result = cast(Any, backend).search_many(
+                    [str(root_dir)], rule["pattern"], config=rule_cfg
+                )
+            except RuntimeError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
             rule_matches = result.total_matches
             matched_files.update(result.matched_file_paths)
             if not matched_files and result.total_files > 0:
@@ -1047,7 +1074,11 @@ def scan_command(
         else:
             rule_matches = 0
             for current_file in candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                try:
+                    result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                except RuntimeError as exc:
+                    print(f"Error: {exc}", file=sys.stderr)
+                    return 1
                 rule_matches += result.total_matches
                 if result.total_files > 0 or result.total_matches > 0:
                     matched_files.add(current_file)
@@ -1183,10 +1214,16 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                 case_id = str(case.get("id") or test_file_entry["stem"])
                 linked_rule = case.get("ruleId")
                 pattern = _extract_rule_pattern(case)
-                language = str(case.get("language") or cfg.lang or "python")
-                if not pattern and isinstance(linked_rule, str) and linked_rule in rules_by_id:
-                    pattern = rules_by_id[linked_rule]["pattern"]
-                    language = str(case.get("language") or rules_by_id[linked_rule]["language"])
+                try:
+                    language = normalize_ast_language(case.get("language") or cfg.lang or "python")
+                    if not pattern and isinstance(linked_rule, str) and linked_rule in rules_by_id:
+                        pattern = rules_by_id[linked_rule]["pattern"]
+                        language = normalize_ast_language(
+                            case.get("language") or rules_by_id[linked_rule]["language"]
+                        )
+                except ValueError as exc:
+                    failures.append(f"{test_file}:{case_id}: {exc}")
+                    continue
                 if not pattern:
                     failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
                     continue

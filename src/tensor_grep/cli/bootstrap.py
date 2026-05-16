@@ -59,10 +59,12 @@ _SCAN_FULL_CLI_FLAGS = {
     "--max-evidence-snippet-chars",
     "--max-evidence-snippets-per-file",
     "--path",
+    "--rule",
     "--ruleset",
     "--suppressions",
     "--write-baseline",
     "--write-suppressions",
+    "-r",
 }
 
 _SCAN_FULL_CLI_FLAG_PREFIXES = (
@@ -72,6 +74,7 @@ _SCAN_FULL_CLI_FLAG_PREFIXES = (
     "--max-evidence-snippet-chars=",
     "--max-evidence-snippets-per-file=",
     "--path=",
+    "--rule=",
     "--ruleset=",
     "--suppressions=",
     "--write-baseline=",
