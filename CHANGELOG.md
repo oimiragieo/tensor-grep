@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.12.22 (2026-05-16)
+
+### Bug Fixes
+
+- Add evidence-gated python validation fallback
+  ([`1d063fc`](https://github.com/oimiragieo/tensor-grep/commit/1d063fc385257fb5d8ddb7ef5836ce819806f086))
+
+Add an evidence-gated Python validation fallback for agent/context capsules.
+
+- Suggest `uv run pytest -q` only when the selected primary file is Python and local Python
+  project/test evidence exists. - Avoid treating a bare `tests/` directory with JS/TS-only tests as
+  pytest evidence. - Remove only the heuristic repo-wide `cargo test` fallback before adding Python
+  validation, so Rust evidence no longer pollutes Python-primary validation plans.
+
+Validation: - targeted regression tests: 3 passed - validation/capsule focused tests: 44 passed -
+  ruff check, ruff format --check, mypy: passed - full pytest: 2190 passed, 16 skipped - PR CI:
+  passed
+
+
 ## v1.12.21 (2026-05-16)
 
 ### Bug Fixes
