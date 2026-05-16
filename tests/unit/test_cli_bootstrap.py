@@ -227,6 +227,10 @@ def test_main_entry_preserves_files_mode_without_pattern(
     monkeypatch.setattr(sys, "argv", ["tg", "--files", str(project)])
     monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
 
     with pytest.raises(SystemExit) as excinfo:
         bootstrap.main_entry()

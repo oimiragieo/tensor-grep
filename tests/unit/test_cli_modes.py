@@ -443,6 +443,49 @@ def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
     assert "--allow-broad-generated-scan" in result.output
 
 
+def test_files_mode_refuses_generated_root_before_rg_passthrough(monkeypatch, tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        lambda self, paths, pattern, config=None: pytest.fail(
+            "generated-root guard should run before rg passthrough"
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["search", "--files", str(tmp_path), "--hidden"])
+
+    assert result.exit_code == 2
+    assert "broad generated-root scan refused" in result.output
+
+
+def test_files_mode_json_does_not_passthrough_to_rg(monkeypatch, tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        lambda self, paths, pattern, config=None: pytest.fail(
+            "--files --json should keep tensor-grep files-mode semantics"
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["search", "--files", "--json", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "app.py" in result.stdout
+
+
 def test_files_mode_refuses_cwd_generated_root_scan(monkeypatch, tmp_path: Path):
     venv_root = tmp_path / ".venv"
     package_dir = venv_root / "Lib" / "site-packages" / "pkg"
@@ -463,6 +506,10 @@ def test_files_mode_allows_bounded_broad_generated_root_scan(monkeypatch, tmp_pa
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
 
     result = CliRunner().invoke(
         app,
@@ -481,6 +528,10 @@ def test_files_mode_allows_explicit_broad_generated_root_scan(monkeypatch, tmp_p
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
 
     result = CliRunner().invoke(
         app,

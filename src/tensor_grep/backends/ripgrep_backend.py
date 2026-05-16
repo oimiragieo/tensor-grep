@@ -402,6 +402,13 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--max-filesize", config.max_filesize])
             if config.threads > 0:
                 cmd.extend(["-j", str(config.threads)])
+            if config.list_files:
+                cmd.append("--files")
+                if isinstance(file_path, list):
+                    cmd.extend(file_path)
+                else:
+                    cmd.append(file_path)
+                return cmd
 
         patterns = list(config.regexp or []) if config and config.regexp else [pattern]
         for current_pattern in patterns:

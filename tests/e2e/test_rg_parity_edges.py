@@ -32,6 +32,9 @@ def _write_edge_corpus(root: Path) -> None:
         "    return subtotal + tax\n",
         encoding="utf-8",
     )
+    nested_dir = root / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "d.txt").write_text("needle nested\n", encoding="utf-8")
     ignored_dir = root / "ignored"
     ignored_dir.mkdir()
     (ignored_dir / "z.txt").write_text("needle ignored\n", encoding="utf-8")
@@ -99,6 +102,28 @@ def _assert_same_rg_behavior(
     )
     if compare_stdout:
         assert _normalize(tg.stdout, root) == _normalize(rg.stdout, root)
+
+
+def _assert_same_rg_stdout_bytes(
+    *,
+    rg_args: list[str],
+    tg_args: list[str],
+    root: Path,
+    env: dict[str, str],
+    rg_binary: Path,
+) -> None:
+    rg = _run([str(rg_binary), *rg_args], cwd=root, env=env)
+    tg = _run(
+        [sys.executable, "-m", "tensor_grep", "search", *tg_args],
+        cwd=root,
+        env=env,
+    )
+
+    assert tg.returncode == rg.returncode, (
+        f"rg exit={rg.returncode} tg exit={tg.returncode}\n"
+        f"rg stderr={rg.stderr}\ntg stderr={tg.stderr}"
+    )
+    assert tg.stdout.replace("\r\n", "\n") == rg.stdout.replace("\r\n", "\n")
 
 
 @pytest.fixture()
@@ -169,6 +194,27 @@ def test_rg_sorted_output_edges_match(
     _assert_same_rg_behavior(
         rg_args=rg_args,
         tg_args=tg_args,
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+@pytest.mark.parametrize(
+    "path_arg",
+    [".", "./nested"],
+    ids=["dot-root", "dot-slash-subdir"],
+)
+def test_rg_files_mode_preserves_rg_path_prefixes(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+    path_arg: str,
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_stdout_bytes(
+        rg_args=["--files", "--sort", "path", path_arg],
+        tg_args=["--files", "--sort", "path", path_arg],
         root=root,
         env=env,
         rg_binary=rg_binary,
