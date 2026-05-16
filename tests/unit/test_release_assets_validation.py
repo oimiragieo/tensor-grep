@@ -1351,6 +1351,88 @@ def test_should_require_benchmark_regression_to_install_bench_and_dev_extras():
     )
 
 
+def test_should_require_benchmark_regression_to_build_verified_native_binaries():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      benchmark-regression:
+        steps:
+          - name: Install benchmark dependencies
+            run: |
+              uv venv --python 3.12
+              uv pip install -e ".[bench,dev]"
+          - name: Build benchmark native binary
+            working-directory: .
+            run: cargo build --release
+          - name: Determine benchmark base revision
+            run: |
+              echo "${{ github.event.pull_request.base.sha }}"
+              echo "${{ github.event.before }}"
+          - name: Checkout base revision for same-runner benchmark comparison
+            uses: actions/checkout@v6
+            with:
+              ref: ${{ steps.benchmark-base.outputs.base_sha }}
+              path: base-revision
+          - name: Install base benchmark dependencies
+            run: |
+              cd base-revision
+              uv venv --python 3.12
+              uv pip install -e ".[bench,dev]"
+          - name: Build base benchmark native binary
+            working-directory: base-revision
+            run: cargo build --release
+          - name: Run core benchmark suite
+            run: uv run python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.head.json
+          - name: Run base benchmark suite
+            run: |
+              cd base-revision
+              uv run python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.base.json
+          - name: Run hot-query benchmark suite
+            run: uv run python benchmarks/run_hot_query_benchmarks.py
+          - name: Enforce benchmark regression gate
+            run: |
+              uv run python benchmarks/check_regression.py \
+                --baseline base-revision/artifacts/bench_run_benchmarks.base.json \
+                --current artifacts/bench_run_benchmarks.head.json
+          - name: Report accepted benchmark baseline drift
+            continue-on-error: true
+            run: |
+              uv run python benchmarks/check_regression.py \
+                --baseline auto \
+                --current artifacts/bench_run_benchmarks.head.json
+          - name: Build benchmark markdown summary
+            run: |
+              uv run python benchmarks/summarize_benchmarks.py \
+                --baseline auto \
+                --current artifacts/bench_run_benchmarks.head.json
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert (
+        "benchmark-regression `Build benchmark native binary` step must run "
+        "`cargo build --release --no-default-features`" in joined_errors
+    )
+    assert (
+        "benchmark-regression `Build benchmark native binary` step must set "
+        "`working-directory: rust_core`" in joined_errors
+    )
+    assert (
+        "benchmark-regression `Build base benchmark native binary` step must run "
+        "`cargo build --release --no-default-features`" in joined_errors
+    )
+    assert (
+        "benchmark-regression `Build base benchmark native binary` step must set "
+        "`working-directory: base-revision/rust_core`" in joined_errors
+    )
+
+
 def test_should_require_benchmark_regression_job_to_exist_when_release_depends_on_it():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
