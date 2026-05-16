@@ -239,6 +239,124 @@ def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _target_symbol_was_explicitly_requested(query: str, target: dict[str, Any]) -> bool:
+    symbol = str(target.get("symbol") or "")
+    return bool(symbol and repo_map._symbol_name_matches_query_exactly(symbol, query))
+
+
+def _related_call_site_record(
+    caller: dict[str, Any],
+    *,
+    target_symbol: str,
+) -> dict[str, Any] | None:
+    file_path = str(caller.get("file") or "")
+    if not file_path:
+        return None
+    raw_line = caller.get("line") or caller.get("start_line") or 1
+    try:
+        line = int(str(raw_line))
+    except (TypeError, ValueError):
+        line = 1
+    record: dict[str, Any] = {
+        "file": file_path,
+        "line": max(1, line),
+        "symbol": target_symbol,
+        "kind": str(caller.get("kind") or "call"),
+        "provenance": str(caller.get("provenance") or "heuristic"),
+        "reason": "direct caller of primary target",
+    }
+    raw_end_line = caller.get("end_line")
+    if raw_end_line is not None:
+        try:
+            record["end_line"] = max(line, int(str(raw_end_line)))
+        except (TypeError, ValueError):
+            pass
+    text = str(caller.get("text") or "").strip()
+    if text:
+        record["text"] = text[:240]
+    return record
+
+
+def _collect_capsule_call_site_evidence(
+    query: str,
+    path: str,
+    target: dict[str, Any],
+    *,
+    include_blast_radius: bool,
+    max_files: int,
+    max_repo_files: int | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not include_blast_radius:
+        return [], {
+            "status": "disabled",
+            "reason": "call-site evidence disabled by caller",
+        }
+    target_symbol = str(target.get("symbol") or "")
+    if not target_symbol:
+        return [], {
+            "status": "skipped",
+            "reason": "primary target has no symbol",
+        }
+    if not _target_symbol_was_explicitly_requested(query, target):
+        return [], {
+            "status": "skipped",
+            "reason": "primary symbol was not explicitly requested by query",
+        }
+    if _numeric_confidence(target.get("confidence"), 0.0) < 0.75:
+        return [], {
+            "status": "skipped",
+            "reason": "primary target confidence below call-site collection threshold",
+        }
+
+    max_callers = max(1, min(int(max_files) * 2, 8))
+    try:
+        radius_payload = repo_map.build_symbol_blast_radius(
+            target_symbol,
+            path,
+            max_depth=1,
+            max_repo_files=max_repo_files,
+            max_callers=max_callers,
+            max_files=max_callers,
+        )
+    except Exception as exc:  # pragma: no cover - defensive evidence side path
+        return [], {
+            "status": "error",
+            "reason": "call-site evidence collection failed",
+            "error": str(exc),
+        }
+
+    if radius_payload.get("no_match"):
+        return [], {
+            "status": "skipped",
+            "reason": "primary symbol definition was not found by blast-radius",
+            "symbol": target_symbol,
+        }
+
+    related_call_sites = [
+        record
+        for record in (
+            _related_call_site_record(caller, target_symbol=target_symbol)
+            for caller in _as_list_of_dicts(radius_payload.get("callers"))
+        )
+        if record is not None
+    ]
+    output_limit = _as_dict(radius_payload.get("output_limit"))
+    provenance = _dedupe([
+        str(record.get("provenance") or "heuristic") for record in related_call_sites
+    ])
+    evidence = {
+        "status": "collected" if related_call_sites else "collected_no_call_sites",
+        "symbol": target_symbol,
+        "routing_reason": str(radius_payload.get("routing_reason") or "symbol-blast-radius"),
+        "max_callers": max_callers,
+        "returned_call_sites": len(related_call_sites),
+        "omitted_call_sites": int(output_limit.get("omitted_callers", 0) or 0),
+        "provenance": provenance or ["heuristic"],
+        "graph_trust_summary": _as_dict(radius_payload.get("graph_trust_summary")),
+    }
+    return related_call_sites, evidence
+
+
 def _alternative_targets(
     payload: dict[str, Any],
     target: dict[str, Any],
@@ -1155,10 +1273,14 @@ def build_agent_capsule(
         max_repo_files=max_repo_files,
         model=model,
     )
-    call_site_evidence = {
-        "status": "not_collected" if include_blast_radius else "disabled",
-        "reason": "capsule v1 does not run blast-radius automatically",
-    }
+    related_call_sites, call_site_evidence = _collect_capsule_call_site_evidence(
+        query,
+        resolved_path,
+        target,
+        include_blast_radius=include_blast_radius,
+        max_files=max_files,
+        max_repo_files=max_repo_files,
+    )
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
     route_rationale: list[dict[str, Any]] = [
         {
@@ -1167,6 +1289,12 @@ def build_agent_capsule(
             "reason": "highest ranked edit target from context-render",
         }
     ]
+    if call_site_evidence.get("status") == "collected":
+        route_rationale.append({
+            "strategy": "blast-radius-call-sites",
+            "evidence": ", ".join(_as_list_of_strings(call_site_evidence.get("provenance"))),
+            "reason": "verified direct call-site evidence collected for explicit primary symbol",
+        })
     gpu_acceleration = _agent_gpu_evidence(
         query,
         resolved_path,
@@ -1211,7 +1339,7 @@ def build_agent_capsule(
         "alternative_targets": alternatives,
         "route_rationale": route_rationale,
         "snippets": snippets,
-        "related_call_sites": [],
+        "related_call_sites": related_call_sites,
         "call_site_evidence": call_site_evidence,
         "gpu_acceleration": gpu_acceleration,
         "validation_plan": validation_plan,

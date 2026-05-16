@@ -3098,6 +3098,121 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     assert payload["ask_user_before_editing"]["required"] is False
 
 
+def test_agent_capsule_collects_bounded_call_site_evidence_for_explicit_symbol(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    service_path = src_dir / "billing.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def settle_invoice():\n"
+        "    return create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(10, 2) == 12\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "change create_invoice tax calculation",
+            "--max-files",
+            "2",
+            "--max-tokens",
+            "500",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["call_site_evidence"]["status"] == "collected"
+    assert payload["call_site_evidence"]["symbol"] == "create_invoice"
+    assert payload["call_site_evidence"]["returned_call_sites"] >= 1
+    assert payload["call_site_evidence"]["max_callers"] == 4
+    call_site_files = {row["file"] for row in payload["related_call_sites"]}
+    assert str(service_path.resolve()) in call_site_files
+    assert str(test_path.resolve()) in call_site_files
+    assert all(row["line"] >= 1 for row in payload["related_call_sites"])
+    assert all(
+        row["reason"] == "direct caller of primary target" for row in payload["related_call_sites"]
+    )
+    assert any(item["strategy"] == "blast-radius-call-sites" for item in payload["route_rationale"])
+
+
+def test_agent_capsule_skips_call_site_collection_when_symbol_not_explicit(
+    monkeypatch,
+    tmp_path,
+):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(10, 2) == 12\n",
+        encoding="utf-8",
+    )
+
+    def _fail_unbounded_collection(*_args, **_kwargs):
+        raise AssertionError("fuzzy capsule query should not collect call-site evidence")
+
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_symbol_blast_radius", _fail_unbounded_collection
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "change invoice tax calculation",
+            "--max-tokens",
+            "500",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["primary_target"]["symbol"] == "create_invoice"
+    assert payload["related_call_sites"] == []
+    assert payload["call_site_evidence"] == {
+        "status": "skipped",
+        "reason": "primary symbol was not explicitly requested by query",
+    }
+
+
 def test_agent_capsule_gpu_evidence_uses_native_route(monkeypatch, tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
