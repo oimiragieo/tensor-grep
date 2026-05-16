@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.18 (2026-05-16)
+
+### Bug Fixes
+
+- Preserve rg regexp stdin parity ([#147](https://github.com/oimiragieo/tensor-grep/pull/147),
+  [`a3a3a2b`](https://github.com/oimiragieo/tensor-grep/commit/a3a3a2b2b498681b0881491d0f91595f06847124))
+
+
 ## v1.12.17 (2026-05-16)
 
 ### Bug Fixes
