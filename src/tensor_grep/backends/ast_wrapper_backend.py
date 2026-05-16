@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -40,7 +41,7 @@ class AstGrepWrapperBackend(ComputeBackend):
     def _build_command(
         self, pattern: str, paths: list[str], config: SearchConfig | None = None
     ) -> tuple[list[str], AbstractContextManager[object]]:
-        lang = config.lang if config and config.lang else None
+        lang = normalize_ast_language(config.lang) if config and config.lang else None
         if "\n" not in pattern and "\r" not in pattern:
             cmd = [self._get_binary_name(), "run", "--json", "-p", pattern]
             if lang:
@@ -65,6 +66,21 @@ class AstGrepWrapperBackend(ComputeBackend):
         )
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), *paths]
         return cmd, context
+
+    def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> None:
+        raw_returncode = getattr(result, "returncode", 0)
+        returncode = raw_returncode if isinstance(raw_returncode, int) else 0
+        if returncode == 0:
+            return
+
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        if not stderr and stdout.startswith("["):
+            return
+
+        detail = stderr or stdout or "no error output"
+        detail = detail.splitlines()[0]
+        raise RuntimeError(f"ast-grep failed with exit code {returncode}: {detail}")
 
     def _parse_result(self, stdout: str, fallback_file: str | None = None) -> SearchResult:
         matches: list[MatchLine] = []
@@ -146,6 +162,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         except Exception as e:
             raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
 
+        self._raise_for_nonzero(result)
         grouped_matches: dict[str, list[dict[str, Any]]] = {}
         for item in self._parse_json_items(result.stdout):
             rule_id = item.get("ruleId") or item.get("rule_id")
@@ -176,6 +193,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     check=False,
                     encoding="utf-8",
                 )
+                self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout)
         except Exception as e:
             raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
@@ -198,6 +216,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     check=False,
                     encoding="utf-8",
                 )
+                self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout, fallback_file=file_path)
 
         except Exception as e:

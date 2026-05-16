@@ -9140,6 +9140,135 @@ def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: P
     assert finding["message"] == "Avoid print in library code."
 
 
+@pytest.mark.parametrize(
+    ("ast_grep_language", "normalized_language"),
+    [
+        ("Python", "python"),
+        ("JavaScript", "javascript"),
+        ("TypeScript", "typescript"),
+        ("Tsx", "tsx"),
+        ("Go", "go"),
+        ("Rust", "rust"),
+    ],
+)
+def test_scan_inline_rules_normalizes_ast_grep_language_names(
+    monkeypatch,
+    tmp_path: Path,
+    ast_grep_language: str,
+    normalized_language: str,
+) -> None:
+    seen_config_languages: list[str | None] = []
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            seen_config_languages.append(config.lang if config is not None else None)
+            return SearchResult(
+                matches=[],
+                matched_file_paths=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="AstGrepWrapperBackend",
+                routing_reason="ast_grep_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
+    )
+
+    inline_rules = "\n".join([
+        "id: normalized-language",
+        f"language: {ast_grep_language}",
+        "rule:",
+        "  pattern: ERROR",
+    ])
+
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--inline-rules", inline_rules, "--path", str(tmp_path), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["findings"][0]["language"] == normalized_language
+    assert seen_config_languages == [normalized_language]
+
+
+def test_scan_inline_rules_rejects_unsupported_language(tmp_path: Path) -> None:
+    inline_rules = "\n".join([
+        "id: unsupported-language",
+        "language: Dart",
+        "rule:",
+        "  pattern: print($A)",
+    ])
+
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--inline-rules", inline_rules, "--path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: Unsupported AST language Dart" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_scan_inline_rules_reports_invalid_yaml_without_traceback(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--inline-rules", "id: broken\nrule: [", "--path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+    assert "YAML" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_scan_rule_file_reports_invalid_yaml_without_traceback(tmp_path: Path) -> None:
+    rule_file = tmp_path / "broken.yml"
+    rule_file.write_text("id: broken\nrule: [", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["scan", "--rule", str(rule_file), str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+    assert "YAML" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_scan_wrapper_runtime_errors_do_not_show_traceback(monkeypatch, tmp_path: Path) -> None:
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            raise RuntimeError("ast-grep failed with exit code 8: invalid language")
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
+    )
+    inline_rules = "\n".join([
+        "id: wrapper-error",
+        "language: Python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
+
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--inline-rules", inline_rules, "--path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: ast-grep failed with exit code 8: invalid language" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)

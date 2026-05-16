@@ -23,6 +23,7 @@ if sys.platform.startswith("win") and not sys.stdout.isatty():
 
 import typer
 
+from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
 from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.lsp_provider_setup import (
@@ -2867,7 +2868,11 @@ def _load_yaml_dict(path: Path) -> dict[str, object]:
     import yaml
 
     with path.open(encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle) or {}
+        try:
+            loaded = yaml.safe_load(handle) or {}
+        except yaml.YAMLError as exc:
+            detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
+            raise ValueError(f"Invalid YAML in {path}: {detail}") from exc
     if not isinstance(loaded, dict):
         raise ValueError(f"YAML in {path} must be a mapping.")
     return loaded
@@ -2885,7 +2890,7 @@ def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
         "rule_dirs": _normalize_string_list(raw.get("ruleDirs"), ["rules"]),
         "test_dirs": _normalize_string_list(raw.get("testDirs"), ["tests"]),
         "utils_dir": str(raw.get("utilsDir") or "utils"),
-        "language": str(raw.get("language") or "python"),
+        "language": normalize_ast_language(str(raw.get("language") or "python")),
     }
 
 
@@ -2937,7 +2942,7 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 specs.append({
                     "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
                     "pattern": pattern,
-                    "language": str(
+                    "language": normalize_ast_language(
                         item.get("language") or payload.get("language") or default_language
                     ),
                 })
@@ -2949,7 +2954,7 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
         specs.append({
             "id": str(payload.get("id") or rule_file.stem),
             "pattern": pattern,
-            "language": str(payload.get("language") or default_language),
+            "language": normalize_ast_language(str(payload.get("language") or default_language)),
         })
 
     return specs
@@ -2963,10 +2968,13 @@ def _load_inline_rule_specs(
     loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     specs: list[dict[str, str]] = []
 
-    for document_index, payload in enumerate(
-        yaml.load_all(inline_rules_text, Loader=loader),
-        start=1,
-    ):
+    try:
+        documents = list(yaml.load_all(inline_rules_text, Loader=loader))
+    except yaml.YAMLError as exc:
+        detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
+        raise ValueError(f"Invalid inline rules YAML: {detail}") from exc
+
+    for document_index, payload in enumerate(documents, start=1):
         if payload is None:
             continue
         if not isinstance(payload, dict):
@@ -2983,7 +2991,7 @@ def _load_inline_rule_specs(
                 spec = {
                     "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
                     "pattern": pattern,
-                    "language": str(
+                    "language": normalize_ast_language(
                         item.get("language")
                         or payload.get("language")
                         or default_language
@@ -3004,7 +3012,9 @@ def _load_inline_rule_specs(
         spec = {
             "id": str(payload.get("id") or f"inline-rule-{document_index}"),
             "pattern": pattern,
-            "language": str(payload.get("language") or default_language or "python"),
+            "language": normalize_ast_language(
+                str(payload.get("language") or default_language or "python")
+            ),
         }
         for metadata_key in ("severity", "message"):
             if payload.get(metadata_key) is not None:
@@ -3479,10 +3489,18 @@ def _run_ast_scan_payload(
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
+    project_language = normalize_ast_language(project_cfg.get("language"))
+    normalized_rules: list[dict[str, str]] = []
+    for rule in rules:
+        normalized_rule = dict(rule)
+        normalized_rule["language"] = normalize_ast_language(rule.get("language"))
+        normalized_rules.append(normalized_rule)
+    rules = normalized_rules
+
     cfg = SearchConfig(
         ast=True,
         ast_prefer_native=True,
-        lang=cast(str, project_cfg["language"]),
+        lang=project_language,
     )
     root_dir = cast(Path, project_cfg["root_dir"])
     include_scan_paths_in_payload = bool(scan_paths)
@@ -3910,7 +3928,13 @@ def _select_ast_backend_for_pattern(
         )
     )
     pattern_kind = (
-        "native" if base_config.ast_prefer_native and supports_native_pattern else "wrapper"
+        "native"
+        if (
+            base_config.ast_prefer_native
+            and supports_native_pattern
+            and is_native_ast_language(base_config.lang)
+        )
+        else "wrapper"
     )
     cache_key = (base_config.lang, pattern_kind, base_config.ast_prefer_native)
     if backend_cache is not None and cache_key in backend_cache:
@@ -6763,8 +6787,9 @@ def scan(
     candidate_files: list[str] | None = None
     project_scan_fast_path = False
     if ruleset:
+        ruleset_language = normalize_ast_language(language) if language is not None else None
         try:
-            ruleset_meta, rules = resolve_rule_pack(ruleset, language)
+            ruleset_meta, rules = resolve_rule_pack(ruleset, ruleset_language)
         except ValueError as exc:
             typer.echo(f"Error: {exc}", err=True)
             sys.exit(1)
@@ -6796,7 +6821,9 @@ def scan(
         if not rules:
             typer.echo(f"Error: No valid rule was found in {rule_path}.", err=True)
             sys.exit(1)
-        inferred_language = language or str(rules[0]["language"])
+        inferred_language = (
+            normalize_ast_language(language) if language else str(rules[0]["language"])
+        )
         project_cfg = {
             "config_path": rule_path,
             "root_dir": Path(effective_scan_paths[0]).resolve(),
@@ -6815,7 +6842,9 @@ def scan(
         if not rules:
             typer.echo("Error: No valid inline rules were found.", err=True)
             sys.exit(1)
-        inferred_language = language or str(rules[0]["language"])
+        inferred_language = (
+            normalize_ast_language(language) if language else str(rules[0]["language"])
+        )
         project_cfg = {
             "config_path": "inline-rules",
             "root_dir": Path(effective_scan_paths[0]).resolve(),
@@ -6871,7 +6900,7 @@ def scan(
             max_evidence_snippets_per_file=max_evidence_snippets_per_file,
             max_evidence_snippet_chars=max_evidence_snippet_chars,
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     if json_output:

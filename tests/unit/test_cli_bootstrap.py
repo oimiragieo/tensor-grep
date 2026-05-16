@@ -216,6 +216,32 @@ def test_main_entry_should_fallback_to_full_cli_for_scan_inline_rules(monkeypatc
     assert called["full_cli"] is True
 
 
+@pytest.mark.parametrize(
+    "rule_args",
+    [
+        ["--rule", "rules/no-print.yml"],
+        ["--rule=rules/no-print.yml"],
+        ["-r", "rules/no-print.yml"],
+    ],
+)
+def test_main_entry_should_fallback_to_full_cli_for_scan_rule_file(
+    monkeypatch, rule_args: list[str]
+) -> None:
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "scan", *rule_args, "src"])
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_ast_workflow_cli",
+        lambda _argv: pytest.fail("ast workflow fast path should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_preserves_files_mode_without_pattern(
     monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
