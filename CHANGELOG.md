@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.17 (2026-05-16)
+
+### Bug Fixes
+
+- Forward native lsp help ([#146](https://github.com/oimiragieo/tensor-grep/pull/146),
+  [`5bac298`](https://github.com/oimiragieo/tensor-grep/commit/5bac2987b8d02d3ccc146ba6e95ed767fa0ea313))
+
+
 ## v1.12.16 (2026-05-16)
 
 ### Bug Fixes
