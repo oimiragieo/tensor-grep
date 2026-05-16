@@ -29,8 +29,16 @@ _SKIP_DIR_NAMES = {
     ".svn",
     ".venv",
     ".mypy_cache",
+    ".next",
+    ".nyc_output",
+    ".parcel-cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".tmp",
+    ".tox",
+    ".turbo",
+    ".vite",
+    ".vitest",
     "__pycache__",
     "artifacts",
     "build",
@@ -38,11 +46,14 @@ _SKIP_DIR_NAMES = {
     "dist",
     "htmlcov",
     "node_modules",
+    "out",
     "target",
+    "temp",
+    "tmp",
+    "tmp_agent_probe",
     "venv",
     ".cache",
     ".nox",
-    ".tox",
 }
 _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _TS_SUFFIXES = {".ts", ".tsx"}
@@ -325,6 +336,15 @@ def _repo_walk_bucket_sort_key(path: Path, root: Path) -> tuple[int, str]:
     return (path_group, top_level)
 
 
+def _should_skip_repo_dir(path: Path) -> bool:
+    name = path.name.lower()
+    if name in _SKIP_DIR_NAMES:
+        return True
+    if name == "context" and path.parent.name.lower() == ".claude":
+        return True
+    return name.startswith(("tg-agent-gpu-probe", "tg-doctor-gpu-probe"))
+
+
 def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
     try:
         entries = list(os.scandir(root))
@@ -336,7 +356,7 @@ def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
     for entry in entries:
         try:
             if entry.is_dir(follow_symlinks=False):
-                if entry.name.lower() not in _SKIP_DIR_NAMES:
+                if not _should_skip_repo_dir(Path(entry.path)):
                     dir_paths.append(Path(entry.path))
             elif entry.is_file(follow_symlinks=False):
                 file_paths.append(Path(entry.path))
@@ -377,7 +397,7 @@ def _iter_repo_files(
             for entry in entries:
                 try:
                     if entry.is_dir(follow_symlinks=False):
-                        if entry.name.lower() not in _SKIP_DIR_NAMES:
+                        if not _should_skip_repo_dir(Path(entry.path)):
                             path = Path(entry.path)
                             buckets.append((
                                 _repo_walk_bucket_sort_key(path, normalized_root),
@@ -5203,6 +5223,261 @@ def _estimate_tokens(
         return max(1, math.ceil(len(text) / 3.5))
 
 
+def _line_map_for_budgeted_lines(
+    line_map: list[dict[str, int]],
+    selected_line_numbers: list[int],
+) -> list[dict[str, int]]:
+    rendered_to_original: dict[int, int] = {}
+    for segment in line_map:
+        rendered_start = int(segment.get("rendered_start_line", 0))
+        rendered_end = int(segment.get("rendered_end_line", 0))
+        original_start = int(segment.get("original_start_line", 0))
+        if rendered_start <= 0 or rendered_end < rendered_start or original_start <= 0:
+            continue
+        for rendered_line in range(rendered_start, rendered_end + 1):
+            rendered_to_original[rendered_line] = original_start + rendered_line - rendered_start
+
+    budgeted: list[dict[str, int]] = []
+    for new_rendered_line, previous_rendered_line in enumerate(selected_line_numbers, start=1):
+        original_line = rendered_to_original.get(previous_rendered_line)
+        if original_line is None:
+            continue
+        if budgeted and original_line == budgeted[-1]["original_end_line"] + 1:
+            budgeted[-1]["rendered_end_line"] = new_rendered_line
+            budgeted[-1]["original_end_line"] = original_line
+            continue
+        budgeted.append({
+            "rendered_start_line": new_rendered_line,
+            "rendered_end_line": new_rendered_line,
+            "original_start_line": original_line,
+            "original_end_line": original_line,
+        })
+    return budgeted
+
+
+def _source_text_within_budget(
+    text: str,
+    *,
+    max_tokens: int | None,
+    max_chars: int | None,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> bool:
+    if max_chars is not None and len(text) > max_chars:
+        return False
+    if (
+        max_tokens is not None
+        and _estimate_tokens(
+            text,
+            _profiling_collector=_profiling_collector,
+        )
+        > max_tokens
+    ):
+        return False
+    return True
+
+
+def _truncate_source_text_to_budget(
+    text: str,
+    *,
+    max_tokens: int | None,
+    max_chars: int | None,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> tuple[str, list[int], bool]:
+    if _source_text_within_budget(
+        text,
+        max_tokens=max_tokens,
+        max_chars=max_chars,
+        _profiling_collector=_profiling_collector,
+    ):
+        line_count = len(text.splitlines())
+        return text, list(range(1, line_count + 1)), False
+
+    lines = text.splitlines(keepends=True)
+    selected_lines: list[str] = []
+    selected_indexes: list[int] = []
+
+    for index, line in enumerate(lines, start=1):
+        candidate = "".join([*selected_lines, line])
+        if not _source_text_within_budget(
+            candidate,
+            max_tokens=max_tokens,
+            max_chars=max_chars,
+            _profiling_collector=_profiling_collector,
+        ):
+            break
+        selected_lines.append(line)
+        selected_indexes.append(index)
+
+    tail_line: tuple[int, str] | None = None
+    for index in range(len(lines), 0, -1):
+        line = lines[index - 1]
+        stripped = line.strip()
+        if stripped.startswith(("return ", "raise ", "yield ", "assert ")):
+            tail_line = (index, line)
+            break
+
+    if tail_line is not None and tail_line[0] not in selected_indexes:
+        candidate_lines = [*selected_lines, tail_line[1]]
+        candidate_indexes = [*selected_indexes, tail_line[0]]
+        while selected_lines and not _source_text_within_budget(
+            "".join(candidate_lines),
+            max_tokens=max_tokens,
+            max_chars=max_chars,
+            _profiling_collector=_profiling_collector,
+        ):
+            selected_lines.pop()
+            selected_indexes.pop()
+            candidate_lines = [*selected_lines, tail_line[1]]
+            candidate_indexes = [*selected_indexes, tail_line[0]]
+        if _source_text_within_budget(
+            "".join(candidate_lines),
+            max_tokens=max_tokens,
+            max_chars=max_chars,
+            _profiling_collector=_profiling_collector,
+        ):
+            selected_lines = candidate_lines
+            selected_indexes = candidate_indexes
+
+    if not selected_lines and lines:
+        chunk = lines[0]
+        if max_chars is not None:
+            chunk = chunk[:max_chars]
+        while (
+            max_tokens is not None
+            and _estimate_tokens(
+                chunk,
+                _profiling_collector=_profiling_collector,
+            )
+            > max_tokens
+            and len(chunk) > 1
+        ):
+            chunk = chunk[: max(1, int(len(chunk) * 0.75))]
+        selected_lines = [chunk]
+        selected_indexes = [1]
+
+    return "".join(selected_lines).rstrip("\n"), selected_indexes, True
+
+
+def _apply_source_output_budget(
+    sources: list[dict[str, Any]],
+    *,
+    max_tokens: int | None,
+    max_render_chars: int | None,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[dict[str, Any]]]:
+    normalized_max_tokens = max_tokens if max_tokens is not None and max_tokens > 0 else None
+    normalized_max_chars = (
+        max_render_chars if max_render_chars is not None and max_render_chars > 0 else None
+    )
+    if normalized_max_tokens is None and normalized_max_chars is None:
+        return sources, None, []
+
+    budgeted_sources: list[dict[str, Any]] = []
+    omitted_sections: list[dict[str, Any]] = []
+    remaining_tokens = normalized_max_tokens
+    remaining_chars = normalized_max_chars
+    original_token_total = 0
+    emitted_token_total = 0
+    original_char_total = 0
+    emitted_char_total = 0
+    truncated_sources = 0
+    omitted_sources = 0
+    omitted_line_count = 0
+
+    for source in sources:
+        rendered_source = str(source.get("rendered_source", source.get("source", "")))
+        original_tokens = _estimate_tokens(
+            rendered_source,
+            _profiling_collector=_profiling_collector,
+        )
+        original_token_total += original_tokens
+        original_char_total += len(rendered_source)
+        original_line_count = len(rendered_source.splitlines())
+        if (remaining_tokens is not None and remaining_tokens <= 0) or (
+            remaining_chars is not None and remaining_chars <= 0
+        ):
+            omitted_sources += 1
+            omitted_line_count += original_line_count
+            omitted_sections.append({
+                "kind": "source_payload",
+                "file": str(source.get("file", "")),
+                "symbol": source.get("name"),
+                "score": 0,
+                "reason": "source_budget_exhausted",
+                "omitted_line_count": original_line_count,
+                "token_estimate": original_tokens,
+            })
+            continue
+
+        truncated_source, selected_lines, truncated = _truncate_source_text_to_budget(
+            rendered_source,
+            max_tokens=remaining_tokens,
+            max_chars=remaining_chars,
+            _profiling_collector=_profiling_collector,
+        )
+        emitted_tokens = _estimate_tokens(
+            truncated_source,
+            _profiling_collector=_profiling_collector,
+        )
+        emitted_token_total += emitted_tokens
+        emitted_char_total += len(truncated_source)
+        if remaining_tokens is not None:
+            remaining_tokens = max(0, remaining_tokens - emitted_tokens)
+        if remaining_chars is not None:
+            remaining_chars = max(0, remaining_chars - len(truncated_source))
+
+        budgeted = dict(source)
+        budgeted["rendered_source"] = truncated_source
+        if "source" in budgeted:
+            budgeted["source"] = truncated_source
+        if truncated:
+            truncated_sources += 1
+            omitted_lines = max(0, original_line_count - len(selected_lines))
+            omitted_line_count += omitted_lines
+            budgeted["line_map"] = _line_map_for_budgeted_lines(
+                _list_of_dicts(source.get("line_map")),
+                selected_lines,
+            )
+            diagnostics = dict(budgeted.get("render_diagnostics", {}))
+            diagnostics["budget_removed_line_count"] = omitted_lines
+            diagnostics["rendered_line_count"] = len(selected_lines)
+            budgeted["render_diagnostics"] = diagnostics
+            omitted_sections.append({
+                "kind": "source_payload",
+                "file": str(source.get("file", "")),
+                "symbol": source.get("name"),
+                "score": 0,
+                "reason": "source_budget",
+                "omitted_line_count": omitted_lines,
+                "token_estimate": original_tokens,
+                "emitted_token_estimate": emitted_tokens,
+            })
+        budgeted["source_budget"] = {
+            "max_tokens": normalized_max_tokens,
+            "max_render_chars": normalized_max_chars,
+            "original_token_estimate": original_tokens,
+            "emitted_token_estimate": emitted_tokens,
+            "original_char_count": len(rendered_source),
+            "emitted_char_count": len(truncated_source),
+            "truncated": truncated,
+        }
+        budgeted_sources.append(budgeted)
+
+    summary = {
+        "max_tokens": normalized_max_tokens,
+        "max_render_chars": normalized_max_chars,
+        "original_token_estimate": original_token_total,
+        "emitted_token_estimate": emitted_token_total,
+        "original_char_count": original_char_total,
+        "emitted_char_count": emitted_char_total,
+        "truncated_sources": truncated_sources,
+        "omitted_sources": omitted_sources,
+        "omitted_line_count": omitted_line_count,
+        "possibly_truncated": bool(truncated_sources or omitted_sources),
+    }
+    return budgeted_sources, summary, omitted_sections
+
+
 def _render_part_score(part: dict[str, Any]) -> int:
     provenance = part.get("provenance", {})
     if not isinstance(provenance, dict):
@@ -8231,6 +8506,21 @@ def build_context_edit_plan_from_map(
     payload["symbols"] = _sorted_ranked_symbols(list(payload.get("symbols", [])))[
         :normalized_max_symbols
     ]
+    selected_file_set = {str(current) for current in payload["files"]}
+    selected_test_set = {str(current) for current in payload["tests"]}
+    payload["imports"] = [
+        {
+            **dict(entry),
+            "imports": list(dict(entry).get("imports", []))[:normalized_max_symbols],
+        }
+        for entry in payload.get("imports", [])
+        if isinstance(entry, dict) and str(entry.get("file", "")) in selected_file_set
+    ][:normalized_max_files]
+    payload["related_paths"] = [
+        str(path)
+        for path in payload.get("related_paths", [])
+        if str(path) in selected_file_set | selected_test_set
+    ]
     payload["max_files"] = normalized_max_files
     payload["max_symbols"] = normalized_max_symbols
     payload["max_sources"] = normalized_max_sources
@@ -8763,6 +9053,14 @@ def build_context_render_from_map(
             if len(sources) >= max_sources:
                 break
 
+    normalized_max_tokens = max_tokens if max_tokens is not None and max_tokens > 0 else None
+    sources, source_budget, source_omitted_sections = _apply_source_output_budget(
+        sources,
+        max_tokens=normalized_max_tokens,
+        max_render_chars=max_render_chars,
+        _profiling_collector=collector,
+    )
+
     payload = dict(context_payload)
     payload["routing_reason"] = "context-render"
     payload["files"] = list(payload.get("files", []))[:max_files]
@@ -8774,15 +9072,36 @@ def build_context_render_from_map(
         }
         for summary in list(payload.get("file_summaries", []))[:max_files]
     ]
+    selected_file_set = {str(current) for current in payload["files"]}
+    payload["tests"] = list(payload.get("tests", []))[:max_files]
+    selected_test_set = {str(current) for current in payload["tests"]}
+    payload["test_matches"] = list(payload.get("test_matches", []))[:max_files]
+    payload["symbols"] = [
+        dict(symbol)
+        for symbol in payload.get("symbols", [])
+        if str(symbol.get("file", "")) in selected_file_set
+    ][: max_files * max_symbols_per_file]
+    payload["imports"] = [
+        dict(entry)
+        for entry in payload.get("imports", [])
+        if str(entry.get("file", "")) in selected_file_set
+    ][:max_files]
+    payload["related_paths"] = [
+        str(path)
+        for path in payload.get("related_paths", [])
+        if str(path) in selected_file_set | selected_test_set
+    ]
     payload["sources"] = sources
     payload["max_files"] = max_files
     payload["max_sources"] = max_sources
     payload["max_symbols_per_file"] = max_symbols_per_file
     payload["max_render_chars"] = max_render_chars
-    payload["max_tokens"] = max_tokens if max_tokens is not None and max_tokens > 0 else None
+    payload["max_tokens"] = normalized_max_tokens
     payload["model"] = model
     payload["optimize_context"] = optimize_context
     payload["render_profile"] = normalized_profile
+    if source_budget is not None:
+        payload["source_budget"] = source_budget
     if include_edit_plan_seed:
         payload = _attach_edit_plan_metadata(
             repo_map,
@@ -8815,9 +9134,9 @@ def build_context_render_from_map(
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
-    payload["truncated"] = truncated
+    payload["truncated"] = truncated or bool(source_omitted_sections)
     payload["token_estimate"] = token_estimate
-    payload["omitted_sections"] = omitted_sections
+    payload["omitted_sections"] = [*source_omitted_sections, *omitted_sections]
     payload = _apply_context_consistency_invariants(payload)
     payload = _compact_context_render_payload(
         payload,
