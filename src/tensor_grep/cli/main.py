@@ -2583,7 +2583,7 @@ def _can_passthrough_rg(
         and format_type == "rg"
         and (not json_mode or rg_json_passthrough)
         and not ndjson_mode
-        and not files_mode
+        and not (files_mode and json_mode)
         and not only_matching
         and not (rg_json_passthrough and stats_mode)
         and not (rg_json_passthrough and (config.count or config.count_matches))

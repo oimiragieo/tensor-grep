@@ -131,6 +131,33 @@ def test_should_forward_glob_flags():
     assert "!*.tmp" in cmd
 
 
+def test_files_mode_builds_rg_files_command_without_search_pattern():
+    backend = RipgrepBackend()
+    config = SearchConfig(
+        list_files=True,
+        glob=["*.py"],
+        hidden=True,
+        null=True,
+        sort_by="path",
+    )
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[".", "./src"],
+            pattern="SHOULD_NOT_BE_USED",
+            config=config,
+            json_mode=False,
+        )
+
+    assert "--files" in cmd
+    assert "--hidden" in cmd
+    assert "-0" in cmd
+    assert ["-g", "*.py"] == cmd[cmd.index("-g") :][:2]
+    assert ["--sort", "path"] == cmd[cmd.index("--sort") :][:2]
+    assert cmd[cmd.index("--files") + 1 :] == [".", "./src"]
+    assert "SHOULD_NOT_BE_USED" not in cmd
+
+
 def test_should_raise_on_rg_fatal_error():
     backend = RipgrepBackend()
 
