@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.15 (2026-05-16)
+
+### Bug Fixes
+
+- Harden post-release proof governance ([#144](https://github.com/oimiragieo/tensor-grep/pull/144),
+  [`b1bee5b`](https://github.com/oimiragieo/tensor-grep/commit/b1bee5b8d627346ca53147ec40f4fe1fbaa0dacd))
+
+
 ## v1.12.14 (2026-05-16)
 
 ### Bug Fixes
