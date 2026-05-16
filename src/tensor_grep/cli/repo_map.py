@@ -9425,6 +9425,15 @@ def _attach_lsp_evidence_status(
     payload["not_lsp_proof_reason"] = "External LSP provider returned no usable evidence."
 
 
+def _is_lsp_proof_row(row: dict[str, Any]) -> bool:
+    provenance = str(row.get("provenance", ""))
+    return provenance.startswith("lsp-") and "-fallback" not in provenance
+
+
+def _lsp_proof_row_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if _is_lsp_proof_row(row))
+
+
 def _copy_lsp_evidence_status(payload: dict[str, Any], source: dict[str, Any]) -> None:
     for key in ("lsp_evidence_status", "lsp_proof", "not_lsp_proof_reason"):
         if key in source:
@@ -9731,7 +9740,7 @@ def build_symbol_defs_from_map(
             repo_map=repo_map,
         )
         if normalized_provider == "lsp":
-            fallback_used = not bool(external_definitions)
+            fallback_used = not bool(_lsp_proof_row_count(external_definitions))
             definitions = external_definitions or definitions
         else:
             merged: dict[tuple[str, int, int, str], dict[str, Any]] = {}
@@ -9781,10 +9790,11 @@ def build_symbol_defs_from_map(
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "strong"
     payload["semantic_provider"] = normalized_provider
+    lsp_proof_count = _lsp_proof_row_count(external_definitions)
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
         native_count=len(native_definitions),
-        lsp_count=len(external_definitions),
+        lsp_count=lsp_proof_count,
         merged_count=len(definitions),
         fallback_used=fallback_used,
     )
@@ -9797,7 +9807,7 @@ def build_symbol_defs_from_map(
     _attach_lsp_evidence_status(
         payload,
         semantic_provider=normalized_provider,
-        lsp_count=len(external_definitions),
+        lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
     if not definitions:
@@ -10255,7 +10265,7 @@ def build_symbol_refs_from_map(
             if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
         ]
         if normalized_provider == "lsp":
-            fallback_used = not bool(external_refs)
+            fallback_used = not bool(_lsp_proof_row_count(external_refs))
             references = external_refs or references
         else:
             merged_refs: dict[tuple[str, int, int], dict[str, Any]] = {}
@@ -10289,14 +10299,11 @@ def build_symbol_refs_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
+    lsp_proof_count = _lsp_proof_row_count(external_refs)
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
-        native_count=len([
-            current
-            for current in references
-            if not str(current.get("provenance", "")).startswith("lsp-")
-        ]),
-        lsp_count=len(external_refs),
+        native_count=len([current for current in references if not _is_lsp_proof_row(current)]),
+        lsp_count=lsp_proof_count,
         merged_count=len(references),
         fallback_used=fallback_used,
     )
@@ -10309,7 +10316,7 @@ def build_symbol_refs_from_map(
     _attach_lsp_evidence_status(
         payload,
         semantic_provider=normalized_provider,
-        lsp_count=len(external_refs),
+        lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
     return payload
@@ -10630,14 +10637,13 @@ def build_symbol_callers_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
+    lsp_proof_count = _lsp_proof_row_count(external_calls)
+    if normalized_provider != "native" and external_calls and lsp_proof_count == 0:
+        fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
-        native_count=len([
-            current
-            for current in calls
-            if not str(current.get("provenance", "")).startswith("lsp-")
-        ]),
-        lsp_count=len(external_calls),
+        native_count=len([current for current in calls if not _is_lsp_proof_row(current)]),
+        lsp_count=lsp_proof_count,
         merged_count=len(calls),
         fallback_used=fallback_used,
     )
@@ -10650,7 +10656,7 @@ def build_symbol_callers_from_map(
     _attach_lsp_evidence_status(
         payload,
         semantic_provider=normalized_provider,
-        lsp_count=len(external_calls),
+        lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
     _copy_scan_limit(payload, defs_payload)

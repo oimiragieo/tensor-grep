@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import os
+import queue
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import tensor_grep.cli.lsp_external_provider as provider_module
-from tensor_grep.cli.lsp_external_provider import ExternalLSPClient, ExternalLSPProviderManager
+from tensor_grep.cli.lsp_external_provider import (
+    ExternalLSPClient,
+    ExternalLSPProviderManager,
+    LSPTransportError,
+)
 
 
 def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
@@ -87,8 +93,98 @@ def test_provider_status_reports_configured_timeouts_without_cached_client(
     assert status["available"] is True
     assert status["health_status"] == "available_unverified"
     assert status["health_check"] == "not_run"
+    assert status["lsp_proof"] is False
+    assert "not verified" in status["not_lsp_proof_reason"]
     assert status["request_timeout_seconds"] == 6.0
     assert status["initialize_timeout_seconds"] == 21.0
+
+
+def test_provider_status_available_binary_is_unverified_without_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+    )
+
+    assert status["available"] is True
+    assert status["health_status"] == "available_unverified"
+    assert status["health_check"] == "not_run"
+    assert status["lsp_proof"] is False
+    assert status["not_lsp_proof_reason"]
+
+
+def test_provider_status_verify_health_success_reports_lsp_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    seen_timeouts: list[tuple[float, float]] = []
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
+        self.capabilities = {"definitionProvider": True}
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.25,
+    )
+
+    assert seen_timeouts == [(0.25, 0.25)]
+    assert status["available"] is True
+    assert status["health_status"] == "ready"
+    assert status["health_check"] == "probe"
+    assert status["lsp_proof"] is True
+    assert "not_lsp_proof_reason" not in status
+
+
+def test_provider_status_verify_health_failure_reports_unhealthy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        self.disabled_until_monotonic = time.monotonic() + 30.0
+        raise LSPTransportError("timeout waiting for LSP response: initialize")
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.2,
+    )
+
+    assert status["available"] is True
+    assert status["health_status"] == "unhealthy"
+    assert status["health_check"] == "probe"
+    assert status["lsp_proof"] is False
+    assert status["last_error"] == "timeout waiting for LSP response: initialize"
+    assert status["probe_timeout_seconds"] == 0.2
+    assert status["cooldown_remaining_s"] > 0.0
 
 
 def test_provider_status_prefers_managed_provider_root(
@@ -158,6 +254,111 @@ def test_external_provider_client_starts_managed_provider_with_managed_runtime_e
         else provider_root / "node-runtime" / "bin"
     )
     assert str(expected_node_path) in str(env["PATH"]).split(os.pathsep)
+
+
+def test_external_provider_client_start_orders_initialize_initialized_and_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    written_messages: list[dict[str, Any]] = []
+    responses: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"capabilities": {"definitionProvider": True}},
+    })
+    responses.put(None)
+
+    class _FakeStream:
+        def close(self) -> None:
+            return None
+
+    class _FakeProcess:
+        stdin = _FakeStream()
+        stdout = _FakeStream()
+        stderr = _FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr(provider_module.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        provider_module,
+        "_write_message",
+        lambda _stream, payload: written_messages.append(dict(payload)),
+    )
+    monkeypatch.setattr(provider_module, "_read_message", lambda _stream: responses.get())
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.start()
+
+    assert [message["method"] for message in written_messages] == [
+        "initialize",
+        "initialized",
+        "workspace/didChangeConfiguration",
+    ]
+    initialize_message = written_messages[0]
+    assert "id" in initialize_message
+    settings = written_messages[2]["params"]["settings"]
+    analysis_settings = settings["python"]["analysis"]
+    assert analysis_settings["diagnosticMode"] == "openFilesOnly"
+    assert "node_modules" in analysis_settings["exclude"]
+    assert "__pycache__" in analysis_settings["exclude"]
+    assert ".venv" in analysis_settings["exclude"]
+
+
+def test_external_provider_client_stop_sends_shutdown_request_then_exit_notification(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    written_messages: list[dict[str, Any]] = []
+
+    class _FakeStream:
+        def close(self) -> None:
+            return None
+
+    class _FakeProcess:
+        stdin = _FakeStream()
+        stdout = _FakeStream()
+        stderr = _FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def terminate(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        provider_module,
+        "_write_message",
+        lambda _stream, payload: written_messages.append(dict(payload)),
+    )
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.process = _FakeProcess()  # type: ignore[assignment]
+    client._message_queue.put({"jsonrpc": "2.0", "id": 1, "result": None})
+
+    client.stop()
+
+    assert [message["method"] for message in written_messages] == ["shutdown", "exit"]
+    assert "id" in written_messages[0]
+    assert "id" not in written_messages[1]
 
 
 def test_external_provider_client_respects_retry_cooldown(

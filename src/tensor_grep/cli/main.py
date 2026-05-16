@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
 _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
 _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
+_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 1.0
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "__pycache__",
@@ -1298,10 +1299,18 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
 
     manager = ExternalLSPProviderManager()
     workspace_root = Path(path).resolve()
-    return [
-        manager.provider_status(language=language, workspace_root=workspace_root)
-        for language in _doctor_lsp_languages()
-    ]
+    try:
+        return [
+            manager.provider_status(
+                language=language,
+                workspace_root=workspace_root,
+                verify_health=True,
+                probe_timeout_seconds=_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS,
+            )
+            for language in _doctor_lsp_languages()
+        ]
+    finally:
+        manager.stop_all()
 
 
 def _doctor_rust_core_extension_available() -> bool:
@@ -2234,11 +2243,19 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
             source = current.get("command_source", "path")
             managed_root = current.get("managed_provider_root")
             last_error = current.get("last_error")
+            health_status = current.get("health_status", "unknown")
+            health_check = current.get("health_check", "unknown")
+            lsp_proof = current.get("lsp_proof", False)
+            not_lsp_proof_reason = current.get("not_lsp_proof_reason")
             suffix = f" last_error={last_error}" if last_error else ""
             if managed_root:
                 suffix = f" managed_root={managed_root}{suffix}"
+            if not_lsp_proof_reason:
+                suffix = f"{suffix} not_lsp_proof_reason={not_lsp_proof_reason}"
             lines.append(
-                f"  {current['language']}: {availability}/{status} source={source} command={command_str}{suffix}"
+                f"  {current['language']}: {availability}/{status} "
+                f"health={health_status} health_check={health_check} "
+                f"lsp_proof={lsp_proof} source={source} command={command_str}{suffix}"
             )
     else:
         lines.append("lsp_providers: disabled")
