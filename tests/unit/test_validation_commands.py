@@ -602,6 +602,73 @@ def test_rust_primary_replaces_heuristic_repo_fallback_with_nested_manifest(
     assert alignment["filtered_count"] == 0
 
 
+def test_python_primary_uses_detected_repo_pytest_fallback_with_rust_present(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    python_src = project / "src"
+    rust_src = project / "rust_core" / "src"
+    tests_dir = project / "tests"
+    python_src.mkdir(parents=True)
+    rust_src.mkdir(parents=True)
+    tests_dir.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (project / "rust_core" / "Cargo.toml").write_text(
+        '[package]\nname = "sample-rust-core"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    primary_file = python_src / "payments.py"
+    primary_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    (rust_src / "main.rs").write_text("pub fn native() -> bool { true }\n", encoding="utf-8")
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [],
+        repo_root=project,
+        primary_file=str(primary_file.resolve()),
+        query="python cli source target",
+    )
+
+    assert plan == [
+        {
+            "command": "uv run pytest -q",
+            "scope": "repo",
+            "runner": "pytest",
+            "confidence": 0.55,
+            "detection": "detected",
+        }
+    ]
+    assert alignment["status"] == "aligned"
+    assert alignment["primary_target_language"] == "python"
+    assert alignment["kept_count"] == 1
+    assert alignment["filtered_count"] == 0
+
+
+def test_python_primary_without_project_or_test_evidence_has_no_validation(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    primary_file = src_dir / "payments.py"
+    primary_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [],
+        repo_root=project,
+        primary_file=str(primary_file.resolve()),
+        query="python source target",
+    )
+
+    assert plan == []
+    assert alignment["status"] == "no-validation"
+    assert alignment["primary_target_language"] == "python"
+    assert alignment["kept_count"] == 0
+    assert alignment["filtered_count"] == 0
+
+
 def test_detect_validation_runners_is_cached_per_repo_root(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

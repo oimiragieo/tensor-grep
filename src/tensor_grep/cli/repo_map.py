@@ -6627,7 +6627,50 @@ def _primary_language_fallback_validation_steps(
                 "confidence": 0.5,
                 "detection": "detected",
             })
+    elif primary_language == "python" and _has_python_validation_fallback_evidence(root):
+        detected = _detect_validation_runners_from_root(root)
+        if detected.python_detection == "detected":
+            steps.append({
+                "command": "uv run pytest -q",
+                "scope": "repo",
+                "runner": "pytest",
+                "confidence": 0.55,
+                "detection": "detected",
+            })
     return steps
+
+
+def _has_python_validation_fallback_evidence(root: Path) -> bool:
+    if any(
+        (root / marker).is_file()
+        for marker in (
+            "pyproject.toml",
+            "pytest.ini",
+            "setup.py",
+            "setup.cfg",
+            "tox.ini",
+        )
+    ):
+        return True
+    return any(
+        current.suffix == ".py" and _is_test_file(current)
+        for current in _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
+    )
+
+
+def _without_heuristic_repo_cargo_fallback(
+    validation_plan: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        dict(step)
+        for step in validation_plan
+        if not (
+            str(step.get("runner") or "") == "cargo"
+            and str(step.get("command") or "") == "cargo test"
+            and str(step.get("scope") or "") == "repo"
+            and str(step.get("detection") or "") == "heuristic"
+        )
+    ]
 
 
 def _ensure_primary_language_validation_fallback(
@@ -6672,11 +6715,18 @@ def _ensure_primary_language_validation_fallback(
             ]
             augmented.extend(dict(step) for step in fallback_steps)
             return augmented
+        if primary_language == "python" and fallback_commands:
+            return _without_heuristic_repo_cargo_fallback(validation_plan)
         return validation_plan
     if not fallback_steps:
         return validation_plan
-    seen = {str(step.get("command") or "") for step in validation_plan}
-    augmented = [dict(step) for step in validation_plan]
+    base_plan = (
+        _without_heuristic_repo_cargo_fallback(validation_plan)
+        if primary_language == "python"
+        else validation_plan
+    )
+    seen = {str(step.get("command") or "") for step in base_plan}
+    augmented = [dict(step) for step in base_plan]
     for step in fallback_steps:
         command = str(step.get("command") or "")
         if command and command not in seen:
