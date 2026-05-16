@@ -374,3 +374,82 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
     assert artifact_probe.resolve() not in files
     assert (project / "run.log").resolve() not in files
     assert (project / "blob.bin").resolve() not in files
+
+
+def test_edit_plan_excludes_temp_probe_context_and_caps_related_metadata(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+    noisy_files = [
+        project / "tmp_agent_probe" / "probe.py",
+        project / ".tmp" / "probe.py",
+        project / ".claude" / "context" / "debug.py",
+        project / "artifacts" / "debug" / "agent_probe.py",
+    ]
+    for noisy_file in noisy_files:
+        noisy_file.parent.mkdir(parents=True, exist_ok=True)
+        noisy_file.write_text(
+            "def create_invoice_probe():\n    return 'debug probe'\n",
+            encoding="utf-8",
+        )
+
+    payload = repo_map.build_context_edit_plan(
+        "create invoice",
+        project,
+        max_files=1,
+        max_symbols=1,
+        max_sources=1,
+        max_tokens=64,
+    )
+    serialized = json.dumps(payload)
+
+    assert payload["files"] == [str(module_path.resolve())]
+    assert len(payload["imports"]) <= 1
+    assert set(payload["related_paths"]) <= set(payload["files"] + payload["tests"])
+    for noisy_file in noisy_files:
+        assert str(noisy_file.resolve()) not in serialized
+        assert noisy_file.name not in serialized
+
+
+def test_repo_map_keeps_legitimate_temp_and_probe_named_source_dirs(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    temp_sensor = project / "temp_sensor" / "readings.py"
+    system_probe = project / "system_probe" / "diagnostics.py"
+    temp_sensor.parent.mkdir(parents=True)
+    system_probe.parent.mkdir(parents=True)
+    temp_sensor.write_text(
+        "def read_temperature_sensor():\n    return 'temperature'\n",
+        encoding="utf-8",
+    )
+    system_probe.write_text(
+        "def system_probe_status():\n    return 'ok'\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_render(
+        "temperature sensor probe status",
+        project,
+        max_files=4,
+        max_sources=2,
+    )
+    files = {Path(path).resolve() for path in payload["files"]}
+
+    assert temp_sensor.resolve() in files
+    assert system_probe.resolve() in files

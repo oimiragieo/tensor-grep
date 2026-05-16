@@ -13,6 +13,7 @@ As of 2026-05-14, the current tagged version is `v1.12.11`, and the latest compl
 
 Current release facts:
 
+- PR #140 `2aebac6 fix: harden ast cli contract hygiene (#140)` merged and released as `v1.12.11`
 - PR #139 `bbc08e4 fix: harden rg flag contract aliases (#139)` merged and released as `v1.12.10`
 - PR #138 `21627d2 fix: harden v1.12.8 dogfood contracts` merged and released as `v1.12.9`
 - PR #137 `f848748 fix: route cold rg-shaped searches to rg (#137)` merged and released as `v1.12.8`
@@ -20,10 +21,10 @@ Current release facts:
 - PR #116 `a78e33c fix: harden post-release docs governance` merged and released as `v1.11.5`
 - PR #114 `361e0db fix: harden public GPU unavailable routing` and PR #115 `2100122 fix: harden release docs stamp governance` merged and released as `v1.11.4`
 - PR #113 `87d4ca4 fix: accelerate fixed multi-pattern native search` merged and released as `v1.11.3`
-- Tagged merge commit: `bbc08e4 fix: harden rg flag contract aliases (#139)`
-- Tagged release commit: `114e290 chore(release): v1.12.10 [skip ci]`
-- Latest complete public release commit: `114e290 chore(release): v1.12.10 [skip ci]`
-- Latest merged fix commit: `bbc08e4 fix: harden rg flag contract aliases (#139)`
+- Tagged merge commit: `2aebac6 fix: harden ast cli contract hygiene (#140)`
+- Tagged release commit: `5295f85 chore(release): v1.12.11 [skip ci]`
+- Latest complete public release commit: `5295f85 chore(release): v1.12.11 [skip ci]`
+- Latest merged fix commit: `2aebac6 fix: harden ast cli contract hygiene (#140)`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - PR #110 `fix: expose classify provider provenance` merged and released as `v1.11.2`
 - PR #105 `fix: add explicit Windows subprocess launcher repair` merged and released as `v1.10.10`
@@ -50,10 +51,10 @@ Current release facts:
 - Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`
 - PR #66 `docs: define agent context capsule roadmap` merged; Main CI run `25561521904` passed, CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing.
 - `v1.11.0` main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `25944371829` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25944371422` passed on the `v1.12.10` release line.
-- PyPI pinned public install resolves with `uvx --refresh-package tensor-grep --from tensor-grep==1.12.10 tg --version`
-- GitHub release assets for `v1.12.10` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
-- Public `v1.12.10` dogfood verified PyPI, `uvx`, GitHub assets, public launcher resolution, bounded map/context output, `tg run --pattern`, root cold rg-shaped routing, accepted search/native-front-door CLI drift fixes, `tg new --base-dir`, edit-plan budget flags, explicit rg JSON Lines routing via `--format rg --json`, explicit JSON/NDJSON schema positioning, and rg flag-contract aliases; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
+- Main CI run `25946534528` passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`. CodeQL run `25946912110` passed on the `v1.12.11` release line.
+- PyPI pinned public install resolves with `uvx --refresh-package tensor-grep --from tensor-grep==1.12.11 tg --version`
+- GitHub release assets for `v1.12.11` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
+- Public `v1.12.11` dogfood verified PyPI, `uvx`, GitHub assets, public launcher resolution, AST CLI contract hygiene, bounded map/context output, `tg run --pattern`, root cold rg-shaped routing, accepted search/native-front-door CLI drift fixes, `tg new --base-dir`, edit-plan budget flags, explicit rg JSON Lines routing via `--format rg --json`, explicit JSON/NDJSON schema positioning, and rg flag-contract aliases; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
 - Public `v1.11.5` dogfood verified PyPI, `uvx`, GitHub assets, and post-release-safe docs governance; `v1.11.4` remains the native GPU unavailable fallback to `NativeCpuBackend` release, `v1.11.3` remains the fixed multi-pattern native CPU release, and `v1.10.10` remains the historical Windows subprocess launcher repair release.
 - Public `v1.11.2` dogfood verified PyPI, `uvx`, GitHub assets, and classify provider provenance in JSON output.
 - PR #102 `fix: harden v1.10.7 dogfood followups` merged and released as `v1.10.8`

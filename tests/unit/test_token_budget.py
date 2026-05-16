@@ -291,6 +291,48 @@ def test_rendered_source_sections_are_deduplicated_per_file(tmp_path: Path) -> N
     assert [section["path"] for section in source_sections].count(str(module_path.resolve())) == 1
 
 
+def test_context_render_caps_source_payload_when_max_tokens_is_set(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    module_path = project / "src" / "payments.py"
+    filler = "\n".join(f"    debug_line_{index:03d} = {index}" for index in range(120))
+    _write(
+        module_path,
+        "def create_invoice(subtotal):\n"
+        "    tax = subtotal * 0.1\n"
+        "    total = subtotal + tax\n"
+        f"{filler}\n"
+        "    return total\n",
+    )
+
+    payload = repo_map.build_context_render(
+        "create invoice tax",
+        project,
+        max_files=1,
+        max_sources=1,
+        max_tokens=64,
+        optimize_context=True,
+        render_profile="llm",
+    )
+
+    source = payload["sources"][0]
+    rendered_source = source["rendered_source"]
+    assert "def create_invoice" in rendered_source
+    assert "tax = subtotal * 0.1" in rendered_source
+    assert "return total" in rendered_source
+    assert "debug_line_119" not in rendered_source
+    assert repo_map._estimate_tokens(rendered_source) <= 64
+    assert source["source_budget"]["truncated"] is True
+    assert payload["source_budget"]["truncated_sources"] == 1
+    assert payload["truncated"] is True
+    assert any(
+        section.get("kind") == "source_payload"
+        and section.get("file") == str(module_path.resolve())
+        for section in payload["omitted_sections"]
+    )
+
+
 @pytest.mark.parametrize("render_profile", ["full", "compact", "llm"])
 def test_max_tokens_works_for_each_render_profile(tmp_path: Path, render_profile: str) -> None:
     project = _build_project(tmp_path)["project"]

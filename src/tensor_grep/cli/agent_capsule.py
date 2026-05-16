@@ -803,7 +803,13 @@ def _build_snippets(
     for source in _as_list_of_dicts(payload.get("sources")):
         body = str(source.get("rendered_source") or source.get("source") or "")
         token_estimate = repo_map._estimate_tokens(body)
-        if max_tokens is not None and used_tokens + token_estimate > max_tokens:
+        source_budget = source.get("source_budget")
+        budget_token_estimate = token_estimate
+        if isinstance(source_budget, dict) and source_budget.get("truncated"):
+            budget_token_estimate = int(
+                source_budget.get("original_token_estimate") or token_estimate
+            )
+        if max_tokens is not None and used_tokens + budget_token_estimate > max_tokens:
             ref = _source_refetch_ref(source, query, path, max_files)
             omitted.append({
                 "kind": "source",
