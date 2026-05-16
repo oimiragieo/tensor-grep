@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 use tempfile::tempdir;
@@ -153,6 +154,120 @@ sys.stdout.write(json.loads({stdout_text_json:?}))
 }
 
 #[test]
+fn test_search_no_path_piped_stdin_forwards_no_default_path_to_rg() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_exact_args_script(dir.path(), &["-e", "needle"], "stdin needle\n");
+
+    let mut child = tg()
+        .current_dir(dir.path())
+        .args(["search", "needle"])
+        .env("TG_RG_PATH", &fake_rg)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"stdin needle\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "stdin needle\n"
+    );
+}
+
+#[test]
+fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_exact_args_script(
+        dir.path(),
+        &["-e", "needle", "fixture.txt"],
+        "fixture.txt:needle file\n",
+    );
+    fs::write(dir.path().join("fixture.txt"), "needle file\n").unwrap();
+
+    let mut child = tg()
+        .current_dir(dir.path())
+        .args(["search", "needle", "fixture.txt"])
+        .env("TG_RG_PATH", &fake_rg)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"stdin needle\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "fixture.txt:needle file\n"
+    );
+}
+
+#[test]
+fn test_root_no_path_piped_stdin_forwards_no_default_path_to_rg() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_exact_args_script(
+        dir.path(),
+        &["--no-ignore", "-e", "needle"],
+        "stdin needle\n",
+    );
+
+    let mut child = tg()
+        .current_dir(dir.path())
+        .arg("needle")
+        .env("TG_RG_PATH", &fake_rg)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"stdin needle\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "stdin needle\n"
+    );
+}
+
+#[test]
 fn test_search_accepts_multiline_flags_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_script(dir.path(), "invoice.py:def create_invoice\n");
@@ -268,6 +383,41 @@ fn test_lsp_provider_args_are_forwarded_on_public_native_frontdoor() {
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn fake_rg_exact_args_script(dir: &Path, expected_args: &[&str], stdout_text: &str) -> PathBuf {
+    let script = dir.join("fake-rg-exact.py");
+    let expected_args_json = serde_json::to_string(expected_args).unwrap();
+    let stdout_text_json = serde_json::to_string(stdout_text).unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"import json, sys
+expected = json.loads({expected_args_json:?})
+actual = sys.argv[1:]
+if actual != expected:
+    sys.stderr.write("expected rg args " + repr(expected) + " but saw " + repr(actual) + "\n")
+    raise SystemExit(2)
+sys.stdin.buffer.read()
+sys.stdout.write(json.loads({stdout_text_json:?}))
+"#,
+        ),
+    )
+    .unwrap();
+
+    if cfg!(windows) {
+        write_executable_script(
+            dir,
+            "fake-rg-exact.cmd",
+            &format!("@echo off\r\npython \"{}\" %*\r\n", script.display()),
+        )
+    } else {
+        write_executable_script(
+            dir,
+            "fake-rg-exact",
+            &format!("#!/bin/sh\npython \"{}\" \"$@\"\n", script.display()),
+        )
+    }
 }
 
 #[test]
