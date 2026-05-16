@@ -338,6 +338,41 @@ def test_repo_map_callers_hybrid_can_expand_js_ts_import_alias_wrappers(
     )
 
 
+def test_repo_map_callers_lsp_fallback_alias_rows_are_not_lsp_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payments_path = tmp_path / "payments.ts"
+    service_path = tmp_path / "service.ts"
+    payments_path.write_text(
+        "export function createInvoiceAliasWrapper(total: number) {\n    return total + 1;\n}\n",
+        encoding="utf-8",
+    )
+    service_path.write_text(
+        'import { createInvoiceAliasWrapper as invoice } from "./payments";\n'
+        "const runInvoice = invoice;\n\n"
+        "export function buildReceipt(total: number) {\n"
+        "  return runInvoice(total);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
+
+    payload = repo_map.build_symbol_callers(
+        "createInvoiceAliasWrapper",
+        tmp_path,
+        semantic_provider="lsp",
+    )
+
+    assert payload["semantic_provider"] == "lsp"
+    assert any(current["file"] == str(service_path.resolve()) for current in payload["callers"])
+    assert all("-fallback" in str(current.get("provenance", "")) for current in payload["callers"])
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+    assert "native fallback" in payload["not_lsp_proof_reason"].lower()
+
+
 def test_repo_map_blast_radius_hybrid_can_include_js_ts_alias_wrapper_callers(
     tmp_path: Path, monkeypatch
 ) -> None:

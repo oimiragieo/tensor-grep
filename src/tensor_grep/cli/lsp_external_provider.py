@@ -25,8 +25,25 @@ class LSPTransportError(RuntimeError):
 
 _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS = 3.0
 _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS = 15.0
+_DEFAULT_LSP_STOP_TIMEOUT_SECONDS = 1.0
 _LSP_REQUEST_TIMEOUT_ENV_VAR = "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS"
 _LSP_INITIALIZE_TIMEOUT_ENV_VAR = "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS"
+_GENERATED_CACHE_EXCLUDES = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+]
 
 
 def _configured_timeout_seconds(env_var: str, default: float) -> float:
@@ -96,6 +113,21 @@ def _provider_command(language: str) -> list[str]:
     raise ValueError(f"Unsupported LSP language: {language}")
 
 
+def _configuration_settings(language: str) -> dict[str, Any]:
+    if canonical_language(language) != "python":
+        return {"settings": {}}
+    return {
+        "settings": {
+            "python": {
+                "analysis": {
+                    "diagnosticMode": "openFilesOnly",
+                    "exclude": list(_GENERATED_CACHE_EXCLUDES),
+                }
+            }
+        }
+    }
+
+
 class ExternalLSPClient:
     def __init__(
         self,
@@ -133,6 +165,7 @@ class ExternalLSPClient:
         self.capabilities: dict[str, Any] = {}
         self.last_error: str | None = None
         self.disabled_until_monotonic = 0.0
+        self.initialized = False
 
     def start(self) -> None:
         if self.process is not None and self.process.poll() is None:
@@ -178,15 +211,21 @@ class ExternalLSPClient:
         if isinstance(result, dict):
             self.capabilities = dict(result.get("capabilities", {}))
         self.notify("initialized", {})
+        self.initialized = True
+        try:
+            self.notify("workspace/didChangeConfiguration", _configuration_settings(self.language))
+        except Exception:
+            pass
 
     def stop(self) -> None:
         process = self.process
         if process is None:
             return
         reader_thread = self._reader_thread
+        self._request_shutdown_for_stop()
         with self._lock:
             try:
-                self._write_notification("shutdown", {})
+                self._write_notification("exit", None)
             except Exception:
                 pass
             try:
@@ -223,9 +262,48 @@ class ExternalLSPClient:
                 self.process = None
             self._opened_documents.clear()
             self.capabilities = {}
+            self.initialized = False
             if self._reader_thread is reader_thread:
                 self._reader_thread = None
             self._message_queue = queue.Queue()
+
+    def _request_shutdown_for_stop(self) -> None:
+        process = self.process
+        if process is None or process.stdin is None:
+            return
+        try:
+            with self._lock:
+                self._request_id += 1
+                request_id = self._request_id
+                self._write_request(request_id, "shutdown", None)
+        except Exception:
+            return
+
+        timeout_seconds = min(
+            max(float(self.request_timeout_seconds), 0.0),
+            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
+        )
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                message = self._message_queue.get(timeout=remaining)
+            except queue.Empty:
+                return
+            if message is None:
+                return
+            if "id" not in message:
+                if remaining <= 0:
+                    return
+                continue
+            try:
+                message_id = int(message["id"])
+            except (TypeError, ValueError):
+                continue
+            if message_id == request_id:
+                return
+            if remaining <= 0:
+                return
 
     def request(self, method: str, params: dict[str, Any]) -> Any:
         self.start()
@@ -306,6 +384,7 @@ class ExternalLSPClient:
             "command_source": _command_source(self.command),
             "managed_provider_root": str(_managed_provider_root()),
             "running": self.process is not None and self.process.poll() is None,
+            "initialized": self.initialized,
             "capabilities": dict(self.capabilities),
             "last_error": self.last_error,
             "opened_documents": len(self._opened_documents),
@@ -314,20 +393,23 @@ class ExternalLSPClient:
             "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
         }
 
-    def _write_request(self, request_id: int, method: str, params: dict[str, Any]) -> None:
+    def _write_request(self, request_id: int, method: str, params: dict[str, Any] | None) -> None:
         if self.process is None or self.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
-        _write_message(
-            self.process.stdin,
-            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
-        )
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params is not None:
+            payload["params"] = params
+        _write_message(self.process.stdin, payload)
 
-    def _write_notification(self, method: str, params: dict[str, Any]) -> None:
+    def _write_notification(self, method: str, params: dict[str, Any] | None) -> None:
         if self.process is None or self.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            payload["params"] = params
         _write_message(
             self.process.stdin,
-            {"jsonrpc": "2.0", "method": method, "params": params},
+            payload,
         )
 
     def _reader_loop(self) -> None:
@@ -359,7 +441,14 @@ class ExternalLSPProviderManager:
             self._clients[key] = current
         return current
 
-    def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, Any]:
+    def provider_status(
+        self,
+        *,
+        language: str,
+        workspace_root: Path,
+        verify_health: bool = False,
+        probe_timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         key = (language.lower(), str(workspace_root.resolve()))
         current = self._clients.get(key)
         if current is not None:
@@ -367,11 +456,11 @@ class ExternalLSPProviderManager:
             status["available"] = True
             status["health_status"] = _provider_health_status(status)
             status["health_check"] = "cached-client"
-            return status
+            return _attach_lsp_proof_fields(status)
         try:
             command = _provider_command(language)
         except (FileNotFoundError, ValueError) as exc:
-            return {
+            return _attach_lsp_proof_fields({
                 "language": language.lower(),
                 "workspace_root": str(workspace_root.resolve()),
                 "available": False,
@@ -381,6 +470,7 @@ class ExternalLSPProviderManager:
                 "command": [],
                 "command_source": "missing",
                 "managed_provider_root": str(_managed_provider_root()),
+                "initialized": False,
                 "capabilities": {},
                 "last_error": str(exc),
                 "opened_documents": 0,
@@ -392,8 +482,48 @@ class ExternalLSPProviderManager:
                     _LSP_INITIALIZE_TIMEOUT_ENV_VAR,
                     _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
                 ),
-            }
-        return {
+                "cooldown_remaining_s": 0.0,
+            })
+        request_timeout_seconds = _configured_timeout_seconds(
+            _LSP_REQUEST_TIMEOUT_ENV_VAR,
+            _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS,
+        )
+        initialize_timeout_seconds = _configured_timeout_seconds(
+            _LSP_INITIALIZE_TIMEOUT_ENV_VAR,
+            _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
+        )
+        if verify_health:
+            timeout = (
+                max(float(probe_timeout_seconds), 0.0)
+                if probe_timeout_seconds is not None
+                else min(request_timeout_seconds, initialize_timeout_seconds)
+            )
+            client = ExternalLSPClient(
+                language=language,
+                workspace_root=workspace_root,
+                request_timeout_seconds=timeout,
+                initialize_timeout_seconds=timeout,
+            )
+            try:
+                client.start()
+                status = client.status()
+                status["available"] = True
+                status["initialized"] = True
+                status["health_status"] = "ready"
+                status["health_check"] = "probe"
+                status["probe_timeout_seconds"] = timeout
+                return _attach_lsp_proof_fields(status)
+            except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
+                status = client.status()
+                status["available"] = True
+                status["health_status"] = "unhealthy"
+                status["health_check"] = "probe"
+                status["last_error"] = status.get("last_error") or str(exc)
+                status["probe_timeout_seconds"] = timeout
+                return _attach_lsp_proof_fields(status)
+            finally:
+                client.stop()
+        return _attach_lsp_proof_fields({
             "language": language.lower(),
             "workspace_root": str(workspace_root.resolve()),
             "available": True,
@@ -403,19 +533,14 @@ class ExternalLSPProviderManager:
             "command": command,
             "command_source": _command_source(command),
             "managed_provider_root": str(_managed_provider_root()),
+            "initialized": False,
             "capabilities": {},
             "last_error": None,
             "opened_documents": 0,
-            "request_timeout_seconds": _configured_timeout_seconds(
-                _LSP_REQUEST_TIMEOUT_ENV_VAR,
-                _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS,
-            ),
-            "initialize_timeout_seconds": _configured_timeout_seconds(
-                _LSP_INITIALIZE_TIMEOUT_ENV_VAR,
-                _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
-            ),
+            "request_timeout_seconds": request_timeout_seconds,
+            "initialize_timeout_seconds": initialize_timeout_seconds,
             "cooldown_remaining_s": 0.0,
-        }
+        })
 
     def stop_all(self) -> None:
         clients = list(self._clients.values())
@@ -447,8 +572,30 @@ def _provider_health_status(status: dict[str, Any]) -> str:
         return "missing"
     if status.get("last_error"):
         return "unhealthy"
-    if status.get("running") and status.get("capabilities"):
+    if status.get("running") and (status.get("initialized") or status.get("capabilities")):
         return "ready"
     if status.get("running"):
         return "running_unverified"
     return "available_unverified"
+
+
+def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
+    health_status = str(status.get("health_status", _provider_health_status(status)))
+    health_check = str(status.get("health_check", "not_run"))
+    lsp_proof = bool(status.get("available")) and health_status == "ready"
+    status["health_status"] = health_status
+    status["health_check"] = health_check
+    status["lsp_proof"] = lsp_proof
+    if lsp_proof:
+        status.pop("not_lsp_proof_reason", None)
+        return status
+    if not status.get("available"):
+        reason = "Provider binary is unavailable."
+    elif health_status == "available_unverified" and health_check == "not_run":
+        reason = "Provider binary is available but health was not verified."
+    elif health_status == "unhealthy":
+        reason = "Provider health probe failed or timed out."
+    else:
+        reason = "Provider has not completed a successful initialization probe."
+    status["not_lsp_proof_reason"] = reason
+    return status

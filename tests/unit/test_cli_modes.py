@@ -926,6 +926,9 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
                 "command_source": "managed",
                 "managed_provider_root": str(tmp_path / "providers"),
                 "last_error": None,
+                "health_status": "ready",
+                "health_check": "probe",
+                "lsp_proof": True,
             }
         ],
     )
@@ -951,6 +954,9 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["lsp"]["providers"][0]["language"] == "python"
     assert payload["lsp"]["providers"][0]["command_source"] == "managed"
     assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
+    assert payload["lsp"]["providers"][0]["health_status"] == "ready"
+    assert payload["lsp"]["providers"][0]["health_check"] == "probe"
+    assert payload["lsp"]["providers"][0]["lsp_proof"] is True
 
 
 def test_doctor_json_includes_gpu_search_runtime_probe(monkeypatch, tmp_path: Path) -> None:
@@ -1647,6 +1653,41 @@ def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_pa
     assert "native_tg_binary: missing" in result.stdout
     assert "session_daemon: stopped" in result.stdout
     assert "lsp_providers: disabled" in result.stdout
+
+
+def test_doctor_text_reports_lsp_health_and_proof_fields(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.2.3")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_lsp_provider_statuses",
+        lambda path: [
+            {
+                "language": "python",
+                "available": True,
+                "running": False,
+                "command": ["pyright-langserver", "--stdio"],
+                "command_source": "managed",
+                "managed_provider_root": str(tmp_path / "providers"),
+                "last_error": None,
+                "health_status": "available_unverified",
+                "health_check": "not_run",
+                "lsp_proof": False,
+                "not_lsp_proof_reason": "Provider binary is available but health was not verified.",
+            }
+        ],
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "health=available_unverified" in result.stdout
+    assert "health_check=not_run" in result.stdout
+    assert "lsp_proof=False" in result.stdout
+    assert "not_lsp_proof_reason=" in result.stdout
 
 
 def test_doctor_json_explains_rust_core_extension_when_standalone_binary_missing(
