@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.12.16 (2026-05-16)
+
+### Bug Fixes
+
+- Harden v1.12.15 dogfood contracts
+  ([`299c457`](https://github.com/oimiragieo/tensor-grep/commit/299c457d1062a3a9e5293525234a1b733360e4cd))
+
+Harden v1.12.15 dogfood follow-ups: rg editor flags, stale native benchmark proof gates, LSP
+  provider health/proof status, and CI benchmark native proof.
+
+
 ## v1.12.15 (2026-05-16)
 
 ### Bug Fixes
