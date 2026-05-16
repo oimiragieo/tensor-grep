@@ -271,6 +271,39 @@ fn test_lsp_provider_args_are_forwarded_on_public_native_frontdoor() {
 }
 
 #[test]
+fn test_lsp_help_is_forwarded_to_python_help_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_python = fake_python_passthrough_asserting_args_script(
+        dir.path(),
+        &["-m", "tensor_grep", "lsp", "--help"],
+        "lsp help with --provider hybrid experimental\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["lsp", "--help"])
+        .env("TG_SIDECAR_PYTHON", &fake_python)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--provider hybrid"), "stdout={stdout}");
+    assert!(stdout.contains("experimental"), "stdout={stdout}");
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("unexpected argument"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn test_search_files_and_null_path_output_work_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let fake_python = fake_python_passthrough_script(dir.path(), "visible.rs");

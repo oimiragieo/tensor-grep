@@ -593,6 +593,7 @@ pub enum Commands {
         stop: bool,
     },
     /// Start the Language Server Protocol (LSP) server
+    #[command(disable_help_flag = true)]
     Lsp {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
