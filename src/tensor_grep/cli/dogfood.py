@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.progress import ProgressReporter
+
 
 def _json_from_stdout(stdout: str) -> dict[str, Any]:
     stripped = stdout.strip()
@@ -47,6 +49,9 @@ def run_dogfood_readiness(
     expected_version: str | None = None,
     include_shell_probes: bool = True,
     include_wsl_probe: bool = True,
+    progress_mode: str = "auto",
+    progress_interval_s: float = 30.0,
+    json_output: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     repo_root = root.expanduser().resolve()
     readiness_script = repo_root / "scripts" / "agent_readiness.py"
@@ -64,56 +69,62 @@ def run_dogfood_readiness(
     if not include_wsl_probe:
         command.append("--no-wsl-probe")
 
-    if not readiness_script.exists():
-        agent_readiness: dict[str, Any] = {
-            "artifact": "agent_readiness_report",
-            "root": str(repo_root),
-            "summary": {"passed": 0, "failed": 1, "skipped": 0},
-            "results": [
-                {
-                    "name": "agent-readiness-script",
-                    "status": "failed",
-                    "message": f"missing readiness script: {readiness_script}",
-                }
-            ],
-        }
-        returncode = 1
-        stdout = ""
-        stderr = f"missing readiness script: {readiness_script}"
-    else:
-        env = dict(os.environ)
-        env.setdefault("PYTHONUTF8", "1")
-        completed = subprocess.run(
-            command,
-            cwd=repo_root,
-            env=env,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            check=False,
-        )
-        returncode = completed.returncode
-        stdout = completed.stdout
-        stderr = completed.stderr
-        try:
-            agent_readiness = _json_from_stdout(stdout)
-        except ValueError as exc:
+    progress = ProgressReporter(
+        mode=progress_mode,
+        interval_s=progress_interval_s,
+        json_output=json_output,
+    )
+    with progress.phase("agent-readiness"):
+        if not readiness_script.exists():
             agent_readiness = {
                 "artifact": "agent_readiness_report",
                 "root": str(repo_root),
                 "summary": {"passed": 0, "failed": 1, "skipped": 0},
                 "results": [
                     {
-                        "name": "agent-readiness-json",
+                        "name": "agent-readiness-script",
                         "status": "failed",
-                        "message": str(exc),
-                        "stdout_tail": stdout.splitlines()[-20:],
-                        "stderr_tail": stderr.splitlines()[-20:],
+                        "message": f"missing readiness script: {readiness_script}",
                     }
                 ],
             }
             returncode = 1
+            stdout = ""
+            stderr = f"missing readiness script: {readiness_script}"
+        else:
+            env = dict(os.environ)
+            env.setdefault("PYTHONUTF8", "1")
+            completed = subprocess.run(
+                command,
+                cwd=repo_root,
+                env=env,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+            )
+            returncode = completed.returncode
+            stdout = completed.stdout
+            stderr = completed.stderr
+            try:
+                agent_readiness = _json_from_stdout(stdout)
+            except ValueError as exc:
+                agent_readiness = {
+                    "artifact": "agent_readiness_report",
+                    "root": str(repo_root),
+                    "summary": {"passed": 0, "failed": 1, "skipped": 0},
+                    "results": [
+                        {
+                            "name": "agent-readiness-json",
+                            "status": "failed",
+                            "message": str(exc),
+                            "stdout_tail": stdout.splitlines()[-20:],
+                            "stderr_tail": stderr.splitlines()[-20:],
+                        }
+                    ],
+                }
+                returncode = 1
 
     report = {
         "artifact": "dogfood_readiness_report",

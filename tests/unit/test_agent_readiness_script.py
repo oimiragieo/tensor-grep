@@ -1,7 +1,9 @@
 import importlib.util
+import io
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -562,3 +564,136 @@ def test_agent_readiness_main_should_write_json_summary(monkeypatch, tmp_path) -
     assert payload["expected_version"] == "1.8.22"
     assert payload["summary"]["passed"] == 1
     assert payload["summary"]["failed"] == 0
+
+
+def test_agent_readiness_json_auto_progress_keeps_stdout_json_and_captured_stderr_quiet(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_script_module()
+
+    monkeypatch.setattr(module, "read_project_version", lambda _root: "1.8.22")
+    monkeypatch.setattr(
+        module,
+        "build_check_plan",
+        lambda **_kwargs: [
+            module.Check(
+                name="docs-claim-check",
+                command=[],
+                description="Validate docs claims.",
+                validator=lambda _stdout, _root, _expected: None,
+            )
+        ],
+    )
+
+    exit_code = module.main(["--root", str(tmp_path), "--json", "--no-shell-probes"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["summary"]["passed"] == 1
+    assert captured.err == ""
+
+    exit_code = module.main([
+        "--root",
+        str(tmp_path),
+        "--json",
+        "--progress",
+        "never",
+        "--no-shell-probes",
+    ])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["summary"]["passed"] == 1
+    assert captured.err == ""
+
+    exit_code = module.main([
+        "--root",
+        str(tmp_path),
+        "--json",
+        "--progress",
+        "auto",
+        "--no-shell-probes",
+    ])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["summary"]["passed"] == 1
+    assert captured.err == ""
+
+
+def test_agent_readiness_json_progress_always_uses_stderr_only(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_script_module()
+
+    monkeypatch.setattr(module, "read_project_version", lambda _root: "1.8.22")
+    monkeypatch.setattr(
+        module,
+        "build_check_plan",
+        lambda **_kwargs: [
+            module.Check(
+                name="docs-claim-check",
+                command=[],
+                description="Validate docs claims.",
+                validator=lambda _stdout, _root, _expected: None,
+            )
+        ],
+    )
+
+    exit_code = module.main([
+        "--root",
+        str(tmp_path),
+        "--json",
+        "--progress",
+        "always",
+        "--no-shell-probes",
+    ])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["summary"]["passed"] == 1
+    assert "[progress]" in captured.err
+    assert "[progress]" not in captured.out
+
+
+def test_progress_reporter_emits_phase_heartbeat_to_configured_stream() -> None:
+    from tensor_grep.cli.progress import ProgressReporter
+
+    stream = io.StringIO()
+    reporter = ProgressReporter(
+        mode="always",
+        interval_s=0.001,
+        json_output=True,
+        stream=stream,
+    )
+
+    with reporter.phase("readiness"):
+        deadline = time.monotonic() + 1.0
+        while "readiness running" not in stream.getvalue() and time.monotonic() < deadline:
+            time.sleep(0.005)
+
+    lines = stream.getvalue().splitlines()
+    assert lines[0] == "[progress] readiness start"
+    assert any(line.startswith("[progress] readiness running ") for line in lines)
+    assert lines[-1].startswith("[progress] readiness done ")
+
+
+def test_progress_reporter_auto_emits_in_ci_without_json(monkeypatch) -> None:
+    from tensor_grep.cli.progress import ProgressReporter
+
+    stream = io.StringIO()
+    monkeypatch.setenv("CI", "true")
+    reporter = ProgressReporter(
+        mode="auto",
+        interval_s=30.0,
+        json_output=False,
+        stream=stream,
+    )
+
+    with reporter.phase("readiness"):
+        pass
+
+    assert stream.getvalue().splitlines() == [
+        "[progress] readiness start",
+        "[progress] readiness done 0s",
+    ]

@@ -14,7 +14,16 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 IS_WINDOWS = os.name == "nt"
+
+from tensor_grep.cli.progress import (  # noqa: E402
+    PROGRESS_MODES,
+    ProgressReporter,
+    positive_progress_interval_s,
+)
 
 
 class ReadinessError(RuntimeError):
@@ -680,6 +689,13 @@ def _command_available(command: list[str]) -> bool:
     return shutil.which(command[0]) is not None
 
 
+def _argparse_progress_interval_s(value: str) -> float:
+    try:
+        return positive_progress_interval_s(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[str, Any]:
     started = time.monotonic()
     if not _command_available(check.command):
@@ -778,6 +794,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="Optional JSON report path.")
     parser.add_argument("--json", action="store_true", help="Print JSON report to stdout.")
     parser.add_argument(
+        "--progress",
+        choices=PROGRESS_MODES,
+        default="auto",
+        help="Progress reporting mode: auto, always, or never. Emits to stderr only.",
+    )
+    parser.add_argument(
+        "--progress-interval-s",
+        type=_argparse_progress_interval_s,
+        default=30.0,
+        help="Seconds between progress heartbeats for the active phase.",
+    )
+    parser.add_argument(
         "--no-shell-probes", action="store_true", help="Skip public shell version probes."
     )
     parser.add_argument("--no-wsl-probe", action="store_true", help="Skip the optional WSL probe.")
@@ -792,9 +820,15 @@ def main(argv: list[str] | None = None) -> int:
         include_wsl_probe=not args.no_wsl_probe,
     )
 
+    progress = ProgressReporter(
+        mode=args.progress,
+        interval_s=args.progress_interval_s,
+        json_output=args.json,
+    )
     results: list[dict[str, Any]] = []
     for check in checks:
-        result = run_check(check, repo_root=repo_root, expected_version=expected_version)
+        with progress.phase(check.name):
+            result = run_check(check, repo_root=repo_root, expected_version=expected_version)
         results.append(result)
         if not args.json:
             print(

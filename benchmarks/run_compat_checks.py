@@ -26,6 +26,12 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from tensor_grep.cli.progress import (  # noqa: E402
+    PROGRESS_MODES,
+    ProgressReporter,
+    positive_progress_interval_s,
+)
+
 WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
 ROUTING_MATCH_PREVIEW_LIMIT = 20
 ROUTING_PATH_PREVIEW_LIMIT = 50
@@ -428,7 +434,14 @@ def run_compat_suite(
     }
 
 
-def parse_args() -> argparse.Namespace:
+def _argparse_progress_interval_s(value: str) -> float:
+    try:
+        return positive_progress_interval_s(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run the CLI parity and compatibility gate. Both tools are forced to use "
@@ -455,13 +468,25 @@ def parse_args() -> argparse.Namespace:
         "--output",
         help="Optional path for the compat JSON report. Defaults to artifacts/compat_report.json.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--progress",
+        choices=PROGRESS_MODES,
+        default="auto",
+        help="Progress reporting mode: auto, always, or never. Emits to stderr only.",
+    )
+    parser.add_argument(
+        "--progress-interval-s",
+        type=_argparse_progress_interval_s,
+        default=30.0,
+        help="Seconds between progress heartbeats for the active phase.",
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
 
-    args = parse_args()
+    args = parse_args(argv)
     tg_binary = Path(args.binary)
     bench_data_dir = Path(args.bench_data_dir)
     schema_path = Path(args.schema)
@@ -482,12 +507,18 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    report = run_compat_suite(
-        tg_binary=tg_binary,
-        rg_binary=rg_binary,
-        bench_data_dir=bench_data_dir,
-        schema_path=schema_path,
+    progress = ProgressReporter(
+        mode=args.progress,
+        interval_s=args.progress_interval_s,
+        json_output=False,
     )
+    with progress.phase("compat-suite"):
+        report = run_compat_suite(
+            tg_binary=tg_binary,
+            rg_binary=rg_binary,
+            bench_data_dir=bench_data_dir,
+            schema_path=schema_path,
+        )
 
     output_path = (
         Path(args.output) if args.output else ensure_artifacts_dir(ROOT_DIR) / "compat_report.json"
