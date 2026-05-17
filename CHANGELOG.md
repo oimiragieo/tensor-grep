@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.25 (2026-05-17)
+
+### Bug Fixes
+
+- Harden v1.12.24 dogfood proof hygiene ([#154](https://github.com/oimiragieo/tensor-grep/pull/154),
+  [`ad22c30`](https://github.com/oimiragieo/tensor-grep/commit/ad22c306ddf781b4dcf18382512a707ac281acf5))
+
+
 ## v1.12.24 (2026-05-17)
 
 ### Bug Fixes
