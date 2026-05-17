@@ -109,6 +109,32 @@ def test_main_entry_should_strip_noop_rg_format_for_rg_passthrough(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["ERROR", "."]}
 
 
+def test_main_entry_should_preserve_explicit_rg_json_for_rg_passthrough(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "--format", "rg", "--json", "ERROR", "."],
+    )
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "rg", "search_args": ["--json", "ERROR", "."]}
+
+
 def test_main_entry_should_strip_noop_rg_format_and_keep_sort_for_rg_passthrough(monkeypatch):
     seen: dict[str, object] = {}
 

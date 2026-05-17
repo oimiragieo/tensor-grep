@@ -13,6 +13,7 @@ from typing import Any
 
 _CLASSIFY_PROVIDER_ENV = "TENSOR_GREP_CLASSIFY_PROVIDER"
 _CYBERT_CLASSIFY_PROVIDERS = {"cybert", "triton"}
+DEFAULT_CLASSIFY_MAX_LINES = 500
 
 
 def _read_request() -> dict[str, Any]:
@@ -104,6 +105,27 @@ def _classify_lines(lines: list[str]) -> list[dict[str, Any]]:
     return results
 
 
+def _classify_line_budget(total_lines: int, max_lines: int | None) -> dict[str, Any]:
+    effective_max = None if max_lines is None or max_lines <= 0 else max_lines
+    emitted_lines = total_lines if effective_max is None else min(total_lines, effective_max)
+    omitted_lines = max(0, total_lines - emitted_lines)
+    return {
+        "max_lines": effective_max,
+        "total_lines": total_lines,
+        "emitted_lines": emitted_lines,
+        "omitted_lines": omitted_lines,
+        "truncated": omitted_lines > 0,
+    }
+
+
+def _apply_classify_line_budget(
+    lines: list[str],
+    max_lines: int | None = DEFAULT_CLASSIFY_MAX_LINES,
+) -> tuple[list[str], dict[str, Any]]:
+    budget = _classify_line_budget(len(lines), max_lines)
+    return lines[: int(budget["emitted_lines"])], budget
+
+
 def _resolved_source_path(source_path: str | None) -> str | None:
     if not source_path:
         return None
@@ -134,6 +156,7 @@ def _enrich_classifications(
 
 def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tuple[str, str, int]:
     format_type = "json"
+    max_lines = DEFAULT_CLASSIFY_MAX_LINES
     positional_args: list[str] = []
     index = 0
     while index < len(args):
@@ -144,6 +167,20 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
             continue
         if arg.startswith("--format="):
             format_type = arg.split("=", 1)[1]
+            index += 1
+            continue
+        if arg == "--max-lines" and index + 1 < len(args):
+            try:
+                max_lines = int(str(args[index + 1]))
+            except ValueError:
+                return "", "invalid --max-lines value\n", 2
+            index += 2
+            continue
+        if arg.startswith("--max-lines="):
+            try:
+                max_lines = int(arg.split("=", 1)[1])
+            except ValueError:
+                return "", "invalid --max-lines value\n", 2
             index += 1
             continue
         positional_args.append(str(arg))
@@ -172,14 +209,16 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
     if not lines:
         return "", "", 1
 
-    results, classification_backend = _classify_lines_with_metadata(lines)
+    budgeted_lines, line_budget = _apply_classify_line_budget(lines, max_lines)
+    results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
     if format_type == "json":
         return (
             json.dumps({
                 "classification_backend": classification_backend,
+                "line_budget": line_budget,
                 "classifications": _enrich_classifications(
                     results,
-                    lines,
+                    budgeted_lines,
                     source_path=source_path,
                 ),
             })

@@ -5513,13 +5513,22 @@ def _render_part_sort_key(
 ) -> tuple[int, int, int, str, str, int]:
     kind = str(part.get("kind", ""))
     path = _render_part_path(part) or ""
-    kind_priority = {
-        "summary": 0,
-        "source": 1,
-        "tests": 2,
-    }.get(kind, 3)
+    is_primary = primary_file is not None and path == primary_file
+    kind_priority = (
+        {
+            "source": 0,
+            "summary": 1,
+            "tests": 2,
+        }
+        if is_primary
+        else {
+            "summary": 0,
+            "source": 1,
+            "tests": 2,
+        }
+    ).get(kind, 3)
     return (
-        0 if primary_file is not None and path == primary_file else 1,
+        0 if is_primary else 1,
         -_render_part_score(part),
         kind_priority,
         path,

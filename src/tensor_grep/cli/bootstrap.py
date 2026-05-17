@@ -220,6 +220,19 @@ def _strip_noop_rg_format(search_args: list[str]) -> list[str] | None:
     return stripped
 
 
+def _explicit_rg_format_requested(search_args: list[str]) -> bool:
+    for index, arg in enumerate(search_args):
+        if arg == "--format":
+            return index + 1 < len(search_args) and search_args[index + 1] == "rg"
+        if arg == "--format=rg":
+            return True
+    return False
+
+
+def _explicit_json_requested(search_args: list[str]) -> bool:
+    return "--json" in search_args
+
+
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not search_args:
         return False
@@ -371,6 +384,9 @@ def main_entry() -> None:
         if passthrough_search_args is None:
             _run_full_cli()
             return
+        explicit_rg_json = _explicit_rg_format_requested(search_args) and _explicit_json_requested(
+            search_args
+        )
 
         effective_search_args = _effective_native_tg_search_args(passthrough_search_args)
         native_binary_path = resolve_native_tg_binary()
@@ -379,7 +395,8 @@ def main_entry() -> None:
         invalid_regex = _search_args_include_obviously_invalid_regex(passthrough_search_args)
 
         if (
-            native_binary is not None
+            not explicit_rg_json
+            and native_binary is not None
             and not guarded_broad_root
             and not invalid_regex
             and (
@@ -397,7 +414,7 @@ def main_entry() -> None:
         if (
             not guarded_broad_root
             and not invalid_regex
-            and not _requires_full_cli(passthrough_search_args)
+            and (explicit_rg_json or not _requires_full_cli(passthrough_search_args))
         ):
             rg_binary_path = resolve_ripgrep_binary()
             binary_name = str(rg_binary_path) if rg_binary_path else None

@@ -9,6 +9,9 @@ from typing import Any
 
 from tensor_grep.cli.progress import ProgressReporter
 
+ARTIFACT_TAIL_LINE_LIMIT = 20
+ARTIFACT_TAIL_LINE_CHAR_LIMIT = 4000
+
 
 def _json_from_stdout(stdout: str) -> dict[str, Any]:
     stripped = stdout.strip()
@@ -21,6 +24,21 @@ def _json_from_stdout(stdout: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("agent-readiness JSON must be an object")
     return payload
+
+
+def _bounded_tail_lines(
+    text: str,
+    *,
+    line_limit: int = ARTIFACT_TAIL_LINE_LIMIT,
+    char_limit: int = ARTIFACT_TAIL_LINE_CHAR_LIMIT,
+) -> list[str]:
+    tail: list[str] = []
+    for line in text.splitlines()[-line_limit:]:
+        if len(line) <= char_limit:
+            tail.append(line)
+        else:
+            tail.append(f"{line[:char_limit]}... <truncated {len(line) - char_limit} chars>")
+    return tail
 
 
 def _build_verdict(agent_readiness: dict[str, Any], returncode: int) -> dict[str, Any]:
@@ -119,8 +137,8 @@ def run_dogfood_readiness(
                             "name": "agent-readiness-json",
                             "status": "failed",
                             "message": str(exc),
-                            "stdout_tail": stdout.splitlines()[-20:],
-                            "stderr_tail": stderr.splitlines()[-20:],
+                            "stdout_tail": _bounded_tail_lines(stdout),
+                            "stderr_tail": _bounded_tail_lines(stderr),
                         }
                     ],
                 }
@@ -133,7 +151,7 @@ def run_dogfood_readiness(
         "command": command,
         "agent_readiness": agent_readiness,
         "verdict": _build_verdict(agent_readiness, returncode),
-        "stderr_tail": stderr.splitlines()[-20:],
+        "stderr_tail": _bounded_tail_lines(stderr),
     }
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)

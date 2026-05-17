@@ -888,6 +888,9 @@ def test_lsp_setup_help_mentions_managed_provider_install() -> None:
     assert result.exit_code == 0
     assert "--json" in help_text
     assert "managed external LSP providers" in re.sub(r"\s+", " ", help_text)
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[╭╮╰╯─│┌┐└┘]+", " ", help_text))
+    assert "does not prove semantic navigation" in normalized_help
+    assert "health_status" in normalized_help
 
 
 def test_doctor_help_mentions_lsp_and_json() -> None:
@@ -901,8 +904,12 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert "--json" in help_text
     assert "--config" in help_text
     # Handle rich text wrapping that may split phrases
-    normalized_help = re.sub(r"\s+", " ", help_text)
-    assert "system, GPU, cache, and optional daemon diagnostics" in normalized_help
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[╭╮╰╯─│┌┐└┘]+", " ", help_text))
+    assert "system, GPU, cache" in normalized_help
+    assert "provider-proof diagnostics" in normalized_help
+    assert "provider availability is not navigation proof" in normalized_help.lower()
+    assert "health_status" in normalized_help
+    assert "health_check" in normalized_help
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
@@ -6461,6 +6468,20 @@ def test_tg_search_help_should_not_claim_tg_run_ast_grep_parity():
     normalized_help = re.sub(r"\s+", " ", help_text)
     assert "tg run: Run a validated AST slice" in normalized_help
     assert "ast-grep parity" not in help_text
+
+
+@pytest.mark.parametrize("command", ["scan", "test", "new"])
+def test_ast_workflow_help_should_position_commands_as_bounded_ast_slice(command: str) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, [command, "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    normalized_help = re.sub(r"\s+", " ", help_text)
+    assert "bounded AST" in normalized_help
+    assert "ast-grep replacement" not in help_text
+    assert "full ast-grep" not in help_text
 
 
 def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):

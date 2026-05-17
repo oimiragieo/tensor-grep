@@ -112,6 +112,11 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "not_gpu_proof_reason" in contracts
     assert "fallback_or_sidecar_counts_as_gpu_proof" in contracts
     assert "classification_backend" in contracts
+    assert "`tg run` is a validated AST slice" in contracts
+    assert "`tg scan`" in contracts
+    assert "`tg test`" in contracts
+    assert "`tg new`" in contracts
+    assert "not an ast-grep replacement" in contracts
 
 
 def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> None:

@@ -35,6 +35,7 @@ from tensor_grep.cli.progress import (  # noqa: E402
 WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
 ROUTING_MATCH_PREVIEW_LIMIT = 20
 ROUTING_PATH_PREVIEW_LIMIT = 50
+LINE_DIFF_PREVIEW_LIMIT = 50
 
 
 class CommandResult(NamedTuple):
@@ -266,6 +267,14 @@ def extract_total_count(output: str) -> int:
     return total
 
 
+def preview_lines(lines: list[str], limit: int = LINE_DIFF_PREVIEW_LIMIT) -> dict[str, Any]:
+    return {
+        "lines": lines[:limit],
+        "total": len(lines),
+        "omitted": max(0, len(lines) - limit),
+    }
+
+
 def compare_scenario(
     scenario: dict[str, Any], rg_result: CommandResult, tg_result: CommandResult
 ) -> dict[str, Any]:
@@ -293,11 +302,18 @@ def compare_scenario(
 
     rg_lines = normalize_lines(rg_result.stdout)
     tg_lines = normalize_lines(tg_result.stdout)
-    report["missing_lines"] = sorted(line for line in rg_lines if line not in tg_lines)
-    report["extra_lines"] = sorted(line for line in tg_lines if line not in rg_lines)
-    report["status"] = (
-        "PASS" if not report["missing_lines"] and not report["extra_lines"] else "FAIL"
-    )
+    missing_lines = sorted(line for line in rg_lines if line not in tg_lines)
+    extra_lines = sorted(line for line in tg_lines if line not in rg_lines)
+    missing_preview = preview_lines(missing_lines)
+    extra_preview = preview_lines(extra_lines)
+    report["missing_lines"] = missing_preview["lines"]
+    report["extra_lines"] = extra_preview["lines"]
+    report["missing_lines_total"] = missing_preview["total"]
+    report["extra_lines_total"] = extra_preview["total"]
+    report["missing_lines_omitted"] = missing_preview["omitted"]
+    report["extra_lines_omitted"] = extra_preview["omitted"]
+    report["line_diff_preview_limit"] = LINE_DIFF_PREVIEW_LIMIT
+    report["status"] = "PASS" if not missing_lines and not extra_lines else "FAIL"
     if report["status"] == "FAIL":
         report["reason"] = "sorted-line-diff"
     return report

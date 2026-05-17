@@ -267,6 +267,30 @@ def test_primary_file_sections_are_prioritized_when_budget_is_tight(tmp_path: Pa
     assert any(section["file"] != primary_file for section in omitted_sections)
 
 
+def test_primary_source_beats_summary_when_budget_is_tight(tmp_path: Path) -> None:
+    payload = _build_scored_payload(tmp_path)
+    primary_file = payload["edit_plan_seed"]["primary_file"]
+
+    rendered, sections, truncated, _, omitted_sections = (
+        repo_map._render_context_string_and_sections(
+            payload,
+            max_tokens=24,
+        )
+    )
+
+    assert rendered
+    assert truncated is True
+    assert any(
+        section.get("kind") == "source" and section.get("path") == primary_file
+        for section in sections
+    )
+    assert "def create_invoice" in rendered
+    assert any(
+        section.get("kind") == "summary" and section.get("file") == primary_file
+        for section in omitted_sections
+    )
+
+
 def test_rendered_source_sections_are_deduplicated_per_file(tmp_path: Path) -> None:
     project = tmp_path / "project"
     module_path = project / "src" / "payments.py"

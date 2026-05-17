@@ -40,6 +40,7 @@ from tensor_grep.cli.runtime_paths import (
 )
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
+from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
@@ -6688,27 +6689,39 @@ def checkpoint_undo(
 
 @app.command()
 def classify(
-    file_path: str, format_type: str = typer.Option("json", "--format", help="Output format")
+    file_path: str,
+    format_type: str = typer.Option("json", "--format", help="Output format"),
+    max_lines: int = typer.Option(
+        DEFAULT_CLASSIFY_MAX_LINES,
+        "--max-lines",
+        help="Maximum input lines to emit in JSON output (0 disables the cap).",
+    ),
 ) -> None:
     """Run log classification with local heuristics or an explicit cyBERT provider."""
     import json
 
     from tensor_grep.io.reader_fallback import FallbackReader
-    from tensor_grep.sidecar import _classify_lines_with_metadata, _enrich_classifications
+    from tensor_grep.sidecar import (
+        _apply_classify_line_budget,
+        _classify_lines_with_metadata,
+        _enrich_classifications,
+    )
 
     reader = FallbackReader()
     lines = list(reader.read_lines(file_path))
     if not lines:
         sys.exit(1)
 
-    results, classification_backend = _classify_lines_with_metadata(lines)
+    budgeted_lines, line_budget = _apply_classify_line_budget(lines, max_lines)
+    results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
 
     if format_type == "json":
         data = {
             "classification_backend": classification_backend,
+            "line_budget": line_budget,
             "classifications": _enrich_classifications(
                 results,
-                lines,
+                budgeted_lines,
                 source_path=file_path,
             ),
         }
@@ -6745,7 +6758,7 @@ def rulesets(
 def scan(
     paths: list[str] | None = typer.Argument(
         None,
-        help="Optional scan paths, matching ast-grep's positional PATHS form.",
+        help="Optional scan paths for tensor-grep's bounded AST scan slice.",
     ),
     config: str | None = typer.Option(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
@@ -6830,7 +6843,7 @@ def scan(
         help="Maximum characters to keep per evidence snippet when snippet evidence is enabled.",
     ),
 ) -> None:
-    """Scan and rewrite code by configuration."""
+    """Scan code with tensor-grep's bounded AST rule/config surface."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
 
     inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
@@ -7022,7 +7035,7 @@ def test(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
 ) -> None:
-    """Test structural rules by configuration."""
+    """Test structural rules in tensor-grep's bounded AST workflow slice."""
     exit_code = ast_workflows.test_command(config)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
@@ -7068,7 +7081,10 @@ def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
 
 @app.command()
 def new(
-    command: str | None = typer.Argument(None, help="Scaffold kind: project, rule, test, or util."),
+    command: str | None = typer.Argument(
+        None,
+        help="Scaffold kind for tensor-grep's bounded AST workflow: project, rule, test, or util.",
+    ),
     name: str | None = typer.Argument(None, help="Name for rule/test/util scaffolds."),
     lang: str = typer.Option("python", "--lang", "-l", help="Language for generated items."),
     yes: bool = typer.Option(
@@ -7084,7 +7100,7 @@ def new(
         help="Path to sgconfig.yml for selecting configured rule/test/util directories.",
     ),
 ) -> None:
-    """Create a new structural search project or rules/tests scaffold."""
+    """Create bounded AST workflow project, rule, test, or util scaffolds."""
     _ = yes
     scaffold_kind = command or "project"
     try:
@@ -7258,7 +7274,12 @@ def lsp_setup(
         ),
     ),
 ) -> None:
-    """Install managed external LSP providers under the tensor-grep install root."""
+    """Install managed external LSP providers.
+
+    Setup availability does not prove semantic navigation. Use
+    `tg doctor --with-lsp --json` and inspect health_status / health_check plus
+    navigation lsp_proof fields before treating LSP evidence as dependable.
+    """
     payload = install_managed_lsp_providers(
         python_executable=sys.executable,
         managed_root=None,
@@ -7345,10 +7366,13 @@ def doctor(
     with_lsp: bool = typer.Option(
         True,
         "--with-lsp/--no-lsp",
-        help="Include external LSP provider diagnostics.",
+        help=(
+            "Include external LSP provider diagnostics. Provider availability is "
+            "not navigation proof; inspect health_status and health_check."
+        ),
     ),
 ) -> None:
-    """Print system, GPU, cache, and optional daemon diagnostics for AI troubleshooting."""
+    """Print system, GPU, cache, daemon, and provider-proof diagnostics."""
     payload = _build_doctor_payload(path, config=config, with_lsp=with_lsp)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
