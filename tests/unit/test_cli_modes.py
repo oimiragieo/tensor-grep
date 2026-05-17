@@ -1918,11 +1918,36 @@ def test_cli_invalid_regex_is_rejected_before_native_delegation(monkeypatch):
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
 
-    result = CliRunner().invoke(app, ["search", "(", ".", "--json"])
+    result = CliRunner().invoke(app, ["search", "(", "."])
 
     assert result.exit_code == 2
     assert "invalid regex" in result.stderr.lower()
     assert "Use --fixed-strings" in result.stderr
+    assert "cmd" not in seen
+
+
+def test_cli_invalid_regex_reports_json_error_before_native_delegation(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(app, ["search", "(", ".", "--json"])
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_regex"
+    assert "invalid regex" in payload["detail"].lower()
     assert "cmd" not in seen
 
 
@@ -1960,7 +1985,7 @@ def test_cli_later_invalid_regexp_is_rejected_before_native_delegation(monkeypat
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
 
-    result = CliRunner().invoke(app, ["search", "-e", "safe", "-e", "(", ".", "--json"])
+    result = CliRunner().invoke(app, ["search", "-e", "safe", "-e", "(", "."])
 
     assert result.exit_code == 2
     assert "invalid regex" in result.stderr.lower()
@@ -6310,6 +6335,20 @@ def test_search_rejects_empty_pattern(tmp_path: Path):
     assert "PATTERN must not be empty" in result.output
 
 
+def test_search_json_reports_empty_pattern_error(tmp_path: Path):
+    target = tmp_path / "sample.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--json", "", str(target)])
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "empty_pattern"
+    assert "PATTERN must not be empty" in payload["detail"]
+
+
 def test_search_reports_missing_input_paths(tmp_path: Path):
     missing = tmp_path / "missing.py"
 
@@ -6319,6 +6358,20 @@ def test_search_reports_missing_input_paths(tmp_path: Path):
     assert result.exit_code == 2
     assert str(missing) in result.output
     assert "does not exist" in result.output
+
+
+def test_search_json_reports_missing_input_path_error(tmp_path: Path):
+    missing = tmp_path / "missing.py"
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--json", "hello", str(missing)])
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "path_not_found"
+    assert str(missing) in payload["detail"]
+    assert "does not exist" in payload["detail"]
 
 
 def test_files_with_matches_null_outputs_nul_separator(tmp_path: Path):

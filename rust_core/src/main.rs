@@ -2629,6 +2629,12 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     let pattern = cli.pattern.clone().unwrap();
     let paths = implicit_search_paths(&cli.path, stdin_should_search_implicit_path());
+    exit_json_search_input_error_if_needed(
+        cli.json,
+        cli.ndjson,
+        std::slice::from_ref(&pattern),
+        &paths,
+    );
     let primary_path = paths.first().map(String::as_str).unwrap_or(".");
 
     let rg_available = ripgrep_is_available();
@@ -2836,6 +2842,85 @@ fn implicit_search_paths(
         Vec::new()
     } else {
         vec![".".to_string()]
+    }
+}
+
+fn emit_search_error_json(error: &str, detail: &str) {
+    println!(
+        "{}",
+        serde_json::json!({
+            "version": JSON_OUTPUT_VERSION,
+            "ok": false,
+            "error": error,
+            "detail": detail,
+        })
+    );
+}
+
+fn exit_search_error_json(error: &str, detail: impl Into<String>) -> ! {
+    emit_search_error_json(error, &detail.into());
+    std::process::exit(2);
+}
+
+fn first_missing_search_path(paths: &[String]) -> Option<String> {
+    paths
+        .iter()
+        .find(|path| path.as_str() != "-" && !Path::new(path).exists())
+        .cloned()
+}
+
+fn exit_json_search_input_error_if_needed(
+    json: bool,
+    ndjson: bool,
+    patterns: &[String],
+    paths: &[String],
+) {
+    if !json || ndjson {
+        return;
+    }
+    if patterns.iter().any(|pattern| pattern.is_empty()) {
+        exit_search_error_json("empty_pattern", "PATTERN must not be empty.");
+    }
+    if let Some(missing_path) = first_missing_search_path(paths) {
+        exit_search_error_json(
+            "path_not_found",
+            format!("search path does not exist: {missing_path}"),
+        );
+    }
+}
+
+fn search_error_code_for_message(message: &str) -> Option<&'static str> {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("non-empty pattern") || lower.contains("pattern must not be empty") {
+        Some("empty_pattern")
+    } else if lower.contains("path does not exist") {
+        Some("path_not_found")
+    } else if lower.contains("failed to compile native search pattern")
+        || lower.contains("regex parse error")
+        || lower.contains("error parsing regex")
+        || lower.contains("invalid regex")
+    {
+        Some("invalid_regex")
+    } else {
+        None
+    }
+}
+
+fn normalize_search_error_detail(error: &str, detail: &str) -> String {
+    if error == "invalid_regex" && !detail.to_ascii_lowercase().contains("invalid regex") {
+        format!("invalid regex pattern: {detail}")
+    } else {
+        detail.to_string()
+    }
+}
+
+fn exit_json_search_runtime_error_if_needed(json: bool, ndjson: bool, err: &anyhow::Error) {
+    if !json || ndjson {
+        return;
+    }
+    let detail = err.to_string();
+    if let Some(code) = search_error_code_for_message(&detail) {
+        exit_search_error_json(code, normalize_search_error_detail(code, &detail));
     }
 }
 
@@ -3426,6 +3511,7 @@ fn run_native_search_with_optional_rg_fallback(
             Ok(())
         }
         Err(err) => {
+            exit_json_search_runtime_error_if_needed(json, ndjson, &err);
             if let Some(rg_args) = rg_fallback {
                 eprintln!("warning: native CPU search failed, falling back to ripgrep: {err}");
                 if !json && !ndjson && verbose {
@@ -3465,6 +3551,12 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     }
 
     let request = resolve_search_request(&args)?;
+    exit_json_search_input_error_if_needed(
+        args.json,
+        args.ndjson,
+        &request.patterns,
+        &request.paths,
+    );
     let query = request.query_display();
     let path_display = request.path_display();
     let rg_available = ripgrep_is_available();
@@ -3624,7 +3716,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 .then(|| command_ripgrep_args(&args, &request));
 
             if request.patterns.len() > 1 {
-                let matches = collect_native_multi_pattern_matches(
+                let matches = match collect_native_multi_pattern_matches(
                     &request.patterns,
                     native_search_config_for_command(
                         &args,
@@ -3632,7 +3724,13 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         &request.paths,
                         decision,
                     ),
-                )?;
+                ) {
+                    Ok(matches) => matches,
+                    Err(err) => {
+                        exit_json_search_runtime_error_if_needed(args.json, args.ndjson, &err);
+                        return Err(err);
+                    }
+                };
                 return emit_multi_pattern_native_results(
                     NativeSearchOutputOptions {
                         decision,

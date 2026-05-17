@@ -2443,15 +2443,46 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == "InvalidRegexError"
 
 
-def _exit_invalid_regex(exc: Exception) -> None:
+def _search_error_payload(error: str, detail: str) -> dict[str, object]:
+    from tensor_grep.cli.formatters.json_fmt import JSON_OUTPUT_VERSION
+
+    return {
+        "version": JSON_OUTPUT_VERSION,
+        "ok": False,
+        "error": error,
+        "detail": detail,
+    }
+
+
+def _emit_search_error_json(error: str, detail: str) -> None:
+    _safe_stdout_line(json.dumps(_search_error_payload(error, detail)))
+
+
+def _exit_search_error(
+    error: str,
+    detail: str,
+    *,
+    json_mode: bool,
+    stderr_detail: str | None = None,
+    exit_code: int = 2,
+) -> None:
+    if json_mode:
+        _emit_search_error_json(error, detail)
+    else:
+        typer.echo(f"Error: {stderr_detail or detail}", err=True)
+    sys.exit(exit_code)
+
+
+def _exit_invalid_regex(exc: Exception, *, json_mode: bool = False) -> None:
     message = str(exc)
     if "invalid regex" not in message.lower():
         message = f"invalid regex pattern: {message}"
-    typer.echo(
-        f"Error: {message}. Use --fixed-strings (-F) to search this pattern literally.",
-        err=True,
+    _exit_search_error(
+        "invalid_regex",
+        message,
+        json_mode=json_mode,
+        stderr_detail=f"{message}. Use --fixed-strings (-F) to search this pattern literally.",
     )
-    sys.exit(2)
 
 
 def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
@@ -4400,8 +4431,11 @@ def search_command(
     elif regexp_patterns:
         pattern = regexp_patterns[0]
         if pattern == "":
-            typer.echo("Error: PATTERN must not be empty.", err=True)
-            sys.exit(2)
+            _exit_search_error(
+                "empty_pattern",
+                "PATTERN must not be empty.",
+                json_mode=json,
+            )
         paths_to_search = args or ["."]
         paths_defaulted = not args
     else:
@@ -4410,8 +4444,11 @@ def search_command(
             sys.exit(1)
         pattern = args[0]
         if pattern == "":
-            typer.echo("Error: PATTERN must not be empty.", err=True)
-            sys.exit(2)
+            _exit_search_error(
+                "empty_pattern",
+                "PATTERN must not be empty.",
+                json_mode=json,
+            )
         paths_to_search = args[1:] or ["."]
         paths_defaulted = not args[1:]
 
@@ -4420,9 +4457,16 @@ def search_command(
             path for path in paths_to_search if path != "-" and not Path(path).exists()
         ]
         if missing_paths:
-            for missing_path in missing_paths:
-                typer.echo(f"Error: search path does not exist: {missing_path}", err=True)
-            sys.exit(2)
+            if json:
+                detail = "search path does not exist: " + ", ".join(missing_paths)
+                _exit_search_error("path_not_found", detail, json_mode=True)
+            else:
+                for missing_path in missing_paths:
+                    typer.echo(
+                        f"Error: search path does not exist: {missing_path}",
+                        err=True,
+                    )
+                sys.exit(2)
 
     if line_number is None:
         line_number = sys.stdout.isatty()
@@ -4563,7 +4607,7 @@ def search_command(
                 _validate_search_regex(regex_pattern, config)
         except Exception as exc:
             if _is_invalid_regex_error(exc):
-                _exit_invalid_regex(exc)
+                _exit_invalid_regex(exc, json_mode=json)
             raise
     guarded_broad_root = _search_paths_include_guarded_broad_root(paths_to_search)
     explicit_hidden_search_root = not config.hidden and any(
@@ -4758,7 +4802,7 @@ def search_command(
                 result = rg_backend.search(search_targets, pattern, config=rg_search_config)
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
-                    _exit_invalid_regex(exc)
+                    _exit_invalid_regex(exc, json_mode=json)
                 raise
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
@@ -4784,7 +4828,7 @@ def search_command(
                     result = backend.search(current_file, pattern, config=config)
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
-                        _exit_invalid_regex(exc)
+                        _exit_invalid_regex(exc, json_mode=json)
                     raise
                 if span is not None:
                     span.set_attribute("matches", result.total_matches)
