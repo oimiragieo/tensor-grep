@@ -173,7 +173,7 @@ When public dogfood identifies multiple independent fixes, preserve the process 
 5. For each slice, write or update the contract test first, implement the smallest fix, run the targeted suite, then run lint and format before moving on.
 6. Push each branch, wait for PR CI, squash-merge intentionally, then watch main CI. Release-bearing work is not complete until semantic-release, assets, PyPI, and public release dogfood pass.
 
-Record the plan, Exa research anchors, thinktank consensus, PR order, Gemini review result, validation commands, PR CI, main CI, and public release dogfood in `docs/SESSION_HANDOFF.md`, `SKILL.md`, and this file when operating practice changes.
+Maintain a per-slice evidence ledger in `docs/SESSION_HANDOFF.md`, `SKILL.md`, and this file when operating practice changes. Each slice entry must record PR order, slice scope, Exa research anchors, thinktank or planning consensus, subagent ownership, Gemini review result, validation commands, PR CI, and main CI. Optional or triggered items may be marked `not applicable` only with a rationale. For release-bearing slices, additionally require semantic-release, release assets, PyPI, and public release dogfood evidence.
 
 ## Required Local Validation
 
