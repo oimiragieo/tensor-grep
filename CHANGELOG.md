@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.23 (2026-05-17)
+
+### Bug Fixes
+
+- Add dogfood progress heartbeats
+  ([`ab35a29`](https://github.com/oimiragieo/tensor-grep/commit/ab35a29cbe6f6629e046c373b6e3a98b32d329e8))
+
+* fix: add dogfood progress heartbeats
+
+* fix: satisfy progress mode mypy versions
+
+
 ## v1.12.22 (2026-05-16)
 
 ### Bug Fixes
