@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.12.26 (2026-05-17)
+
+### Bug Fixes
+
+- Harden lsp server request handshake
+  ([`fed5b6d`](https://github.com/oimiragieo/tensor-grep/commit/fed5b6d60b75a5d40fa3ed676b5b0178533bf241))
+
+Harden LSP client request handling so provider-backed navigation can answer server-initiated
+  configuration/workspace requests during initialize without deadlocking.\n\nValidation:\n- uv run
+  pytest tests/unit/test_lsp_external_provider.py -q\n- uv run pytest
+  tests/unit/test_lsp_external_provider.py tests/unit/test_semantic_provider_navigation.py -q\n- uv
+  run ruff check .\n- uv run ruff format --check --preview .\n- uv run mypy src/tensor_grep\n- uv
+  run pytest -q\n- git diff --check\n- PR CI passed
+
+
 ## v1.12.25 (2026-05-17)
 
 ### Bug Fixes
