@@ -222,6 +222,10 @@ class ExternalLSPClient:
         if process is None:
             return
         reader_thread = self._reader_thread
+        stop_timeout_seconds = min(
+            max(float(self.request_timeout_seconds), 0.0),
+            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
+        )
         self._request_shutdown_for_stop()
         with self._lock:
             try:
@@ -238,14 +242,14 @@ class ExternalLSPClient:
             except Exception:
                 pass
         try:
-            process.wait(timeout=2.0)
+            process.wait(timeout=stop_timeout_seconds)
         except subprocess.TimeoutExpired:
             try:
                 process.kill()
             except Exception:
                 pass
             try:
-                process.wait(timeout=2.0)
+                process.wait(timeout=stop_timeout_seconds)
             except Exception:
                 pass
         finally:
@@ -256,7 +260,7 @@ class ExternalLSPClient:
                 except Exception:
                     pass
         if reader_thread is not None and reader_thread.is_alive():
-            reader_thread.join(timeout=2.0)
+            reader_thread.join(timeout=stop_timeout_seconds)
         with self._lock:
             if self.process is process:
                 self.process = None

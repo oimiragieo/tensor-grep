@@ -460,6 +460,51 @@ def test_run_compat_checks_progress_always_uses_stderr_without_changing_report(
     assert "[progress]" not in captured.out
 
 
+def test_run_compat_checks_progress_is_on_by_default(monkeypatch, tmp_path, capsys):
+    module = _load_script_module(
+        "run_compat_checks_default_progress_script", "benchmarks/run_compat_checks.py"
+    )
+    tg_binary = tmp_path / "tg"
+    tg_binary.write_text("fake tg", encoding="utf-8")
+    bench_data_dir = tmp_path / "bench_data"
+    bench_data_dir.mkdir()
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text("{}", encoding="utf-8")
+    output_path = tmp_path / "compat_report.json"
+    expected_report = {
+        "suite": "run_compat_checks",
+        "scenarios": [],
+        "routing_metadata": {"valid": True},
+        "pytest": {"passed": True},
+        "all_passed": True,
+    }
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: Path("rg"))
+    monkeypatch.setattr(module, "run_compat_suite", lambda **_kwargs: dict(expected_report))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_compat_checks.py",
+            "--binary",
+            str(tg_binary),
+            "--bench-data-dir",
+            str(bench_data_dir),
+            "--schema",
+            str(schema_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    exit_code = module.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "[progress] compat-suite start" in captured.err
+    assert "[progress] compat-suite done" in captured.err
+    assert "[progress]" not in captured.out
+
+
 def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):
     module = _load_script_module(
         "build_attempt_ledger_cli_script", "benchmarks/build_attempt_ledger.py"

@@ -172,6 +172,59 @@ def test_external_lsp_workspace_symbol_queries_are_operation_budgeted(
     assert initialize_timeout <= 0.25
 
 
+def test_external_lsp_workspace_symbol_default_budget_is_agent_loop_sized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+    query_timeouts: list[tuple[float, float]] = []
+
+    class _SlowClient:
+        request_timeout_seconds = 30.0
+        initialize_timeout_seconds = 30.0
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            _ = method
+            _ = params
+            query_timeouts.append((
+                self.request_timeout_seconds,
+                self.initialize_timeout_seconds,
+            ))
+            return []
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _SlowClient:
+            _ = language
+            _ = workspace_root
+            return _SlowClient()
+
+    monkeypatch.delenv("TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS", raising=False)
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    repo_map._external_workspace_symbols(
+        tmp_path,
+        "create_invoice",
+        repo_map={
+            "path": str(tmp_path),
+            "symbols": [
+                {
+                    "name": "create_invoice",
+                    "file": str(service_path),
+                    "line": 1,
+                    "kind": "function",
+                }
+            ],
+        },
+    )
+
+    assert query_timeouts
+    request_timeout, initialize_timeout = query_timeouts[0]
+    assert request_timeout <= 2.0
+    assert initialize_timeout <= 2.0
+
+
 def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"

@@ -6976,6 +6976,9 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     native_binary.parent.mkdir(parents=True)
     python_executable.write_text("", encoding="utf-8")
     native_binary.write_text("old native", encoding="utf-8")
+    unrelated_native_env = tmp_path / "other" / "bin" / "tg.exe"
+    unrelated_native_env.parent.mkdir(parents=True)
+    unrelated_native_env.write_text("other native", encoding="utf-8")
     downloads: list[str] = []
 
     def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
@@ -7002,6 +7005,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(unrelated_native_env))
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
@@ -9117,6 +9121,78 @@ def test_scan_filter_limits_project_rules(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["rule_count"] == 1
     assert [finding["rule_id"] for finding in payload["findings"]] == ["no-print"]
+
+
+def test_scan_project_filter_respects_positional_scan_paths(monkeypatch, tmp_path: Path) -> None:
+    class CountingAstBackend:
+        def search(self, file_path: str, pattern: str, config=None) -> SearchResult:
+            _ = config
+            try:
+                lines = Path(file_path).read_text(encoding="utf-8").splitlines()
+            except OSError:
+                lines = []
+            matches = [
+                MatchLine(line_number=line_number, text=line, file=file_path)
+                for line_number, line in enumerate(lines, start=1)
+                if pattern in line
+            ]
+            total_matches = sum(line.count(pattern) for line in lines)
+            return SearchResult(
+                matches=matches,
+                matched_file_paths=[file_path] if total_matches else [],
+                total_files=1 if total_matches else 0,
+                total_matches=total_matches,
+                routing_backend="AstBackend",
+                routing_reason="ast_native",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: CountingAstBackend(),
+    )
+
+    src_dir = tmp_path / "src"
+    rules_dir = tmp_path / "rules"
+    src_dir.mkdir()
+    rules_dir.mkdir()
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+    )
+    (rules_dir / "no-pass.yml").write_text(
+        "\n".join([
+            "id: no-pass",
+            "language: python",
+            "message: avoid pass",
+            "rule:",
+            "  pattern: pass",
+        ]),
+        encoding="utf-8",
+    )
+    (src_dir / "sample.py").write_text("def f():\n    pass\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "scan",
+            "--config",
+            str(tmp_path / "sgconfig.yml"),
+            "--filter",
+            "no-pass",
+            str(src_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["scan_paths"] == [str(src_dir.resolve())]
+    assert payload["total_matches"] == 1
+    assert payload["findings"][0]["files"] == [str((src_dir / "sample.py").resolve())]
+    assert all(
+        "rules" not in Path(file_path).parts for file_path in payload["findings"][0]["files"]
+    )
 
 
 def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: Path) -> None:

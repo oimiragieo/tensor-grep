@@ -22,7 +22,7 @@ from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
-_DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 8.0
+_DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
     ".tensor-grep",
