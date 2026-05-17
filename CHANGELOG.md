@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.12.27 (2026-05-17)
+
+### Bug Fixes
+
+- Harden gpu promotion workload gates
+  ([`a1ca113`](https://github.com/oimiragieo/tensor-grep/commit/a1ca11353c476c2e73b40458e0fe1ca2d45fc2fb))
+
+Harden GPU promotion evidence so public acceleration claims require a named workload class,
+  NativeGpuBackend proof without sidecar fallback, fair rg multi-pattern baselines, and speed wins
+  at every required scale.\n\nValidation:\n- uv run pytest
+  tests/unit/test_gpu_benchmark_scale_contracts.py tests/unit/test_benchmark_scripts.py -q\n- uv run
+  ruff check .\n- uv run ruff format --check --preview .\n- uv run mypy src/tensor_grep\n- uv run
+  pytest -q\n- git diff --check\n- PR CI passed
+
+
 ## v1.12.26 (2026-05-17)
 
 ### Bug Fixes
