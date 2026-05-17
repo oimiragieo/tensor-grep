@@ -1343,6 +1343,109 @@ fn test_search_json_and_ndjson_are_mutually_exclusive() {
 }
 
 #[test]
+fn test_search_json_reports_empty_pattern_error() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "output={}",
+        combined_output(&output)
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "empty_pattern");
+    assert!(payload["detail"]
+        .as_str()
+        .unwrap()
+        .contains("PATTERN must not be empty"));
+}
+
+#[test]
+fn test_root_json_reports_empty_pattern_error() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg().arg("--json").arg("").arg(dir.path()).output().unwrap();
+
+    assert!(
+        !output.status.success(),
+        "output={}",
+        combined_output(&output)
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "empty_pattern");
+}
+
+#[test]
+fn test_search_json_reports_missing_path_error() {
+    let dir = tempdir().unwrap();
+    let missing = dir.path().join("missing.txt");
+
+    let output = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("hello")
+        .arg(&missing)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "output={}",
+        combined_output(&output)
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "path_not_found");
+    assert!(payload["detail"]
+        .as_str()
+        .unwrap()
+        .contains(&missing.to_string_lossy().to_string()));
+}
+
+#[test]
+fn test_search_json_reports_invalid_regex_error() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("(")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "output={}",
+        combined_output(&output)
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "invalid_regex");
+    assert!(payload["detail"]
+        .as_str()
+        .unwrap()
+        .to_lowercase()
+        .contains("invalid regex"));
+}
+
+#[test]
 fn test_routing_explicit_index_uses_trigram_index_json() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
