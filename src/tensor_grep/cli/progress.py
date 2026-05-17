@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Literal, TextIO, cast
+from typing import Literal, TextIO
 
 ProgressMode = Literal["auto", "always", "never"]
 PROGRESS_MODES: tuple[ProgressMode, ...] = ("auto", "always", "never")
@@ -14,10 +14,14 @@ PROGRESS_MODES: tuple[ProgressMode, ...] = ("auto", "always", "never")
 
 def normalize_progress_mode(value: str) -> ProgressMode:
     mode = value.strip().lower()
-    if mode not in PROGRESS_MODES:
-        choices = ", ".join(PROGRESS_MODES)
-        raise ValueError(f"invalid progress mode {value!r}; expected one of: {choices}")
-    return cast(ProgressMode, mode)
+    if mode == "auto":
+        return "auto"
+    if mode == "always":
+        return "always"
+    if mode == "never":
+        return "never"
+    choices = ", ".join(PROGRESS_MODES)
+    raise ValueError(f"invalid progress mode {value!r}; expected one of: {choices}")
 
 
 def positive_progress_interval_s(value: str) -> float:
