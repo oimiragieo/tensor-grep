@@ -34,6 +34,7 @@ DEFAULT_CORRECTNESS_PATTERNS = (
     "WARN retry budget exhausted",
     "Database connection timeout",
 )
+GPU_SCALE_WORKLOAD_CLASS = "single_pattern_cold_grep"
 RECOMMENDATION_REQUIRED_CORPUS_SIZES = (1 * GB, 5 * GB)
 GPU_RECOMMENDATION_MIN_SPEEDUP_PCT = 20.0
 PAYLOAD_FILLER = "payload=" + ("0123456789abcdef" * 224)
@@ -1014,6 +1015,7 @@ def analyze_gpu_auto_recommendation(
         }
 
     winners: list[dict[str, object]] = []
+    winning_sizes_by_device: dict[str, set[int]] = {}
     skipped_non_native_route = False
     for row in rows:
         if row.get("size_bytes") not in required_size_bytes:
@@ -1050,6 +1052,9 @@ def analyze_gpu_auto_recommendation(
             gpu_result["speedup_vs_rg_pct"] = speedup_vs_rg_pct
             gpu_result["speedup_vs_tg_cpu_pct"] = speedup_vs_tg_cpu_pct
             if speedup_vs_rg_pct >= min_speedup_pct and speedup_vs_tg_cpu_pct >= min_speedup_pct:
+                winning_sizes_by_device.setdefault(str(device_id), set()).add(
+                    int(row.get("size_bytes", 0))
+                )
                 winners.append({
                     "device_id": device_id,
                     "size_label": row.get("size_label"),
@@ -1058,17 +1063,23 @@ def analyze_gpu_auto_recommendation(
                     "speedup_vs_tg_cpu_pct": speedup_vs_tg_cpu_pct,
                 })
 
-    if not winners:
+    qualifying_devices = {
+        device_id
+        for device_id, winning_sizes in winning_sizes_by_device.items()
+        if required_size_bytes.issubset(winning_sizes)
+    }
+
+    if not winners or not qualifying_devices:
         if skipped_non_native_route:
             reason = (
                 "No correctness-passing GPU row used NativeGpuBackend with sidecar_used=false "
-                f"and beat both rg and tg_cpu by at least {min_speedup_pct:.0f}% at the "
+                f"and beat both rg and tg_cpu by at least {min_speedup_pct:.0f}% at every "
                 f"required {required_size_labels} scale."
             )
         else:
             reason = (
-                "No correctness-passing GPU row beat both rg and tg_cpu by at least "
-                f"{min_speedup_pct:.0f}% at the required {required_size_labels} scale."
+                "No correctness-passing GPU device beat both rg and tg_cpu by at least "
+                f"{min_speedup_pct:.0f}% at every required {required_size_labels} scale."
             )
         return {
             "should_add_flag": False,
@@ -1079,10 +1090,12 @@ def analyze_gpu_auto_recommendation(
     return {
         "should_add_flag": True,
         "reason": (
-            "At least one GPU row passed required correctness and beat both rg and "
-            f"tg_cpu by {min_speedup_pct:.0f}% or more at required scale."
+            "At least one GPU device passed required correctness and beat both rg and "
+            f"tg_cpu by {min_speedup_pct:.0f}% or more at every required scale."
         ),
-        "winning_rows": winners,
+        "winning_rows": [
+            winner for winner in winners if str(winner.get("device_id")) in qualifying_devices
+        ],
     }
 
 
@@ -1094,11 +1107,13 @@ def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object
     return {
         "required_runtime_backend": "NativeGpuBackend",
         "required_sidecar_used": False,
+        "required_workload_class": GPU_SCALE_WORKLOAD_CLASS,
         "required_correctness_sizes": required_labels,
         "required_speed_baselines": ["rg", "tg_cpu"],
         "sidecar_routing_counts_as_promotion": False,
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
+        "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
     }
 
 
@@ -1281,6 +1296,7 @@ def build_scale_gate_summary(
 
     return {
         "benchmark_surface": "python-gpu-scale",
+        "workload_class": GPU_SCALE_WORKLOAD_CLASS,
         "promotion_evidence_contract": _promotion_evidence_contract(required_labels),
         "native_cuda_scale_gate": native_gate,
         "correctness_gate": correctness_gate,
