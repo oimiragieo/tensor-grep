@@ -128,6 +128,17 @@ def _configuration_settings(language: str) -> dict[str, Any]:
     }
 
 
+def _lookup_configuration_section(settings: dict[str, Any], section: object) -> Any:
+    if not isinstance(section, str) or not section:
+        return settings
+    current: Any = settings
+    for part in section.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
 class ExternalLSPClient:
     def __init__(
         self,
@@ -194,7 +205,15 @@ class ExternalLSPClient:
                 {
                     "processId": None,
                     "rootUri": self.workspace_root.as_uri(),
-                    "capabilities": {},
+                    "capabilities": {
+                        "workspace": {
+                            "configuration": True,
+                            "workspaceFolders": True,
+                        }
+                    },
+                    "initializationOptions": _configuration_settings(self.language).get(
+                        "settings", {}
+                    ),
                     "workspaceFolders": [
                         {
                             "uri": self.workspace_root.as_uri(),
@@ -322,24 +341,26 @@ class ExternalLSPClient:
             self._request_id += 1
             request_id = self._request_id
             self._write_request(request_id, method, params)
-            while True:
-                try:
-                    message = self._message_queue.get(timeout=timeout_seconds)
-                except queue.Empty as exc:
-                    self.last_error = f"timeout waiting for LSP response: {method}"
-                    raise LSPTransportError(self.last_error) from exc
-                if message is None:
-                    self.last_error = f"LSP process closed during request: {method}"
-                    raise LSPTransportError(f"LSP process closed during request: {method}")
-                if "id" not in message:
-                    continue
-                if int(message["id"]) != request_id:
-                    continue
-                if "error" in message:
-                    self.last_error = str(message["error"])
-                    raise LSPTransportError(self.last_error)
-                self.last_error = None
-                return message.get("result")
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                message = self._message_queue.get(timeout=remaining)
+            except queue.Empty as exc:
+                self.last_error = f"timeout waiting for LSP response: {method}"
+                raise LSPTransportError(self.last_error) from exc
+            if message is None:
+                self.last_error = f"LSP process closed during request: {method}"
+                raise LSPTransportError(f"LSP process closed during request: {method}")
+            if "id" not in message:
+                continue
+            if int(message["id"]) != request_id:
+                continue
+            if "error" in message:
+                self.last_error = str(message["error"])
+                raise LSPTransportError(self.last_error)
+            self.last_error = None
+            return message.get("result")
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.start()
@@ -416,6 +437,72 @@ class ExternalLSPClient:
             payload,
         )
 
+    def _write_response(self, request_id: object, result: Any) -> None:
+        if self.process is None or self.process.stdin is None:
+            raise LSPTransportError("LSP process is not available")
+        payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
+        _write_message(self.process.stdin, payload)
+
+    def _write_error_response(self, request_id: object, *, code: int, message: str) -> None:
+        if self.process is None or self.process.stdin is None:
+            raise LSPTransportError("LSP process is not available")
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": code, "message": message},
+        }
+        _write_message(self.process.stdin, payload)
+
+    def _configuration_response(self, params: object) -> list[Any]:
+        settings = _configuration_settings(self.language).get("settings", {})
+        if not isinstance(params, dict):
+            return [settings]
+        items = params.get("items")
+        if not isinstance(items, list):
+            return [settings]
+        return [
+            _lookup_configuration_section(
+                settings,
+                item.get("section") if isinstance(item, dict) else None,
+            )
+            for item in items
+        ]
+
+    def _handle_server_request(self, message: dict[str, Any]) -> bool:
+        if "id" not in message or "method" not in message:
+            return False
+        method = str(message.get("method"))
+        request_id = message.get("id")
+        try:
+            if method == "workspace/configuration":
+                result = self._configuration_response(message.get("params"))
+            elif method == "workspace/workspaceFolders":
+                result = [{"uri": self.workspace_root.as_uri(), "name": self.workspace_root.name}]
+            elif method in {
+                "client/registerCapability",
+                "client/unregisterCapability",
+                "window/workDoneProgress/create",
+            }:
+                result = None
+            else:
+                with self._lock:
+                    self._write_error_response(
+                        request_id,
+                        code=-32601,
+                        message=f"Unsupported LSP server request: {method}",
+                    )
+                return True
+            with self._lock:
+                self._write_response(request_id, result)
+            return True
+        except Exception as exc:
+            try:
+                with self._lock:
+                    self._write_error_response(request_id, code=-32603, message=str(exc))
+            except Exception:
+                pass
+            return True
+
     def _reader_loop(self) -> None:
         process = self.process
         if process is None or process.stdout is None:
@@ -427,6 +514,8 @@ class ExternalLSPClient:
                 if message is None:
                     self._message_queue.put(None)
                     return
+                if self._handle_server_request(message):
+                    continue
                 self._message_queue.put(message)
         except Exception as exc:
             self.last_error = str(exc)

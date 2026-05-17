@@ -304,12 +304,197 @@ def test_external_provider_client_start_orders_initialize_initialized_and_config
     ]
     initialize_message = written_messages[0]
     assert "id" in initialize_message
+    assert initialize_message["params"]["capabilities"]["workspace"] == {
+        "configuration": True,
+        "workspaceFolders": True,
+    }
+    assert (
+        initialize_message["params"]["initializationOptions"]["python"]["analysis"][
+            "diagnosticMode"
+        ]
+        == "openFilesOnly"
+    )
     settings = written_messages[2]["params"]["settings"]
     analysis_settings = settings["python"]["analysis"]
     assert analysis_settings["diagnosticMode"] == "openFilesOnly"
     assert "node_modules" in analysis_settings["exclude"]
     assert "__pycache__" in analysis_settings["exclude"]
     assert ".venv" in analysis_settings["exclude"]
+
+
+def test_external_provider_client_answers_server_configuration_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    written_messages: list[dict[str, Any]] = []
+    responses: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "workspace/configuration",
+        "params": {
+            "items": [
+                {"section": "python.analysis"},
+                {"section": "python"},
+                {},
+            ]
+        },
+    })
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"capabilities": {"definitionProvider": True}},
+    })
+    responses.put(None)
+
+    class _FakeStream:
+        def close(self) -> None:
+            return None
+
+    class _FakeProcess:
+        stdin = _FakeStream()
+        stdout = _FakeStream()
+        stderr = _FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr(provider_module.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        provider_module,
+        "_write_message",
+        lambda _stream, payload: written_messages.append(dict(payload)),
+    )
+    monkeypatch.setattr(provider_module, "_read_message", lambda _stream: responses.get())
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.start()
+
+    server_response = next(
+        message for message in written_messages if message.get("id") == 1 and "result" in message
+    )
+    assert "error" not in server_response
+    analysis_settings, python_settings, full_settings = server_response["result"]
+    assert analysis_settings["diagnosticMode"] == "openFilesOnly"
+    assert "artifacts" in analysis_settings["exclude"]
+    assert python_settings["analysis"]["diagnosticMode"] == "openFilesOnly"
+    assert full_settings["python"]["analysis"]["diagnosticMode"] == "openFilesOnly"
+    assert [message["method"] for message in written_messages if "method" in message] == [
+        "initialize",
+        "initialized",
+        "workspace/didChangeConfiguration",
+    ]
+
+
+def test_external_provider_client_answers_workspace_folder_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    written_messages: list[dict[str, Any]] = []
+    responses: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "workspace/workspaceFolders",
+    })
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"capabilities": {"definitionProvider": True}},
+    })
+    responses.put(None)
+
+    class _FakeStream:
+        def close(self) -> None:
+            return None
+
+    class _FakeProcess:
+        stdin = _FakeStream()
+        stdout = _FakeStream()
+        stderr = _FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr(provider_module.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        provider_module,
+        "_write_message",
+        lambda _stream, payload: written_messages.append(dict(payload)),
+    )
+    monkeypatch.setattr(provider_module, "_read_message", lambda _stream: responses.get())
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.start()
+
+    server_response = next(message for message in written_messages if message.get("id") == 42)
+    assert server_response["result"] == [
+        {"uri": tmp_path.resolve().as_uri(), "name": tmp_path.name}
+    ]
+
+
+def test_external_provider_client_rejects_unknown_server_requests_without_poisoning_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    written_messages: list[dict[str, Any]] = []
+    responses: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": "server-unknown",
+        "method": "experimental/unknown",
+    })
+    responses.put({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"capabilities": {"definitionProvider": True}},
+    })
+    responses.put(None)
+
+    class _FakeStream:
+        def close(self) -> None:
+            return None
+
+    class _FakeProcess:
+        stdin = _FakeStream()
+        stdout = _FakeStream()
+        stderr = _FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr(provider_module.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        provider_module,
+        "_write_message",
+        lambda _stream, payload: written_messages.append(dict(payload)),
+    )
+    monkeypatch.setattr(provider_module, "_read_message", lambda _stream: responses.get())
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.start()
+
+    server_response = next(
+        message for message in written_messages if message.get("id") == "server-unknown"
+    )
+    assert server_response["error"]["code"] == -32601
+    assert "Unsupported LSP server request" in server_response["error"]["message"]
+    assert client.capabilities == {"definitionProvider": True}
 
 
 def test_external_provider_client_stop_sends_shutdown_request_then_exit_notification(
