@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::routing::gpu_proof_fields;
+
 const JSON_OUTPUT_VERSION: u32 = 1;
 const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 const STREAMING_OUTPUT_FLUSH_BYTES: usize = 64 * 1024;
@@ -625,6 +627,14 @@ struct NativeJsonOutput<'a> {
     sidecar_used: bool,
     requested_gpu_device_ids: Vec<i32>,
     routing_gpu_device_ids: Vec<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_evidence_status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_proof: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_gpu_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_gpu_proof_reason: Option<String>,
     query: &'a str,
     path: String,
     total_matches: usize,
@@ -646,6 +656,14 @@ struct NativeNdjsonMatch<'a> {
     sidecar_used: bool,
     requested_gpu_device_ids: Vec<i32>,
     routing_gpu_device_ids: Vec<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_evidence_status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_proof: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_gpu_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_gpu_proof_reason: Option<String>,
     query: &'a str,
     path: &'a str,
     file: &'a str,
@@ -1870,6 +1888,11 @@ fn native_match_from_sink(path: &Path, mat: &SinkMatch<'_>) -> NativeSearchMatch
 }
 
 fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result<()> {
+    let proof_fields = gpu_proof_fields(
+        &config.requested_gpu_device_ids,
+        config.routing_backend,
+        config.sidecar_used,
+    );
     let payload = NativeJsonOutput {
         version: JSON_OUTPUT_VERSION,
         routing_backend: config.routing_backend,
@@ -1877,6 +1900,10 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         sidecar_used: config.sidecar_used,
         requested_gpu_device_ids: config.requested_gpu_device_ids.clone(),
         routing_gpu_device_ids: Vec::new(),
+        gpu_evidence_status: proof_fields.gpu_evidence_status,
+        gpu_proof: proof_fields.gpu_proof,
+        native_gpu_unavailable: proof_fields.native_gpu_unavailable,
+        not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
         query: &config.pattern,
         path: display_search_path(&config.paths),
         total_matches: stats.total_matches,
@@ -1910,6 +1937,11 @@ fn append_ndjson_match_bytes(
 ) -> Result<()> {
     let line = native_match_line_number(matched)?;
     let file = matched.path.to_string_lossy().into_owned();
+    let proof_fields = gpu_proof_fields(
+        &config.requested_gpu_device_ids,
+        config.routing_backend,
+        config.sidecar_used,
+    );
     let payload = NativeNdjsonMatch {
         version: JSON_OUTPUT_VERSION,
         routing_backend: config.routing_backend,
@@ -1917,6 +1949,10 @@ fn append_ndjson_match_bytes(
         sidecar_used: config.sidecar_used,
         requested_gpu_device_ids: config.requested_gpu_device_ids.clone(),
         routing_gpu_device_ids: Vec::new(),
+        gpu_evidence_status: proof_fields.gpu_evidence_status,
+        gpu_proof: proof_fields.gpu_proof,
+        native_gpu_unavailable: proof_fields.native_gpu_unavailable,
+        not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
         query: &config.pattern,
         path: search_path,
         file: &file,

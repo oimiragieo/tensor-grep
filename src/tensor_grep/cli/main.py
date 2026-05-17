@@ -451,16 +451,15 @@ def _managed_native_frontdoor_path_from_env() -> Path | None:
     if install_root.name != ".tensor-grep":
         return None
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg-native"
-    native_path = (
-        Path(native_env).expanduser() if native_env else install_root / "bin" / binary_name
-    )
+    expected_native_path = install_root / "bin" / binary_name
+    native_path = Path(native_env).expanduser() if native_env else expected_native_path
     try:
         native_parent = native_path.parent.resolve()
-        expected_parent = (install_root / "bin").resolve()
+        expected_parent = expected_native_path.parent.resolve()
     except OSError:
-        return None
+        return expected_native_path
     if native_parent != expected_parent:
-        return None
+        return expected_native_path
     return native_path
 
 
@@ -3527,7 +3526,9 @@ def _run_ast_scan_payload(
         else [str(root_dir)]
     )
     scanner: DirectoryScanner | None = None
-    resolved_candidate_files = list(candidate_files) if candidate_files is not None else None
+    resolved_candidate_files = (
+        None if scan_paths else list(candidate_files) if candidate_files is not None else None
+    )
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 

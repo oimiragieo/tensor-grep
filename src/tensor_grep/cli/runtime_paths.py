@@ -113,6 +113,26 @@ def _native_candidate_matches_current_package(candidate: Path, *, expected_versi
     return _native_tg_version_matches(expected_version, _native_tg_version(candidate))
 
 
+def _path_binary_candidates(binary_name: str) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for raw_entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not raw_entry:
+            continue
+        candidate = Path(raw_entry).expanduser() / binary_name
+        if not candidate.is_file():
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate.absolute()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        candidates.append(resolved)
+    return candidates
+
+
 def inspect_native_tg_binary(
     candidate: Path,
     *,
@@ -180,19 +200,19 @@ def resolve_native_tg_binary() -> Path | None:
         if _native_candidate_matches_current_package(candidate, expected_version=expected_version):
             return candidate
 
-    # Priority 3: PATH installations
-    if which_tg := shutil.which(binary_name):
-        resolved = Path(which_tg).resolve()
+    # Priority 3: PATH installations. Scan every candidate so a Python
+    # console-entrypoint shim in an active repo venv cannot hide a later
+    # managed native front door.
+    for resolved in _path_binary_candidates(binary_name):
         if not _looks_like_python_scripts_launcher(
             resolved
         ) and _native_candidate_matches_current_package(
             resolved, expected_version=expected_version
         ):
             return resolved
-    if which_tensor_grep := shutil.which(
-        "tensor-grep" + (".exe" if sys.platform.startswith("win") else "")
-    ):
-        resolved = Path(which_tensor_grep).resolve()
+
+    tensor_grep_binary_name = "tensor-grep" + (".exe" if sys.platform.startswith("win") else "")
+    for resolved in _path_binary_candidates(tensor_grep_binary_name):
         if not _looks_like_python_scripts_launcher(
             resolved
         ) and _native_candidate_matches_current_package(

@@ -1883,6 +1883,16 @@ fn test_public_gpu_request_without_explicit_sidecar_falls_back_to_native_cpu() {
     assert_eq!(payload["total_matches"], 3);
     assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
     assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([]));
+    assert_eq!(payload["gpu_evidence_status"], "unsupported");
+    assert_eq!(payload["gpu_proof"], false);
+    assert_eq!(payload["native_gpu_unavailable"], true);
+    assert!(
+        payload["not_gpu_proof_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not GPU acceleration proof"),
+        "payload={payload}"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("native GPU unavailable"), "stderr={stderr}");
@@ -1930,6 +1940,16 @@ fn test_public_gpu_ndjson_fallback_reports_no_routed_gpu_devices() {
         assert_eq!(payload["sidecar_used"], false);
         assert_eq!(payload["requested_gpu_device_ids"], serde_json::json!([0]));
         assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([]));
+        assert_eq!(payload["gpu_evidence_status"], "unsupported");
+        assert_eq!(payload["gpu_proof"], false);
+        assert_eq!(payload["native_gpu_unavailable"], true);
+        assert!(
+            payload["not_gpu_proof_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not GPU acceleration proof"),
+            "payload={payload}"
+        );
         rows += 1;
     }
     assert_eq!(rows, 3);

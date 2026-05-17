@@ -70,6 +70,7 @@ def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, t
     monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", "")
     monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
     resolve_native_tg_binary.cache_clear()
 
@@ -92,6 +93,7 @@ def test_resolve_native_tg_binary_ignores_stale_in_tree_binary_without_explicit_
     monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", "")
     monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
     monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.8.21", raising=False)
     monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.8.14", raising=False)
@@ -114,6 +116,7 @@ def test_resolve_native_tg_binary_uses_matching_in_tree_binary(monkeypatch, tmp_
     monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", "")
     monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
     monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.8.21", raising=False)
     monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.8.21", raising=False)
@@ -183,6 +186,7 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, t
     monkeypatch.setattr(runtime_paths.sys, "executable", str(python_path))
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", str(venv_dir))
     monkeypatch.setattr(
         runtime_paths.shutil,
         "which",
@@ -224,6 +228,7 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher_when_python_re
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setattr(runtime_paths.Path, "resolve", fake_resolve)
+    monkeypatch.setenv("PATH", str(venv_dir))
     monkeypatch.setattr(
         runtime_paths.shutil,
         "which",
@@ -232,6 +237,49 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher_when_python_re
     resolve_native_tg_binary.cache_clear()
 
     assert resolve_native_tg_binary() is None
+
+
+def test_resolve_native_tg_binary_skips_python_launcher_and_uses_later_matching_path_candidate(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    python_name = "python.exe" if sys.platform.startswith("win") else "python"
+    current_venv_dir = (
+        tmp_path / "repo" / ".venv" / ("Scripts" if sys.platform.startswith("win") else "bin")
+    )
+    current_venv_dir.mkdir(parents=True, exist_ok=True)
+    current_python = current_venv_dir / python_name
+    current_python.write_text("python\n", encoding="utf-8")
+    python_launcher = current_venv_dir / binary_name
+    python_launcher.write_text("python console entrypoint\n", encoding="utf-8")
+
+    managed_dir = tmp_path / ".tensor-grep" / "bin"
+    managed_dir.mkdir(parents=True, exist_ok=True)
+    managed_native = managed_dir / binary_name
+    managed_native.write_text("native tg\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(current_python))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(current_venv_dir), str(managed_dir)]))
+    monkeypatch.setattr(runtime_paths, "_in_tree_native_tg_candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.12.24")
+    monkeypatch.setattr(
+        runtime_paths,
+        "_native_candidate_matches_current_package",
+        lambda candidate, *, expected_version: (
+            Path(candidate).resolve() == managed_native.resolve()
+        ),
+    )
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() == managed_native.resolve()
 
 
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows launcher layout")
@@ -259,6 +307,7 @@ def test_resolve_native_tg_binary_ignores_foreign_python_install_scripts_launche
     monkeypatch.setattr(runtime_paths.sys, "executable", str(current_python))
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", str(foreign_scripts_dir))
     monkeypatch.setattr(
         runtime_paths.shutil,
         "which",

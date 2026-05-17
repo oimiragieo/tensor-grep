@@ -44,8 +44,8 @@ use tensor_grep_rs::rg_passthrough::{
     ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
-    route_search, BackendSelection, IndexRoutingState, RoutingDecision, SearchRoutingCalibration,
-    SearchRoutingConfig,
+    gpu_proof_fields, route_search, BackendSelection, IndexRoutingState, RoutingDecision,
+    SearchRoutingCalibration, SearchRoutingConfig,
 };
 
 const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  tg search                           Validated common rg-compatible subset, not a full ripgrep replacement.\n  --format rg --json                  Emit ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nLSP provider status:\n  tg lsp --provider hybrid            Optional experimental semantic provider mode; provider availability is not LSP proof.\n  tg doctor --with-lsp                Report provider availability plus health_status/health_check diagnostics.\n\nLauncher repair:\n  tg repair-launcher --allow-foreign-rename\n                                      Explicitly back up a foreign Windows tg.exe that blocks Python subprocess resolution and replace it with the verified tensor-grep front door.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.\n  TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS Total per-command budget for optional external LSP provider requests.";
@@ -3846,6 +3846,14 @@ struct SearchResultJson<'a> {
     sidecar_used: bool,
     requested_gpu_device_ids: Vec<i32>,
     routing_gpu_device_ids: Vec<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_evidence_status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_proof: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_gpu_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_gpu_proof_reason: Option<String>,
     query: &'a str,
     path: &'a str,
     total_matches: usize,
@@ -3865,6 +3873,14 @@ struct GpuNativeSearchResultJson<'a> {
     total_files: usize,
     requested_gpu_device_ids: Vec<i32>,
     routing_gpu_device_ids: Vec<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_evidence_status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_proof: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_gpu_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_gpu_proof_reason: Option<String>,
     pipeline: &'a GpuPipelineStats,
     matches: Vec<SearchMatchJson>,
 }
@@ -4123,6 +4139,14 @@ struct SearchMatchNdjson<'a> {
     sidecar_used: bool,
     requested_gpu_device_ids: Vec<i32>,
     routing_gpu_device_ids: Vec<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_evidence_status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_proof: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_gpu_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_gpu_proof_reason: Option<String>,
     query: &'a str,
     path: &'a str,
     file: &'a str,
@@ -6736,6 +6760,11 @@ fn emit_json_search_results(
     requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
 ) -> anyhow::Result<()> {
+    let proof_fields = gpu_proof_fields(
+        requested_gpu_device_ids,
+        decision.routing_backend(),
+        decision.sidecar_used(),
+    );
     let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -6743,6 +6772,10 @@ fn emit_json_search_results(
         sidecar_used: decision.sidecar_used(),
         requested_gpu_device_ids: requested_gpu_device_ids.to_vec(),
         routing_gpu_device_ids: Vec::new(),
+        gpu_evidence_status: proof_fields.gpu_evidence_status,
+        gpu_proof: proof_fields.gpu_proof,
+        native_gpu_unavailable: proof_fields.native_gpu_unavailable,
+        not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
         query: pattern,
         path,
         total_matches: matches.len(),
@@ -6841,6 +6874,11 @@ fn emit_gpu_native_json_results(
     params: &GpuSearchParams<'_>,
     stats: &GpuNativeSearchStats,
 ) -> anyhow::Result<()> {
+    let proof_fields = gpu_proof_fields(
+        params.gpu_device_ids,
+        decision.routing_backend(),
+        decision.sidecar_used(),
+    );
     let payload = GpuNativeSearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -6856,6 +6894,10 @@ fn emit_gpu_native_json_results(
             .iter()
             .map(|device| device.device_id)
             .collect(),
+        gpu_evidence_status: proof_fields.gpu_evidence_status,
+        gpu_proof: proof_fields.gpu_proof,
+        native_gpu_unavailable: proof_fields.native_gpu_unavailable,
+        not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
         pipeline: &stats.pipeline,
         matches: gpu_native_match_json_entries(stats),
     };
@@ -6972,6 +7014,11 @@ fn emit_ndjson_search_results(
     matches: Vec<SearchMatchJson>,
 ) -> anyhow::Result<()> {
     for matched in matches {
+        let proof_fields = gpu_proof_fields(
+            requested_gpu_device_ids,
+            decision.routing_backend(),
+            decision.sidecar_used(),
+        );
         let payload = SearchMatchNdjson {
             version: JSON_OUTPUT_VERSION,
             routing_backend: decision.routing_backend(),
@@ -6979,6 +7026,10 @@ fn emit_ndjson_search_results(
             sidecar_used: decision.sidecar_used(),
             requested_gpu_device_ids: requested_gpu_device_ids.to_vec(),
             routing_gpu_device_ids: Vec::new(),
+            gpu_evidence_status: proof_fields.gpu_evidence_status,
+            gpu_proof: proof_fields.gpu_proof,
+            native_gpu_unavailable: proof_fields.native_gpu_unavailable,
+            not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
             query: pattern,
             path,
             file: &matched.file,
@@ -7006,6 +7057,11 @@ fn normalize_gpu_sidecar_json(
     requested_gpu_device_ids: &[i32],
 ) -> anyhow::Result<serde_json::Value> {
     let payload = parse_gpu_sidecar_search_payload(stdout)?;
+    let proof_fields = gpu_proof_fields(
+        requested_gpu_device_ids,
+        RoutingDecision::gpu_sidecar().routing_backend(),
+        RoutingDecision::gpu_sidecar().sidecar_used(),
+    );
     let requested_gpu_device_ids = requested_gpu_device_ids
         .iter()
         .copied()
@@ -7032,7 +7088,7 @@ fn normalize_gpu_sidecar_json(
         })
         .collect::<Vec<_>>();
 
-    Ok(serde_json::json!({
+    let mut value = serde_json::json!({
         "version": JSON_OUTPUT_VERSION,
         "routing_backend": RoutingDecision::gpu_sidecar().routing_backend(),
         "routing_reason": RoutingDecision::gpu_sidecar().reason,
@@ -7042,7 +7098,20 @@ fn normalize_gpu_sidecar_json(
         "requested_gpu_device_ids": requested_gpu_device_ids,
         "routing_gpu_device_ids": payload.routing_gpu_device_ids,
         "matches": normalized_matches,
-    }))
+    });
+    if let Some(gpu_evidence_status) = proof_fields.gpu_evidence_status {
+        value["gpu_evidence_status"] = serde_json::json!(gpu_evidence_status);
+    }
+    if let Some(gpu_proof) = proof_fields.gpu_proof {
+        value["gpu_proof"] = serde_json::json!(gpu_proof);
+    }
+    if let Some(native_gpu_unavailable) = proof_fields.native_gpu_unavailable {
+        value["native_gpu_unavailable"] = serde_json::json!(native_gpu_unavailable);
+    }
+    if let Some(not_gpu_proof_reason) = proof_fields.not_gpu_proof_reason {
+        value["not_gpu_proof_reason"] = serde_json::json!(not_gpu_proof_reason);
+    }
+    Ok(value)
 }
 
 fn emit_verbose_metadata(decision: RoutingDecision) {

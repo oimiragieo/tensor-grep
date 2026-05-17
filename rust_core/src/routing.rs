@@ -72,6 +72,50 @@ pub struct RoutingDecision {
     pub allow_rg_fallback: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuProofFields {
+    pub gpu_evidence_status: Option<&'static str>,
+    pub gpu_proof: Option<bool>,
+    pub native_gpu_unavailable: Option<bool>,
+    pub not_gpu_proof_reason: Option<String>,
+}
+
+pub fn gpu_proof_fields(
+    requested_gpu_device_ids: &[i32],
+    routing_backend: &str,
+    sidecar_used: bool,
+) -> GpuProofFields {
+    if requested_gpu_device_ids.is_empty() {
+        return GpuProofFields {
+            gpu_evidence_status: None,
+            gpu_proof: None,
+            native_gpu_unavailable: None,
+            not_gpu_proof_reason: None,
+        };
+    }
+
+    let native_gpu_proof = routing_backend == "NativeGpuBackend" && !sidecar_used;
+    if native_gpu_proof {
+        return GpuProofFields {
+            gpu_evidence_status: Some("native"),
+            gpu_proof: Some(true),
+            native_gpu_unavailable: Some(false),
+            not_gpu_proof_reason: None,
+        };
+    }
+
+    GpuProofFields {
+        gpu_evidence_status: Some("unsupported"),
+        gpu_proof: Some(false),
+        native_gpu_unavailable: Some(true),
+        not_gpu_proof_reason: Some(format!(
+            "Requested GPU execution did not produce NativeGpuBackend with sidecar_used=false \
+             (routing_backend={routing_backend}, sidecar_used={sidecar_used}); this is \
+             CPU/sidecar compatibility output, not GPU acceleration proof."
+        )),
+    }
+}
+
 impl RoutingDecision {
     pub const fn routing_backend(self) -> &'static str {
         self.selection.routing_backend()

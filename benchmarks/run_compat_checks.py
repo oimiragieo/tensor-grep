@@ -471,7 +471,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--progress",
         choices=PROGRESS_MODES,
-        default="auto",
+        default="always",
         help="Progress reporting mode: auto, always, or never. Emits to stderr only.",
     )
     parser.add_argument(
