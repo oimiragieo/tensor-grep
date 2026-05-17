@@ -36,6 +36,8 @@ DEFAULT_RUNS = 3
 DEFAULT_WARMUP = 0
 DEFAULT_COMMAND_TIMEOUT_S = 180
 DEFAULT_GPU_DEVICE_ID = 0
+NATIVE_SCALE_WORKLOAD_CLASS = "single_pattern_cold_grep"
+NATIVE_MANY_PATTERN_WORKLOAD_CLASS = "many_fixed_patterns_single_dispatch"
 DEFAULT_TIMEOUT_SIMULATION_MS = 300
 DEFAULT_TIMEOUT_DESCRIPTION = "simulation-backed via TG_TEST_CUDA_BEHAVIOR"
 DEFAULT_ADVANCED_TRANSFER_TOTAL_BYTES = 1 * GB
@@ -97,6 +99,18 @@ def _build_command_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 def build_rg_search_command(rg_binary: str, pattern: str, corpus_dir: Path) -> list[str]:
     return [rg_binary, "--no-ignore", "-F", pattern, str(corpus_dir)]
+
+
+def build_rg_multi_pattern_search_command(
+    rg_binary: str,
+    patterns: list[str] | tuple[str, ...],
+    corpus_dir: Path,
+) -> list[str]:
+    command = [rg_binary, "--no-ignore", "-F"]
+    for pattern in patterns:
+        command.extend(["-e", pattern])
+    command.append(str(corpus_dir))
+    return command
 
 
 def build_tg_cpu_search_command(tg_binary: Path, pattern: str, corpus_dir: Path) -> list[str]:
@@ -960,11 +974,13 @@ def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object
     return {
         "required_runtime_backend": "NativeGpuBackend",
         "required_sidecar_used": False,
+        "required_workload_class": NATIVE_SCALE_WORKLOAD_CLASS,
         "required_correctness_sizes": required_labels,
         "required_speed_baselines": ["rg", "tg_cpu"],
         "sidecar_routing_counts_as_promotion": False,
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
+        "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
     }
 
 
@@ -1031,16 +1047,16 @@ def _native_speed_gate(
         ):
             best_attempt = attempt
 
-    status = "PASS" if winning_sizes else "FAIL"
+    status = "PASS" if required_labels.issubset(set(winning_sizes)) else "FAIL"
     return {
         "status": status,
         "required_baselines": ["rg", "tg_cpu"],
         "winning_sizes": winning_sizes,
         "best_attempt": best_attempt,
         "reason": (
-            "Native CUDA beat both rg and tg_cpu at the required scale."
-            if winning_sizes
-            else "Native CUDA did not beat both rg and tg_cpu at the required scale."
+            "Native CUDA beat both rg and tg_cpu at every required scale."
+            if status == "PASS"
+            else "Native CUDA did not beat both rg and tg_cpu at every required scale."
         ),
     }
 
@@ -1281,6 +1297,7 @@ def build_native_scale_gate_summary(
 
     return {
         "benchmark_surface": "native-cuda-scale",
+        "workload_class": NATIVE_SCALE_WORKLOAD_CLASS,
         "promotion_evidence_contract": _promotion_evidence_contract(required_labels),
         "native_cuda_runtime_gate": runtime_gate,
         "correctness_gate": correctness_gate,
@@ -2023,6 +2040,14 @@ def run_advanced_gpu_native_benchmarks(
         timeout_s=command_timeout_s,
         workload_bytes=one_gib_actual_bytes * len(multi_patterns),
     )
+    multi_pattern_rg_benchmark = benchmark_search_command(
+        build_rg_multi_pattern_search_command(rg_binary, multi_patterns, one_gib_corpus),
+        env=env,
+        runs=runs,
+        warmup=warmup,
+        timeout_s=command_timeout_s,
+        corpus_bytes=one_gib_actual_bytes,
+    )
     multi_pattern_gpu_stats = (
         multi_pattern_gpu_benchmark.pop("payload", {})
         if isinstance(multi_pattern_gpu_benchmark.get("payload"), dict)
@@ -2030,10 +2055,18 @@ def run_advanced_gpu_native_benchmarks(
     )
     multi_pattern_gpu_median = multi_pattern_gpu_benchmark.get("median_s")
     multi_pattern_cpu_median = multi_pattern_cpu_benchmark.get("median_s")
+    multi_pattern_rg_median = multi_pattern_rg_benchmark.get("median_s")
     multi_pattern_speedup = (
         round(float(multi_pattern_cpu_median) / float(multi_pattern_gpu_median), 4)
         if isinstance(multi_pattern_gpu_median, (float, int))
         and isinstance(multi_pattern_cpu_median, (float, int))
+        and float(multi_pattern_gpu_median) > 0
+        else None
+    )
+    multi_pattern_rg_speedup = (
+        round(float(multi_pattern_rg_median) / float(multi_pattern_gpu_median), 4)
+        if isinstance(multi_pattern_gpu_median, (float, int))
+        and isinstance(multi_pattern_rg_median, (float, int))
         and float(multi_pattern_gpu_median) > 0
         else None
     )
@@ -2042,22 +2075,32 @@ def run_advanced_gpu_native_benchmarks(
         "PASS"
         if multi_pattern_gpu_benchmark.get("status") == "PASS"
         and multi_pattern_cpu_benchmark.get("status") == "PASS"
+        and multi_pattern_rg_benchmark.get("status") == "PASS"
         and int(multi_pattern_pipeline.get("pattern_count", 0)) == len(multi_patterns)
         and bool(multi_pattern_pipeline.get("single_dispatch"))
         and multi_pattern_speedup is not None
         and multi_pattern_speedup > 1.0
+        and multi_pattern_rg_speedup is not None
+        and multi_pattern_rg_speedup > 1.0
         else "FAIL"
     )
     advanced["multi_pattern"] = {
         "status": multi_pattern_status,
+        "workload_class": NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
+        "fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
         "patterns": multi_patterns,
         "gpu": multi_pattern_gpu_benchmark,
         "cpu_sequential": multi_pattern_cpu_benchmark,
+        "rg_multi_pattern": multi_pattern_rg_benchmark,
         "speedup_vs_cpu": multi_pattern_speedup,
+        "speedup_vs_rg_multi_pattern": multi_pattern_rg_speedup,
         "gpu_stats": multi_pattern_gpu_stats,
     }
     if multi_pattern_status != "PASS":
-        errors.append("Multi-pattern GPU benchmark did not beat sequential CPU execution.")
+        errors.append(
+            "Multi-pattern GPU benchmark did not beat both sequential CPU and fair rg "
+            "multi-pattern execution."
+        )
 
     single_gpu_benchmark = benchmark_json_metric_command(
         build_tg_gpu_native_stats_command(

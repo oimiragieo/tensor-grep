@@ -3532,6 +3532,30 @@ def test_run_gpu_native_benchmarks_should_emit_advanced_sections_when_enabled(
     assert payload["advanced"]["oom_validation"]["status"] == "PASS"
 
 
+def test_run_gpu_native_benchmarks_should_build_fair_rg_multi_pattern_command(tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_fair_rg_multi_pattern",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    corpus_dir = tmp_path / "corpus"
+    patterns = ["ERROR timeout", "WARN retry", "Database connection timeout"]
+
+    command = module.build_rg_multi_pattern_search_command("rg", patterns, corpus_dir)
+
+    assert command == [
+        "rg",
+        "--no-ignore",
+        "-F",
+        "-e",
+        "ERROR timeout",
+        "-e",
+        "WARN retry",
+        "-e",
+        "Database connection timeout",
+        str(corpus_dir),
+    ]
+
+
 def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module(
         "run_hot_query_benchmarks_script", "benchmarks/run_hot_query_benchmarks.py"

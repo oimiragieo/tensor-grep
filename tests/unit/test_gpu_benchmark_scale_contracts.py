@@ -29,6 +29,29 @@ def test_run_gpu_benchmarks_should_parse_5gb_corpus_size():
     )
 
 
+def test_gpu_promotion_contract_should_name_single_pattern_workload_class():
+    module = _load_script_module(
+        "run_gpu_benchmarks_workload_contract", "benchmarks/run_gpu_benchmarks.py"
+    )
+
+    contract = module._promotion_evidence_contract(["1GB", "5GB"])
+
+    assert contract["required_workload_class"] == "single_pattern_cold_grep"
+    assert contract["many_pattern_claim_requires_fair_rg_multi_pattern_baseline"] is True
+
+
+def test_gpu_native_promotion_contract_should_name_single_pattern_workload_class():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_workload_contract",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    contract = module._promotion_evidence_contract(["1GB", "5GB"])
+
+    assert contract["required_workload_class"] == "single_pattern_cold_grep"
+    assert contract["many_pattern_claim_requires_fair_rg_multi_pattern_baseline"] is True
+
+
 def test_gpu_pipeline_helpers_should_summarize_bottleneck_stage():
     module = _load_script_module(
         "run_gpu_benchmarks_pipeline_summary", "benchmarks/run_gpu_benchmarks.py"
@@ -515,14 +538,17 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
     assert "sidecar" in payload["not_gpu_proof_reason"]
     assert payload["scale_gate_summary"] == {
         "benchmark_surface": "python-gpu-scale",
+        "workload_class": "single_pattern_cold_grep",
         "promotion_evidence_contract": {
             "required_runtime_backend": "NativeGpuBackend",
             "required_sidecar_used": False,
+            "required_workload_class": "single_pattern_cold_grep",
             "required_correctness_sizes": ["1GB", "5GB"],
             "required_speed_baselines": ["rg", "tg_cpu"],
             "sidecar_routing_counts_as_promotion": False,
             "fallback_or_sidecar_counts_as_gpu_proof": False,
             "public_managed_rows_must_not_be_sidecar": True,
+            "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
         },
         "native_cuda_scale_gate": {
             "status": "UNSUPPORTED",
@@ -764,7 +790,7 @@ def test_gpu_auto_recommendation_should_reject_sidecar_contaminated_native_rows(
     assert "NativeGpuBackend with sidecar_used=false" in recommendation["reason"]
 
 
-def test_gpu_auto_recommendation_should_recommend_required_scale_win_with_correctness():
+def test_gpu_auto_recommendation_should_require_every_required_scale_to_win():
     module = _load_script_module(
         "run_gpu_benchmarks_required_recommendation",
         "benchmarks/run_gpu_benchmarks.py",
@@ -820,6 +846,67 @@ def test_gpu_auto_recommendation_should_recommend_required_scale_win_with_correc
         correctness_patterns=("gpu benchmark sentinel", "WARN retry budget exhausted"),
     )
 
+    assert recommendation["should_add_flag"] is False
+    assert recommendation["winning_rows"] == []
+    assert "every required 1GB/5GB scale" in recommendation["reason"]
+
+
+def test_gpu_auto_recommendation_should_recommend_when_all_required_scales_win():
+    module = _load_script_module(
+        "run_gpu_benchmarks_all_required_recommendation",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 10.0},
+            "tg_cpu": {"status": "PASS", "median_s": 12.0},
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 5.0,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": False,
+                }
+            ],
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 60.0},
+            "tg_cpu": {"status": "PASS", "median_s": 70.0},
+            "gpu": [
+                {
+                    "device_id": 0,
+                    "status": "PASS",
+                    "median_s": 40.0,
+                    "tg_runtime_backend": "NativeGpuBackend",
+                    "tg_runtime_sidecar_used": False,
+                }
+            ],
+        },
+    ]
+    correctness_checks = [
+        {
+            "device_id": 0,
+            "corpus_size_label": size_label,
+            "pattern": pattern,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+        for pattern in ("gpu benchmark sentinel", "WARN retry budget exhausted")
+    ]
+
+    recommendation = module.analyze_gpu_auto_recommendation(
+        rows,
+        correctness_checks=correctness_checks,
+        correctness_patterns=("gpu benchmark sentinel", "WARN retry budget exhausted"),
+    )
+
     assert recommendation["should_add_flag"] is True
     assert recommendation["winning_rows"] == [
         {
@@ -828,7 +915,14 @@ def test_gpu_auto_recommendation_should_recommend_required_scale_win_with_correc
             "size_bytes": module.GB,
             "speedup_vs_rg_pct": 50.0,
             "speedup_vs_tg_cpu_pct": 58.33,
-        }
+        },
+        {
+            "device_id": 0,
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "speedup_vs_rg_pct": 33.33,
+            "speedup_vs_tg_cpu_pct": 42.86,
+        },
     ]
 
 
@@ -1334,14 +1428,17 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
     )
 
     assert summary["benchmark_surface"] == "native-cuda-scale"
+    assert summary["workload_class"] == "single_pattern_cold_grep"
     assert summary["promotion_evidence_contract"] == {
         "required_runtime_backend": "NativeGpuBackend",
         "required_sidecar_used": False,
+        "required_workload_class": "single_pattern_cold_grep",
         "required_correctness_sizes": ["1GB", "5GB"],
         "required_speed_baselines": ["rg", "tg_cpu"],
         "sidecar_routing_counts_as_promotion": False,
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
+        "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
     }
     assert summary["native_cuda_runtime_gate"] == {
         "status": "PASS",
@@ -1365,7 +1462,7 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
             "gpu_rg_ratio": 36.8,
             "gpu_tg_cpu_ratio": 38.3333,
         },
-        "reason": "Native CUDA did not beat both rg and tg_cpu at the required scale.",
+        "reason": "Native CUDA did not beat both rg and tg_cpu at every required scale.",
     }
     assert summary["promotion_blockers"] == ["speed_gate_failed"]
     assert summary["promotion_ready"] is False
