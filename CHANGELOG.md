@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.24 (2026-05-17)
+
+### Bug Fixes
+
+- Codify dogfood workflow ledger
+  ([`cff51b9`](https://github.com/oimiragieo/tensor-grep/commit/cff51b983b074007937c0d094e068787f9ac64b1))
+
+
 ## v1.12.23 (2026-05-17)
 
 ### Bug Fixes
