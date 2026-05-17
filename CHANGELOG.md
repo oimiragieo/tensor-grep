@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.28 (2026-05-17)
+
+### Bug Fixes
+
+- Emit structured search json errors
+  ([`da59c96`](https://github.com/oimiragieo/tensor-grep/commit/da59c969447083ae8f427f3902539f9551d12ada))
+
+Emit stable JSON error envelopes for tensor-grep search invalid-input paths.
+
+
 ## v1.12.27 (2026-05-17)
 
 ### Bug Fixes
