@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.29 (2026-05-17)
+
+### Bug Fixes
+
+- Harden v1.12.28 dogfood contracts ([#158](https://github.com/oimiragieo/tensor-grep/pull/158),
+  [`c375bda`](https://github.com/oimiragieo/tensor-grep/commit/c375bda7e3d7e9e5d1dca91cac2054c4a3ed6462))
+
+
 ## v1.12.28 (2026-05-17)
 
 ### Bug Fixes
