@@ -18,6 +18,8 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 IS_WINDOWS = os.name == "nt"
+ARTIFACT_TAIL_LINE_LIMIT = 20
+ARTIFACT_TAIL_LINE_CHAR_LIMIT = 4000
 
 from tensor_grep.cli.progress import (  # noqa: E402
     PROGRESS_MODES,
@@ -128,6 +130,122 @@ def validate_windows_launcher_quoted_patterns(
                 f"exit={completed.returncode}, stdout={stdout or '<empty>'}, "
                 f"stderr={stderr or '<empty>'}"
             )
+
+
+def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str]]]:
+    log_file = probe_dir / "app.log"
+    return [
+        ("short-with-filename", ["tg", "search", "-H", "ERROR", str(log_file)]),
+        (
+            "long-with-filename",
+            ["tg", "search", "--with-filename", "ERROR", str(log_file)],
+        ),
+        ("short-no-filename", ["tg", "search", "-I", "ERROR", str(log_file)]),
+        (
+            "long-no-filename",
+            ["tg", "search", "--no-filename", "ERROR", str(log_file)],
+        ),
+        ("short-quiet", ["tg", "search", "-q", "ERROR", str(log_file)]),
+        ("long-quiet", ["tg", "search", "--quiet", "ERROR", str(log_file)]),
+        ("stats", ["tg", "search", "--stats", "ERROR", str(log_file)]),
+        ("debug", ["tg", "search", "--debug", "ERROR", str(log_file)]),
+        ("trace", ["tg", "search", "--trace", "ERROR", str(log_file)]),
+        ("engine", ["tg", "search", "--engine", "auto", "ERROR", str(log_file)]),
+        ("case-sensitive", ["tg", "search", "-s", "ERROR", str(log_file)]),
+        ("line-regexp", ["tg", "search", "-x", "ERROR failed", str(log_file)]),
+        ("threads", ["tg", "search", "-j", "1", "ERROR", str(log_file)]),
+        ("iglob", ["tg", "search", "--iglob", "*.log", "ERROR", str(probe_dir)]),
+        ("type-not", ["tg", "search", "-T", "rust", "ERROR", str(probe_dir)]),
+        ("unrestricted", ["tg", "search", "-u", "ERROR", str(probe_dir)]),
+        (
+            "root-option-first-sort",
+            ["tg", "--sort", "path", "-n", "-F", "ERROR", str(probe_dir)],
+        ),
+    ]
+
+
+def _extract_help_option_tokens(help_text: str) -> set[str]:
+    return set(re.findall(r"(?<![\w-])-{1,2}[A-Za-z0-9][A-Za-z0-9_.-]*", help_text))
+
+
+def _search_flag_tokens_for_sweep(command: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for arg in command[1:]:
+        if arg == "--":
+            break
+        if re.fullmatch(r"-[A-Za-z0-9.]", arg) or re.fullmatch(
+            r"--[A-Za-z0-9][A-Za-z0-9_.-]*", arg
+        ):
+            tokens.add(arg)
+    return tokens
+
+
+def validate_public_search_advertised_flag_sweep(
+    _stdout: str, repo_root: Path, _expected_version: str
+) -> None:
+    if shutil.which("tg") is None:
+        raise ReadinessError("could not resolve public tg command for search flag sweep")
+
+    probe_dir = repo_root / "artifacts" / "agent_readiness" / "public_search_flags"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    (probe_dir / "app.log").write_text("ERROR failed\nINFO ok\n", encoding="utf-8")
+    (probe_dir / "lib.rs").write_text("fn main() {}\n", encoding="utf-8")
+
+    help_result = subprocess.run(
+        ["tg", "search", "--help"],
+        cwd=repo_root,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if help_result.returncode != 0:
+        raise ReadinessError(
+            "could not read public tg search --help for advertised flag sweep: "
+            f"exit={help_result.returncode}, stderr={help_result.stderr.strip() or '<empty>'}"
+        )
+    advertised_flags = _extract_help_option_tokens(help_result.stdout)
+    required_flags = set().union(
+        *(
+            _search_flag_tokens_for_sweep(command)
+            for _label, command in _public_search_flag_sweep_cases(probe_dir)
+        )
+    )
+    missing_flags = sorted(required_flags - advertised_flags)
+    if missing_flags:
+        raise ReadinessError(
+            "search help missing advertised sweep flags: " + ", ".join(missing_flags)
+        )
+
+    failures: list[str] = []
+    for label, command in _public_search_flag_sweep_cases(probe_dir):
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        if completed.returncode not in {0, 1}:
+            failures.append(
+                f"{label}: exit={completed.returncode}, command={command!r}, "
+                f"stdout={stdout or '<empty>'}, stderr={stderr or '<empty>'}"
+            )
+            continue
+        if "unexpected argument" in stderr.lower():
+            failures.append(
+                f"{label}: command={command!r} emitted unexpected-argument stderr: {stderr}"
+            )
+
+    if failures:
+        raise ReadinessError("public search advertised flag sweep failed: " + "; ".join(failures))
 
 
 def _validate_doctor_payload(
@@ -531,6 +649,18 @@ def build_check_plan(
                     validator=validate_windows_launcher_quoted_patterns,
                 ),
             ])
+        checks.append(
+            Check(
+                name="public-search-advertised-flag-sweep",
+                command=[],
+                description=(
+                    "Verify installed public tg accepts advertised rg-style search flags "
+                    "and option-first root search forwarding."
+                ),
+                timeout_s=60,
+                validator=validate_public_search_advertised_flag_sweep,
+            )
+        )
 
     checks.extend([
         Check(
@@ -696,6 +826,22 @@ def _argparse_progress_interval_s(value: str) -> float:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _bounded_tail_lines(
+    text: str,
+    *,
+    line_limit: int = ARTIFACT_TAIL_LINE_LIMIT,
+    char_limit: int = ARTIFACT_TAIL_LINE_CHAR_LIMIT,
+) -> list[str]:
+    bounded: list[str] = []
+    for line in text.splitlines()[-line_limit:]:
+        if len(line) <= char_limit:
+            bounded.append(line)
+        else:
+            omitted = len(line) - char_limit
+            bounded.append(f"{line[:char_limit]}... <truncated {omitted} chars>")
+    return bounded
+
+
 def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[str, Any]:
     started = time.monotonic()
     if not _command_available(check.command):
@@ -759,8 +905,8 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
         "command": check.command,
         "returncode": returncode,
         "message": message,
-        "stdout_tail": stdout.splitlines()[-20:],
-        "stderr_tail": stderr.splitlines()[-20:],
+        "stdout_tail": _bounded_tail_lines(stdout),
+        "stderr_tail": _bounded_tail_lines(stderr),
     }
 
 

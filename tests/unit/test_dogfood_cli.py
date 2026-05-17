@@ -121,6 +121,45 @@ def test_dogfood_json_progress_always_uses_stderr_only(tmp_path: Path) -> None:
     assert "[progress]" not in result.stdout
 
 
+def test_dogfood_command_caps_nested_readiness_tails(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "agent_readiness.py"
+    giant = "z" * 9000
+    script.write_text(
+        "\n".join([
+            "import sys",
+            f"print({giant!r})",
+            f"print({giant!r}, file=sys.stderr)",
+        ]),
+        encoding="utf-8",
+    )
+    output = tmp_path / "artifacts" / "dogfood.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "dogfood",
+            "--root",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--no-shell-probes",
+            "--no-wsl-probe",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    nested = payload["agent_readiness"]["results"][0]
+    assert "truncated" in nested["stdout_tail"][0]
+    assert "truncated" in nested["stderr_tail"][0]
+    assert "truncated" in payload["stderr_tail"][0]
+    assert len(nested["stdout_tail"][0]) < 4200
+    assert len(nested["stderr_tail"][0]) < 4200
+    assert len(payload["stderr_tail"][0]) < 4200
+
+
 def test_dogfood_rejects_non_positive_progress_interval(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,

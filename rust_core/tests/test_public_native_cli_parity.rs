@@ -515,6 +515,25 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
     fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
 
     let flag_cases: &[(&str, &[&str])] = &[
+        ("-H", &["search", "-H", "ERROR", "."]),
+        (
+            "--with-filename",
+            &["search", "--with-filename", "ERROR", "."],
+        ),
+        ("-I", &["search", "-I", "ERROR", "."]),
+        ("--no-filename", &["search", "--no-filename", "ERROR", "."]),
+        ("-q", &["search", "-q", "ERROR", "."]),
+        ("--quiet", &["search", "--quiet", "ERROR", "."]),
+        ("--engine", &["search", "--engine", "auto", "ERROR", "."]),
+        ("-s", &["search", "-s", "ERROR", "."]),
+        ("-x", &["search", "-x", "ERROR", "."]),
+        ("-j", &["search", "-j", "1", "ERROR", "."]),
+        ("--iglob", &["search", "--iglob", "*.log", "ERROR", "."]),
+        ("-T", &["search", "-T", "rust", "ERROR", "."]),
+        ("-u", &["search", "-u", "ERROR", "."]),
+        ("--stats", &["search", "--stats", "ERROR", "."]),
+        ("--debug", &["search", "--debug", "ERROR", "."]),
+        ("--trace", &["search", "--trace", "ERROR", "."]),
         ("--passthru", &["search", "--passthru", "ERROR", "."]),
         ("--passthrough", &["search", "--passthrough", "ERROR", "."]),
         ("--unicode", &["search", "--unicode", "ERROR", "."]),
@@ -569,6 +588,36 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn test_option_first_root_search_flags_forward_to_search_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_asserting_args_script(
+        dir.path(),
+        &["--sort", "path", "-n", "-F", "-e", "ERROR", "."],
+        "accepted\n",
+    );
+    fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["--sort", "path", "-n", "-F", "ERROR", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "accepted\n"
+    );
 }
 
 #[test]

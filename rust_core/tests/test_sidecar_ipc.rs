@@ -208,7 +208,7 @@ fn test_sidecar_protocol_handles_large_payload_and_large_stdout() {
     });
     let request = json!({
         "command": "classify",
-        "args": [],
+        "args": ["--max-lines", "0"],
         "payload": payload,
     });
 

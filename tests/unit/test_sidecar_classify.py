@@ -139,6 +139,53 @@ def test_python_cli_classify_defaults_to_fast_local_heuristics(monkeypatch, tmp_
     assert payload["classification_backend"]["provider_used"] == "heuristic"
 
 
+def test_python_cli_classify_caps_json_output_by_default(monkeypatch, tmp_path):
+    from tensor_grep.cli.main import app
+
+    log_path = tmp_path / "app.log"
+    log_path.write_text(
+        "".join(f"INFO line {index}\n" for index in range(505)),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    result = CliRunner().invoke(app, ["classify", "--format", "json", str(log_path)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert len(payload["classifications"]) == 500
+    assert payload["line_budget"] == {
+        "max_lines": 500,
+        "total_lines": 505,
+        "emitted_lines": 500,
+        "omitted_lines": 5,
+        "truncated": True,
+    }
+
+
+def test_sidecar_classify_accepts_explicit_max_lines(monkeypatch):
+    from tensor_grep.sidecar import _classify_payload
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    stdout, stderr, exit_code = _classify_payload(
+        ["--format=json", "--max-lines", "2"],
+        {"content": "INFO one\nWARN two\nERROR three\n"},
+    )
+
+    assert stderr == ""
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert len(payload["classifications"]) == 2
+    assert payload["line_budget"] == {
+        "max_lines": 2,
+        "total_lines": 3,
+        "emitted_lines": 2,
+        "omitted_lines": 1,
+        "truncated": True,
+    }
+
+
 def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch):
     from tensor_grep.sidecar import _classify_payload
 

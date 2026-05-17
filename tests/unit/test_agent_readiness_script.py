@@ -89,6 +89,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         assert "public-doctor-cmd" in names
         assert "public-doctor-pwsh-noprofile" in names
         assert "public-version-python-subprocess" in names
+    assert "public-search-advertised-flag-sweep" in names
     assert "repo-cli-build-warmup" in names
     assert "repo-doctor" in names
     assert "context-render-trust" in names
@@ -162,6 +163,13 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "pytest",
         "tests/unit/test_agent_capsule_hardcases.py",
     ]
+
+    flag_sweep = next(
+        check for check in checks if check.name == "public-search-advertised-flag-sweep"
+    )
+    assert flag_sweep.command == []
+    assert flag_sweep.validator is module.validate_public_search_advertised_flag_sweep
+    assert flag_sweep.timeout_s <= 60
 
 
 def test_agent_readiness_docs_claims_cover_gpu_taxonomy(tmp_path) -> None:
@@ -513,6 +521,148 @@ def test_agent_readiness_should_accept_native_and_python_version_prefixes() -> N
     module.validate_version_output("tg 1.8.26\n", Path("C:/repo"), "1.8.26")
 
 
+def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script_module()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(list(command))
+        if command == ["tg", "search", "--help"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="\n".join([
+                    "Usage: tg search [OPTIONS]",
+                    "  -H, --with-filename",
+                    "  -I, --no-filename",
+                    "  -q, --quiet",
+                    "      --stats",
+                    "      --debug",
+                    "      --trace",
+                    "      --engine <ENGINE>",
+                    "  -s, --case-sensitive",
+                    "  -x, --line-regexp",
+                    "  -j, --threads <THREADS>",
+                    "      --iglob <GLOB>",
+                    "  -T, --type-not <TYPE>",
+                    "  -u, --unrestricted",
+                    "      --sort <SORTBY>",
+                    "  -n, --line-number",
+                    "  -F, --fixed-strings",
+                ]),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=2,
+            stdout="",
+            stderr="error: unexpected argument '-H' found\n",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    try:
+        module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+    except module.ReadinessError as exc:
+        assert "public search advertised flag sweep failed" in str(exc)
+        assert "-H" in str(exc)
+        assert "unexpected argument" in str(exc)
+    else:
+        raise AssertionError("expected public search flag sweep to fail")
+
+    assert calls[0] == ["tg", "search", "--help"]
+
+
+def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script_module()
+    seen_commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+
+    def fake_run(command, **_kwargs):
+        seen_commands.append(list(command))
+        if command == ["tg", "search", "--help"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="\n".join([
+                    "Usage: tg search [OPTIONS]",
+                    "  -H, --with-filename",
+                    "  -I, --no-filename",
+                    "  -q, --quiet",
+                    "      --stats",
+                    "      --debug",
+                    "      --trace",
+                    "      --engine <ENGINE>",
+                    "  -s, --case-sensitive",
+                    "  -x, --line-regexp",
+                    "  -j, --threads <THREADS>",
+                    "      --iglob <GLOB>",
+                    "  -T, --type-not <TYPE>",
+                    "  -u, --unrestricted",
+                    "      --sort <SORTBY>",
+                    "  -n, --line-number",
+                    "  -F, --fixed-strings",
+                ]),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="accepted\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+
+    flattened = [" ".join(command) for command in seen_commands]
+    assert seen_commands[0] == ["tg", "search", "--help"]
+    assert any("search -H" in command for command in flattened)
+    assert any("search --stats" in command for command in flattened)
+    assert any(command.startswith("tg --sort path") for command in flattened)
+
+
+def test_agent_readiness_public_search_flag_sweep_rejects_missing_help_advertisement(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script_module()
+
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+
+    def fake_run(command, **_kwargs):
+        assert command == ["tg", "search", "--help"]
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="Usage: tg search [OPTIONS]\n  -H, --with-filename\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    try:
+        module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+    except module.ReadinessError as exc:
+        assert "search help missing advertised sweep flags" in str(exc)
+        assert "--stats" in str(exc)
+    else:
+        raise AssertionError("expected missing help flag to fail")
+
+
 def test_agent_readiness_should_reject_signature_only_context_payload() -> None:
     module = _load_script_module()
     payload = {
@@ -654,6 +804,40 @@ def test_agent_readiness_json_progress_always_uses_stderr_only(
     assert json.loads(captured.out)["summary"]["passed"] == 1
     assert "[progress]" in captured.err
     assert "[progress]" not in captured.out
+
+
+def test_agent_readiness_run_check_caps_single_line_stdout_stderr(monkeypatch, tmp_path) -> None:
+    module = _load_script_module()
+    huge_stdout = "x" * (module.ARTIFACT_TAIL_LINE_CHAR_LIMIT + 25)
+    huge_stderr = "y" * (module.ARTIFACT_TAIL_LINE_CHAR_LIMIT + 10)
+
+    monkeypatch.setattr(module, "_command_available", lambda _command: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["demo"],
+            returncode=0,
+            stdout=huge_stdout,
+            stderr=huge_stderr,
+        ),
+    )
+
+    result = module.run_check(
+        module.Check(
+            name="giant-json-line",
+            command=["demo"],
+            description="demo",
+        ),
+        repo_root=tmp_path,
+        expected_version="1.12.28",
+    )
+
+    assert result["status"] == "passed"
+    assert len(result["stdout_tail"][0]) <= module.ARTIFACT_TAIL_LINE_CHAR_LIMIT + 80
+    assert len(result["stderr_tail"][0]) <= module.ARTIFACT_TAIL_LINE_CHAR_LIMIT + 80
+    assert "truncated" in result["stdout_tail"][0]
+    assert "truncated" in result["stderr_tail"][0]
 
 
 def test_progress_reporter_emits_phase_heartbeat_to_configured_stream() -> None:

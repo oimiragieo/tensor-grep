@@ -411,6 +411,30 @@ def test_run_compat_checks_routing_metadata_report_caps_payload_previews():
     assert summary["match_counts_by_file_count"] == 3
 
 
+def test_run_compat_checks_scenario_diff_caps_line_lists():
+    module = _load_script_module(
+        "run_compat_checks_diff_cap_script", "benchmarks/run_compat_checks.py"
+    )
+    scenario = {"name": "large-diff", "comparison": "lines"}
+    rg_output = "\n".join(f"rg-line-{index:03d}" for index in range(80))
+    tg_output = "\n".join(f"tg-line-{index:03d}" for index in range(80))
+
+    report = module.compare_scenario(
+        scenario,
+        module.CommandResult(0, rg_output, ""),
+        module.CommandResult(0, tg_output, ""),
+    )
+
+    assert report["status"] == "FAIL"
+    assert report["reason"] == "sorted-line-diff"
+    assert report["missing_lines_total"] == 80
+    assert report["extra_lines_total"] == 80
+    assert len(report["missing_lines"]) == module.LINE_DIFF_PREVIEW_LIMIT
+    assert len(report["extra_lines"]) == module.LINE_DIFF_PREVIEW_LIMIT
+    assert report["missing_lines_omitted"] == 80 - module.LINE_DIFF_PREVIEW_LIMIT
+    assert report["extra_lines_omitted"] == 80 - module.LINE_DIFF_PREVIEW_LIMIT
+
+
 def test_run_compat_checks_progress_always_uses_stderr_without_changing_report(
     monkeypatch, tmp_path, capsys
 ):

@@ -52,6 +52,102 @@ const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent -
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
+const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
+    "--format",
+    "--sort",
+    "--sortr",
+    "--sort-files",
+    "--no-sort-files",
+    "-H",
+    "--with-filename",
+    "-I",
+    "--no-filename",
+    "-q",
+    "--quiet",
+    "--engine",
+    "-s",
+    "--case-sensitive",
+    "-x",
+    "--line-regexp",
+    "-j",
+    "--threads",
+    "--iglob",
+    "-T",
+    "--type-not",
+    "-u",
+    "--unrestricted",
+    "--stats",
+    "--debug",
+    "--trace",
+];
+const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
+    "-H",
+    "--with-filename",
+    "-I",
+    "--no-filename",
+    "-q",
+    "--quiet",
+    "--engine",
+    "-s",
+    "--case-sensitive",
+    "-x",
+    "--line-regexp",
+    "-j",
+    "--threads",
+    "--iglob",
+    "-T",
+    "--type-not",
+    "-u",
+    "--unrestricted",
+    "--stats",
+    "--debug",
+    "--trace",
+    "-f",
+    "--file",
+    "--pre",
+    "--pre-glob",
+    "-z",
+    "--search-zip",
+    "--crlf",
+    "--dfa-size-limit",
+    "-E",
+    "--encoding",
+    "--mmap",
+    "--no-unicode",
+    "--regex-size-limit",
+    "--stop-on-nonmatch",
+    "--binary",
+    "--glob-case-insensitive",
+    "--ignore-file",
+    "--ignore-file-case-insensitive",
+    "--no-require-git",
+    "--one-file-system",
+    "--type-add",
+    "--type-clear",
+    "--block-buffered",
+    "-b",
+    "--byte-offset",
+    "--colors",
+    "--context-separator",
+    "--field-context-separator",
+    "--field-match-separator",
+    "--heading",
+    "--no-heading",
+    "--hostname-bin",
+    "--hyperlink-format",
+    "--include-zero",
+    "--line-buffered",
+    "-M",
+    "--max-columns",
+    "--max-columns-preview",
+    "-p",
+    "--pretty",
+    "--trim",
+    "--no-ignore-messages",
+    "--no-messages",
+    "--generate",
+    "--lang",
+];
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -544,6 +640,10 @@ pub struct ClassifyArgs {
     #[arg(long = "format", default_value = "json")]
     pub format: String,
 
+    /// Maximum input lines to emit in JSON output (0 disables the cap)
+    #[arg(long = "max-lines", default_value_t = 500)]
+    pub max_lines: usize,
+
     /// The log file to classify
     pub file_path: String,
 }
@@ -917,6 +1017,13 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if raw_args.get(1).and_then(|arg| arg.to_str()) != Some("search") {
+        if let Some(search_args) = normalize_top_level_search_args(&raw_args) {
+            let cli = CommandCli::parse_from(search_args);
+            return run_command_cli(cli);
+        }
+    }
+
     if let Some(exit_code) = try_early_positional_ripgrep_passthrough(&raw_args)? {
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -1066,13 +1173,16 @@ fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Re
 }
 
 fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<String>> {
-    let search_args = normalize_top_level_format_search_args(raw_args)?;
+    let search_args = normalize_top_level_search_args(raw_args)?;
 
     let args = search_args
         .iter()
         .skip(2)
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+    if search_args_contain_any_flag(&args, SEARCH_PYTHON_PASSTHROUGH_FLAGS) {
+        return Some(args);
+    }
     if args.iter().any(|arg| {
         matches!(
             arg.as_str(),
@@ -1130,14 +1240,13 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
     None
 }
 
-fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
+fn normalize_top_level_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
     if raw_args.get(1).and_then(|arg| arg.to_str()) == Some("search") {
         return Some(raw_args.to_vec());
     }
-    if !raw_args.iter().skip(1).any(|arg| {
-        let token = arg.to_string_lossy();
-        token == "--format" || token.starts_with("--format=")
-    }) {
+    if !raw_args_contain_any_flag(raw_args, SEARCH_OPTION_FIRST_FLAGS)
+        && !raw_args_contain_any_flag(raw_args, SEARCH_PYTHON_PASSTHROUGH_FLAGS)
+    {
         return None;
     }
     if raw_args
@@ -1154,6 +1263,28 @@ fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<O
     search_args.push(OsString::from("search"));
     search_args.extend(raw_args.iter().skip(1).cloned());
     Some(search_args)
+}
+
+fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
+    normalize_top_level_search_args(raw_args)
+}
+
+fn raw_args_contain_any_flag(raw_args: &[OsString], flags: &[&str]) -> bool {
+    raw_args.iter().skip(1).any(|arg| {
+        let token = arg.to_string_lossy();
+        token_matches_any_flag(&token, flags)
+    })
+}
+
+fn search_args_contain_any_flag(args: &[String], flags: &[&str]) -> bool {
+    args.iter()
+        .any(|token| token_matches_any_flag(token.as_str(), flags))
+}
+
+fn token_matches_any_flag(token: &str, flags: &[&str]) -> bool {
+    flags.iter().any(|flag| {
+        token == *flag || (flag.starts_with("--") && token.starts_with(&format!("{flag}=")))
+    })
 }
 
 fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
@@ -2371,7 +2502,13 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify(args) => handle_sidecar_command(
             "classify",
-            vec!["--format".to_string(), args.format, args.file_path],
+            vec![
+                "--format".to_string(),
+                args.format,
+                "--max-lines".to_string(),
+                args.max_lines.to_string(),
+                args.file_path,
+            ],
         ),
         Commands::Run(args) => handle_ast_run(args),
         Commands::Scan { args } => {
