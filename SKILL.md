@@ -108,7 +108,8 @@ Dogfood follow-up workflow:
 - Run a thinktank or equivalent independent planning review for benchmark interpretation, GPU promotion policy, product positioning, and release workflow changes.
 - Ask Gemini for a bounded read-only diff review before each PR merge, then verify any finding locally before changing code.
 - For every slice: start with the contract test, implement the smallest fix, run the targeted suite, run lint and format, push the PR, wait for PR CI, squash-merge, then watch main CI.
-- For release-bearing slices, final status also requires semantic-release, GitHub release assets, PyPI/package publication, and public release dogfood evidence.
+- Maintain a per-slice evidence ledger for dogfood follow-up work. Each slice entry must record PR order, slice scope, Exa research anchors, thinktank or planning consensus, subagent ownership, Gemini review result, validation commands, PR CI, and main CI. Optional or triggered items may be marked `not applicable` only with a rationale.
+- For release-bearing slices, final status also requires semantic-release, release assets, PyPI/package publication, and public release dogfood evidence.
 
 Known current weak spots:
 

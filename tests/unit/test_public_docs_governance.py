@@ -447,14 +447,27 @@ def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process()
 
     required_fragments = (
         "Dogfood follow-up workflow",
+        "per-slice evidence ledger",
+        "PR order",
+        "slice scope",
         "Exa research",
         "thinktank",
+        "subagent ownership",
         "PR-sized slices",
         "Gemini",
+        "contract test",
+        "targeted suite",
+        "validation commands",
         "lint and format",
         "PR CI",
         "main CI",
+        "release-bearing slices",
+        "semantic-release",
+        "release assets",
+        "PyPI",
         "public release dogfood",
+        "not applicable",
+        "rationale",
         "do not collapse independent fixes into one broad PR",
     )
     for path, content in docs.items():
