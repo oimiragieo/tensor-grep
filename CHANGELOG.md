@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.31 (2026-05-18)
+
+### Bug Fixes
+
+- Harden v1.12.30 dogfood contracts
+  ([`2ea678f`](https://github.com/oimiragieo/tensor-grep/commit/2ea678fb89b8225da99aa2f4a31bd3acd64b5c60))
+
+Accept and forward remaining rg config-override flags across native/Python search paths, add
+  installed-public sweep/parity coverage, and block stale in-tree native tg binaries in the agent
+  success harness by default.
+
+
 ## v1.12.30 (2026-05-18)
 
 ### Bug Fixes
