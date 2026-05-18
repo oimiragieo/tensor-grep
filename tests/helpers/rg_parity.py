@@ -91,6 +91,7 @@ ROW_SCENARIOS: dict[str, _ScenarioSpec] = {
     "follow": _ScenarioSpec("follow sentinel", ("links",), needs_follow=True),
     "smart-case": _ScenarioSpec("smartcase sentinel", ("smart-case.txt",)),
     "line-number": _ScenarioSpec("line number sentinel", ("line-number.txt",)),
+    "no-line-number": _ScenarioSpec("line number sentinel", ("line-number.txt",)),
     "column": _ScenarioSpec("column sentinel", ("column.txt",)),
     "count": _ScenarioSpec("count sentinel", ("count-a.txt", "count-b.txt")),
     "count-matches": _ScenarioSpec("count-match sentinel", ("count-matches.txt",)),

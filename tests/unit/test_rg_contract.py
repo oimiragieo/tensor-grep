@@ -25,6 +25,7 @@ EXPECTED_ROWS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "follow": (("-L", "--follow"), ("--follow",)),
     "smart-case": (("-S", "--smart-case"), ("--smart-case",)),
     "line-number": (("-n", "--line-number"), ("--line-number",)),
+    "no-line-number": (("-N", "--no-line-number"), ("--no-line-number",)),
     "column": (("--column",), ("--column",)),
     "count": (("-c", "--count"), ("--count",)),
     "count-matches": (("--count-matches",), ("--count-matches",)),

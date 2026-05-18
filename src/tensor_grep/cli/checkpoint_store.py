@@ -69,8 +69,28 @@ class CheckpointUndoResult:
     removed_paths: int
 
 
-def _detect_checkpoint_root(path: Path) -> tuple[Path, str]:
+@dataclass(frozen=True)
+class _CheckpointScope:
+    root: Path
+    mode: str
+    original_path: Path
+    target_relative: Path | None = None
+
+    @property
+    def scope_kind(self) -> str:
+        return "file" if self.target_relative is not None else "tree"
+
+
+def _detect_checkpoint_scope(path: Path) -> _CheckpointScope:
     resolved = path.expanduser().resolve()
+    if resolved.is_file() or (not resolved.exists() and resolved.suffix):
+        return _CheckpointScope(
+            root=resolved.parent,
+            mode="filesystem-snapshot",
+            original_path=resolved,
+            target_relative=Path(resolved.name),
+        )
+
     probe_root = resolved if resolved.is_dir() else resolved.parent
     try:
         completed = subprocess.run(
@@ -80,10 +100,29 @@ def _detect_checkpoint_root(path: Path) -> tuple[Path, str]:
             check=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return resolved if resolved.is_dir() else resolved.parent, "filesystem-snapshot"
+        return _CheckpointScope(
+            root=resolved if resolved.is_dir() else resolved.parent,
+            mode="filesystem-snapshot",
+            original_path=resolved,
+        )
 
     git_root = Path(completed.stdout.strip())
-    return git_root, "git-worktree-snapshot"
+    if resolved == git_root:
+        return _CheckpointScope(
+            root=git_root,
+            mode="git-worktree-snapshot",
+            original_path=resolved,
+        )
+    return _CheckpointScope(
+        root=resolved if resolved.is_dir() else resolved.parent,
+        mode="filesystem-snapshot",
+        original_path=resolved,
+    )
+
+
+def _detect_checkpoint_root(path: Path) -> tuple[Path, str]:
+    scope = _detect_checkpoint_scope(path)
+    return scope.root, scope.mode
 
 
 def _checkpoint_storage_dir(root: Path) -> Path:
@@ -96,8 +135,9 @@ def _display_command(argv: list[str]) -> str:
     return shlex.join(argv)
 
 
-def _undo_argv(root: Path, checkpoint_id: str) -> list[str]:
-    return ["tg", "checkpoint", "undo", checkpoint_id, str(root)]
+def _undo_argv(scope: _CheckpointScope, checkpoint_id: str) -> list[str]:
+    undo_path = scope.original_path if scope.scope_kind == "file" else scope.root
+    return ["tg", "checkpoint", "undo", checkpoint_id, str(undo_path)]
 
 
 def _index_path(root: Path) -> Path:
@@ -140,6 +180,8 @@ def _git_snapshot_entries(root: Path) -> dict[str, bool]:
         if not raw:
             continue
         rel = raw.decode("utf-8", errors="surrogateescape")
+        if _CHECKPOINT_DIRNAME in Path(rel).parts:
+            continue
         entries[rel] = (root / rel).exists()
     return dict(sorted(entries.items()))
 
@@ -161,10 +203,12 @@ def _filesystem_snapshot_entries(root: Path) -> dict[str, bool]:
     return entries
 
 
-def _snapshot_entries(root: Path, mode: str) -> dict[str, bool]:
-    if mode == "git-worktree-snapshot":
-        return _git_snapshot_entries(root)
-    return _filesystem_snapshot_entries(root)
+def _snapshot_entries(scope: _CheckpointScope) -> dict[str, bool]:
+    if scope.target_relative is not None:
+        return {scope.target_relative.as_posix(): (scope.root / scope.target_relative).exists()}
+    if scope.mode == "git-worktree-snapshot":
+        return _git_snapshot_entries(scope.root)
+    return _filesystem_snapshot_entries(scope.root)
 
 
 def _checkpoint_dir(root: Path, checkpoint_id: str) -> Path:
@@ -180,13 +224,20 @@ def _metadata_path(root: Path, checkpoint_id: str) -> Path:
 
 
 def _write_checkpoint_metadata(
-    root: Path, result: CheckpointCreateResult, entries: dict[str, bool]
+    root: Path,
+    result: CheckpointCreateResult,
+    entries: dict[str, bool],
+    *,
+    scope_kind: str,
+    original_path: Path,
 ) -> None:
     payload: dict[str, Any] = {
         "version": _CHECKPOINT_VERSION,
         "checkpoint_id": result.checkpoint_id,
         "mode": result.mode,
         "root": result.root,
+        "scope": scope_kind,
+        "original_path": str(original_path),
         "created_at": result.created_at,
         "file_count": result.file_count,
         "entries": entries,
@@ -198,10 +249,12 @@ def _write_checkpoint_metadata(
 
 
 def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
-    root, mode = _detect_checkpoint_root(Path(path))
+    scope = _detect_checkpoint_scope(Path(path))
+    root = scope.root
+    mode = scope.mode
     created_at = datetime.now(UTC).isoformat()
     checkpoint_id = f"ckpt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
-    entries = _snapshot_entries(root, mode)
+    entries = _snapshot_entries(scope)
 
     snapshot_dir = _snapshot_path(root, checkpoint_id)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -220,10 +273,16 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         root=str(root),
         created_at=created_at,
         file_count=len(entries),
-        undo_argv=_undo_argv(root, checkpoint_id),
-        undo_command=_display_command(_undo_argv(root, checkpoint_id)),
+        undo_argv=_undo_argv(scope, checkpoint_id),
+        undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
     )
-    _write_checkpoint_metadata(root, result, entries)
+    _write_checkpoint_metadata(
+        root,
+        result,
+        entries,
+        scope_kind=scope.scope_kind,
+        original_path=scope.original_path,
+    )
 
     records = _load_index(root)
     records.insert(
@@ -316,7 +375,13 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     entries: dict[str, bool] = metadata["entries"]
     snapshot_dir = _snapshot_path(root, checkpoint_id)
 
-    current_entries = _filesystem_snapshot_entries(root)
+    scope_kind = str(metadata.get("scope", "tree"))
+    if scope_kind == "file":
+        current_entries: dict[str, bool] = {}
+    elif mode == "git-worktree-snapshot":
+        current_entries = _git_snapshot_entries(root)
+    else:
+        current_entries = _filesystem_snapshot_entries(root)
     expected_paths = set(entries.keys())
     removed_paths = 0
 
@@ -338,19 +403,20 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
             target.unlink()
             removed_paths += 1
 
-    for directory in sorted(root.rglob("*"), reverse=True):
-        if not directory.is_dir():
-            continue
-        if directory == _checkpoint_storage_dir(root).parent:
-            continue
-        try:
-            relative = directory.relative_to(root)
-        except ValueError:
-            continue
-        if any(part in {".git", _CHECKPOINT_DIRNAME} for part in relative.parts):
-            continue
-        if not any(directory.iterdir()):
-            directory.rmdir()
+    if scope_kind != "file" and mode != "git-worktree-snapshot":
+        for directory in sorted(root.rglob("*"), reverse=True):
+            if not directory.is_dir():
+                continue
+            if directory == _checkpoint_storage_dir(root).parent:
+                continue
+            try:
+                relative = directory.relative_to(root)
+            except ValueError:
+                continue
+            if any(part in {".git", _CHECKPOINT_DIRNAME} for part in relative.parts):
+                continue
+            if not any(directory.iterdir()):
+                directory.rmdir()
 
     return CheckpointUndoResult(
         checkpoint_id=checkpoint_id,

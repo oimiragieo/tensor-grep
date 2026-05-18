@@ -26,6 +26,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         count: false,
         count_matches: false,
         line_number: false,
+        no_line_number: false,
         column: false,
         only_matching: false,
         context: None,
@@ -85,6 +86,14 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
             "-v" | "--invert-match" => args.invert_match = true,
             "-c" | "--count" => args.count = true,
             "--count-matches" => args.count_matches = true,
+            "-n" | "--line-number" => {
+                args.line_number = true;
+                args.no_line_number = false;
+            }
+            "-N" | "--no-line-number" => {
+                args.line_number = false;
+                args.no_line_number = true;
+            }
             "--column" => args.column = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
             "-0" | "--null" => args.null = true,

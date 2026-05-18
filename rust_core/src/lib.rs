@@ -239,6 +239,7 @@ impl RustBackend {
             count,
             count_matches,
             line_number,
+            no_line_number: false,
             column,
             only_matching,
             context,

@@ -29,6 +29,15 @@ fn create_sparse_file(path: &std::path::Path, len: u64) {
     file.set_len(len).unwrap();
 }
 
+fn canonical_display_path(path: &std::path::Path) -> String {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let rendered = canonical.to_string_lossy();
+    rendered
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&rendered)
+        .to_string()
+}
+
 fn write_batch_config(dir: &std::path::Path, payload: &Value) -> PathBuf {
     let config_path = dir.join("batch-rewrite.json");
     fs::write(&config_path, serde_json::to_vec_pretty(payload).unwrap()).unwrap();
@@ -1171,6 +1180,96 @@ fn test_tg_run_apply_verify_json_can_create_checkpoint() {
         metadata_path.display()
     );
     assert!(index_path.exists(), "missing {}", index_path.display());
+}
+
+#[test]
+fn test_tg_run_apply_checkpoint_for_file_inside_git_repo_stays_file_scoped() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let project = dir.path();
+    let source_dir = project.join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    let file_path = source_dir.join("fixture.py");
+    fs::write(&file_path, "def add(x, y): return x + y\n").unwrap();
+    fs::write(source_dir.join("notes.txt"), "leave me alone\n").unwrap();
+    let ignored_dir = project
+        .join("artifacts")
+        .join("external_repos")
+        .join("chalk");
+    fs::create_dir_all(&ignored_dir).unwrap();
+    fs::write(ignored_dir.join("README.md"), "ignored\n").unwrap();
+    fs::write(project.join(".gitignore"), "artifacts/\n").unwrap();
+
+    Command::new("git")
+        .arg("init")
+        .current_dir(project)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tg@example.com"])
+        .current_dir(project)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "tensor-grep"])
+        .current_dir(project)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(project)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(project)
+        .output()
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--checkpoint")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let checkpoint = parsed["checkpoint"]
+        .as_object()
+        .expect("checkpoint metadata must be present");
+    let checkpoint_id = checkpoint["checkpoint_id"]
+        .as_str()
+        .expect("checkpoint id must be a string");
+    assert_eq!(checkpoint["file_count"], 1);
+    assert_eq!(checkpoint["mode"], "filesystem-snapshot");
+    assert_eq!(checkpoint["root"], canonical_display_path(&source_dir));
+
+    let metadata_path = source_dir
+        .join(".tensor-grep")
+        .join("checkpoints")
+        .join(checkpoint_id)
+        .join("metadata.json");
+    let metadata: Value = serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    assert_eq!(metadata["scope"], "file");
+    assert_eq!(metadata["entries"].as_object().unwrap().len(), 1);
+    assert!(metadata["entries"].get("fixture.py").is_some());
 }
 
 #[test]

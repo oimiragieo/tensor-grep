@@ -53,6 +53,160 @@ def test_checkpoint_create_list_and_undo_restores_non_git_tree(tmp_path: Path) -
     assert not extra_file.exists()
 
 
+def test_checkpoint_create_for_file_scope_only_restores_that_file(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    source_file = project / "sample.py"
+    source_file.write_text("print('before')\n", encoding="utf-8")
+    sibling_file = project / "notes.txt"
+    sibling_file.write_text("leave me alone\n", encoding="utf-8")
+
+    runner = CliRunner()
+
+    create_result = runner.invoke(app, ["checkpoint", "create", str(source_file), "--json"])
+    assert create_result.exit_code == 0
+    payload = json.loads(create_result.stdout)
+    assert payload["mode"] == "filesystem-snapshot"
+    assert payload["root"] == str(project.resolve())
+    assert payload["file_count"] == 1
+    assert payload["undo_argv"] == [
+        "tg",
+        "checkpoint",
+        "undo",
+        payload["checkpoint_id"],
+        str(source_file.resolve()),
+    ]
+    checkpoint_id = payload["checkpoint_id"]
+
+    source_file.write_text("print('after')\n", encoding="utf-8")
+    sibling_file.write_text("still present\n", encoding="utf-8")
+    generated_file = project / "generated.py"
+    generated_file.write_text("print('new')\n", encoding="utf-8")
+
+    undo_result = runner.invoke(
+        app,
+        ["checkpoint", "undo", checkpoint_id, str(source_file), "--json"],
+    )
+
+    assert undo_result.exit_code == 0
+    assert source_file.read_text(encoding="utf-8") == "print('before')\n"
+    assert sibling_file.read_text(encoding="utf-8") == "still present\n"
+    assert generated_file.exists()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_checkpoint_create_for_file_inside_git_repo_stays_file_scoped(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    source_dir = project / "src"
+    source_dir.mkdir()
+    source_file = source_dir / "sample.py"
+    source_file.write_text("print('before')\n", encoding="utf-8")
+    sibling_file = source_dir / "notes.txt"
+    sibling_file.write_text("leave me alone\n", encoding="utf-8")
+    ignored_dir = project / "artifacts" / "external_repos" / "chalk"
+    ignored_dir.mkdir(parents=True)
+    ignored_file = ignored_dir / "README.md"
+    ignored_file.write_text("ignored\n", encoding="utf-8")
+    (project / ".gitignore").write_text("artifacts/\n", encoding="utf-8")
+
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "tg@example.com"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "tensor-grep"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(source_file), "--json"])
+
+    assert create_result.exit_code == 0
+    payload = json.loads(create_result.stdout)
+    assert payload["mode"] == "filesystem-snapshot"
+    assert payload["root"] == str(source_dir.resolve())
+    assert payload["file_count"] == 1
+    checkpoint_id = payload["checkpoint_id"]
+
+    source_file.write_text("print('after')\n", encoding="utf-8")
+    sibling_file.write_text("still present\n", encoding="utf-8")
+
+    undo_result = runner.invoke(
+        app,
+        ["checkpoint", "undo", checkpoint_id, str(source_file), "--json"],
+    )
+
+    assert undo_result.exit_code == 0
+    assert source_file.read_text(encoding="utf-8") == "print('before')\n"
+    assert sibling_file.read_text(encoding="utf-8") == "still present\n"
+    assert ignored_file.read_text(encoding="utf-8") == "ignored\n"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_checkpoint_undo_git_scope_uses_git_entries_instead_of_filesystem_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    source_file = project / "sample.py"
+    source_file.write_text("print('before')\n", encoding="utf-8")
+
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "tg@example.com"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "tensor-grep"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    from tensor_grep.cli import checkpoint_store
+
+    checkpoint = checkpoint_store.create_checkpoint(str(project))
+    source_file.write_text("print('after')\n", encoding="utf-8")
+
+    def fail_filesystem_walk(root: Path) -> dict[str, bool]:
+        raise AssertionError(f"filesystem walk should not run for git checkpoint undo: {root}")
+
+    monkeypatch.setattr(checkpoint_store, "_filesystem_snapshot_entries", fail_filesystem_walk)
+
+    restored = checkpoint_store.undo_checkpoint(checkpoint.checkpoint_id, str(project))
+
+    assert restored.mode == "git-worktree-snapshot"
+    assert source_file.read_text(encoding="utf-8") == "print('before')\n"
+
+
 def test_checkpoint_list_explains_empty_scope(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["checkpoint", "list", str(tmp_path)])

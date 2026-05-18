@@ -147,6 +147,11 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
         ),
         ("short-quiet", ["tg", "search", "-q", "ERROR", str(log_file)]),
         ("long-quiet", ["tg", "search", "--quiet", "ERROR", str(log_file)]),
+        ("short-no-line-number", ["tg", "search", "-N", "ERROR", str(log_file)]),
+        (
+            "long-no-line-number",
+            ["tg", "search", "--no-line-number", "ERROR", str(log_file)],
+        ),
         ("stats", ["tg", "search", "--stats", "ERROR", str(log_file)]),
         ("debug", ["tg", "search", "--debug", "ERROR", str(log_file)]),
         ("trace", ["tg", "search", "--trace", "ERROR", str(log_file)]),
