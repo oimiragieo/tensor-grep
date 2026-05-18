@@ -547,25 +547,66 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             &["search", "--auto-hybrid-regex", "ERROR", "."],
         ),
         (
+            "--no-auto-hybrid-regex",
+            &["search", "--no-auto-hybrid-regex", "ERROR", "."],
+        ),
+        (
+            "--no-pcre2-unicode",
+            &["search", "--no-pcre2-unicode", "ERROR", "."],
+        ),
+        ("--no-text", &["search", "--no-text", "ERROR", "."]),
+        ("--no-binary", &["search", "--no-binary", "ERROR", "."]),
+        ("--no-follow", &["search", "--no-follow", "ERROR", "."]),
+        (
+            "--no-glob-case-insensitive",
+            &["search", "--no-glob-case-insensitive", "ERROR", "."],
+        ),
+        (
+            "--no-ignore-file-case-insensitive",
+            &["search", "--no-ignore-file-case-insensitive", "ERROR", "."],
+        ),
+        (
             "--no-ignore-dot",
             &["search", "--no-ignore-dot", "ERROR", "."],
         ),
+        ("--ignore-dot", &["search", "--ignore-dot", "ERROR", "."]),
         (
             "--no-ignore-exclude",
             &["search", "--no-ignore-exclude", "ERROR", "."],
+        ),
+        (
+            "--ignore-exclude",
+            &["search", "--ignore-exclude", "ERROR", "."],
         ),
         (
             "--no-ignore-files",
             &["search", "--no-ignore-files", "ERROR", "."],
         ),
         (
+            "--ignore-files",
+            &["search", "--ignore-files", "ERROR", "."],
+        ),
+        (
             "--no-ignore-global",
             &["search", "--no-ignore-global", "ERROR", "."],
+        ),
+        (
+            "--ignore-global",
+            &["search", "--ignore-global", "ERROR", "."],
+        ),
+        (
+            "--ignore-messages",
+            &["search", "--ignore-messages", "ERROR", "."],
         ),
         (
             "--no-ignore-parent",
             &["search", "--no-ignore-parent", "ERROR", "."],
         ),
+        (
+            "--ignore-parent",
+            &["search", "--ignore-parent", "ERROR", "."],
+        ),
+        ("--ignore-vcs", &["search", "--ignore-vcs", "ERROR", "."]),
         ("--ignore", &["search", "--ignore", "ERROR", "."]),
         ("--messages", &["search", "--messages", "ERROR", "."]),
         ("--require-git", &["search", "--require-git", "ERROR", "."]),
@@ -574,6 +615,38 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             "--pcre2-unicode",
             &["search", "--pcre2-unicode", "ERROR", "."],
         ),
+        (
+            "--no-one-file-system",
+            &["search", "--no-one-file-system", "ERROR", "."],
+        ),
+        (
+            "--no-block-buffered",
+            &["search", "--no-block-buffered", "ERROR", "."],
+        ),
+        (
+            "--no-byte-offset",
+            &["search", "--no-byte-offset", "ERROR", "."],
+        ),
+        ("--no-column", &["search", "--no-column", "ERROR", "."]),
+        (
+            "--no-context-separator",
+            &["search", "--no-context-separator", "ERROR", "."],
+        ),
+        (
+            "--no-include-zero",
+            &["search", "--no-include-zero", "ERROR", "."],
+        ),
+        (
+            "--no-line-buffered",
+            &["search", "--no-line-buffered", "ERROR", "."],
+        ),
+        (
+            "--no-max-columns-preview",
+            &["search", "--no-max-columns-preview", "ERROR", "."],
+        ),
+        ("--no-trim", &["search", "--no-trim", "ERROR", "."]),
+        ("--no-json", &["search", "--no-json", "ERROR", "."]),
+        ("--no-stats", &["search", "--no-stats", "ERROR", "."]),
         ("--no-config", &["search", "--no-config", "ERROR", "."]),
         ("--type-list", &["search", "--type-list"]),
         ("--pcre2-version", &["search", "--pcre2-version"]),
@@ -601,6 +674,93 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn test_search_frontdoor_forwards_rg_inverse_config_override_flags() {
+    let dir = tempdir().unwrap();
+    let expected = [
+        "--no-auto-hybrid-regex",
+        "--no-pcre2-unicode",
+        "--no-text",
+        "--no-binary",
+        "--no-follow",
+        "--no-glob-case-insensitive",
+        "--no-ignore-file-case-insensitive",
+        "--ignore-dot",
+        "--ignore-exclude",
+        "--ignore-files",
+        "--ignore-global",
+        "--ignore-messages",
+        "--ignore-parent",
+        "--ignore-vcs",
+        "--no-one-file-system",
+        "--no-block-buffered",
+        "--no-byte-offset",
+        "--no-column",
+        "--no-context-separator",
+        "--no-include-zero",
+        "--no-line-buffered",
+        "--no-max-columns-preview",
+        "--no-trim",
+        "--no-json",
+        "--no-stats",
+        "-e",
+        "ERROR",
+        ".",
+    ];
+    let fake_rg = fake_rg_asserting_args_script(dir.path(), &expected, "accepted\n");
+    fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args([
+            "search",
+            "--format",
+            "rg",
+            "--no-auto-hybrid-regex",
+            "--no-pcre2-unicode",
+            "--no-text",
+            "--no-binary",
+            "--no-follow",
+            "--no-glob-case-insensitive",
+            "--no-ignore-file-case-insensitive",
+            "--ignore-dot",
+            "--ignore-exclude",
+            "--ignore-files",
+            "--ignore-global",
+            "--ignore-messages",
+            "--ignore-parent",
+            "--ignore-vcs",
+            "--no-one-file-system",
+            "--no-block-buffered",
+            "--no-byte-offset",
+            "--no-column",
+            "--no-context-separator",
+            "--no-include-zero",
+            "--no-line-buffered",
+            "--no-max-columns-preview",
+            "--no-trim",
+            "--no-json",
+            "--no-stats",
+            "ERROR",
+            ".",
+        ])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "accepted\n"
+    );
 }
 
 #[test]

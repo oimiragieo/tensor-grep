@@ -92,6 +92,11 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "Windows native-front-door retry helper" in contracts
     assert f"current `{CURRENT_RELEASE_TAG}` release line" in contracts
     assert "managed native-upgrade contract" in contracts
+    assert "world_class_readiness" in contracts
+    assert "raw_cold_text_search" in contracts
+    assert "public_gpu_acceleration" in contracts
+    assert "lsp_semantic_provider" in contracts
+    assert "agent_target_selection_metrics" in contracts
     assert "path_tg_first_launcher_kind" in contracts
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
     assert "python_subprocess_path_tg_first_launcher_kind" in contracts

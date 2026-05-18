@@ -257,26 +257,42 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--multiline-dotall")
             if config.auto_hybrid_regex:
                 cmd.append("--auto-hybrid-regex")
+            if config.no_auto_hybrid_regex:
+                cmd.append("--no-auto-hybrid-regex")
             if config.unicode:
                 cmd.append("--unicode")
             if config.pcre2_unicode:
                 cmd.append("--pcre2-unicode")
+            if config.no_pcre2_unicode:
+                cmd.append("--no-pcre2-unicode")
             if config.no_unicode:
                 cmd.append("--no-unicode")
             if config.ignore:
                 cmd.append("--ignore")
             if config.no_ignore:
                 cmd.append("--no-ignore")
+            if config.ignore_dot:
+                cmd.append("--ignore-dot")
             if config.no_ignore_dot:
                 cmd.append("--no-ignore-dot")
+            if config.ignore_exclude:
+                cmd.append("--ignore-exclude")
             if config.no_ignore_exclude:
                 cmd.append("--no-ignore-exclude")
+            if config.ignore_files:
+                cmd.append("--ignore-files")
             if config.no_ignore_files:
                 cmd.append("--no-ignore-files")
+            if config.ignore_global:
+                cmd.append("--ignore-global")
             if config.no_ignore_global:
                 cmd.append("--no-ignore-global")
+            if config.ignore_parent:
+                cmd.append("--ignore-parent")
             if config.no_ignore_parent:
                 cmd.append("--no-ignore-parent")
+            if config.ignore_vcs:
+                cmd.append("--ignore-vcs")
             if config.no_ignore_vcs:
                 cmd.append("--no-ignore-vcs")
             if config.no_require_git:
@@ -285,11 +301,15 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--require-git")
             if config.one_file_system:
                 cmd.append("--one-file-system")
+            if config.no_one_file_system:
+                cmd.append("--no-one-file-system")
             if config.ignore_file:
                 for ignore_path in config.ignore_file:
                     cmd.extend(["--ignore-file", ignore_path])
             if config.ignore_file_case_insensitive:
                 cmd.append("--ignore-file-case-insensitive")
+            if config.no_ignore_file_case_insensitive:
+                cmd.append("--no-ignore-file-case-insensitive")
             if config.max_depth is not None:
                 cmd.extend(["--max-depth", str(config.max_depth)])
             if config.no_config:
@@ -298,14 +318,20 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-o")
             if config.text:
                 cmd.append("-a")
+            if config.no_text:
+                cmd.append("--no-text")
             if config.binary and not config.text:
                 cmd.append("--binary")
+            if config.no_binary:
+                cmd.append("--no-binary")
             if config.hidden:
                 cmd.append("--hidden")
             if config.no_hidden:
                 cmd.append("--no-hidden")
             if config.follow:
                 cmd.append("--follow")
+            if config.no_follow:
+                cmd.append("--no-follow")
             if config.line_number is not None and not json_mode:
                 if config.line_number:
                     cmd.append("-n")
@@ -313,6 +339,8 @@ class RipgrepBackend(ComputeBackend):
                     cmd.append("--no-line-number")
             if config.column and not json_mode:
                 cmd.append("--column")
+            if config.no_column and not json_mode:
+                cmd.append("--no-column")
             if config.path_separator is not None and not json_mode:
                 cmd.extend(["--path-separator", config.path_separator])
             if config.vimgrep and not json_mode:
@@ -323,6 +351,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--color", config.color])
             if config.glob_case_insensitive:
                 cmd.append("--glob-case-insensitive")
+            if config.no_glob_case_insensitive:
+                cmd.append("--no-glob-case-insensitive")
             if config.glob:
                 for glob in config.glob:
                     cmd.extend(["-g", glob])
@@ -365,13 +395,19 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--passthru")
             if config.block_buffered and not json_mode:
                 cmd.append("--block-buffered")
+            if config.no_block_buffered and not json_mode:
+                cmd.append("--no-block-buffered")
             if config.byte_offset and not json_mode:
                 cmd.append("-b")
+            if config.no_byte_offset and not json_mode:
+                cmd.append("--no-byte-offset")
             if config.colors and not json_mode:
                 for color_spec in config.colors:
                     cmd.extend(["--colors", color_spec])
             if config.context_separator != "--" and not json_mode:
                 cmd.extend(["--context-separator", config.context_separator])
+            if config.no_context_separator and not json_mode:
+                cmd.append("--no-context-separator")
             if config.field_context_separator != "-" and not json_mode:
                 cmd.extend(["--field-context-separator", config.field_context_separator])
             if config.field_match_separator != ":" and not json_mode:
@@ -380,12 +416,18 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--no-heading")
             if config.include_zero and not json_mode:
                 cmd.append("--include-zero")
+            if config.no_include_zero and not json_mode:
+                cmd.append("--no-include-zero")
             if config.line_buffered and not json_mode:
                 cmd.append("--line-buffered")
+            if config.no_line_buffered and not json_mode:
+                cmd.append("--no-line-buffered")
             if config.max_columns is not None and not json_mode:
                 cmd.extend(["--max-columns", str(config.max_columns)])
             if config.max_columns_preview and not json_mode:
                 cmd.append("--max-columns-preview")
+            if config.no_max_columns_preview and not json_mode:
+                cmd.append("--no-max-columns-preview")
             if config.sort_by != "none" and not json_mode:
                 cmd.extend(["--sort", config.sort_by])
             if config.sort_files and not json_mode:
@@ -394,6 +436,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--sortr", config.sort_by_reverse])
             if config.trim and not json_mode:
                 cmd.append("--trim")
+            if config.no_trim and not json_mode:
+                cmd.append("--no-trim")
             if config.with_filename and not json_mode:
                 cmd.append("--with-filename")
             if config.no_filename and not json_mode:
@@ -404,6 +448,10 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--trace")
             if config.stats:
                 cmd.append("--stats")
+            if config.no_stats:
+                cmd.append("--no-stats")
+            if config.ignore_messages:
+                cmd.append("--ignore-messages")
             if config.no_ignore_messages:
                 cmd.append("--no-ignore-messages")
             if config.no_messages:
@@ -412,6 +460,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--messages")
             if config.pcre2:
                 cmd.append("-P")
+            if config.no_json:
+                cmd.append("--no-json")
             if config.max_filesize:
                 cmd.extend(["--max-filesize", config.max_filesize])
             if config.threads > 0:

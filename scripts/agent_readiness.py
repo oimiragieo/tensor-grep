@@ -134,6 +134,33 @@ def validate_windows_launcher_quoted_patterns(
 
 def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str]]]:
     log_file = probe_dir / "app.log"
+    inverse_config_flags = [
+        "--no-pcre2-unicode",
+        "--no-auto-hybrid-regex",
+        "--no-text",
+        "--no-binary",
+        "--no-follow",
+        "--no-glob-case-insensitive",
+        "--no-ignore-file-case-insensitive",
+        "--ignore-dot",
+        "--ignore-exclude",
+        "--ignore-files",
+        "--ignore-global",
+        "--ignore-messages",
+        "--ignore-parent",
+        "--ignore-vcs",
+        "--no-one-file-system",
+        "--no-block-buffered",
+        "--no-byte-offset",
+        "--no-column",
+        "--no-context-separator",
+        "--no-include-zero",
+        "--no-line-buffered",
+        "--no-max-columns-preview",
+        "--no-trim",
+        "--no-json",
+        "--no-stats",
+    ]
     return [
         ("short-with-filename", ["tg", "search", "-H", "ERROR", str(log_file)]),
         (
@@ -156,6 +183,10 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
         ("debug", ["tg", "search", "--debug", "ERROR", str(log_file)]),
         ("trace", ["tg", "search", "--trace", "ERROR", str(log_file)]),
         ("pcre2-unicode", ["tg", "search", "--pcre2-unicode", "ERROR", str(log_file)]),
+        (
+            "rg-inverse-config-overrides",
+            ["tg", "search", *inverse_config_flags, "ERROR", str(log_file)],
+        ),
         ("ignore", ["tg", "search", "--ignore", "ERROR", str(log_file)]),
         ("messages", ["tg", "search", "--messages", "ERROR", str(log_file)]),
         ("require-git", ["tg", "search", "--require-git", "ERROR", str(log_file)]),

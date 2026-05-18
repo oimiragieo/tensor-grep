@@ -74,6 +74,71 @@ def test_should_forward_rg_config_override_flags():
         assert flag in cmd
 
 
+def test_should_forward_rg_inverse_config_override_flags():
+    backend = RipgrepBackend()
+    config = SearchConfig(
+        no_auto_hybrid_regex=True,
+        no_pcre2_unicode=True,
+        no_text=True,
+        no_binary=True,
+        no_follow=True,
+        no_glob_case_insensitive=True,
+        no_ignore_file_case_insensitive=True,
+        ignore_dot=True,
+        ignore_exclude=True,
+        ignore_files=True,
+        ignore_global=True,
+        ignore_messages=True,
+        ignore_parent=True,
+        ignore_vcs=True,
+        no_one_file_system=True,
+        no_block_buffered=True,
+        no_byte_offset=True,
+        no_column=True,
+        no_context_separator=True,
+        no_include_zero=True,
+        no_line_buffered=True,
+        no_max_columns_preview=True,
+        no_trim=True,
+        no_json=True,
+        no_stats=True,
+    )
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path="test.log", pattern="ERROR", config=config, json_mode=False
+        )
+
+    for flag in (
+        "--no-auto-hybrid-regex",
+        "--no-pcre2-unicode",
+        "--no-text",
+        "--no-binary",
+        "--no-follow",
+        "--no-glob-case-insensitive",
+        "--no-ignore-file-case-insensitive",
+        "--ignore-dot",
+        "--ignore-exclude",
+        "--ignore-files",
+        "--ignore-global",
+        "--ignore-messages",
+        "--ignore-parent",
+        "--ignore-vcs",
+        "--no-one-file-system",
+        "--no-block-buffered",
+        "--no-byte-offset",
+        "--no-column",
+        "--no-context-separator",
+        "--no-include-zero",
+        "--no-line-buffered",
+        "--no-max-columns-preview",
+        "--no-trim",
+        "--no-json",
+        "--no-stats",
+    ):
+        assert flag in cmd
+
+
 def test_should_forward_no_line_number_for_plain_text_output():
     backend = RipgrepBackend()
     config = SearchConfig(line_number=False)
