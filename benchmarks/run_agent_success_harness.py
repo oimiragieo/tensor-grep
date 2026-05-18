@@ -21,6 +21,11 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from run_benchmarks import (  # noqa: E402
+    benchmark_binary_warnings,
+    benchmark_claim_blockers,
+    emit_benchmark_claim_blockers,
+)
 from run_harness_loop_benchmark import default_binary_path, run_json_command  # noqa: E402
 
 POSITIONING = "agent-native end-to-end success harness; not a raw search speed claim"
@@ -543,8 +548,16 @@ def build_payload(
     corpus_manifest: dict[str, object],
     scenarios: list[dict[str, object]],
     args: argparse.Namespace,
+    warnings: list[str] | None = None,
 ) -> dict[str, object]:
     passed_count = sum(1 for row in scenarios if bool(row.get("passed")))
+    warnings = list(warnings or [])
+    has_stale_binary_warning = any("stale in-tree native tg binary" in item for item in warnings)
+    version_status = (
+        "unsafe-launcher-allowed"
+        if has_stale_binary_warning and getattr(args, "allow_claim_unsafe_launcher", False)
+        else "claim-safe"
+    )
     return {
         "artifact": "bench_agent_success_harness",
         "suite": "run_agent_success_harness",
@@ -563,7 +576,9 @@ def build_payload(
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),
             "tg_binary": str(tg_binary),
+            "tg_binary_version_status": version_status,
         },
+        "warnings": warnings,
         "output": str(output_path),
         "seed": args.seed,
         "iterations": args.iterations,
@@ -600,6 +615,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-repo-files", type=int, default=512)
     parser.add_argument("--pattern", default=DEFAULT_PATTERN)
     parser.add_argument("--replacement", default=DEFAULT_REPLACEMENT)
+    parser.add_argument(
+        "--allow-claim-unsafe-launcher",
+        action="store_true",
+        help=(
+            "Allow exploratory harness runs with launcher evidence that is unsafe for "
+            "release claims, such as a stale in-tree native tg binary."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -608,6 +631,11 @@ def main() -> int:
 
     args = parse_args()
     tg_binary = resolve_tg_binary(args.binary)
+    warnings = benchmark_binary_warnings(tg_binary)
+    blockers = benchmark_claim_blockers(warnings)
+    if blockers and not args.allow_claim_unsafe_launcher:
+        emit_benchmark_claim_blockers(blockers)
+        return 2
     output_path = Path(args.output).expanduser().resolve()
     bench_dir = resolve_agent_success_bench_dir()
     bench_dir.mkdir(parents=True, exist_ok=True)
@@ -634,6 +662,7 @@ def main() -> int:
         },
         scenarios=rows,
         args=args,
+        warnings=warnings,
     )
     write_json(output_path, payload)
     return 0 if bool(payload["summary"]["all_passed"]) else 1

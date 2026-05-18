@@ -249,6 +249,7 @@ impl RustBackend {
             word_regexp,
             smart_case,
             globs,
+            ignore: false,
             no_ignore,
             no_ignore_dot,
             no_ignore_exclude,
@@ -256,7 +257,9 @@ impl RustBackend {
             no_ignore_global,
             no_ignore_parent,
             no_ignore_vcs,
+            require_git: false,
             hidden,
+            no_hidden: false,
             follow,
             text,
             files_with_matches,
@@ -279,8 +282,10 @@ impl RustBackend {
             patterns,
             paths: vec![path],
             pcre2,
+            pcre2_unicode: false,
             auto_hybrid_regex: false,
             unicode: false,
+            messages: false,
             max_filesize,
         };
         execute_ripgrep_search(&args).map_err(|e| {

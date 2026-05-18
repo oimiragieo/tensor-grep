@@ -546,6 +546,11 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "      --stats",
                     "      --debug",
                     "      --trace",
+                    "      --pcre2-unicode",
+                    "      --ignore",
+                    "      --messages",
+                    "      --require-git",
+                    "      --no-hidden",
                     "      --engine <ENGINE>",
                     "  -s, --case-sensitive",
                     "  -x, --line-regexp",
@@ -605,6 +610,11 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "      --stats",
                     "      --debug",
                     "      --trace",
+                    "      --pcre2-unicode",
+                    "      --ignore",
+                    "      --messages",
+                    "      --require-git",
+                    "      --no-hidden",
                     "      --engine <ENGINE>",
                     "  -s, --case-sensitive",
                     "  -x, --line-regexp",
@@ -633,6 +643,8 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     assert seen_commands[0] == ["tg", "search", "--help"]
     assert any("search -H" in command for command in flattened)
     assert any("search --stats" in command for command in flattened)
+    assert any("search --pcre2-unicode" in command for command in flattened)
+    assert any("search --no-hidden" in command for command in flattened)
     assert any(command.startswith("tg --sort path") for command in flattened)
 
 

@@ -49,6 +49,31 @@ def test_should_forward_no_ignore_flag():
     assert "--no-ignore" in cmd
 
 
+def test_should_forward_rg_config_override_flags():
+    backend = RipgrepBackend()
+    config = SearchConfig(
+        ignore=True,
+        messages=True,
+        require_git=True,
+        no_hidden=True,
+        pcre2_unicode=True,
+    )
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path="test.log", pattern="ERROR", config=config, json_mode=False
+        )
+
+    for flag in (
+        "--ignore",
+        "--messages",
+        "--require-git",
+        "--no-hidden",
+        "--pcre2-unicode",
+    ):
+        assert flag in cmd
+
+
 def test_should_forward_no_line_number_for_plain_text_output():
     backend = RipgrepBackend()
     config = SearchConfig(line_number=False)

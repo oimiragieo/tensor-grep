@@ -2334,7 +2334,12 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
             "search",
             "--passthrough",
             "--unicode",
+            "--pcre2-unicode",
             "--auto-hybrid-regex",
+            "--ignore",
+            "--messages",
+            "--require-git",
+            "--no-hidden",
             "--sort-files",
             "--maxdepth",
             "2",
@@ -2349,7 +2354,12 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
     config = seen["config"]
     assert config.passthru is True
     assert config.unicode is True
+    assert config.pcre2_unicode is True
     assert config.auto_hybrid_regex is True
+    assert config.ignore is True
+    assert config.messages is True
+    assert config.require_git is True
+    assert config.no_hidden is True
     assert config.sort_files is True
     assert config.max_depth == 2
 

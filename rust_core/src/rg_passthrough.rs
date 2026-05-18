@@ -33,6 +33,7 @@ pub struct RipgrepSearchArgs {
     pub word_regexp: bool,
     pub smart_case: bool,
     pub globs: Vec<String>,
+    pub ignore: bool,
     pub no_ignore: bool,
     pub no_ignore_dot: bool,
     pub no_ignore_exclude: bool,
@@ -40,7 +41,9 @@ pub struct RipgrepSearchArgs {
     pub no_ignore_global: bool,
     pub no_ignore_parent: bool,
     pub no_ignore_vcs: bool,
+    pub require_git: bool,
     pub hidden: bool,
+    pub no_hidden: bool,
     pub follow: bool,
     pub text: bool,
     pub files_with_matches: bool,
@@ -63,8 +66,10 @@ pub struct RipgrepSearchArgs {
     pub patterns: Vec<String>,
     pub paths: Vec<String>,
     pub pcre2: bool,
+    pub pcre2_unicode: bool,
     pub auto_hybrid_regex: bool,
     pub unicode: bool,
+    pub messages: bool,
     pub max_filesize: Option<String>,
 }
 
@@ -83,6 +88,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
 
     if args.pcre2 {
         command.arg("-P");
+    }
+    if args.pcre2_unicode {
+        command.arg("--pcre2-unicode");
     }
     if args.auto_hybrid_regex {
         command.arg("--auto-hybrid-regex");
@@ -116,6 +124,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.no_ignore_vcs {
         command.arg("--no-ignore-vcs");
+    }
+    if args.require_git {
+        command.arg("--require-git");
     }
     if args.ignore_case {
         command.arg("-i");
@@ -161,7 +172,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.smart_case {
         command.arg("-S");
     }
-    if args.no_ignore {
+    if args.ignore {
+        command.arg("--ignore");
+    } else if args.no_ignore {
         command.arg("--no-ignore");
     }
     if args.no_ignore_dot {
@@ -184,6 +197,8 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.hidden {
         command.arg("--hidden");
+    } else if args.no_hidden {
+        command.arg("--no-hidden");
     }
     if args.follow {
         command.arg("--follow");
@@ -214,6 +229,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.passthru {
         command.arg("--passthru");
+    }
+    if args.messages {
+        command.arg("--messages");
     }
     if let Some(sort) = &args.sort {
         command.arg("--sort").arg(sort);
