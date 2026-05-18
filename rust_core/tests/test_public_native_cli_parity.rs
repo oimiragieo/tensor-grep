@@ -566,6 +566,14 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             "--no-ignore-parent",
             &["search", "--no-ignore-parent", "ERROR", "."],
         ),
+        ("--ignore", &["search", "--ignore", "ERROR", "."]),
+        ("--messages", &["search", "--messages", "ERROR", "."]),
+        ("--require-git", &["search", "--require-git", "ERROR", "."]),
+        ("--no-hidden", &["search", "--no-hidden", "ERROR", "."]),
+        (
+            "--pcre2-unicode",
+            &["search", "--pcre2-unicode", "ERROR", "."],
+        ),
         ("--no-config", &["search", "--no-config", "ERROR", "."]),
         ("--type-list", &["search", "--type-list"]),
         ("--pcre2-version", &["search", "--pcre2-version"]),
@@ -593,6 +601,56 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn test_search_frontdoor_forwards_rg_config_override_flags() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_asserting_args_script(
+        dir.path(),
+        &[
+            "--pcre2-unicode",
+            "--require-git",
+            "--ignore",
+            "--no-hidden",
+            "--messages",
+            "-e",
+            "ERROR",
+            ".",
+        ],
+        "accepted\n",
+    );
+    fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args([
+            "search",
+            "--format",
+            "rg",
+            "--pcre2-unicode",
+            "--ignore",
+            "--messages",
+            "--require-git",
+            "--no-hidden",
+            "ERROR",
+            ".",
+        ])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "accepted\n"
+    );
 }
 
 #[test]

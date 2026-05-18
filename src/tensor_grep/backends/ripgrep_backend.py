@@ -259,8 +259,12 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--auto-hybrid-regex")
             if config.unicode:
                 cmd.append("--unicode")
+            if config.pcre2_unicode:
+                cmd.append("--pcre2-unicode")
             if config.no_unicode:
                 cmd.append("--no-unicode")
+            if config.ignore:
+                cmd.append("--ignore")
             if config.no_ignore:
                 cmd.append("--no-ignore")
             if config.no_ignore_dot:
@@ -277,6 +281,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--no-ignore-vcs")
             if config.no_require_git:
                 cmd.append("--no-require-git")
+            if config.require_git:
+                cmd.append("--require-git")
             if config.one_file_system:
                 cmd.append("--one-file-system")
             if config.ignore_file:
@@ -296,6 +302,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--binary")
             if config.hidden:
                 cmd.append("--hidden")
+            if config.no_hidden:
+                cmd.append("--no-hidden")
             if config.follow:
                 cmd.append("--follow")
             if config.line_number is not None and not json_mode:
@@ -396,6 +404,12 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--trace")
             if config.stats:
                 cmd.append("--stats")
+            if config.no_ignore_messages:
+                cmd.append("--no-ignore-messages")
+            if config.no_messages:
+                cmd.append("--no-messages")
+            if config.messages:
+                cmd.append("--messages")
             if config.pcre2:
                 cmd.append("-P")
             if config.max_filesize:

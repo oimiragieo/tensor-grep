@@ -36,13 +36,16 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         word_regexp: false,
         smart_case: false,
         globs: Vec::new(),
+        ignore: false,
         no_ignore: false,
         no_ignore_dot: false,
         no_ignore_exclude: false,
         no_ignore_files: false,
         no_ignore_global: false,
         no_ignore_parent: false,
+        require_git: false,
         hidden: false,
+        no_hidden: false,
         follow: false,
         text: false,
         files_with_matches: false,
@@ -66,8 +69,10 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
+        pcre2_unicode: false,
         auto_hybrid_regex: false,
         unicode: false,
+        messages: false,
         max_filesize: None,
     };
 
@@ -101,19 +106,38 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
             "-U" | "--multiline" => args.multiline = true,
             "--multiline-dotall" => args.multiline_dotall = true,
             "-S" | "--smart-case" => args.smart_case = true,
-            "--no-ignore" => args.no_ignore = true,
+            "--ignore" => {
+                args.ignore = true;
+                args.no_ignore = false;
+            }
+            "--no-ignore" => {
+                args.ignore = false;
+                args.no_ignore = true;
+            }
             "--no-ignore-dot" => args.no_ignore_dot = true,
             "--no-ignore-exclude" => args.no_ignore_exclude = true,
             "--no-ignore-files" => args.no_ignore_files = true,
             "--no-ignore-global" => args.no_ignore_global = true,
             "--no-ignore-parent" => args.no_ignore_parent = true,
+            "--require-git" => args.require_git = true,
             "--no-config" => args.no_config = true,
             "--passthru" => args.passthru = true,
             "--passthrough" => args.passthru = true,
             "--auto-hybrid-regex" => args.auto_hybrid_regex = true,
+            "--pcre2-unicode" => {
+                args.pcre2_unicode = true;
+            }
             "--unicode" => args.unicode = true,
+            "--messages" => args.messages = true,
             "--vimgrep" => args.vimgrep = true,
-            "--hidden" | "-." => args.hidden = true,
+            "--no-hidden" => {
+                args.hidden = false;
+                args.no_hidden = true;
+            }
+            "--hidden" | "-." => {
+                args.hidden = true;
+                args.no_hidden = false;
+            }
             "--follow" | "-L" => args.follow = true,
             "--text" | "-a" => args.text = true,
             "--files-with-matches" | "-l" => args.files_with_matches = true,

@@ -79,6 +79,11 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--stats",
     "--debug",
     "--trace",
+    "--pcre2-unicode",
+    "--ignore",
+    "--messages",
+    "--require-git",
+    "--no-hidden",
 ];
 const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "-H",
@@ -123,6 +128,11 @@ const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "--ignore-file",
     "--ignore-file-case-insensitive",
     "--no-require-git",
+    "--pcre2-unicode",
+    "--ignore",
+    "--messages",
+    "--require-git",
+    "--no-hidden",
     "--one-file-system",
     "--type-add",
     "--type-clear",
@@ -268,6 +278,10 @@ pub struct PositionalCli {
     #[arg(long)]
     pub unicode: bool,
 
+    /// Enable PCRE2 Unicode mode. Alias of --unicode in ripgrep; accepted for rg CLI compatibility.
+    #[arg(long = "pcre2-unicode")]
+    pub pcre2_unicode: bool,
+
     /// Ignore files larger than this size (e.g. 10MB)
     #[arg(long)]
     pub max_filesize: Option<String>,
@@ -275,6 +289,22 @@ pub struct PositionalCli {
     /// Ignore configured ignore files
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
+
+    /// Respect configured ignore files. This is the default; accepted for rg CLI compatibility.
+    #[arg(long = "ignore")]
+    pub ignore: bool,
+
+    /// Show normal diagnostic messages. This is the default; accepted for rg CLI compatibility.
+    #[arg(long = "messages")]
+    pub messages: bool,
+
+    /// Require a git repository before respecting git ignore rules.
+    #[arg(long = "require-git")]
+    pub require_git: bool,
+
+    /// Do not search hidden files and directories. This is the default; accepted for rg CLI compatibility.
+    #[arg(long = "no-hidden")]
+    pub no_hidden: bool,
 
     /// Don't respect source control ignore files
     #[arg(long)]
@@ -387,6 +417,10 @@ pub struct SearchArgs {
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
 
+    /// Respect .gitignore / ignore files. This is the default; accepted for rg CLI compatibility.
+    #[arg(long = "ignore")]
+    pub ignore: bool,
+
     /// Don't respect .ignore or .rgignore files
     #[arg(long = "no-ignore-dot")]
     pub no_ignore_dot: bool,
@@ -410,6 +444,10 @@ pub struct SearchArgs {
     /// Search hidden files and directories
     #[arg(short = '.', long)]
     pub hidden: bool,
+
+    /// Do not search hidden files and directories. This is the default; accepted for rg CLI compatibility.
+    #[arg(long = "no-hidden")]
+    pub no_hidden: bool,
 
     /// Follow symbolic links
     #[arg(short = 'L', long)]
@@ -499,6 +537,10 @@ pub struct SearchArgs {
     #[arg(long)]
     pub unicode: bool,
 
+    /// Enable PCRE2 Unicode mode. Alias of --unicode in ripgrep; accepted for rg CLI compatibility.
+    #[arg(long = "pcre2-unicode")]
+    pub pcre2_unicode: bool,
+
     /// Ignore files larger than this size (e.g. 10MB)
     #[arg(long)]
     pub max_filesize: Option<String>,
@@ -506,6 +548,14 @@ pub struct SearchArgs {
     /// Don't respect source control ignore files
     #[arg(long)]
     pub no_ignore_vcs: bool,
+
+    /// Require a git repository before respecting git ignore rules.
+    #[arg(long = "require-git")]
+    pub require_git: bool,
+
+    /// Show normal diagnostic messages. This is the default; accepted for rg CLI compatibility.
+    #[arg(long = "messages")]
+    pub messages: bool,
 
     /// Never read configuration files
     #[arg(long = "no-config")]
@@ -1342,13 +1392,16 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         word_regexp: false,
         smart_case: false,
         globs: Vec::new(),
+        ignore: false,
         no_ignore: false,
         no_ignore_dot: false,
         no_ignore_exclude: false,
         no_ignore_files: false,
         no_ignore_global: false,
         no_ignore_parent: false,
+        require_git: false,
         hidden: false,
+        no_hidden: false,
         follow: false,
         text: false,
         files_with_matches: false,
@@ -1372,8 +1425,10 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
+        pcre2_unicode: false,
         auto_hybrid_regex: false,
         unicode: false,
+        messages: false,
         max_filesize: None,
     };
 
@@ -1406,17 +1461,29 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "--null-data" => args.null_data = true,
             "-U" | "--multiline" => args.multiline = true,
             "--multiline-dotall" => args.multiline_dotall = true,
-            "--no-ignore" => args.no_ignore = true,
+            "--ignore" => {
+                args.ignore = true;
+                args.no_ignore = false;
+            }
+            "--no-ignore" => {
+                args.ignore = false;
+                args.no_ignore = true;
+            }
             "--no-ignore-dot" => args.no_ignore_dot = true,
             "--no-ignore-exclude" => args.no_ignore_exclude = true,
             "--no-ignore-files" => args.no_ignore_files = true,
             "--no-ignore-global" => args.no_ignore_global = true,
             "--no-ignore-parent" => args.no_ignore_parent = true,
+            "--require-git" => args.require_git = true,
             "--no-config" => args.no_config = true,
             "--passthru" => args.passthru = true,
             "--passthrough" => args.passthru = true,
             "--auto-hybrid-regex" => args.auto_hybrid_regex = true,
+            "--pcre2-unicode" => {
+                args.pcre2_unicode = true;
+            }
             "--unicode" => args.unicode = true,
+            "--messages" => args.messages = true,
             "-C" | "--context" => {
                 index += 1;
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
@@ -1473,6 +1540,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                     Some(token.split_once('=').map(|(_, value)| value.to_string())?);
             }
             "--vimgrep" => args.vimgrep = true,
+            "--no-hidden" => {
+                args.hidden = false;
+                args.no_hidden = true;
+            }
+            "--hidden" | "-." => {
+                args.hidden = true;
+                args.no_hidden = false;
+            }
             "--format" => {
                 index += 1;
                 if tokens.get(index)? != "rg" {
@@ -3303,14 +3378,17 @@ fn positional_ripgrep_args(
         word_regexp: cli.word_regexp,
         smart_case: false,
         globs: Vec::new(),
-        no_ignore: true,
+        ignore: cli.ignore,
+        no_ignore: !cli.ignore,
         no_ignore_dot: false,
         no_ignore_exclude: false,
         no_ignore_files: false,
         no_ignore_global: false,
         no_ignore_parent: false,
         no_ignore_vcs: cli.no_ignore_vcs,
+        require_git: cli.require_git,
         hidden: false,
+        no_hidden: cli.no_hidden,
         follow: false,
         text: false,
         files_with_matches: false,
@@ -3333,8 +3411,10 @@ fn positional_ripgrep_args(
         patterns: vec![pattern.to_string()],
         paths: paths.to_vec(),
         pcre2: cli.pcre2,
+        pcre2_unicode: cli.pcre2_unicode,
         auto_hybrid_regex: cli.auto_hybrid_regex,
         unicode: cli.unicode,
+        messages: cli.messages,
         max_filesize: cli.max_filesize.clone(),
     }
 }
@@ -3359,6 +3439,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         word_regexp: args.word_regexp,
         smart_case: args.smart_case,
         globs: args.globs.clone(),
+        ignore: args.ignore,
         no_ignore: args.no_ignore,
         no_ignore_dot: args.no_ignore_dot,
         no_ignore_exclude: args.no_ignore_exclude,
@@ -3366,7 +3447,9 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         no_ignore_global: args.no_ignore_global,
         no_ignore_parent: args.no_ignore_parent,
         no_ignore_vcs: args.no_ignore_vcs,
+        require_git: args.require_git,
         hidden: args.hidden,
+        no_hidden: args.no_hidden,
         follow: args.follow,
         text: args.text,
         files_with_matches: args.files_with_matches,
@@ -3389,8 +3472,10 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         patterns: request.patterns.clone(),
         paths: request.paths.clone(),
         pcre2: args.pcre2,
+        pcre2_unicode: args.pcre2_unicode,
         auto_hybrid_regex: args.auto_hybrid_regex,
         unicode: args.unicode,
+        messages: args.messages,
         max_filesize: args.max_filesize.clone(),
     }
 }
@@ -3408,6 +3493,11 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
                 || args.passthru
                 || args.no_config
                 || args.auto_hybrid_regex
+                || args.pcre2_unicode
+                || args.ignore
+                || args.messages
+                || args.require_git
+                || args.no_hidden
                 || args.path_separator.is_some()
                 || args.vimgrep
                 || args.no_ignore_dot
@@ -6948,6 +7038,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 word_regexp: params.word_regexp,
                                 smart_case: params.smart_case,
                                 globs: params.globs.clone(),
+                                ignore: false,
                                 no_ignore: params.no_ignore,
                                 no_ignore_dot: false,
                                 no_ignore_exclude: false,
@@ -6955,6 +7046,8 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 no_ignore_global: false,
                                 no_ignore_parent: false,
                                 hidden: params.hidden,
+                                require_git: false,
+                                no_hidden: false,
                                 follow: false,
                                 text: params.text,
                                 files_with_matches: false,
@@ -6978,8 +7071,10 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 paths: vec![params.path.to_string()],
                                 no_ignore_vcs: false,
                                 pcre2: false,
+                                pcre2_unicode: false,
                                 auto_hybrid_regex: false,
                                 unicode: false,
+                                messages: false,
                                 max_filesize: None,
                             });
                     if cpu_config.verbose {

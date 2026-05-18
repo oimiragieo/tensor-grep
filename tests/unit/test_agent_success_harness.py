@@ -190,3 +190,100 @@ def test_agent_success_harness_main_writes_payload(monkeypatch, tmp_path):
     assert payload["artifact"] == "bench_agent_success_harness"
     assert payload["summary"]["scenario_count"] == 1
     assert payload["summary"]["all_passed"] is True
+
+
+def test_agent_success_harness_should_refuse_stale_in_tree_native_binary_by_default(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_agent_success_harness_stale_refusal",
+        "benchmarks/run_agent_success_harness.py",
+    )
+    output_path = tmp_path / "agent_success.json"
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("stale", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_agent_success_harness.py",
+            "--binary",
+            str(tg_binary),
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(
+        module,
+        "benchmark_binary_warnings",
+        lambda _binary: ["tensor-grep benchmark warning: stale in-tree native tg binary"],
+    )
+    monkeypatch.setattr(
+        module,
+        "ensure_agent_success_corpus",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("stale benchmark binary should fail before corpus setup")
+        ),
+    )
+
+    assert module.main() == 2
+    assert not output_path.exists()
+
+
+def test_agent_success_harness_should_allow_exploratory_stale_in_tree_binary(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_agent_success_harness_stale_exploratory",
+        "benchmarks/run_agent_success_harness.py",
+    )
+    output_path = tmp_path / "agent_success.json"
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("stale", encoding="utf-8")
+    corpus = tmp_path / "corpus"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_agent_success_harness.py",
+            "--binary",
+            str(tg_binary),
+            "--output",
+            str(output_path),
+            "--allow-claim-unsafe-launcher",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(
+        module,
+        "benchmark_binary_warnings",
+        lambda _binary: ["tensor-grep benchmark warning: stale in-tree native tg binary"],
+    )
+    monkeypatch.setattr(module, "resolve_agent_success_bench_dir", lambda: tmp_path / "bench")
+    monkeypatch.setattr(
+        module,
+        "ensure_agent_success_corpus",
+        lambda output_dir, *, seed: {
+            "corpus_dir": corpus,
+            "manifest_path": output_dir / "manifest.json",
+            "file_count": 3,
+            "seed": seed,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_agent_success_harness",
+        lambda **_kwargs: [
+            {
+                "scenario": "python_invoice_success",
+                "passed": True,
+                "phase_timings_s": {},
+            }
+        ],
+    )
+
+    assert module.main() == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["warnings"] == ["tensor-grep benchmark warning: stale in-tree native tg binary"]
+    assert payload["environment"]["tg_binary_version_status"] == "unsafe-launcher-allowed"

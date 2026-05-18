@@ -1206,6 +1206,7 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "auto_hybrid_regex",
     "no_unicode",
     "unicode",
+    "pcre2_unicode",
     "null_data",
     "pcre2",
     "regex_size_limit",
@@ -1222,6 +1223,7 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "ignore_file_case_insensitive",
     "max_depth",
     "max_filesize",
+    "ignore",
     "no_ignore_dot",
     "no_ignore_exclude",
     "no_ignore_files",
@@ -1229,6 +1231,8 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "no_ignore_parent",
     "no_ignore_vcs",
     "no_require_git",
+    "require_git",
+    "no_hidden",
     "one_file_system",
     "file_type",
     "type_not",
@@ -1266,6 +1270,7 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "debug",
     "no_ignore_messages",
     "no_messages",
+    "messages",
     "stats",
     "trace",
     "list_files",
@@ -4114,6 +4119,11 @@ def search_command(
     unicode: bool = typer.Option(
         False, "--unicode", help="Enable Unicode mode for regex. This is the default."
     ),
+    pcre2_unicode: bool = typer.Option(
+        False,
+        "--pcre2-unicode",
+        help="Enable PCRE2 Unicode mode. Alias of --unicode in ripgrep.",
+    ),
     no_unicode: bool = typer.Option(False, "--no-unicode", help="Disable Unicode mode for regex."),
     null_data: bool = typer.Option(
         False, "--null-data", help="Use NUL as a line terminator instead of \\n."
@@ -4171,6 +4181,9 @@ def search_command(
     no_ignore: bool = typer.Option(
         False, "--no-ignore", help="Don't respect ignore files (.gitignore, .rgignore, etc)."
     ),
+    ignore: bool = typer.Option(
+        False, "--ignore", help="Respect ignore files; useful for overriding ripgrep config."
+    ),
     no_ignore_dot: bool = typer.Option(
         False, "--no-ignore-dot", help="Don't respect .ignore or .rgignore files."
     ),
@@ -4191,6 +4204,14 @@ def search_command(
     ),
     no_require_git: bool = typer.Option(
         False, "--no-require-git", help="Respect .gitignore even outside of git repos."
+    ),
+    require_git: bool = typer.Option(
+        False,
+        "--require-git",
+        help="Require a git repo before respecting git ignore rules.",
+    ),
+    no_hidden: bool = typer.Option(
+        False, "--no-hidden", help="Do not search hidden files and directories."
     ),
     one_file_system: bool = typer.Option(
         False, "--one-file-system", help="Don't cross file system boundaries."
@@ -4340,6 +4361,9 @@ def search_command(
     ),
     no_messages: bool = typer.Option(
         False, "--no-messages", help="Suppress some error messages (like failed file opens)."
+    ),
+    messages: bool = typer.Option(
+        False, "--messages", help="Show normal diagnostic messages; overrides ripgrep config."
     ),
     stats: bool = typer.Option(False, "--stats", help="Print aggregate statistics."),
     trace: bool = typer.Option(False, "--trace", help="Show exhaustive trace messages."),
@@ -4518,6 +4542,7 @@ def search_command(
         auto_hybrid_regex=auto_hybrid_regex,
         no_unicode=no_unicode,
         unicode=unicode,
+        pcre2_unicode=pcre2_unicode,
         null_data=null_data,
         pcre2=pcre2,
         regex_size_limit=regex_size_limit,
@@ -4536,6 +4561,7 @@ def search_command(
         ignore_file_case_insensitive=ignore_file_case_insensitive,
         max_depth=max_depth,
         max_filesize=max_filesize,
+        ignore=ignore,
         no_ignore=no_ignore,
         no_ignore_dot=no_ignore_dot,
         no_ignore_exclude=no_ignore_exclude,
@@ -4544,6 +4570,8 @@ def search_command(
         no_ignore_parent=no_ignore_parent,
         no_ignore_vcs=no_ignore_vcs,
         no_require_git=no_require_git,
+        require_git=require_git,
+        no_hidden=no_hidden,
         one_file_system=one_file_system,
         file_type=type,
         type_not=type_not,
@@ -4591,6 +4619,7 @@ def search_command(
         debug=debug,
         no_ignore_messages=no_ignore_messages,
         no_messages=no_messages,
+        messages=messages,
         stats=stats,
         trace=trace,
         list_files=files,

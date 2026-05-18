@@ -27,6 +27,7 @@ class SearchConfig:
     auto_hybrid_regex: bool = False
     no_unicode: bool = False
     unicode: bool = False
+    pcre2_unicode: bool = False
     null_data: bool = False
     pcre2: bool = False
     regex_size_limit: str | None = None
@@ -47,6 +48,7 @@ class SearchConfig:
     ignore_file_case_insensitive: bool = False
     max_depth: int | None = None
     max_filesize: str | None = None
+    ignore: bool = False
     no_ignore: bool = False
     no_ignore_dot: bool = False
     no_ignore_exclude: bool = False
@@ -55,6 +57,8 @@ class SearchConfig:
     no_ignore_parent: bool = False
     no_ignore_vcs: bool = False
     no_require_git: bool = False
+    require_git: bool = False
+    no_hidden: bool = False
     one_file_system: bool = False
     file_type: list[str] | None = None
     type_not: list[str] | None = None
@@ -108,6 +112,7 @@ class SearchConfig:
     debug: bool = False
     no_ignore_messages: bool = False
     no_messages: bool = False
+    messages: bool = False
     stats: bool = False
     trace: bool = False
 
