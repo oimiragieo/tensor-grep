@@ -43,9 +43,22 @@ def test_dogfood_command_wraps_agent_readiness_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Dogfood verdict: PASS" in result.stdout
     assert "passed=2 failed=0 skipped=1" in result.stdout
+    assert "world-class claim: not_claimed" in result.stdout
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["artifact"] == "dogfood_readiness_report"
     assert payload["verdict"]["status"] == "PASS"
+    assert payload["world_class_readiness"]["status"] == "not_claimed"
+    assert "fast release-readiness gate" in payload["world_class_readiness"]["summary"]
+    limitation_surfaces = {
+        item["surface"] for item in payload["world_class_readiness"]["limitations"]
+    }
+    assert {
+        "raw_cold_text_search",
+        "full_ast_grep_surface",
+        "public_gpu_acceleration",
+        "lsp_semantic_provider",
+        "agent_target_selection_metrics",
+    }.issubset(limitation_surfaces)
     assert payload["agent_readiness"]["summary"]["passed"] == 2
 
 
@@ -116,6 +129,7 @@ def test_dogfood_json_progress_always_uses_stderr_only(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["verdict"]["status"] == "PASS"
+    assert payload["world_class_readiness"]["status"] == "not_claimed"
     assert payload["stderr_tail"] == []
     assert "[progress]" in result.stderr
     assert "[progress]" not in result.stdout

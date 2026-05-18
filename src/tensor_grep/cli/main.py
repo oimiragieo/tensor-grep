@@ -4116,6 +4116,11 @@ def search_command(
         "--auto-hybrid-regex",
         help="Use ripgrep's hybrid regex engine selection when rg passthrough is selected.",
     ),
+    no_auto_hybrid_regex: bool = typer.Option(
+        False,
+        "--no-auto-hybrid-regex",
+        help="Disable ripgrep's hybrid regex engine selection; useful for config overrides.",
+    ),
     unicode: bool = typer.Option(
         False, "--unicode", help="Enable Unicode mode for regex. This is the default."
     ),
@@ -4123,6 +4128,9 @@ def search_command(
         False,
         "--pcre2-unicode",
         help="Enable PCRE2 Unicode mode. Alias of --unicode in ripgrep.",
+    ),
+    no_pcre2_unicode: bool = typer.Option(
+        False, "--no-pcre2-unicode", help="Disable PCRE2 Unicode mode."
     ),
     no_unicode: bool = typer.Option(False, "--no-unicode", help="Disable Unicode mode for regex."),
     null_data: bool = typer.Option(
@@ -4143,6 +4151,7 @@ def search_command(
     text: bool = typer.Option(
         False, "-a", "--text", help="Search binary files as if they were text."
     ),
+    no_text: bool = typer.Option(False, "--no-text", help="Do not search binary files as text."),
     threads: int = typer.Option(
         0, "-j", "--threads", help="Approximate number of threads to use (0 = auto)."
     ),
@@ -4153,12 +4162,23 @@ def search_command(
     binary: bool = typer.Option(
         False, "--binary", help="Search binary files (don't stop on NUL byte)."
     ),
+    no_binary: bool = typer.Option(
+        False, "--no-binary", help="Do not search binary files unless --text is set."
+    ),
     follow: bool = typer.Option(False, "-L", "--follow", help="Follow symbolic links."),
+    no_follow: bool = typer.Option(
+        False, "--no-follow", help="Do not follow symbolic links; useful for config overrides."
+    ),
     glob: list[str] | None = typer.Option(
         None, "-g", "--glob", help="Include/exclude files matching glob."
     ),
     glob_case_insensitive: bool = typer.Option(
         False, "--glob-case-insensitive", help="Process glob patterns case insensitively."
+    ),
+    no_glob_case_insensitive: bool = typer.Option(
+        False,
+        "--no-glob-case-insensitive",
+        help="Process glob patterns case sensitively; useful for config overrides.",
     ),
     hidden: bool = typer.Option(
         False, "-.", "--hidden", help="Search hidden files and directories."
@@ -4171,6 +4191,11 @@ def search_command(
     ),
     ignore_file_case_insensitive: bool = typer.Option(
         False, "--ignore-file-case-insensitive", help="Process ignore files case insensitively."
+    ),
+    no_ignore_file_case_insensitive: bool = typer.Option(
+        False,
+        "--no-ignore-file-case-insensitive",
+        help="Process ignore files case sensitively; useful for config overrides.",
     ),
     max_depth: int | None = typer.Option(
         None, "-d", "--max-depth", "--maxdepth", help="Limit depth of directory traversal."
@@ -4187,17 +4212,36 @@ def search_command(
     no_ignore_dot: bool = typer.Option(
         False, "--no-ignore-dot", help="Don't respect .ignore or .rgignore files."
     ),
+    ignore_dot: bool = typer.Option(
+        False, "--ignore-dot", help="Respect .ignore and .rgignore files."
+    ),
     no_ignore_exclude: bool = typer.Option(
         False, "--no-ignore-exclude", help="Don't respect .git/info/exclude."
+    ),
+    ignore_exclude: bool = typer.Option(
+        False, "--ignore-exclude", help="Respect .git/info/exclude."
     ),
     no_ignore_files: bool = typer.Option(
         False, "--no-ignore-files", help="Ignore any --ignore-file flags."
     ),
+    ignore_files: bool = typer.Option(False, "--ignore-files", help="Respect --ignore-file flags."),
     no_ignore_global: bool = typer.Option(
         False, "--no-ignore-global", help="Don't respect global gitignore."
     ),
+    ignore_global: bool = typer.Option(
+        False, "--ignore-global", help="Respect global gitignore files."
+    ),
+    ignore_messages: bool = typer.Option(
+        False, "--ignore-messages", help="Show ignore file parsing errors."
+    ),
     no_ignore_parent: bool = typer.Option(
         False, "--no-ignore-parent", help="Don't respect ignore files in parent directories."
+    ),
+    ignore_parent: bool = typer.Option(
+        False, "--ignore-parent", help="Respect ignore files in parent directories."
+    ),
+    ignore_vcs: bool = typer.Option(
+        False, "--ignore-vcs", help="Respect source control ignore files."
     ),
     no_ignore_vcs: bool = typer.Option(
         False, "--no-ignore-vcs", help="Don't respect source control ignore files (.gitignore)."
@@ -4215,6 +4259,9 @@ def search_command(
     ),
     one_file_system: bool = typer.Option(
         False, "--one-file-system", help="Don't cross file system boundaries."
+    ),
+    no_one_file_system: bool = typer.Option(
+        False, "--no-one-file-system", help="Allow crossing file system boundaries."
     ),
     type: list[str] | None = typer.Option(
         None, "-t", "--type", help="Only search files matching TYPE."
@@ -4237,8 +4284,14 @@ def search_command(
         None, "-B", "--before-context", help="Show NUM lines before each match."
     ),
     block_buffered: bool = typer.Option(False, "--block-buffered", help="Force block buffering."),
+    no_block_buffered: bool = typer.Option(
+        False, "--no-block-buffered", help="Disable forced block buffering."
+    ),
     byte_offset: bool = typer.Option(
         False, "-b", "--byte-offset", help="Print 0-based byte offset before each output line."
+    ),
+    no_byte_offset: bool = typer.Option(
+        False, "--no-byte-offset", help="Do not print byte offsets."
     ),
     color: str = typer.Option(
         "auto", "--color", help="When to use colors: never, auto, always, ansi."
@@ -4247,11 +4300,15 @@ def search_command(
         None, "--colors", help="Color settings for output (e.g. 'match:fg:magenta')."
     ),
     column: bool = typer.Option(False, "--column", help="Show column numbers (1-based)."),
+    no_column: bool = typer.Option(False, "--no-column", help="Do not show column numbers."),
     context: int | None = typer.Option(
         None, "-C", "--context", help="Show NUM lines before and after each match."
     ),
     context_separator: str = typer.Option(
         "--", "--context-separator", help="String used to separate non-contiguous context lines."
+    ),
+    no_context_separator: bool = typer.Option(
+        False, "--no-context-separator", help="Disable explicit context separators."
     ),
     field_context_separator: str = typer.Option(
         "-", "--field-context-separator", help="Set the field context separator."
@@ -4271,7 +4328,13 @@ def search_command(
     include_zero: bool = typer.Option(
         False, "--include-zero", help="Print zero match counts with -c."
     ),
+    no_include_zero: bool = typer.Option(
+        False, "--no-include-zero", help="Do not print zero match counts with -c."
+    ),
     line_buffered: bool = typer.Option(False, "--line-buffered", help="Force line buffering."),
+    no_line_buffered: bool = typer.Option(
+        False, "--no-line-buffered", help="Disable forced line buffering."
+    ),
     line_number: bool | None = typer.Option(
         None, "-n", "--line-number", help="Show line numbers (1-based)."
     ),
@@ -4283,6 +4346,9 @@ def search_command(
     ),
     max_columns_preview: bool = typer.Option(
         False, "--max-columns-preview", help="Preview lines exceeding max column limit."
+    ),
+    no_max_columns_preview: bool = typer.Option(
+        False, "--no-max-columns-preview", help="Do not preview lines exceeding max column limit."
     ),
     null: bool = typer.Option(False, "-0", "--null", help="Follow file paths with a NUL byte."),
     only_matching: bool = typer.Option(
@@ -4317,6 +4383,9 @@ def search_command(
         help="Deprecated ripgrep alias for --sort path; disables parallel traversal.",
     ),
     trim: bool = typer.Option(False, "--trim", help="Remove leading ASCII whitespace from output."),
+    no_trim: bool = typer.Option(
+        False, "--no-trim", help="Do not remove leading ASCII whitespace from output."
+    ),
     vimgrep: bool = typer.Option(
         False,
         "--vimgrep",
@@ -4349,6 +4418,9 @@ def search_command(
             "Use --format rg --json for ripgrep JSON Lines or --ndjson for tensor-grep streaming output."
         ),
     ),
+    no_json: bool = typer.Option(
+        False, "--no-json", help="Disable ripgrep JSON Lines when overriding rg config."
+    ),
     ndjson: bool = typer.Option(
         False,
         "--ndjson",
@@ -4366,6 +4438,7 @@ def search_command(
         False, "--messages", help="Show normal diagnostic messages; overrides ripgrep config."
     ),
     stats: bool = typer.Option(False, "--stats", help="Print aggregate statistics."),
+    no_stats: bool = typer.Option(False, "--no-stats", help="Do not print aggregate statistics."),
     trace: bool = typer.Option(False, "--trace", help="Show exhaustive trace messages."),
     # OTHER BEHAVIORS
     files: bool = typer.Option(
@@ -4540,39 +4613,53 @@ def search_command(
         multiline=multiline,
         multiline_dotall=multiline_dotall,
         auto_hybrid_regex=auto_hybrid_regex,
+        no_auto_hybrid_regex=no_auto_hybrid_regex,
         no_unicode=no_unicode,
         unicode=unicode,
         pcre2_unicode=pcre2_unicode,
+        no_pcre2_unicode=no_pcre2_unicode,
         null_data=null_data,
         pcre2=pcre2,
         regex_size_limit=regex_size_limit,
         smart_case=smart_case,
         stop_on_nonmatch=stop_on_nonmatch,
         text=text,
+        no_text=no_text,
         threads=threads,
         word_regexp=word_regexp,
         binary=binary,
+        no_binary=no_binary,
         follow=follow,
+        no_follow=no_follow,
         glob=glob,
         glob_case_insensitive=glob_case_insensitive,
+        no_glob_case_insensitive=no_glob_case_insensitive,
         hidden=hidden,
         iglob=iglob,
         ignore_file=ignore_file,
         ignore_file_case_insensitive=ignore_file_case_insensitive,
+        no_ignore_file_case_insensitive=no_ignore_file_case_insensitive,
         max_depth=max_depth,
         max_filesize=max_filesize,
         ignore=ignore,
         no_ignore=no_ignore,
+        ignore_dot=ignore_dot,
         no_ignore_dot=no_ignore_dot,
+        ignore_exclude=ignore_exclude,
         no_ignore_exclude=no_ignore_exclude,
+        ignore_files=ignore_files,
         no_ignore_files=no_ignore_files,
+        ignore_global=ignore_global,
         no_ignore_global=no_ignore_global,
+        ignore_parent=ignore_parent,
         no_ignore_parent=no_ignore_parent,
+        ignore_vcs=ignore_vcs,
         no_ignore_vcs=no_ignore_vcs,
         no_require_git=no_require_git,
         require_git=require_git,
         no_hidden=no_hidden,
         one_file_system=one_file_system,
+        no_one_file_system=no_one_file_system,
         file_type=type,
         type_not=type_not,
         type_add=type_add,
@@ -4581,22 +4668,29 @@ def search_command(
         after_context=after_context,
         before_context=before_context,
         block_buffered=block_buffered,
+        no_block_buffered=no_block_buffered,
         byte_offset=byte_offset,
+        no_byte_offset=no_byte_offset,
         color=color,
         colors=colors,
         column=column,
+        no_column=no_column,
         context=context,
         context_separator=context_separator,
+        no_context_separator=no_context_separator,
         field_context_separator=field_context_separator,
         field_match_separator=field_match_separator,
         heading=heading,
         hostname_bin=hostname_bin,
         hyperlink_format=hyperlink_format,
         include_zero=include_zero,
+        no_include_zero=no_include_zero,
         line_buffered=line_buffered,
+        no_line_buffered=no_line_buffered,
         line_number=line_number,
         max_columns=max_columns,
         max_columns_preview=max_columns_preview,
+        no_max_columns_preview=no_max_columns_preview,
         null=null,
         only_matching=only_matching,
         path_separator=path_separator,
@@ -4608,6 +4702,7 @@ def search_command(
         sort_by_reverse=sortr,
         sort_files=sort_files,
         trim=trim,
+        no_trim=no_trim,
         vimgrep=vimgrep,
         with_filename=with_filename or implicit_with_filename,
         no_filename=no_filename,
@@ -4616,11 +4711,14 @@ def search_command(
         files_with_matches=files_with_matches,
         files_without_match=files_without_match,
         json_mode=json,
+        no_json=no_json,
         debug=debug,
+        ignore_messages=ignore_messages,
         no_ignore_messages=no_ignore_messages,
         no_messages=no_messages,
         messages=messages,
         stats=stats,
+        no_stats=no_stats,
         trace=trace,
         list_files=files,
         generate=generate,
@@ -7252,6 +7350,9 @@ def dogfood(
             f"failed={summary.get('failed', 0)} "
             f"skipped={summary.get('skipped', 0)}"
         )
+        world_class_readiness = report.get("world_class_readiness")
+        if isinstance(world_class_readiness, dict):
+            typer.echo(f"world-class claim: {world_class_readiness.get('status', 'unknown')}")
         if output is not None:
             typer.echo(f"report: {output}")
         failed_checks = verdict.get("failed_checks")

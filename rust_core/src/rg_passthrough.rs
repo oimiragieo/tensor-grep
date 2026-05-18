@@ -67,9 +67,34 @@ pub struct RipgrepSearchArgs {
     pub paths: Vec<String>,
     pub pcre2: bool,
     pub pcre2_unicode: bool,
+    pub no_pcre2_unicode: bool,
     pub auto_hybrid_regex: bool,
+    pub no_auto_hybrid_regex: bool,
     pub unicode: bool,
+    pub no_text: bool,
+    pub no_binary: bool,
+    pub no_follow: bool,
+    pub no_glob_case_insensitive: bool,
+    pub no_ignore_file_case_insensitive: bool,
+    pub ignore_dot: bool,
+    pub ignore_exclude: bool,
+    pub ignore_files: bool,
+    pub ignore_global: bool,
+    pub ignore_messages: bool,
+    pub ignore_parent: bool,
+    pub ignore_vcs: bool,
+    pub no_one_file_system: bool,
+    pub no_block_buffered: bool,
+    pub no_byte_offset: bool,
+    pub no_column: bool,
+    pub no_context_separator: bool,
+    pub no_include_zero: bool,
+    pub no_line_buffered: bool,
+    pub no_max_columns_preview: bool,
+    pub no_trim: bool,
+    pub no_json: bool,
     pub messages: bool,
+    pub no_stats: bool,
     pub max_filesize: Option<String>,
 }
 
@@ -92,11 +117,86 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.pcre2_unicode {
         command.arg("--pcre2-unicode");
     }
+    if args.no_pcre2_unicode {
+        command.arg("--no-pcre2-unicode");
+    }
     if args.auto_hybrid_regex {
         command.arg("--auto-hybrid-regex");
     }
+    if args.no_auto_hybrid_regex {
+        command.arg("--no-auto-hybrid-regex");
+    }
     if args.unicode {
         command.arg("--unicode");
+    }
+    if args.no_text {
+        command.arg("--no-text");
+    }
+    if args.no_binary {
+        command.arg("--no-binary");
+    }
+    if args.no_follow {
+        command.arg("--no-follow");
+    }
+    if args.no_glob_case_insensitive {
+        command.arg("--no-glob-case-insensitive");
+    }
+    if args.no_ignore_file_case_insensitive {
+        command.arg("--no-ignore-file-case-insensitive");
+    }
+    if args.ignore_dot {
+        command.arg("--ignore-dot");
+    }
+    if args.ignore_exclude {
+        command.arg("--ignore-exclude");
+    }
+    if args.ignore_files {
+        command.arg("--ignore-files");
+    }
+    if args.ignore_global {
+        command.arg("--ignore-global");
+    }
+    if args.ignore_messages {
+        command.arg("--ignore-messages");
+    }
+    if args.ignore_parent {
+        command.arg("--ignore-parent");
+    }
+    if args.ignore_vcs {
+        command.arg("--ignore-vcs");
+    }
+    if args.no_one_file_system {
+        command.arg("--no-one-file-system");
+    }
+    if args.no_block_buffered {
+        command.arg("--no-block-buffered");
+    }
+    if args.no_byte_offset {
+        command.arg("--no-byte-offset");
+    }
+    if args.no_column {
+        command.arg("--no-column");
+    }
+    if args.no_context_separator {
+        command.arg("--no-context-separator");
+    }
+    if args.no_include_zero {
+        command.arg("--no-include-zero");
+    }
+    if args.no_line_buffered {
+        command.arg("--no-line-buffered");
+    }
+    if args.no_max_columns_preview {
+        command.arg("--no-max-columns-preview");
+    }
+    if args.no_trim {
+        command.arg("--no-trim");
+    }
+    if args.no_json {
+        command.arg("--no-json");
+    }
+    if args.no_stats {
+        command.arg("--no-stats");
     }
     if args.files {
         command.arg("--files");

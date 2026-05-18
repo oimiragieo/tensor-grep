@@ -60,6 +60,61 @@ def _build_verdict(agent_readiness: dict[str, Any], returncode: int) -> dict[str
     }
 
 
+def _build_world_class_readiness() -> dict[str, Any]:
+    """Describe proof-gated surfaces that a passing dogfood gate does not promote."""
+    return {
+        "status": "not_claimed",
+        "summary": (
+            "PASS means the fast release-readiness gate passed; it is not proof "
+            "that tensor-grep replaces rg, ast-grep, public GPU search, or "
+            "production LSP-backed navigation."
+        ),
+        "limitations": [
+            {
+                "surface": "raw_cold_text_search",
+                "status": "rg_remains_baseline",
+                "required_evidence": (
+                    "accepted benchmark artifacts showing semantic parity and "
+                    "speed wins over rg for the declared workload class"
+                ),
+            },
+            {
+                "surface": "full_ast_grep_surface",
+                "status": "validated_subset",
+                "required_evidence": (
+                    "implemented and tested parity for ast-grep run/scan/test/new "
+                    "options before replacement claims"
+                ),
+            },
+            {
+                "surface": "public_gpu_acceleration",
+                "status": "experimental_until_native_gpu_proof",
+                "required_evidence": (
+                    "NativeGpuBackend with sidecar_used=false, 1GB/5GB correctness, "
+                    "and speed wins over both rg and tg_cpu"
+                ),
+            },
+            {
+                "surface": "lsp_semantic_provider",
+                "status": "experimental_until_lsp_proof",
+                "required_evidence": (
+                    "latency-bounded provider initialization and navigation payloads "
+                    "with lsp_proof=true on accepted hardcase artifacts"
+                ),
+            },
+            {
+                "surface": "agent_target_selection_metrics",
+                "status": "missing_enterprise_accuracy_gate",
+                "required_evidence": (
+                    "accepted target-selection metrics such as top-k hit rate, MRR, "
+                    "false-primary rate, validation-command precision, and ambiguity "
+                    "handling on mixed-language and noisy-repo hardcases"
+                ),
+            },
+        ],
+    }
+
+
 def run_dogfood_readiness(
     *,
     root: Path,
@@ -151,6 +206,7 @@ def run_dogfood_readiness(
         "command": command,
         "agent_readiness": agent_readiness,
         "verdict": _build_verdict(agent_readiness, returncode),
+        "world_class_readiness": _build_world_class_readiness(),
         "stderr_tail": _bounded_tail_lines(stderr),
     }
     if output is not None:

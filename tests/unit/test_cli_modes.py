@@ -2336,10 +2336,35 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
             "--unicode",
             "--pcre2-unicode",
             "--auto-hybrid-regex",
+            "--no-auto-hybrid-regex",
+            "--no-pcre2-unicode",
+            "--no-text",
+            "--no-binary",
+            "--no-follow",
+            "--no-glob-case-insensitive",
+            "--no-ignore-file-case-insensitive",
+            "--ignore-dot",
+            "--ignore-exclude",
+            "--ignore-files",
+            "--ignore-global",
+            "--ignore-messages",
+            "--ignore-parent",
+            "--ignore-vcs",
             "--ignore",
             "--messages",
             "--require-git",
             "--no-hidden",
+            "--no-one-file-system",
+            "--no-block-buffered",
+            "--no-byte-offset",
+            "--no-column",
+            "--no-context-separator",
+            "--no-include-zero",
+            "--no-line-buffered",
+            "--no-max-columns-preview",
+            "--no-trim",
+            "--no-json",
+            "--no-stats",
             "--sort-files",
             "--maxdepth",
             "2",
@@ -2356,10 +2381,35 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
     assert config.unicode is True
     assert config.pcre2_unicode is True
     assert config.auto_hybrid_regex is True
+    assert config.no_auto_hybrid_regex is True
+    assert config.no_pcre2_unicode is True
+    assert config.no_text is True
+    assert config.no_binary is True
+    assert config.no_follow is True
+    assert config.no_glob_case_insensitive is True
+    assert config.no_ignore_file_case_insensitive is True
+    assert config.ignore_dot is True
+    assert config.ignore_exclude is True
+    assert config.ignore_files is True
+    assert config.ignore_global is True
+    assert config.ignore_messages is True
+    assert config.ignore_parent is True
+    assert config.ignore_vcs is True
     assert config.ignore is True
     assert config.messages is True
     assert config.require_git is True
     assert config.no_hidden is True
+    assert config.no_one_file_system is True
+    assert config.no_block_buffered is True
+    assert config.no_byte_offset is True
+    assert config.no_column is True
+    assert config.no_context_separator is True
+    assert config.no_include_zero is True
+    assert config.no_line_buffered is True
+    assert config.no_max_columns_preview is True
+    assert config.no_trim is True
+    assert config.no_json is True
+    assert config.no_stats is True
     assert config.sort_files is True
     assert config.max_depth == 2
 

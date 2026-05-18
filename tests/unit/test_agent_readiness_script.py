@@ -547,10 +547,35 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "      --debug",
                     "      --trace",
                     "      --pcre2-unicode",
+                    "      --no-pcre2-unicode",
+                    "      --no-auto-hybrid-regex",
+                    "      --no-text",
+                    "      --no-binary",
+                    "      --no-follow",
+                    "      --no-glob-case-insensitive",
+                    "      --no-ignore-file-case-insensitive",
                     "      --ignore",
+                    "      --ignore-dot",
+                    "      --ignore-exclude",
+                    "      --ignore-files",
+                    "      --ignore-global",
+                    "      --ignore-messages",
+                    "      --ignore-parent",
+                    "      --ignore-vcs",
                     "      --messages",
                     "      --require-git",
                     "      --no-hidden",
+                    "      --no-one-file-system",
+                    "      --no-block-buffered",
+                    "      --no-byte-offset",
+                    "      --no-column",
+                    "      --no-context-separator",
+                    "      --no-include-zero",
+                    "      --no-line-buffered",
+                    "      --no-max-columns-preview",
+                    "      --no-trim",
+                    "      --no-json",
+                    "      --no-stats",
                     "      --engine <ENGINE>",
                     "  -s, --case-sensitive",
                     "  -x, --line-regexp",
@@ -585,6 +610,50 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
     assert calls[0] == ["tg", "search", "--help"]
 
 
+def test_agent_readiness_public_search_flag_sweep_includes_rg_inverse_overrides(
+    tmp_path,
+) -> None:
+    module = _load_script_module()
+    cases = module._public_search_flag_sweep_cases(tmp_path)
+    commands = {" ".join(command) for _label, command in cases}
+    batched_inverse_commands = [
+        command for label, command in cases if label == "rg-inverse-config-overrides"
+    ]
+
+    assert len(batched_inverse_commands) == 1
+    batched_inverse_command = batched_inverse_commands[0]
+
+    for flag in (
+        "--no-auto-hybrid-regex",
+        "--no-pcre2-unicode",
+        "--no-text",
+        "--no-binary",
+        "--no-follow",
+        "--no-glob-case-insensitive",
+        "--no-ignore-file-case-insensitive",
+        "--ignore-dot",
+        "--ignore-exclude",
+        "--ignore-files",
+        "--ignore-global",
+        "--ignore-messages",
+        "--ignore-parent",
+        "--ignore-vcs",
+        "--no-one-file-system",
+        "--no-block-buffered",
+        "--no-byte-offset",
+        "--no-column",
+        "--no-context-separator",
+        "--no-include-zero",
+        "--no-line-buffered",
+        "--no-max-columns-preview",
+        "--no-trim",
+        "--no-json",
+        "--no-stats",
+    ):
+        assert any(f" {flag} " in command for command in commands)
+        assert flag in batched_inverse_command
+
+
 def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     monkeypatch, tmp_path
 ) -> None:
@@ -611,10 +680,35 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "      --debug",
                     "      --trace",
                     "      --pcre2-unicode",
+                    "      --no-pcre2-unicode",
+                    "      --no-auto-hybrid-regex",
+                    "      --no-text",
+                    "      --no-binary",
+                    "      --no-follow",
+                    "      --no-glob-case-insensitive",
+                    "      --no-ignore-file-case-insensitive",
                     "      --ignore",
+                    "      --ignore-dot",
+                    "      --ignore-exclude",
+                    "      --ignore-files",
+                    "      --ignore-global",
+                    "      --ignore-messages",
+                    "      --ignore-parent",
+                    "      --ignore-vcs",
                     "      --messages",
                     "      --require-git",
                     "      --no-hidden",
+                    "      --no-one-file-system",
+                    "      --no-block-buffered",
+                    "      --no-byte-offset",
+                    "      --no-column",
+                    "      --no-context-separator",
+                    "      --no-include-zero",
+                    "      --no-line-buffered",
+                    "      --no-max-columns-preview",
+                    "      --no-trim",
+                    "      --no-json",
+                    "      --no-stats",
                     "      --engine <ENGINE>",
                     "  -s, --case-sensitive",
                     "  -x, --line-regexp",
@@ -643,7 +737,9 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     assert seen_commands[0] == ["tg", "search", "--help"]
     assert any("search -H" in command for command in flattened)
     assert any("search --stats" in command for command in flattened)
+    assert any(" --no-stats " in command for command in flattened)
     assert any("search --pcre2-unicode" in command for command in flattened)
+    assert any(" --no-auto-hybrid-regex " in command for command in flattened)
     assert any("search --no-hidden" in command for command in flattened)
     assert any(command.startswith("tg --sort path") for command in flattened)
 
