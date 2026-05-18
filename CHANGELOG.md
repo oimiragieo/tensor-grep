@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.32 (2026-05-18)
+
+### Bug Fixes
+
+- Harden dogfood readiness contracts
+  ([`6b00e6d`](https://github.com/oimiragieo/tensor-grep/commit/6b00e6d1895d8087d8e6a6d0458d2f3ac873e9c8))
+
+
 ## v1.12.31 (2026-05-18)
 
 ### Bug Fixes
