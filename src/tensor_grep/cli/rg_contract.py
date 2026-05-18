@@ -194,6 +194,15 @@ RG_CONTRACT_ROWS: tuple[RGContractRow, ...] = (
         "benchmarkable": True,
     },
     {
+        "id": "no-line-number",
+        "public_flags": ("-N", "--no-line-number"),
+        "rg_args": ("--no-line-number",),
+        "tg_args": ("--no-line-number",),
+        "output_mode": "text",
+        "parity_expectation": "exact",
+        "benchmarkable": True,
+    },
+    {
         "id": "column",
         "public_flags": ("--column",),
         "rg_args": ("--column",),

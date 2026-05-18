@@ -87,6 +87,8 @@ const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "--no-filename",
     "-q",
     "--quiet",
+    "-N",
+    "--no-line-number",
     "--engine",
     "-s",
     "--case-sensitive",
@@ -185,6 +187,10 @@ pub struct PositionalCli {
     /// Show line numbers
     #[arg(short = 'n', long)]
     pub line_number: bool,
+
+    /// Suppress line numbers
+    #[arg(short = 'N', long = "no-line-number")]
+    pub no_line_number: bool,
 
     /// Show column numbers
     #[arg(long)]
@@ -300,6 +306,10 @@ pub struct SearchArgs {
     /// Show line numbers
     #[arg(short = 'n', long)]
     pub line_number: bool,
+
+    /// Suppress line numbers
+    #[arg(short = 'N', long = "no-line-number")]
+    pub no_line_number: bool,
 
     /// Show column numbers
     #[arg(long)]
@@ -1322,6 +1332,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         count: false,
         count_matches: false,
         line_number: false,
+        no_line_number: false,
         column: false,
         only_matching: false,
         context: None,
@@ -1381,7 +1392,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-v" | "--invert-match" => args.invert_match = true,
             "-c" | "--count" => args.count = true,
             "--json" => args.json = true,
-            "-n" | "--line-number" => args.line_number = true,
+            "-n" | "--line-number" => {
+                args.line_number = true;
+                args.no_line_number = false;
+            }
+            "-N" | "--no-line-number" => {
+                args.line_number = false;
+                args.no_line_number = true;
+            }
             "-o" | "--only-matching" => args.only_matching = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
             "-0" | "--null" => args.null = true,
@@ -1785,6 +1803,26 @@ mod tests {
         assert!(args.line_number);
         assert_eq!(args.color.as_deref(), Some("never"));
         assert_eq!(args.sort.as_deref(), Some("path"));
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn top_level_search_frontdoor_accepts_no_line_number() {
+        let args = parse_default_frontdoor_args(&[
+            "tg",
+            "--format",
+            "rg",
+            "-n",
+            "-N",
+            "-F",
+            "ERROR",
+            "bench_data",
+        ]);
+
+        assert!(args.fixed_strings);
+        assert!(!args.line_number);
+        assert!(args.no_line_number);
         assert_eq!(args.patterns, vec!["ERROR".to_string()]);
         assert_eq!(args.paths, vec!["bench_data".to_string()]);
     }
@@ -3254,7 +3292,8 @@ fn positional_ripgrep_args(
         invert_match: cli.invert_match,
         count: cli.count,
         count_matches: false,
-        line_number: cli.line_number,
+        line_number: cli.line_number && !cli.no_line_number,
+        no_line_number: cli.no_line_number,
         column: false,
         only_matching: cli.only_matching,
         context: None,
@@ -3309,7 +3348,8 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         invert_match: args.invert_match,
         count: args.count,
         count_matches: args.count_matches,
-        line_number: args.line_number,
+        line_number: args.line_number && !args.no_line_number,
+        no_line_number: args.no_line_number,
         column: args.column,
         only_matching: args.only_matching,
         context: args.context,
@@ -3458,7 +3498,7 @@ fn native_search_config_for_positional(
         ndjson: cli.ndjson,
         verbose: cli.verbose,
         text: false,
-        line_number: cli.line_number,
+        line_number: cli.line_number && !cli.no_line_number,
         only_matching: cli.only_matching,
         replace: cli.replace.clone(),
         ..NativeSearchConfig::default()
@@ -3495,7 +3535,7 @@ fn native_search_config_for_command(
         ndjson: args.ndjson,
         verbose: args.verbose,
         text: args.text,
-        line_number: args.line_number,
+        line_number: args.line_number && !args.no_line_number,
         only_matching: args.only_matching,
         replace: args.replace.clone(),
         ..NativeSearchConfig::default()
@@ -3877,7 +3917,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         json: args.json,
                         ndjson: args.ndjson,
                         count: args.count,
-                        line_number: args.line_number,
+                        line_number: args.line_number && !args.no_line_number,
                     },
                     matches,
                 );
@@ -4175,6 +4215,8 @@ struct CheckpointCreateSummary {
     checkpoint_id: String,
     mode: String,
     root: String,
+    scope: String,
+    original_path: String,
     created_at: String,
     file_count: usize,
 }
@@ -4195,6 +4237,8 @@ struct CheckpointMetadata {
     checkpoint_id: String,
     mode: String,
     root: String,
+    scope: String,
+    original_path: String,
     created_at: String,
     file_count: usize,
     entries: BTreeMap<String, bool>,
@@ -4654,11 +4698,65 @@ fn checkpoint_index_path(root: &Path) -> PathBuf {
     checkpoint_storage_dir(root).join("index.json")
 }
 
-fn detect_checkpoint_root(path: &str) -> (PathBuf, String) {
+#[derive(Debug, Clone)]
+struct CheckpointScope {
+    root: PathBuf,
+    mode: String,
+    original_path: PathBuf,
+    target_relative: Option<String>,
+}
+
+impl CheckpointScope {
+    fn scope_kind(&self) -> &'static str {
+        if self.target_relative.is_some() {
+            "file"
+        } else {
+            "tree"
+        }
+    }
+}
+
+fn checkpoint_rel_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn checkpoint_display_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
+}
+
+fn checkpoint_absolute_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        }
+    })
+}
+
+fn detect_checkpoint_scope(path: &str) -> CheckpointScope {
     let candidate = Path::new(path);
-    let resolved = candidate
-        .canonicalize()
-        .unwrap_or_else(|_| candidate.to_path_buf());
+    let resolved = checkpoint_absolute_path(candidate);
+    if resolved.is_file() || (!resolved.exists() && resolved.extension().is_some()) {
+        let root = resolved
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let target_relative = resolved
+            .file_name()
+            .map(PathBuf::from)
+            .map(|relative| checkpoint_rel_path(&relative));
+        return CheckpointScope {
+            root,
+            mode: "filesystem-snapshot".to_string(),
+            original_path: resolved,
+            target_relative,
+        };
+    }
+
     let probe_root = if resolved.is_dir() {
         resolved.clone()
     } else {
@@ -4680,12 +4778,34 @@ fn detect_checkpoint_root(path: &str) -> (PathBuf, String) {
         Ok(output) if output.status.success() => {
             let git_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if git_root.is_empty() {
-                (probe_root, "filesystem-snapshot".to_string())
+                CheckpointScope {
+                    root: probe_root,
+                    mode: "filesystem-snapshot".to_string(),
+                    original_path: resolved,
+                    target_relative: None,
+                }
+            } else if Path::new(&git_root) == resolved.as_path() {
+                CheckpointScope {
+                    root: PathBuf::from(git_root),
+                    mode: "git-worktree-snapshot".to_string(),
+                    original_path: resolved,
+                    target_relative: None,
+                }
             } else {
-                (PathBuf::from(git_root), "git-worktree-snapshot".to_string())
+                CheckpointScope {
+                    root: probe_root,
+                    mode: "filesystem-snapshot".to_string(),
+                    original_path: resolved,
+                    target_relative: None,
+                }
             }
         }
-        _ => (probe_root, "filesystem-snapshot".to_string()),
+        _ => CheckpointScope {
+            root: probe_root,
+            mode: "filesystem-snapshot".to_string(),
+            original_path: resolved,
+            target_relative: None,
+        },
     }
 }
 
@@ -4724,6 +4844,9 @@ fn collect_git_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap<String
             continue;
         }
         let rel = String::from_utf8_lossy(raw).to_string();
+        if rel.split('/').any(|component| component == ".tensor-grep") {
+            continue;
+        }
         entries.insert(rel.clone(), root.join(&rel).exists());
     }
     Ok(entries)
@@ -4767,23 +4890,29 @@ fn collect_filesystem_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap
     Ok(entries)
 }
 
-fn collect_checkpoint_entries(root: &Path, mode: &str) -> anyhow::Result<BTreeMap<String, bool>> {
-    if mode == "git-worktree-snapshot" {
-        collect_git_checkpoint_entries(root)
+fn collect_checkpoint_entries(scope: &CheckpointScope) -> anyhow::Result<BTreeMap<String, bool>> {
+    if let Some(relative) = &scope.target_relative {
+        let mut entries = BTreeMap::new();
+        entries.insert(relative.clone(), scope.root.join(relative).exists());
+        Ok(entries)
+    } else if scope.mode == "git-worktree-snapshot" {
+        collect_git_checkpoint_entries(&scope.root)
     } else {
-        collect_filesystem_checkpoint_entries(root)
+        collect_filesystem_checkpoint_entries(&scope.root)
     }
 }
 
 fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
-    let (root, mode) = detect_checkpoint_root(path);
+    let scope = detect_checkpoint_scope(path);
+    let root = scope.root.clone();
+    let mode = scope.mode.clone();
     let created_at = checkpoint_timestamp_string();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     let checkpoint_id = format!("ckpt-{created_at}-{unique:x}");
-    let entries = collect_checkpoint_entries(&root, &mode)?;
+    let entries = collect_checkpoint_entries(&scope)?;
 
     let snapshot_dir = checkpoint_snapshot_dir(&root, &checkpoint_id);
     std::fs::create_dir_all(&snapshot_dir).with_context(|| {
@@ -4819,7 +4948,9 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
     let summary = CheckpointCreateSummary {
         checkpoint_id: checkpoint_id.clone(),
         mode: mode.clone(),
-        root: root.to_string_lossy().to_string(),
+        root: checkpoint_display_path(&root),
+        scope: scope.scope_kind().to_string(),
+        original_path: checkpoint_display_path(&scope.original_path),
         created_at: created_at.clone(),
         file_count: entries.len(),
     };
@@ -4828,6 +4959,8 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
         checkpoint_id: checkpoint_id.clone(),
         mode: mode.clone(),
         root: summary.root.clone(),
+        scope: summary.scope.clone(),
+        original_path: summary.original_path.clone(),
         created_at: created_at.clone(),
         file_count: entries.len(),
         entries,
@@ -6805,6 +6938,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 count: params.count,
                                 count_matches: false,
                                 line_number: params.line_number,
+                                no_line_number: false,
                                 column: false,
                                 only_matching: false,
                                 context: params.context,

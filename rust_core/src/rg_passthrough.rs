@@ -23,6 +23,7 @@ pub struct RipgrepSearchArgs {
     pub count: bool,
     pub count_matches: bool,
     pub line_number: bool,
+    pub no_line_number: bool,
     pub column: bool,
     pub only_matching: bool,
     pub context: Option<usize>,
@@ -136,6 +137,8 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.count {
         command.arg("-c");
+    } else if args.no_line_number {
+        command.arg("-N");
     } else if args.line_number {
         command.arg("-n");
     }

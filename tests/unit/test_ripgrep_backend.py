@@ -49,6 +49,19 @@ def test_should_forward_no_ignore_flag():
     assert "--no-ignore" in cmd
 
 
+def test_should_forward_no_line_number_for_plain_text_output():
+    backend = RipgrepBackend()
+    config = SearchConfig(line_number=False)
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path="test.log", pattern="ERROR", config=config, json_mode=False
+        )
+
+    assert "--no-line-number" in cmd
+    assert "--line-number" not in cmd
+
+
 def test_should_forward_advertised_ignore_and_config_flags():
     backend = RipgrepBackend()
     config = SearchConfig(

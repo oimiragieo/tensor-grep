@@ -4254,6 +4254,9 @@ def search_command(
     line_number: bool | None = typer.Option(
         None, "-n", "--line-number", help="Show line numbers (1-based)."
     ),
+    no_line_number: bool = typer.Option(
+        False, "-N", "--no-line-number", help="Suppress line numbers."
+    ),
     max_columns: int | None = typer.Option(
         None, "-M", "--max-columns", help="Omit lines longer than this limit."
     ),
@@ -4469,7 +4472,9 @@ def search_command(
                     )
                 sys.exit(2)
 
-    if line_number is None:
+    if no_line_number:
+        line_number = False
+    elif line_number is None:
         line_number = sys.stdout.isatty()
 
     from tensor_grep.core.config import SearchConfig

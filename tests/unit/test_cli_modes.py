@@ -1829,6 +1829,29 @@ def test_cli_should_force_cpu_pipeline_when_env_override_is_enabled(monkeypatch)
     assert _LAST_PIPELINE_CONFIG.force_cpu is True
 
 
+def test_cli_search_no_line_number_overrides_line_number(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _LAST_PIPELINE_CONFIG = None
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    result = CliRunner().invoke(app, ["search", "-n", "-N", "--cpu", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert _LAST_PIPELINE_CONFIG is not None
+    assert _LAST_PIPELINE_CONFIG.line_number is False
+
+
 def test_cli_search_without_path_defaults_to_current_directory(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
     _FAKE_WALK = {".": ["a.log"]}

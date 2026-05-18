@@ -47,6 +47,12 @@ def test_ci_workflow_should_keep_dependency_install_retry_guards() -> None:
     assert "Dependency install failed after 5 attempts." in workflow
 
 
+def test_ci_python_matrix_should_be_timeout_bounded() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    python_section = workflow.split("  test-python:", 1)[1].split("  test-rust-core:", 1)[0]
+    assert "timeout-minutes: 30" in python_section
+
+
 def test_ci_gpu_workflow_should_keep_dependency_retry_guards() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "Verify cuDF / RAPIDS Configuration (with retry)" in workflow
