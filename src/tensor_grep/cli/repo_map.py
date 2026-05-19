@@ -8139,6 +8139,14 @@ def _build_edit_plan_seed(
         ),
         next(iter(ranked_symbols), None),
     )
+    if primary_symbol is not None and primary_file is not None:
+        primary_symbol_file = str(primary_symbol.get("file", "") or "")
+        primary_file_has_ranked_symbol = any(
+            str(current.get("file", "") or "") == str(primary_file) for current in ranked_symbols
+        )
+        if primary_symbol_file and primary_symbol_file != str(primary_file):
+            if not primary_file_has_ranked_symbol:
+                primary_file = primary_symbol_file
     if primary_symbol is not None and primary_file is None:
         preferred_files = _preferred_definition_files(repo_map, str(primary_symbol.get("name", "")))
         if preferred_files:

@@ -21,9 +21,9 @@ def _project_release_tag() -> str:
 
 
 CURRENT_RELEASE_TAG = _project_release_tag()
-VERIFIED_RELEASE_TAG = "v1.12.14"
-VERIFIED_RELEASE_COMMIT = "3be6879 chore(release): v1.12.14 [skip ci]"
-VERIFIED_FIX_COMMIT = "21e5437 fix: collect capsule call-site evidence"
+VERIFIED_RELEASE_TAG = "v1.12.34"
+VERIFIED_RELEASE_COMMIT = "e069f67 chore(release): v1.12.34 [skip ci]"
+VERIFIED_FIX_COMMIT = "c0cb613 fix: harden v1.12.33 dogfood contracts"
 CURRENT_RELEASE_COMMIT = VERIFIED_RELEASE_COMMIT
 CURRENT_FIX_COMMIT = VERIFIED_FIX_COMMIT
 CURRENT_GPU_FIX_COMMIT = "361e0db fix: harden public GPU unavailable routing"
@@ -34,8 +34,8 @@ LATEST_COMPLETE_RELEASE_TAG = CURRENT_RELEASE_TAG
 LATEST_COMPLETE_RELEASE_COMMIT = VERIFIED_RELEASE_COMMIT
 LATEST_COMPLETE_FIX_COMMIT = VERIFIED_FIX_COMMIT
 LATEST_VERIFIED_RELEASE_TAG = VERIFIED_RELEASE_TAG
-LATEST_VERIFIED_MAIN_CI = "25951521056"
-LATEST_VERIFIED_CODEQL = "25951813292"
+LATEST_VERIFIED_MAIN_CI = "26094452260"
+LATEST_VERIFIED_CODEQL = "26064676072"
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -116,6 +116,12 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "native_gpu_unavailable" in contracts
     assert "not_gpu_proof_reason" in contracts
     assert "fallback_or_sidecar_counts_as_gpu_proof" in contracts
+    assert "tg-native-metadata.json" in contracts
+    assert "--public-managed-proof" in contracts
+    assert "public_managed_promotion_ready" in contracts
+    assert "public_gpu_proof" in contracts
+    assert "native_frontdoor_metadata_version" in contracts
+    assert "native_frontdoor_asset_name" in contracts
     assert "classification_backend" in contracts
     assert "`tg run` is a validated AST slice" in contracts
     assert "`tg scan`" in contracts
@@ -439,6 +445,10 @@ def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogf
     for doc in (readme, benchmarks, gpu_doc):
         assert "public managed binary" in doc
         assert "CUDA-feature native build" in doc or "local CUDA-feature release build" in doc
+        assert "tg-native-metadata.json" in doc
+        assert "--public-managed-proof" in doc
+        assert "public_managed_promotion_ready" in doc
+        assert "public_gpu_proof" in doc
         assert "GpuSidecar" in doc
         assert "NativeGpuBackend" in doc
         assert "not public GPU readiness" in doc

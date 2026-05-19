@@ -38,6 +38,15 @@ function Write-AsciiFile {
     [System.IO.File]::WriteAllText($Path, $Value, [System.Text.Encoding]::ASCII)
 }
 
+function Write-Utf8NoBomFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    [System.IO.File]::WriteAllText($Path, $Value, [System.Text.UTF8Encoding]::new($false))
+}
+
 function Write-BashFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -91,6 +100,7 @@ function Install-NativeFrontdoorBinary {
 
     $nativeFrontdoorPath = Join-Path $frontdoorDir "tg.exe"
     $script:TensorGrepNativeFrontdoorFlavor = "cpu"
+    $script:TensorGrepNativeFrontdoorAssetName = ""
     if ($installChannel -eq "main") {
         Write-Host "      Main-channel install: using Python front door until release-native assets exist."
         return $nativeFrontdoorPath
@@ -110,6 +120,7 @@ function Install-NativeFrontdoorBinary {
                 throw "native tg front door smoke test failed"
             }
             $script:TensorGrepNativeFrontdoorFlavor = $nativeFlavor
+            $script:TensorGrepNativeFrontdoorAssetName = $nativeAssetName
             Write-Host "      Native tg front door installed: $nativeFrontdoorPath (asset flavor: $nativeFlavor)"
             return $nativeFrontdoorPath
         } catch {
@@ -458,8 +469,19 @@ try {
     $stagingFrontdoorPs1Path = Join-Path $stagingFrontdoorDir "tg.ps1"
     $stagingFrontdoorBashPath = Join-Path $stagingFrontdoorDir "tg"
     $stagingFrontdoorArgBridgePath = Join-Path $stagingFrontdoorDir "tg-cmd-bridge.py"
+    $stagingNativeMetadataPath = Join-Path $stagingFrontdoorDir "tg-native-metadata.json"
     if ((Test-Path -LiteralPath $stagingNativeFrontdoorPath) -and ($stagingNativeFrontdoorPath -ne (Join-Path $stagingFrontdoorDir "tg.exe"))) {
         Move-Item -LiteralPath $stagingNativeFrontdoorPath -Destination (Join-Path $stagingFrontdoorDir "tg.exe") -Force
+    }
+    if (Test-Path -LiteralPath (Join-Path $stagingFrontdoorDir "tg.exe")) {
+        $nativeMetadata = @{
+            artifact = "tensor_grep_native_frontdoor_metadata"
+            version = $installedVersion
+            asset_flavor = $nativeFrontdoorFlavor
+            requested_asset_flavor = $nativeFrontdoorRequestedFlavor
+            asset_name = $script:TensorGrepNativeFrontdoorAssetName
+        } | ConvertTo-Json -Depth 3
+        Write-Utf8NoBomFile -Path $stagingNativeMetadataPath -Value ($nativeMetadata + "`n")
     }
     $frontdoorCmdContent = (
         "@echo off`r`n" +

@@ -11,6 +11,7 @@ The post-`v1.12.34` dogfood keeps public GPU not promotion-ready. Single-pattern
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary; sidecar-routed rows are unsupported for native CUDA promotion.
 - The public managed binary currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
 - Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, declared workload class, correctness, and speed artifacts.
+- Public promotion additionally requires managed NVIDIA release provenance: the installed front door must include `tg-native-metadata.json`, and `benchmarks/run_gpu_native_benchmarks.py --public-managed-proof` must emit `public_managed_promotion_ready = true` and `public_gpu_proof = true`.
 - Current GPU artifacts expose `promotion_evidence_contract`, `fallback_or_sidecar_counts_as_gpu_proof`, `promotion_blockers`, `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` so sidecar routing, CPU fallback, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
 
 Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary.
@@ -73,6 +74,7 @@ Do not promote GPU speed from device discovery, sidecar availability, or correct
 2. Exact match and file-set correctness at every required 1GB and 5GB corpus.
 3. GPU faster than both `rg` and `tg_cpu` at the required scale and declared workload class.
 4. No failed error-handling or throughput gates.
+5. For public managed promotion, `--public-managed-proof` with managed NVIDIA `tg-native-metadata.json`, `public_managed_promotion_ready = true`, and `public_gpu_proof = true`.
 
 Until those are true, the public routing decision is explicit GPU search only.
 

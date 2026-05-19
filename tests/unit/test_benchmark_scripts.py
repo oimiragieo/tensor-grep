@@ -3474,6 +3474,143 @@ def test_run_gpu_native_benchmarks_should_emit_rows_correctness_and_error_tests(
     assert payload["error_tests"]["timeout"]["simulated"] is True
     assert payload["crossover"]["exists"] is True
     assert payload["crossover"]["first_gpu_faster_than_rg"] == "100MB"
+    assert payload["public_managed_gpu_proof_gate"]["status"] == "NOT_REQUESTED"
+    assert payload["public_managed_promotion_ready"] is False
+    assert payload["public_gpu_proof"] is False
+
+
+def test_run_gpu_native_benchmarks_public_managed_proof_requires_metadata(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_public_managed_proof",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_gpu_native_public.json"
+    tg_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True)
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_native_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--public-managed-proof",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "inspect_native_tg_binary",
+        lambda _binary: {
+            "kind": "managed-native",
+            "version_status": "matches",
+            "expected_version": "1.12.34",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_gpu_native_benchmarks",
+        lambda **_kwargs: {
+            "bench_dir": str(tmp_path / "gpu_native_bench_data"),
+            "corpus_sizes": [],
+            "rows": [],
+            "correctness_checks": [],
+            "error_tests": {},
+            "crossover": {
+                "exists": False,
+                "first_gpu_faster_than_rg": None,
+                "summary": "not relevant",
+            },
+            "scale_gate_summary": {
+                "promotion_ready": True,
+                "summary": "Native CUDA correctness and speed gates passed.",
+            },
+            "warnings": [],
+            "errors": [],
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["public_managed_gpu_proof_gate"]["status"] == "PASS"
+    assert payload["public_managed_promotion_ready"] is True
+    assert payload["public_gpu_proof"] is True
+
+
+def test_run_gpu_native_benchmarks_public_managed_proof_fails_without_managed_metadata(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_public_managed_proof_fails",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_gpu_native_public_fail.json"
+    tg_binary = tmp_path / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True)
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_native_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--public-managed-proof",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "inspect_native_tg_binary",
+        lambda _binary: {
+            "kind": "in-tree-release",
+            "version_status": "matches",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_metadata_status": "present",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_gpu_native_benchmarks",
+        lambda **_kwargs: {
+            "bench_dir": str(tmp_path / "gpu_native_bench_data"),
+            "corpus_sizes": [],
+            "rows": [],
+            "correctness_checks": [],
+            "error_tests": {},
+            "crossover": {
+                "exists": False,
+                "first_gpu_faster_than_rg": None,
+                "summary": "not relevant",
+            },
+            "scale_gate_summary": {
+                "promotion_ready": True,
+                "summary": "Native CUDA correctness and speed gates passed.",
+            },
+            "warnings": [],
+            "errors": [],
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["public_managed_gpu_proof_gate"]["status"] == "FAIL"
+    assert "not_managed_native_frontdoor" in payload["public_managed_gpu_proof_gate"]["blockers"]
+    assert payload["public_managed_promotion_ready"] is False
+    assert payload["public_gpu_proof"] is False
 
 
 def test_run_gpu_native_benchmarks_should_emit_advanced_sections_when_enabled(

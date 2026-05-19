@@ -314,6 +314,56 @@ def test_context_render_consistency_metadata_links_seed_render_and_navigation(
     assert payload["context_consistency"]["confidence_downgraded"] is False
 
 
+def test_edit_plan_seed_never_pairs_symbol_span_with_different_primary_file() -> None:
+    repo = {
+        "path": ".",
+        "imports": [],
+    }
+    main_path = str(Path("src/tensor_grep/cli/main.py").resolve())
+    runtime_path = str(Path("src/tensor_grep/cli/runtime_paths.py").resolve())
+    payload = {
+        "path": ".",
+        "files": [main_path],
+        "tests": [],
+        "file_matches": [
+            {
+                "path": main_path,
+                "score": 9,
+                "reasons": ["source"],
+            }
+        ],
+        "test_matches": [],
+    }
+    ranked_symbols = [
+        {
+            "name": "resolve_ripgrep_binary",
+            "kind": "function",
+            "file": runtime_path,
+            "line": 227,
+            "start_line": 227,
+            "end_line": 252,
+            "score": 9,
+        }
+    ]
+
+    seed = repo_map._build_edit_plan_seed(
+        repo,
+        payload,
+        ranked_symbols=ranked_symbols,
+        query="ripgrep binary resolution",
+        max_files=3,
+    )
+    navigation_target = repo_map._navigation_pack(
+        repo,
+        {"edit_plan_seed": seed, "candidate_edit_targets": {}},
+        max_reads=3,
+    )["primary_target"]
+
+    assert seed["primary_file"] == runtime_path
+    assert navigation_target["file"] == runtime_path
+    assert navigation_target["mention_ref"] == f"{runtime_path}#L227-L252"
+
+
 def test_validation_plan_does_not_suggest_npm_without_package_json(
     tmp_path: Path,
 ) -> None:

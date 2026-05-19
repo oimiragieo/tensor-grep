@@ -70,6 +70,21 @@ def test_install_ps1_should_require_opt_in_nvidia_native_frontdoor_with_cpu_fall
     assert "GPU promotion" not in content
 
 
+def test_install_ps1_should_write_native_frontdoor_metadata():
+    content = _read_script("scripts/install.ps1")
+
+    assert '"tg-native-metadata.json"' in content
+    assert "tensor_grep_native_frontdoor_metadata" in content
+    assert "asset_flavor" in content
+    assert "requested_asset_flavor" in content
+    assert "asset_name" in content
+    assert "$script:TensorGrepNativeFrontdoorAssetName" in content
+    assert "Write-Utf8NoBomFile -Path $stagingNativeMetadataPath" in content
+    assert content.index("Write-Utf8NoBomFile -Path $stagingNativeMetadataPath") < content.index(
+        "Commit-StagedManagedInstall `"
+    )
+
+
 def test_install_ps1_should_fail_fast_when_native_install_steps_fail():
     content = _read_script("scripts/install.ps1")
 
@@ -356,6 +371,20 @@ def test_install_sh_should_require_opt_in_nvidia_native_frontdoor_with_cpu_fallb
     assert "Falling back to CPU native tg front-door asset" in content
     assert "asset flavor" in content
     assert "GPU promotion" not in content
+
+
+def test_install_sh_should_write_native_frontdoor_metadata():
+    content = _read_script("scripts/install.sh")
+
+    assert 'STAGING_NATIVE_METADATA="$STAGING_INSTALL_DIR/bin/tg-native-metadata.json"' in content
+    assert "tensor_grep_native_frontdoor_metadata" in content
+    assert '"asset_flavor":' in content
+    assert '"requested_asset_flavor":' in content
+    assert '"asset_name":' in content
+    assert "TG_NATIVE_FRONTDOOR_ASSET_NAME" in content
+    assert content.index('cat > "$STAGING_NATIVE_METADATA"') < content.index(
+        'cat > "$STAGING_INSTALL_DIR/bin/tg"'
+    )
 
 
 def test_install_sh_should_use_current_gpu_wheel_indexes():

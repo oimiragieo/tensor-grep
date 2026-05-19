@@ -45,7 +45,7 @@ release_docs_current_tag: v1.12.34
 
 Latest tagged GitHub release: [`v1.12.34`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.34). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.12.34`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.34). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.12.32` completed in main CI run `26064673640`; CodeQL run `26064676072` passed.
+Latest verified release proof: `v1.12.34` completed in main CI run `26094452260`; latest CodeQL proof remains run `26064676072`.
 
 Current positioning:
 
@@ -53,11 +53,21 @@ Current positioning:
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
-- Public GPU note: in `v1.12.32`, public managed GPU is not promotion-ready. The public managed binary falls back to `NativeCpuBackend` or reports unsupported for explicit GPU requests unless a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. GPU benchmark artifacts expose `promotion_evidence_contract`, `promotion_blockers`, and declared workload class so fallback or sidecar rows cannot look like promotion proof. The latest public managed many-pattern dogfood is not promotion-ready for GPU: the accepted improvement is a native CPU fixed multi-pattern fast path, not public GPU readiness. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce 1GB and 5GB correctness and speed wins for the declared workload on RTX 4070 / RTX 5070 class devices. Many-pattern GPU claims require a single-invocation fair baseline such as `rg -F -e ... -e ...`; sequential `rg` loops are exploratory amortization evidence only.
+- Public GPU note: in `v1.12.32`, public managed GPU is not promotion-ready. The public managed binary falls back to `NativeCpuBackend` or reports unsupported for explicit GPU requests unless a CUDA-feature native build can produce `NativeGpuBackend` / `sidecar_used = false` evidence. GPU benchmark artifacts expose `promotion_evidence_contract`, `promotion_blockers`, and declared workload class so fallback or sidecar rows cannot look like promotion proof. The latest public managed many-pattern dogfood is not promotion-ready for GPU: the accepted improvement is a native CPU fixed multi-pattern fast path, not public GPU readiness. Native CUDA correctness rows are not public GPU readiness, and GPU remains experimental until public managed binaries produce 1GB and 5GB correctness and speed wins for the declared workload on RTX 4070 / RTX 5070 class devices. Many-pattern GPU claims require a single-invocation fair baseline such as `rg -F -e ... -e ...`; sequential `rg` loops are exploratory amortization evidence only. Public GPU promotion also requires managed NVIDIA front-door provenance from `tg-native-metadata.json` plus `benchmarks/run_gpu_native_benchmarks.py --public-managed-proof`, which must emit `public_managed_promotion_ready = true` and `public_gpu_proof = true`.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+
+What `v1.12.34` closed:
+
+- PR #163 `fix: harden v1.12.33 dogfood contracts` shipped the release as merge commit `c0cb613 fix: harden v1.12.33 dogfood contracts` and release commit `e069f67 chore(release): v1.12.34 [skip ci]`
+- Latest merged feature commit before this release line: `a518cc6 feat: add agent success harness`
+- main CI run `26094452260` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; latest CodeQL proof remains run `26064676072`
+- GitHub release assets for `v1.12.34` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.12.34 tg --version` reports `tensor-grep 1.12.34`
+- The remaining `--column --no-column` rg override edge now accepts and forwards through both `tg search --format rg ...` and root-level `tg --format rg ...` with last-flag-wins behavior.
+- Agent readiness now diagnoses stale repo-local `uv run tg` warmup drift, and the `ripgrep binary resolution` capsule hardcase is pinned so natural-language target selection does not regress to marker helpers.
+- Post-release-safe docs governance is preserved: current tag labels advance with semantic-release while this latest verified proof block records exact CI, assets, PyPI, and `uvx` evidence. The release preserves conservative positioning: `tg` is agent-native code intelligence with rg-compatible common search, not a blanket faster-ripgrep or GPU-acceleration claim.
 
 What `v1.12.32` closed:
 
@@ -940,7 +950,7 @@ The native CPU engine requires only a Rust toolchain. No GPU, CUDA, or Python ru
 
 ### Experimental Native CUDA
 
-To evaluate native CUDA search, your system must meet these requirements. End-to-end GPU routing is still benchmark-governed and host-specific; see [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current measured line. Public managed GPU remains experimental until public binaries produce `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins over both `rg` and `tg_cpu`.
+To evaluate native CUDA search, your system must meet these requirements. End-to-end GPU routing is still benchmark-governed and host-specific; see [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current measured line. Public managed GPU remains experimental until public binaries produce `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins over both `rg` and `tg_cpu`. Release-quality GPU promotion additionally requires managed NVIDIA front-door metadata in `tg-native-metadata.json` and a `--public-managed-proof` native benchmark artifact with `public_managed_promotion_ready = true` and `public_gpu_proof = true`; a local CUDA-feature native build alone is not public GPU readiness.
 
 * **Hardware:**
   * NVIDIA GPU (RTX 30/40 series recommended; RTX 50-series / sm_120 support depends on the CUDA/PyTorch stack described in [docs/runbooks/gpu-troubleshooting.md](docs/runbooks/gpu-troubleshooting.md))
