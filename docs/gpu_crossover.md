@@ -2,7 +2,7 @@
 
 ## Current post-`v1.12.32` GPU dogfood Read
 
-The post-`v1.12.32` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus fair `rg -F -e ... -e ...` multi-pattern search.
+The post-`v1.12.32` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus a single-invocation fair `rg -F -e ... -e ...` multi-pattern search for the declared workload class.
 
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
 - There is still no crossover for single-pattern literal search: GPU remains slower than `rg` and `tg_cpu` after CUDA startup, file I/O, H2D transfer, and output materialization are counted.
@@ -10,7 +10,7 @@ The post-`v1.12.32` dogfood keeps public GPU not promotion-ready. Single-pattern
 - The fair baseline is `rg -F -e ... -e ...`. In the `v1.11.5` public managed dogfood, 100 fixed no-match patterns over 1GB were `rg` multi-pattern: `0.169s`, `tg` CPU multi-pattern: `0.394s`, and `tg --gpu-device-ids 0`: `0.448s` via `NativeCpuBackend` CPU fallback. The mixed 100-pattern row was `rg` mixed multi-pattern: `0.105s` versus `tg` CPU mixed multi-pattern: `2.220s`, with the GPU-requested row also falling back to `NativeCpuBackend` (`2.211s`).
 - Python GPU scale rows are unsupported for native CUDA promotion when they route through the Python/Torch sidecar instead of a CUDA-enabled native `tg` binary; sidecar-routed rows are unsupported for native CUDA promotion.
 - The public managed binary currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
-- Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, correctness, and speed artifacts.
+- Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, declared workload class, correctness, and speed artifacts.
 - Current GPU artifacts expose `promotion_evidence_contract`, `fallback_or_sidecar_counts_as_gpu_proof`, `promotion_blockers`, `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` so sidecar routing, CPU fallback, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
 
 Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary.

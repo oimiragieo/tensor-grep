@@ -95,6 +95,16 @@ def test_should_forward_rg_inverse_config_override_flags():
         no_block_buffered=True,
         no_byte_offset=True,
         no_column=True,
+        no_crlf=True,
+        no_encoding=True,
+        no_fixed_strings=True,
+        no_invert_match=True,
+        no_mmap=True,
+        no_multiline=True,
+        no_multiline_dotall=True,
+        no_pcre2=True,
+        no_pre=True,
+        no_search_zip=True,
         no_context_separator=True,
         no_include_zero=True,
         no_line_buffered=True,
@@ -128,6 +138,16 @@ def test_should_forward_rg_inverse_config_override_flags():
         "--no-block-buffered",
         "--no-byte-offset",
         "--no-column",
+        "--no-crlf",
+        "--no-encoding",
+        "--no-fixed-strings",
+        "--no-invert-match",
+        "--no-mmap",
+        "--no-multiline",
+        "--no-multiline-dotall",
+        "--no-pcre2",
+        "--no-pre",
+        "--no-search-zip",
         "--no-context-separator",
         "--no-include-zero",
         "--no-line-buffered",
@@ -137,6 +157,17 @@ def test_should_forward_rg_inverse_config_override_flags():
         "--no-stats",
     ):
         assert flag in cmd
+
+
+def test_should_forward_pattern_file_without_treating_path_as_regex():
+    backend = RipgrepBackend()
+    config = SearchConfig(file_patterns=[r"C:\Users\oimir\patterns.txt"])
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(file_path="test.log", pattern="", config=config, json_mode=False)
+
+    assert cmd[-3:] == ["--file", r"C:\Users\oimir\patterns.txt", "test.log"]
+    assert "-e" not in cmd
 
 
 def test_should_forward_no_line_number_for_plain_text_output():

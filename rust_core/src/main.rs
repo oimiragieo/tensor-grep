@@ -102,6 +102,16 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-block-buffered",
     "--no-byte-offset",
     "--no-column",
+    "--no-crlf",
+    "--no-encoding",
+    "--no-fixed-strings",
+    "--no-invert-match",
+    "--no-mmap",
+    "--no-multiline",
+    "--no-multiline-dotall",
+    "--no-pcre2",
+    "--no-pre",
+    "--no-search-zip",
     "--no-context-separator",
     "--no-include-zero",
     "--no-line-buffered",
@@ -181,6 +191,16 @@ const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "-b",
     "--byte-offset",
     "--no-byte-offset",
+    "--no-crlf",
+    "--no-encoding",
+    "--no-fixed-strings",
+    "--no-invert-match",
+    "--no-mmap",
+    "--no-multiline",
+    "--no-multiline-dotall",
+    "--no-pcre2",
+    "--no-pre",
+    "--no-search-zip",
     "--colors",
     "--context-separator",
     "--no-context-separator",
@@ -370,9 +390,17 @@ pub struct SearchArgs {
     #[arg(short = 'F', long)]
     pub fixed_strings: bool,
 
+    /// Disable fixed-string mode; useful for rg config overrides.
+    #[arg(long = "no-fixed-strings")]
+    pub no_fixed_strings: bool,
+
     /// Invert match (select non-matching lines)
     #[arg(short = 'v', long)]
     pub invert_match: bool,
+
+    /// Disable inverted matching; useful for rg config overrides.
+    #[arg(long = "no-invert-match")]
+    pub no_invert_match: bool,
 
     /// Count matching lines
     #[arg(short = 'c', long)]
@@ -1079,14 +1107,21 @@ fn main() -> anyhow::Result<()> {
         return print_native_top_level_help();
     }
 
-    if is_top_level_pcre2_version_invocation(&raw_args) {
+    if is_top_level_version_invocation(&raw_args) || is_search_version_invocation(&raw_args) {
+        println!("tg {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    if is_top_level_pcre2_version_invocation(&raw_args)
+        || is_search_pcre2_version_invocation(&raw_args)
+    {
         let exit_code = execute_ripgrep_pcre2_version()?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
         }
         return Ok(());
     }
-    if is_top_level_type_list_invocation(&raw_args) {
+    if is_top_level_type_list_invocation(&raw_args) || is_search_type_list_invocation(&raw_args) {
         let exit_code = execute_ripgrep_type_list()?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -1168,12 +1203,41 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_top_level_version_invocation(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 2
+        && matches!(
+            raw_args.get(1).and_then(|arg| arg.to_str()),
+            Some("--version" | "-V")
+        )
+}
+
+fn is_search_version_invocation(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 3
+        && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("search")
+        && matches!(
+            raw_args.get(2).and_then(|arg| arg.to_str()),
+            Some("--version" | "-V")
+        )
+}
+
 fn is_top_level_pcre2_version_invocation(raw_args: &[OsString]) -> bool {
     raw_args.len() == 2 && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("--pcre2-version")
 }
 
 fn is_top_level_type_list_invocation(raw_args: &[OsString]) -> bool {
     raw_args.len() == 2 && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("--type-list")
+}
+
+fn is_search_pcre2_version_invocation(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 3
+        && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("search")
+        && raw_args.get(2).and_then(|arg| arg.to_str()) == Some("--pcre2-version")
+}
+
+fn is_search_type_list_invocation(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 3
+        && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("search")
+        && raw_args.get(2).and_then(|arg| arg.to_str()) == Some("--type-list")
 }
 
 fn parse_public_help_passthrough(raw_args: &[OsString]) -> Option<(&str, Vec<String>)> {
@@ -1427,7 +1491,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         json: false,
         ignore_case: false,
         fixed_strings: false,
+        no_fixed_strings: false,
         invert_match: false,
+        no_invert_match: false,
         count: false,
         count_matches: false,
         line_number: false,
@@ -1469,13 +1535,21 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         null: false,
         null_data: false,
         multiline: false,
+        no_multiline: false,
         multiline_dotall: false,
+        no_multiline_dotall: false,
         patterns: Vec::new(),
         paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
+        no_pcre2: false,
         pcre2_unicode: false,
         no_pcre2_unicode: false,
+        no_crlf: false,
+        no_encoding: false,
+        no_mmap: false,
+        no_pre: false,
+        no_search_zip: false,
         auto_hybrid_regex: false,
         no_auto_hybrid_regex: false,
         unicode: false,
@@ -1518,7 +1592,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         match token.as_str() {
             "-i" | "--ignore-case" => args.ignore_case = true,
             "-F" | "--fixed-strings" => args.fixed_strings = true,
+            "--no-fixed-strings" => args.no_fixed_strings = true,
             "-v" | "--invert-match" => args.invert_match = true,
+            "--no-invert-match" => args.no_invert_match = true,
             "-c" | "--count" => args.count = true,
             "--json" => args.json = true,
             "-n" | "--line-number" => {
@@ -1534,7 +1610,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-0" | "--null" => args.null = true,
             "--null-data" => args.null_data = true,
             "-U" | "--multiline" => args.multiline = true,
+            "--no-multiline" => args.no_multiline = true,
             "--multiline-dotall" => args.multiline_dotall = true,
+            "--no-multiline-dotall" => args.no_multiline_dotall = true,
             "--ignore" => {
                 args.ignore = true;
                 args.no_ignore = false;
@@ -1558,6 +1636,12 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 args.pcre2_unicode = true;
             }
             "--no-pcre2-unicode" => args.no_pcre2_unicode = true,
+            "--no-crlf" => args.no_crlf = true,
+            "--no-encoding" => args.no_encoding = true,
+            "--no-mmap" => args.no_mmap = true,
+            "--no-pcre2" => args.no_pcre2 = true,
+            "--no-pre" => args.no_pre = true,
+            "--no-search-zip" => args.no_search_zip = true,
             "--unicode" => args.unicode = true,
             "--no-text" => args.no_text = true,
             "--no-binary" => args.no_binary = true,
@@ -3465,7 +3549,9 @@ fn positional_ripgrep_args(
         json: false,
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
+        no_fixed_strings: false,
         invert_match: cli.invert_match,
+        no_invert_match: false,
         count: cli.count,
         count_matches: false,
         line_number: cli.line_number && !cli.no_line_number,
@@ -3508,12 +3594,20 @@ fn positional_ripgrep_args(
         null: false,
         null_data: false,
         multiline: false,
+        no_multiline: false,
         multiline_dotall: false,
+        no_multiline_dotall: false,
         patterns: vec![pattern.to_string()],
         paths: paths.to_vec(),
         pcre2: cli.pcre2,
+        no_pcre2: false,
         pcre2_unicode: cli.pcre2_unicode,
         no_pcre2_unicode: false,
+        no_crlf: false,
+        no_encoding: false,
+        no_mmap: false,
+        no_pre: false,
+        no_search_zip: false,
         auto_hybrid_regex: cli.auto_hybrid_regex,
         no_auto_hybrid_regex: false,
         unicode: cli.unicode,
@@ -3551,7 +3645,9 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         json: args.json && args.format.as_deref() == Some("rg"),
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
+        no_fixed_strings: false,
         invert_match: args.invert_match,
+        no_invert_match: false,
         count: args.count,
         count_matches: args.count_matches,
         line_number: args.line_number && !args.no_line_number,
@@ -3594,12 +3690,20 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         null: args.null,
         null_data: args.null_data,
         multiline: args.multiline,
+        no_multiline: false,
         multiline_dotall: args.multiline_dotall,
+        no_multiline_dotall: false,
         patterns: request.patterns.clone(),
         paths: request.paths.clone(),
         pcre2: args.pcre2,
+        no_pcre2: false,
         pcre2_unicode: args.pcre2_unicode,
         no_pcre2_unicode: false,
+        no_crlf: false,
+        no_encoding: false,
+        no_mmap: false,
+        no_pre: false,
+        no_search_zip: false,
         auto_hybrid_regex: args.auto_hybrid_regex,
         no_auto_hybrid_regex: false,
         unicode: args.unicode,
@@ -7175,7 +7279,9 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 json: false,
                                 ignore_case: params.ignore_case,
                                 fixed_strings: params.fixed_strings,
+                                no_fixed_strings: false,
                                 invert_match: params.invert_match,
+                                no_invert_match: false,
                                 count: params.count,
                                 count_matches: false,
                                 line_number: params.line_number,
@@ -7217,13 +7323,21 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 null: false,
                                 null_data: false,
                                 multiline: false,
+                                no_multiline: false,
                                 multiline_dotall: false,
+                                no_multiline_dotall: false,
                                 patterns: params.patterns.to_vec(),
                                 paths: vec![params.path.to_string()],
                                 no_ignore_vcs: false,
                                 pcre2: false,
+                                no_pcre2: false,
                                 pcre2_unicode: false,
                                 no_pcre2_unicode: false,
+                                no_crlf: false,
+                                no_encoding: false,
+                                no_mmap: false,
+                                no_pre: false,
+                                no_search_zip: false,
                                 auto_hybrid_regex: false,
                                 no_auto_hybrid_regex: false,
                                 unicode: false,

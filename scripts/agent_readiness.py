@@ -153,6 +153,16 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
         "--no-block-buffered",
         "--no-byte-offset",
         "--no-column",
+        "--no-crlf",
+        "--no-encoding",
+        "--no-fixed-strings",
+        "--no-invert-match",
+        "--no-mmap",
+        "--no-multiline",
+        "--no-multiline-dotall",
+        "--no-pcre2",
+        "--no-pre",
+        "--no-search-zip",
         "--no-context-separator",
         "--no-include-zero",
         "--no-line-buffered",
@@ -706,7 +716,7 @@ def build_check_plan(
     checks.extend([
         Check(
             name="repo-cli-build-warmup",
-            command=["uv", "run", "tg", "--version"],
+            command=["uv", "run", "--no-sync", "tg", "--version"],
             description=(
                 "Warm the repo-local uv/tg editable build before bounded agent trust probes."
             ),
@@ -715,7 +725,7 @@ def build_check_plan(
         ),
         Check(
             name="repo-doctor",
-            command=["uv", "run", "tg", "doctor", "--json", "--no-lsp"],
+            command=["uv", "run", "--no-sync", "tg", "doctor", "--json", "--no-lsp"],
             description="Verify repo tg doctor reports version and PATH parity.",
             timeout_s=90,
             validator=validate_repo_doctor_payload,
@@ -725,6 +735,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "tg",
                 "context-render",
                 "tests/unit/test_trust_planning.py",
@@ -738,7 +749,14 @@ def build_check_plan(
         ),
         Check(
             name="rg-parity-edges",
-            command=["uv", "run", "pytest", "tests/e2e/test_rg_parity_edges.py", "-q"],
+            command=[
+                "uv",
+                "run",
+                "--no-sync",
+                "pytest",
+                "tests/e2e/test_rg_parity_edges.py",
+                "-q",
+            ],
             description="Verify deterministic rg parity edge cases.",
             timeout_s=180,
         ),
@@ -747,6 +765,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "pytest",
                 "tests/unit/test_cli_modes.py",
                 "-q",
@@ -758,7 +777,7 @@ def build_check_plan(
         ),
         Check(
             name="ast-info-json",
-            command=["uv", "run", "tg", "ast-info", "--json"],
+            command=["uv", "run", "--no-sync", "tg", "ast-info", "--json"],
             description="Verify AST language inventory JSON is parseable.",
             timeout_s=60,
             validator=validate_ast_info,
@@ -768,6 +787,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "tg",
                 "run",
                 "--pattern",
@@ -786,6 +806,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "pytest",
                 "tests/unit/test_mcp_server.py",
                 "-q",
@@ -800,6 +821,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "pytest",
                 "tests/unit/test_cli_modes.py",
                 "tests/unit/test_mcp_server.py",
@@ -815,6 +837,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "pytest",
                 "tests/unit/test_cli_modes.py",
                 "-q",
@@ -833,6 +856,7 @@ def build_check_plan(
             command=[
                 "uv",
                 "run",
+                "--no-sync",
                 "pytest",
                 "tests/unit/test_agent_capsule_hardcases.py",
                 "-q",

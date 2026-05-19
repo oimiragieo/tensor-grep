@@ -444,7 +444,9 @@ def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogf
         assert "not public GPU readiness" in doc
         assert "promotion_evidence_contract" in doc
         assert "promotion_blockers" in doc
+        assert "declared workload class" in doc
         assert "rg -F -e" in doc
+        assert "single-invocation" in doc
         assert "sequential `rg`" in doc
 
 
