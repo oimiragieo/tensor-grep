@@ -1029,6 +1029,60 @@ fn test_top_level_format_rg_search_is_accepted_on_public_native_frontdoor() {
 }
 
 #[test]
+fn test_format_rg_column_no_column_forwards_to_rg_with_no_column_last() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
+
+    for args in [
+        vec![
+            "search",
+            "--format",
+            "rg",
+            "--column",
+            "--no-column",
+            "-n",
+            "-F",
+            "ERROR",
+            "app.log",
+        ],
+        vec![
+            "--format",
+            "rg",
+            "--column",
+            "--no-column",
+            "-n",
+            "-F",
+            "ERROR",
+            "app.log",
+        ],
+    ] {
+        let fake_rg = fake_rg_exact_args_script(
+            dir.path(),
+            &["--no-column", "-F", "-n", "-e", "ERROR", "app.log"],
+            "app.log:1:ERROR failed\n",
+        );
+        let output = tg()
+            .current_dir(dir.path())
+            .args(&args)
+            .env("TG_RG_PATH", &fake_rg)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "args={args:?} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "app.log:1:ERROR failed\n"
+        );
+    }
+}
+
+#[test]
 fn test_top_level_type_list_is_accepted_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_script(dir.path(), "rust: *.rs\n");

@@ -127,7 +127,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     warmup_check = next(check for check in checks if check.name == "repo-cli-build-warmup")
     assert warmup_check.command == ["uv", "run", "--no-sync", "tg", "--version"]
     assert warmup_check.timeout_s >= 180
-    assert warmup_check.validator is module.validate_version_output
+    assert warmup_check.validator is module.validate_repo_cli_warmup_version_output
 
     mcp_check = next(check for check in checks if check.name == "mcp-context-render-smoke")
     assert "test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target" in (
@@ -536,6 +536,24 @@ def test_agent_readiness_should_accept_native_and_python_version_prefixes() -> N
     module.validate_version_output("tg 1.8.26\n", Path("C:/repo"), "1.8.26")
 
 
+def test_agent_readiness_repo_cli_warmup_reports_stale_uv_entrypoint() -> None:
+    module = _load_script_module()
+
+    try:
+        module.validate_repo_cli_warmup_version_output(
+            "tensor-grep 1.12.32\n",
+            Path("C:/repo"),
+            "1.12.33",
+        )
+    except module.ReadinessError as exc:
+        message = str(exc)
+        assert "repo-local uv/tg entrypoint is stale" in message
+        assert "expected one of" in message
+        assert "uv run --refresh-package tensor-grep tg --version" in message
+    else:
+        raise AssertionError("expected stale repo cli warmup to fail")
+
+
 def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift(
     monkeypatch, tmp_path
 ) -> None:
@@ -583,6 +601,7 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "      --no-one-file-system",
                     "      --no-block-buffered",
                     "      --no-byte-offset",
+                    "      --column",
                     "      --no-column",
                     "      --no-crlf",
                     "      --no-encoding",
@@ -609,6 +628,7 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "  -T, --type-not <TYPE>",
                     "  -u, --unrestricted",
                     "      --sort <SORTBY>",
+                    "      --format <FORMAT>",
                     "  -n, --line-number",
                     "  -F, --fixed-strings",
                 ]),
@@ -643,6 +663,9 @@ def test_agent_readiness_public_search_flag_sweep_includes_rg_inverse_overrides(
     commands = {" ".join(command) for _label, command in cases}
     batched_inverse_commands = [
         command for label, command in cases if label == "rg-inverse-config-overrides"
+    ]
+    column_toggle_commands = [
+        command for label, command in cases if label == "column-no-column-last-wins"
     ]
 
     assert len(batched_inverse_commands) == 1
@@ -687,6 +710,9 @@ def test_agent_readiness_public_search_flag_sweep_includes_rg_inverse_overrides(
     ):
         assert any(f" {flag} " in command for command in commands)
         assert flag in batched_inverse_command
+    assert len(column_toggle_commands) == 1
+    assert "--column" in column_toggle_commands[0]
+    assert "--no-column" in column_toggle_commands[0]
 
 
 def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
@@ -736,6 +762,7 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "      --no-one-file-system",
                     "      --no-block-buffered",
                     "      --no-byte-offset",
+                    "      --column",
                     "      --no-column",
                     "      --no-crlf",
                     "      --no-encoding",
@@ -762,6 +789,7 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "  -T, --type-not <TYPE>",
                     "  -u, --unrestricted",
                     "      --sort <SORTBY>",
+                    "      --format <FORMAT>",
                     "  -n, --line-number",
                     "  -F, --fixed-strings",
                 ]),

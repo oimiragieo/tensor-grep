@@ -422,6 +422,10 @@ pub struct SearchArgs {
     #[arg(long)]
     pub column: bool,
 
+    /// Do not show column numbers; useful for rg config overrides.
+    #[arg(long = "no-column")]
+    pub no_column: bool,
+
     /// Replace matches in emitted output (ripgrep-style)
     #[arg(short = 'r', long)]
     pub replace: Option<String>,
@@ -1660,7 +1664,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "--no-one-file-system" => args.no_one_file_system = true,
             "--no-block-buffered" => args.no_block_buffered = true,
             "--no-byte-offset" => args.no_byte_offset = true,
-            "--no-column" => args.no_column = true,
+            "--column" => {
+                args.column = true;
+                args.no_column = false;
+            }
+            "--no-column" => {
+                args.column = false;
+                args.no_column = true;
+            }
             "--no-context-separator" => args.no_context_separator = true,
             "--no-include-zero" => args.no_include_zero = true,
             "--no-line-buffered" => args.no_line_buffered = true,
@@ -2719,6 +2730,35 @@ mod tests {
     }
 
     #[test]
+    fn default_search_frontdoor_accepts_column_no_column_last_wins() {
+        let raw_args = [
+            "tg",
+            "search",
+            "--format",
+            "rg",
+            "--column",
+            "--no-column",
+            "-n",
+            "-F",
+            "ERROR",
+            "bench_data",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+
+        let parsed = parse_default_search_frontdoor_args(&raw_args)
+            .expect("expected default search frontdoor column override args to parse");
+
+        assert!(!parsed.column);
+        assert!(parsed.no_column);
+        assert!(parsed.line_number);
+        assert!(parsed.fixed_strings);
+        assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
     fn default_search_frontdoor_rejects_structured_and_advanced_shapes() {
         let structured = ["tg", "search", "--json", "ERROR", "bench_data"]
             .into_iter()
@@ -3652,7 +3692,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         count_matches: args.count_matches,
         line_number: args.line_number && !args.no_line_number,
         no_line_number: args.no_line_number,
-        column: args.column,
+        column: args.column && !args.no_column,
         only_matching: args.only_matching,
         context: args.context,
         before_context: args.before_context,
@@ -3722,7 +3762,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         no_one_file_system: false,
         no_block_buffered: false,
         no_byte_offset: false,
-        no_column: false,
+        no_column: args.no_column,
         no_context_separator: false,
         no_include_zero: false,
         no_line_buffered: false,
@@ -3741,6 +3781,7 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
             && !args.ndjson
             && (args.count_matches
                 || args.column
+                || args.no_column
                 || args.smart_case
                 || args.hidden
                 || args.follow
