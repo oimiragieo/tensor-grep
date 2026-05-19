@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.35 (2026-05-19)
+
+### Bug Fixes
+
+- Harden public gpu proof contracts ([#164](https://github.com/oimiragieo/tensor-grep/pull/164),
+  [`6e19395`](https://github.com/oimiragieo/tensor-grep/commit/6e193959ff218dfe88cf4deba9a42ea250a1d5d7))
+
+
 ## v1.12.34 (2026-05-19)
 
 ### Bug Fixes
