@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.34 (2026-05-19)
+
+### Bug Fixes
+
+- Harden v1.12.33 dogfood contracts
+  ([`c0cb613`](https://github.com/oimiragieo/tensor-grep/commit/c0cb613f06abae668ef8d36449a0f0db96191ebd))
+
+Harden v1.12.33 dogfood contract gaps: accept rg --column/--no-column last-wins, add stale repo CLI
+  warmup diagnostics, pin the ripgrep binary-resolution agent hardcase, and record the dogfood slice
+  evidence.
+
+
 ## v1.12.33 (2026-05-19)
 
 ### Bug Fixes
