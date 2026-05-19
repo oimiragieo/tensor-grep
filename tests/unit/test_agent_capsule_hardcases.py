@@ -314,10 +314,11 @@ def test_agent_capsule_prefers_ripgrep_resolver_for_binary_resolution_query(tmp_
         encoding="utf-8",
     )
 
-    payload = _agent_payload(project, "fix ripgrep binary resolution")
+    for query in ("fix ripgrep binary resolution", "ripgrep binary resolution"):
+        payload = _agent_payload(project, query)
 
-    assert payload["primary_target"]["file"] == str(runtime_paths.resolve())
-    assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
+        assert payload["primary_target"]["file"] == str(runtime_paths.resolve())
+        assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
 
 
 def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():

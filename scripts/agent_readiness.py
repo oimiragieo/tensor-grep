@@ -85,6 +85,19 @@ def validate_version_output(stdout: str, _repo_root: Path, expected_version: str
         )
 
 
+def validate_repo_cli_warmup_version_output(
+    stdout: str, repo_root: Path, expected_version: str
+) -> None:
+    try:
+        validate_version_output(stdout, repo_root, expected_version)
+    except ReadinessError as exc:
+        raise ReadinessError(
+            f"repo-local uv/tg entrypoint is stale or unsynchronized: {exc}. "
+            "Run `uv sync` or `uv run --refresh-package tensor-grep tg --version` "
+            "before trusting repo-local dogfood."
+        ) from exc
+
+
 def validate_windows_launcher_quoted_patterns(
     _stdout: str, repo_root: Path, _expected_version: str
 ) -> None:
@@ -196,6 +209,21 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
         (
             "rg-inverse-config-overrides",
             ["tg", "search", *inverse_config_flags, "ERROR", str(log_file)],
+        ),
+        (
+            "column-no-column-last-wins",
+            [
+                "tg",
+                "search",
+                "--format",
+                "rg",
+                "--column",
+                "--no-column",
+                "-n",
+                "-F",
+                "ERROR",
+                str(log_file),
+            ],
         ),
         ("ignore", ["tg", "search", "--ignore", "ERROR", str(log_file)]),
         ("messages", ["tg", "search", "--messages", "ERROR", str(log_file)]),
@@ -721,7 +749,7 @@ def build_check_plan(
                 "Warm the repo-local uv/tg editable build before bounded agent trust probes."
             ),
             timeout_s=240 if IS_WINDOWS else 180,
-            validator=validate_version_output,
+            validator=validate_repo_cli_warmup_version_output,
         ),
         Check(
             name="repo-doctor",

@@ -221,6 +221,15 @@ RG_CONTRACT_ROWS: tuple[RGContractRow, ...] = (
         "benchmarkable": True,
     },
     {
+        "id": "column-disabled",
+        "public_flags": ("--column", "--no-column"),
+        "rg_args": ("--column", "--no-column"),
+        "tg_args": ("--column", "--no-column"),
+        "output_mode": "text",
+        "parity_expectation": "exact",
+        "benchmarkable": False,
+    },
+    {
         "id": "count",
         "public_flags": ("-c", "--count"),
         "rg_args": ("--count",),
@@ -368,5 +377,5 @@ RG_CONTRACT_ROWS: tuple[RGContractRow, ...] = (
 
 
 PUBLIC_SEARCH_HELP_FLAGS: tuple[str, ...] = tuple(
-    flag for row in RG_CONTRACT_ROWS for flag in row["public_flags"]
+    dict.fromkeys(flag for row in RG_CONTRACT_ROWS for flag in row["public_flags"])
 )

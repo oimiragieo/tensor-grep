@@ -94,6 +94,7 @@ ROW_SCENARIOS: dict[str, _ScenarioSpec] = {
     "line-number": _ScenarioSpec("line number sentinel", ("line-number.txt",)),
     "no-line-number": _ScenarioSpec("line number sentinel", ("line-number.txt",)),
     "column": _ScenarioSpec("column sentinel", ("column.txt",)),
+    "column-disabled": _ScenarioSpec("column sentinel", ("column.txt",)),
     "count": _ScenarioSpec("count sentinel", ("count-a.txt", "count-b.txt")),
     "count-matches": _ScenarioSpec("count-match sentinel", ("count-matches.txt",)),
     "text": _ScenarioSpec("text sentinel", ("binary.bin",)),

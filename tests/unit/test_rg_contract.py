@@ -28,6 +28,7 @@ EXPECTED_ROWS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "line-number": (("-n", "--line-number"), ("--line-number",)),
     "no-line-number": (("-N", "--no-line-number"), ("--no-line-number",)),
     "column": (("--column",), ("--column",)),
+    "column-disabled": (("--column", "--no-column"), ("--column", "--no-column")),
     "count": (("-c", "--count"), ("--count",)),
     "count-matches": (("--count-matches",), ("--count-matches",)),
     "text": (("-a", "--text"), ("--text",)),
