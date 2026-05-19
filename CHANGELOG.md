@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.33 (2026-05-19)
+
+### Bug Fixes
+
+- Harden gpu proof and search contracts
+  ([`0543b3f`](https://github.com/oimiragieo/tensor-grep/commit/0543b3f91b1c858925b4e44e09f0bf3229f5e623))
+
+Squash-merge PR #162 after local validation and green PR CI.
+
+
 ## v1.12.32 (2026-05-18)
 
 ### Bug Fixes
