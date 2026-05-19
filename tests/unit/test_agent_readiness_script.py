@@ -105,15 +105,27 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
 
     rg_check = next(check for check in checks if check.name == "rg-parity-edges")
     assert rg_check.timeout_s <= 180
-    assert rg_check.command[:4] == ["uv", "run", "pytest", "tests/e2e/test_rg_parity_edges.py"]
+    assert rg_check.command[:5] == [
+        "uv",
+        "run",
+        "--no-sync",
+        "pytest",
+        "tests/e2e/test_rg_parity_edges.py",
+    ]
 
     broad_scan_check = next(check for check in checks if check.name == "broad-generated-scan-guard")
     assert broad_scan_check.timeout_s <= 120
-    assert broad_scan_check.command[:4] == ["uv", "run", "pytest", "tests/unit/test_cli_modes.py"]
+    assert broad_scan_check.command[:5] == [
+        "uv",
+        "run",
+        "--no-sync",
+        "pytest",
+        "tests/unit/test_cli_modes.py",
+    ]
     assert "broad_generated_root_scan" in broad_scan_check.command
 
     warmup_check = next(check for check in checks if check.name == "repo-cli-build-warmup")
-    assert warmup_check.command == ["uv", "run", "tg", "--version"]
+    assert warmup_check.command == ["uv", "run", "--no-sync", "tg", "--version"]
     assert warmup_check.timeout_s >= 180
     assert warmup_check.validator is module.validate_version_output
 
@@ -124,9 +136,10 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
 
     capsule_check = next(check for check in checks if check.name == "agent-capsule")
     assert capsule_check.timeout_s <= 120
-    assert capsule_check.command[:5] == [
+    assert capsule_check.command[:6] == [
         "uv",
         "run",
+        "--no-sync",
         "pytest",
         "tests/unit/test_cli_modes.py",
         "tests/unit/test_mcp_server.py",
@@ -137,9 +150,10 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         check for check in checks if check.name == "agent-capsule-mixed-language"
     )
     assert mixed_capsule_check.timeout_s <= 120
-    assert mixed_capsule_check.command[:4] == [
+    assert mixed_capsule_check.command[:5] == [
         "uv",
         "run",
+        "--no-sync",
         "pytest",
         "tests/unit/test_cli_modes.py",
     ]
@@ -157,9 +171,10 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
 
     hardcase_check = next(check for check in checks if check.name == "agent-capsule-hardcases")
     assert hardcase_check.timeout_s <= 120
-    assert hardcase_check.command[:4] == [
+    assert hardcase_check.command[:5] == [
         "uv",
         "run",
+        "--no-sync",
         "pytest",
         "tests/unit/test_agent_capsule_hardcases.py",
     ]
@@ -569,6 +584,16 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "      --no-block-buffered",
                     "      --no-byte-offset",
                     "      --no-column",
+                    "      --no-crlf",
+                    "      --no-encoding",
+                    "      --no-fixed-strings",
+                    "      --no-invert-match",
+                    "      --no-mmap",
+                    "      --no-multiline",
+                    "      --no-multiline-dotall",
+                    "      --no-pcre2",
+                    "      --no-pre",
+                    "      --no-search-zip",
                     "      --no-context-separator",
                     "      --no-include-zero",
                     "      --no-line-buffered",
@@ -642,6 +667,16 @@ def test_agent_readiness_public_search_flag_sweep_includes_rg_inverse_overrides(
         "--no-block-buffered",
         "--no-byte-offset",
         "--no-column",
+        "--no-crlf",
+        "--no-encoding",
+        "--no-fixed-strings",
+        "--no-invert-match",
+        "--no-mmap",
+        "--no-multiline",
+        "--no-multiline-dotall",
+        "--no-pcre2",
+        "--no-pre",
+        "--no-search-zip",
         "--no-context-separator",
         "--no-include-zero",
         "--no-line-buffered",
@@ -702,6 +737,16 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "      --no-block-buffered",
                     "      --no-byte-offset",
                     "      --no-column",
+                    "      --no-crlf",
+                    "      --no-encoding",
+                    "      --no-fixed-strings",
+                    "      --no-invert-match",
+                    "      --no-mmap",
+                    "      --no-multiline",
+                    "      --no-multiline-dotall",
+                    "      --no-pcre2",
+                    "      --no-pre",
+                    "      --no-search-zip",
                     "      --no-context-separator",
                     "      --no-include-zero",
                     "      --no-line-buffered",

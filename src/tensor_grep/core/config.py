@@ -7,23 +7,32 @@ class SearchConfig:
     regexp: list[str] | None = None
     file_patterns: list[str] | None = None
     pre: str | None = None
+    no_pre: bool = False
     pre_glob: list[str] | None = None
     search_zip: bool = False
+    no_search_zip: bool = False
 
     # SEARCH OPTIONS
     case_sensitive: bool = False
     crlf: bool = False
+    no_crlf: bool = False
     dfa_size_limit: str | None = None
     encoding: str = "auto"
+    no_encoding: bool = False
     engine: str = "default"
     fixed_strings: bool = False
+    no_fixed_strings: bool = False
     ignore_case: bool = False
     invert_match: bool = False
+    no_invert_match: bool = False
     line_regexp: bool = False
     max_count: int | None = None
     mmap: bool = True
+    no_mmap: bool = False
     multiline: bool = False
+    no_multiline: bool = False
     multiline_dotall: bool = False
+    no_multiline_dotall: bool = False
     auto_hybrid_regex: bool = False
     no_auto_hybrid_regex: bool = False
     no_unicode: bool = False
@@ -32,6 +41,7 @@ class SearchConfig:
     no_pcre2_unicode: bool = False
     null_data: bool = False
     pcre2: bool = False
+    no_pcre2: bool = False
     regex_size_limit: str | None = None
     smart_case: bool = False
     stop_on_nonmatch: bool = False

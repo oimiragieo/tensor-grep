@@ -628,6 +628,31 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
             &["search", "--no-byte-offset", "ERROR", "."],
         ),
         ("--no-column", &["search", "--no-column", "ERROR", "."]),
+        ("--no-crlf", &["search", "--no-crlf", "ERROR", "."]),
+        ("--no-encoding", &["search", "--no-encoding", "ERROR", "."]),
+        (
+            "--no-fixed-strings",
+            &["search", "--no-fixed-strings", "ERROR", "."],
+        ),
+        (
+            "--no-invert-match",
+            &["search", "--no-invert-match", "ERROR", "."],
+        ),
+        ("--no-mmap", &["search", "--no-mmap", "ERROR", "."]),
+        (
+            "--no-multiline",
+            &["search", "--no-multiline", "ERROR", "."],
+        ),
+        (
+            "--no-multiline-dotall",
+            &["search", "--no-multiline-dotall", "ERROR", "."],
+        ),
+        ("--no-pcre2", &["search", "--no-pcre2", "ERROR", "."]),
+        ("--no-pre", &["search", "--no-pre", "ERROR", "."]),
+        (
+            "--no-search-zip",
+            &["search", "--no-search-zip", "ERROR", "."],
+        ),
         (
             "--no-context-separator",
             &["search", "--no-context-separator", "ERROR", "."],
@@ -677,6 +702,26 @@ fn test_search_help_advertised_rg_flags_are_accepted_on_public_native_frontdoor(
 }
 
 #[test]
+fn test_search_version_and_top_level_version_do_not_enter_search_parser() {
+    for args in [&["--version"][..], &["search", "--version"][..]] {
+        let output = tg().args(args).output().unwrap();
+
+        assert!(
+            output.status.success(),
+            "args={args:?} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("tg "),
+            "stdout={}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
+
+#[test]
 fn test_search_frontdoor_forwards_rg_inverse_config_override_flags() {
     let dir = tempdir().unwrap();
     let expected = [
@@ -698,6 +743,16 @@ fn test_search_frontdoor_forwards_rg_inverse_config_override_flags() {
         "--no-block-buffered",
         "--no-byte-offset",
         "--no-column",
+        "--no-crlf",
+        "--no-encoding",
+        "--no-fixed-strings",
+        "--no-invert-match",
+        "--no-mmap",
+        "--no-multiline",
+        "--no-multiline-dotall",
+        "--no-pcre2",
+        "--no-pre",
+        "--no-search-zip",
         "--no-context-separator",
         "--no-include-zero",
         "--no-line-buffered",
@@ -736,6 +791,16 @@ fn test_search_frontdoor_forwards_rg_inverse_config_override_flags() {
             "--no-block-buffered",
             "--no-byte-offset",
             "--no-column",
+            "--no-crlf",
+            "--no-encoding",
+            "--no-fixed-strings",
+            "--no-invert-match",
+            "--no-mmap",
+            "--no-multiline",
+            "--no-multiline-dotall",
+            "--no-pcre2",
+            "--no-pre",
+            "--no-search-zip",
             "--no-context-separator",
             "--no-include-zero",
             "--no-line-buffered",

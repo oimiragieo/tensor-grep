@@ -90,8 +90,10 @@ def _build_world_class_readiness() -> dict[str, Any]:
                 "surface": "public_gpu_acceleration",
                 "status": "experimental_until_native_gpu_proof",
                 "required_evidence": (
-                    "NativeGpuBackend with sidecar_used=false, 1GB/5GB correctness, "
-                    "and speed wins over both rg and tg_cpu"
+                    "declared workload class, NativeGpuBackend with sidecar_used=false, "
+                    "1GB/5GB correctness, speed wins over both rg and tg_cpu, and "
+                    "fair many-pattern comparison against rg -F -e ... -e ... when "
+                    "claiming many-pattern GPU acceleration"
                 ),
             },
             {

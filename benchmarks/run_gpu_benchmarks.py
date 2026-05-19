@@ -35,6 +35,9 @@ DEFAULT_CORRECTNESS_PATTERNS = (
     "Database connection timeout",
 )
 GPU_SCALE_WORKLOAD_CLASS = "single_pattern_cold_grep"
+GPU_MANY_PATTERN_WORKLOAD_CLASS = "many_fixed_patterns_single_dispatch"
+GPU_RESIDENT_REPEATED_QUERY_WORKLOAD_CLASS = "resident_repeated_query"
+FAIR_RG_MULTI_PATTERN_BASELINE = "rg -F -e ... -e ..."
 RECOMMENDATION_REQUIRED_CORPUS_SIZES = (1 * GB, 5 * GB)
 GPU_RECOMMENDATION_MIN_SPEEDUP_PCT = 20.0
 PAYLOAD_FILLER = "payload=" + ("0123456789abcdef" * 224)
@@ -46,6 +49,33 @@ GPU_PIPELINE_STAGE_FIELDS = {
     "kernel": ("kernel_time_ms",),
     "cpu_staging": ("cpu_staging_time_ms",),
 }
+
+
+def build_gpu_workload_taxonomy() -> dict[str, object]:
+    return {
+        "promotion_scope": "declared_workload_class_only",
+        "measured_scale_gate": {
+            "workload_class": GPU_SCALE_WORKLOAD_CLASS,
+            "promotion_eligible": True,
+            "required_proof": (
+                "NativeGpuBackend with sidecar_used=false, required-scale correctness, "
+                "and end-to-end speed wins over both rg and tg_cpu"
+            ),
+        },
+        "candidate_workload_classes": [
+            {
+                "workload_class": GPU_MANY_PATTERN_WORKLOAD_CLASS,
+                "status": "candidate_until_required_scale_correctness_and_fair_rg_speed_proof",
+                "fair_rg_baseline": FAIR_RG_MULTI_PATTERN_BASELINE,
+            },
+            {
+                "workload_class": GPU_RESIDENT_REPEATED_QUERY_WORKLOAD_CLASS,
+                "status": "candidate_not_measured",
+                "fair_rg_baseline": "not_applicable_until_benchmark_exists",
+            },
+        ],
+        "non_proof_routes": ["GpuSidecar", "NativeCpuBackend", "sidecar_used=true"],
+    }
 
 
 def _is_skippable_cybert_exception(exc: Exception) -> bool:
@@ -1105,11 +1135,17 @@ def _required_size_labels(required_corpus_sizes: tuple[int, ...]) -> list[str]:
 
 def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object]:
     return {
+        "promotion_scope": "declared_workload_class_only",
         "required_runtime_backend": "NativeGpuBackend",
         "required_sidecar_used": False,
         "required_workload_class": GPU_SCALE_WORKLOAD_CLASS,
         "required_correctness_sizes": required_labels,
         "required_speed_baselines": ["rg", "tg_cpu"],
+        "fair_many_pattern_baseline": FAIR_RG_MULTI_PATTERN_BASELINE,
+        "candidate_workload_classes": [
+            GPU_MANY_PATTERN_WORKLOAD_CLASS,
+            GPU_RESIDENT_REPEATED_QUERY_WORKLOAD_CLASS,
+        ],
         "sidecar_routing_counts_as_promotion": False,
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
@@ -1139,6 +1175,24 @@ def _promotion_blockers(
     elif speed_status != "PASS":
         blockers.append("speed_gate_failed")
     return blockers
+
+
+def _workload_evidence_status(
+    *,
+    runtime_gate: dict[str, object],
+    correctness_gate: dict[str, object],
+    speed_gate: dict[str, object],
+    promotion_ready: bool,
+) -> str:
+    if promotion_ready:
+        return "promotion_ready"
+    if runtime_gate.get("status") not in {"PASS", "SUPPORTED"}:
+        return "native_cuda_runtime_unsupported"
+    if correctness_gate.get("status") != "PASS":
+        return "correctness_gate_failed"
+    if speed_gate.get("status") != "PASS":
+        return "speed_gate_failed"
+    return "experimental"
 
 
 def _observed_operational_backends(devices: list[dict[str, object]]) -> list[str]:
@@ -1294,9 +1348,13 @@ def build_scale_gate_summary(
             else "Native CUDA promotion is blocked by correctness or speed gate evidence."
         )
 
+    promotion_ready = has_native_cuda_backend and bool(
+        gpu_auto_recommendation.get("should_add_flag", False)
+    )
     return {
         "benchmark_surface": "python-gpu-scale",
         "workload_class": GPU_SCALE_WORKLOAD_CLASS,
+        "workload_taxonomy": build_gpu_workload_taxonomy(),
         "promotion_evidence_contract": _promotion_evidence_contract(required_labels),
         "native_cuda_scale_gate": native_gate,
         "correctness_gate": correctness_gate,
@@ -1306,8 +1364,13 @@ def build_scale_gate_summary(
             correctness_gate=correctness_gate,
             speed_gate=speed_gate,
         ),
-        "promotion_ready": has_native_cuda_backend
-        and bool(gpu_auto_recommendation.get("should_add_flag", False)),
+        "workload_evidence_status": _workload_evidence_status(
+            runtime_gate=native_gate,
+            correctness_gate=correctness_gate,
+            speed_gate=speed_gate,
+            promotion_ready=promotion_ready,
+        ),
+        "promotion_ready": promotion_ready,
         "summary": summary,
     }
 

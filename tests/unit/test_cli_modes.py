@@ -2358,6 +2358,16 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
             "--no-block-buffered",
             "--no-byte-offset",
             "--no-column",
+            "--no-crlf",
+            "--no-encoding",
+            "--no-fixed-strings",
+            "--no-invert-match",
+            "--no-mmap",
+            "--no-multiline",
+            "--no-multiline-dotall",
+            "--no-pcre2",
+            "--no-pre",
+            "--no-search-zip",
             "--no-context-separator",
             "--no-include-zero",
             "--no-line-buffered",
@@ -2403,6 +2413,16 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
     assert config.no_block_buffered is True
     assert config.no_byte_offset is True
     assert config.no_column is True
+    assert config.no_crlf is True
+    assert config.no_encoding is True
+    assert config.no_fixed_strings is True
+    assert config.no_invert_match is True
+    assert config.no_mmap is True
+    assert config.no_multiline is True
+    assert config.no_multiline_dotall is True
+    assert config.no_pcre2 is True
+    assert config.no_pre is True
+    assert config.no_search_zip is True
     assert config.no_context_separator is True
     assert config.no_include_zero is True
     assert config.no_line_buffered is True
@@ -2412,6 +2432,47 @@ def test_python_search_accepts_advertised_rg_compatibility_flags(monkeypatch, tm
     assert config.no_stats is True
     assert config.sort_files is True
     assert config.max_depth == 2
+
+
+def test_python_search_treats_file_option_as_pattern_file_not_regex(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    windows_pattern_file = r"C:\Users\oimir\patterns.txt"
+    seen: dict[str, object] = {}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        seen["paths"] = list(paths)
+        seen["pattern"] = pattern
+        seen["config"] = config
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "--format",
+            "rg",
+            "--file",
+            windows_pattern_file,
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["paths"] == [str(project)]
+    assert seen["pattern"] == ""
+    config = seen["config"]
+    assert config.file_patterns == [windows_pattern_file]
 
 
 def test_search_version_should_run_from_python_search_entrypoint() -> None:

@@ -59,6 +59,16 @@ def test_dogfood_command_wraps_agent_readiness_report(tmp_path: Path) -> None:
         "lsp_semantic_provider",
         "agent_target_selection_metrics",
     }.issubset(limitation_surfaces)
+    gpu_limitation = next(
+        item
+        for item in payload["world_class_readiness"]["limitations"]
+        if item["surface"] == "public_gpu_acceleration"
+    )
+    assert "declared workload class" in gpu_limitation["required_evidence"]
+    assert "NativeGpuBackend" in gpu_limitation["required_evidence"]
+    assert "sidecar_used=false" in gpu_limitation["required_evidence"]
+    assert "1GB/5GB correctness" in gpu_limitation["required_evidence"]
+    assert "rg -F -e ... -e ..." in gpu_limitation["required_evidence"]
     assert payload["agent_readiness"]["summary"]["passed"] == 2
 
 

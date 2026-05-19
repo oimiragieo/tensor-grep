@@ -37,6 +37,8 @@ def test_gpu_promotion_contract_should_name_single_pattern_workload_class():
     contract = module._promotion_evidence_contract(["1GB", "5GB"])
 
     assert contract["required_workload_class"] == "single_pattern_cold_grep"
+    assert contract["promotion_scope"] == "declared_workload_class_only"
+    assert contract["fair_many_pattern_baseline"] == "rg -F -e ... -e ..."
     assert contract["many_pattern_claim_requires_fair_rg_multi_pattern_baseline"] is True
 
 
@@ -49,7 +51,117 @@ def test_gpu_native_promotion_contract_should_name_single_pattern_workload_class
     contract = module._promotion_evidence_contract(["1GB", "5GB"])
 
     assert contract["required_workload_class"] == "single_pattern_cold_grep"
+    assert contract["promotion_scope"] == "declared_workload_class_only"
+    assert contract["fair_many_pattern_baseline"] == "rg -F -e ... -e ..."
     assert contract["many_pattern_claim_requires_fair_rg_multi_pattern_baseline"] is True
+
+
+def test_gpu_workload_taxonomy_should_name_candidate_classes():
+    modules = [
+        _load_script_module(
+            "run_gpu_benchmarks_workload_taxonomy", "benchmarks/run_gpu_benchmarks.py"
+        ),
+        _load_script_module(
+            "run_gpu_native_benchmarks_workload_taxonomy",
+            "benchmarks/run_gpu_native_benchmarks.py",
+        ),
+    ]
+
+    for module in modules:
+        taxonomy = module.build_gpu_workload_taxonomy()
+
+        assert taxonomy["promotion_scope"] == "declared_workload_class_only"
+        assert taxonomy["measured_scale_gate"]["workload_class"] == "single_pattern_cold_grep"
+        assert taxonomy["measured_scale_gate"]["promotion_eligible"] is True
+        assert taxonomy["candidate_workload_classes"] == [
+            {
+                "workload_class": "many_fixed_patterns_single_dispatch",
+                "status": "candidate_until_required_scale_correctness_and_fair_rg_speed_proof",
+                "fair_rg_baseline": "rg -F -e ... -e ...",
+            },
+            {
+                "workload_class": "resident_repeated_query",
+                "status": "candidate_not_measured",
+                "fair_rg_baseline": "not_applicable_until_benchmark_exists",
+            },
+        ]
+
+
+def test_gpu_native_summary_should_report_workload_scoped_speed_blocker():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_losing_speed_scope",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    rows = [
+        {
+            "size_label": label,
+            "rg": {"median_s": 1.0},
+            "tg_cpu": {"median_s": 1.5},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 2.0,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        }
+        for label in ("1GB", "5GB")
+    ]
+    correctness_checks = [
+        {
+            "size_label": label,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+        }
+        for label in ("1GB", "5GB")
+    ]
+
+    summary = module.build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+    proof = module._gpu_proof_status_from_native_summary(summary)
+
+    assert summary["workload_taxonomy"]["promotion_scope"] == "declared_workload_class_only"
+    assert summary["workload_evidence_status"] == "speed_gate_failed"
+    assert summary["promotion_ready"] is False
+    assert proof["gpu_proof"] is False
+    assert proof["gpu_evidence_status"] == "experimental"
+
+
+def test_gpu_python_summary_should_mark_native_cpu_fallback_as_unsupported_not_proof():
+    module = _load_script_module(
+        "run_gpu_benchmarks_native_cpu_fallback_scope",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+
+    devices = [
+        {
+            "device_id": 0,
+            "name": "RTX",
+            "operational": True,
+            "tg_runtime_backend": "NativeCpuBackend",
+            "tg_runtime_sidecar_used": False,
+        }
+    ]
+
+    summary = module.build_scale_gate_summary(
+        devices=devices,
+        correctness_checks=[],
+        gpu_auto_recommendation={"should_add_flag": False},
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+    proof = module._gpu_proof_status_from_summary(summary)
+
+    assert summary["workload_taxonomy"]["promotion_scope"] == "declared_workload_class_only"
+    assert summary["native_cuda_scale_gate"]["status"] == "UNSUPPORTED"
+    assert summary["promotion_ready"] is False
+    assert "native_cuda_runtime_unsupported" in summary["promotion_blockers"]
+    assert proof["gpu_evidence_status"] == "unsupported"
+    assert proof["gpu_proof"] is False
+    assert proof["native_gpu_unavailable"] is True
 
 
 def test_gpu_pipeline_helpers_should_summarize_bottleneck_stage():
@@ -536,15 +648,25 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
     assert payload["gpu_proof"] is False
     assert payload["native_gpu_unavailable"] is True
     assert "sidecar" in payload["not_gpu_proof_reason"]
+    scale_summary = payload["scale_gate_summary"]
+    assert scale_summary["workload_taxonomy"]["promotion_scope"] == ("declared_workload_class_only")
+    assert scale_summary["workload_evidence_status"] == "native_cuda_runtime_unsupported"
     assert payload["scale_gate_summary"] == {
         "benchmark_surface": "python-gpu-scale",
         "workload_class": "single_pattern_cold_grep",
+        "workload_taxonomy": module.build_gpu_workload_taxonomy(),
         "promotion_evidence_contract": {
+            "promotion_scope": "declared_workload_class_only",
             "required_runtime_backend": "NativeGpuBackend",
             "required_sidecar_used": False,
             "required_workload_class": "single_pattern_cold_grep",
             "required_correctness_sizes": ["1GB", "5GB"],
             "required_speed_baselines": ["rg", "tg_cpu"],
+            "fair_many_pattern_baseline": "rg -F -e ... -e ...",
+            "candidate_workload_classes": [
+                "many_fixed_patterns_single_dispatch",
+                "resident_repeated_query",
+            ],
             "sidecar_routing_counts_as_promotion": False,
             "fallback_or_sidecar_counts_as_gpu_proof": False,
             "public_managed_rows_must_not_be_sidecar": True,
@@ -577,6 +699,7 @@ def test_run_gpu_benchmarks_should_skip_sidecar_contaminated_native_runtime_for_
             "correctness_not_run",
             "speed_not_run",
         ],
+        "workload_evidence_status": "native_cuda_runtime_unsupported",
         "promotion_ready": False,
         "summary": (
             "Python GPU scale rows are unsupported for native CUDA promotion; run "
@@ -1429,12 +1552,19 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
 
     assert summary["benchmark_surface"] == "native-cuda-scale"
     assert summary["workload_class"] == "single_pattern_cold_grep"
+    assert summary["workload_taxonomy"] == module.build_gpu_workload_taxonomy()
     assert summary["promotion_evidence_contract"] == {
+        "promotion_scope": "declared_workload_class_only",
         "required_runtime_backend": "NativeGpuBackend",
         "required_sidecar_used": False,
         "required_workload_class": "single_pattern_cold_grep",
         "required_correctness_sizes": ["1GB", "5GB"],
         "required_speed_baselines": ["rg", "tg_cpu"],
+        "fair_many_pattern_baseline": "rg -F -e ... -e ...",
+        "candidate_workload_classes": [
+            "many_fixed_patterns_single_dispatch",
+            "resident_repeated_query",
+        ],
         "sidecar_routing_counts_as_promotion": False,
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
@@ -1465,6 +1595,7 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
         "reason": "Native CUDA did not beat both rg and tg_cpu at every required scale.",
     }
     assert summary["promotion_blockers"] == ["speed_gate_failed"]
+    assert summary["workload_evidence_status"] == "speed_gate_failed"
     assert summary["promotion_ready"] is False
     assert (
         summary["summary"]

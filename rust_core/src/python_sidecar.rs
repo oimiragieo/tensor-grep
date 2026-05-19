@@ -88,7 +88,7 @@ pub fn execute_python_passthrough_command(
 ) -> Result<i32, SidecarError> {
     let python = resolve_python_command();
 
-    let mut child = Command::new(&python);
+    let mut child = command_for_executable(&python);
     configure_python_child_environment(&mut child);
     child
         .arg("-m")
@@ -113,7 +113,7 @@ pub fn execute_python_passthrough_command_captured(
     let python = resolve_python_command();
     let passthrough_timeout = resolve_help_probe_timeout();
 
-    let mut child = Command::new(&python);
+    let mut child = command_for_executable(&python);
     configure_python_child_environment(&mut child);
     #[cfg(unix)]
     unsafe {
@@ -207,7 +207,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         stderr: String::new(),
     })?;
 
-    let mut child = Command::new(&python);
+    let mut child = command_for_executable(&python);
     configure_python_child_environment(&mut child);
     if let Some(device_ids) = gpu_device_ids_env_value(&request) {
         child.env("TENSOR_GREP_DEVICE_IDS", device_ids);
@@ -501,6 +501,29 @@ fn resolve_python_command() -> OsString {
 
     let current_exe = env::current_exe().ok();
     resolve_python_command_for_context(current_exe.as_deref(), &managed_home_dirs_from_env())
+}
+
+fn command_for_executable(program: &OsStr) -> Command {
+    #[cfg(windows)]
+    {
+        let path = Path::new(program);
+        if is_windows_batch_script(path) {
+            let mut command = Command::new("cmd");
+            command.arg("/d").arg("/c").arg(path);
+            return command;
+        }
+    }
+    Command::new(program)
+}
+
+#[cfg(windows)]
+fn is_windows_batch_script(program: &Path) -> bool {
+    program
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        })
 }
 
 fn resolve_python_command_for_context(

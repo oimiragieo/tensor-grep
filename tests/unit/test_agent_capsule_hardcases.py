@@ -286,6 +286,40 @@ def test_agent_capsule_live_repo_prefers_exe_bridge_implementation_over_marker_h
     assert payload["ask_user_before_editing"]["required"] is True
 
 
+def test_agent_capsule_prefers_ripgrep_resolver_for_binary_resolution_query(tmp_path):
+    project = tmp_path / "workspace"
+    cli_src = project / "src" / "tensor_grep" / "cli"
+    formatter_src = project / "src" / "tensor_grep" / "cli" / "formatters"
+    cli_src.mkdir(parents=True)
+    formatter_src.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    runtime_paths = cli_src / "runtime_paths.py"
+    runtime_paths.write_text(
+        "def resolve_ripgrep_binary():\n"
+        "    candidate = find_managed_rg_binary()\n"
+        "    if candidate is not None:\n"
+        "        return candidate\n"
+        "    return find_path_binary('rg')\n",
+        encoding="utf-8",
+    )
+    notice_file = formatter_src / "ripgrep_fmt.py"
+    notice_file.write_text(
+        "def _binary_notice_for_match(match):\n"
+        "    return f'binary file matches: {match.file}'\n\n"
+        "def _binary_notice(path):\n"
+        "    return f'binary file matches: {path}'\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_payload(project, "fix ripgrep binary resolution")
+
+    assert payload["primary_target"]["file"] == str(runtime_paths.resolve())
+    assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
+
+
 def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():
     repo_root = Path(__file__).resolve().parents[2]
 

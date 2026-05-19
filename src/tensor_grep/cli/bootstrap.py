@@ -104,6 +104,7 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "--engine",
     "--field-context-separator",
     "--field-match-separator",
+    "--file",
     "--glob",
     "--gpu-device-ids",
     "--hostname-bin",

@@ -3,7 +3,7 @@ use crate::runtime_paths::{
 };
 use anyhow::{anyhow, Context};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
@@ -19,7 +19,9 @@ pub struct RipgrepSearchArgs {
     pub json: bool,
     pub ignore_case: bool,
     pub fixed_strings: bool,
+    pub no_fixed_strings: bool,
     pub invert_match: bool,
+    pub no_invert_match: bool,
     pub count: bool,
     pub count_matches: bool,
     pub line_number: bool,
@@ -62,12 +64,20 @@ pub struct RipgrepSearchArgs {
     pub null: bool,
     pub null_data: bool,
     pub multiline: bool,
+    pub no_multiline: bool,
     pub multiline_dotall: bool,
+    pub no_multiline_dotall: bool,
     pub patterns: Vec<String>,
     pub paths: Vec<String>,
     pub pcre2: bool,
+    pub no_pcre2: bool,
     pub pcre2_unicode: bool,
     pub no_pcre2_unicode: bool,
+    pub no_crlf: bool,
+    pub no_encoding: bool,
+    pub no_mmap: bool,
+    pub no_pre: bool,
+    pub no_search_zip: bool,
     pub auto_hybrid_regex: bool,
     pub no_auto_hybrid_regex: bool,
     pub unicode: bool,
@@ -105,7 +115,7 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         )
     })?;
 
-    let mut command = Command::new(rg_binary);
+    let mut command = command_for_executable(&rg_binary);
     command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -114,11 +124,29 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.pcre2 {
         command.arg("-P");
     }
+    if args.no_pcre2 {
+        command.arg("--no-pcre2");
+    }
     if args.pcre2_unicode {
         command.arg("--pcre2-unicode");
     }
     if args.no_pcre2_unicode {
         command.arg("--no-pcre2-unicode");
+    }
+    if args.no_crlf {
+        command.arg("--no-crlf");
+    }
+    if args.no_encoding {
+        command.arg("--no-encoding");
+    }
+    if args.no_mmap {
+        command.arg("--no-mmap");
+    }
+    if args.no_pre {
+        command.arg("--no-pre");
+    }
+    if args.no_search_zip {
+        command.arg("--no-search-zip");
     }
     if args.auto_hybrid_regex {
         command.arg("--auto-hybrid-regex");
@@ -219,8 +247,14 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.multiline {
         command.arg("--multiline");
     }
+    if args.no_multiline {
+        command.arg("--no-multiline");
+    }
     if args.multiline_dotall {
         command.arg("--multiline-dotall");
+    }
+    if args.no_multiline_dotall {
+        command.arg("--no-multiline-dotall");
     }
     if args.no_ignore_vcs {
         command.arg("--no-ignore-vcs");
@@ -234,8 +268,14 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.fixed_strings {
         command.arg("-F");
     }
+    if args.no_fixed_strings {
+        command.arg("--no-fixed-strings");
+    }
     if args.invert_match {
         command.arg("-v");
+    }
+    if args.no_invert_match {
+        command.arg("--no-invert-match");
     }
     if args.count_matches {
         command.arg("--count-matches");
@@ -367,7 +407,8 @@ pub fn execute_ripgrep_pcre2_version() -> anyhow::Result<i32> {
         )
     })?;
 
-    let status = Command::new(rg_binary)
+    let mut command = command_for_executable(&rg_binary);
+    let status = command
         .arg("--pcre2-version")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -384,7 +425,8 @@ pub fn execute_ripgrep_type_list() -> anyhow::Result<i32> {
         )
     })?;
 
-    let status = Command::new(rg_binary)
+    let mut command = command_for_executable(&rg_binary);
+    let status = command
         .arg("--type-list")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -396,6 +438,28 @@ pub fn execute_ripgrep_type_list() -> anyhow::Result<i32> {
 
 pub fn ripgrep_is_available() -> bool {
     resolve_ripgrep_binary().is_some()
+}
+
+fn command_for_executable(program: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        if is_windows_batch_script(program) {
+            let mut command = Command::new("cmd");
+            command.arg("/d").arg("/c").arg(program);
+            return command;
+        }
+    }
+    Command::new(program)
+}
+
+#[cfg(windows)]
+fn is_windows_batch_script(program: &Path) -> bool {
+    program
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        })
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {

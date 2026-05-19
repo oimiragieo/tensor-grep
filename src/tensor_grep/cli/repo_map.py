@@ -100,6 +100,11 @@ _SOURCE_FIRST_SUFFIXES = {
 }
 _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
+_QUERY_TERM_SYNONYMS = {
+    "resolved": ("resolve",),
+    "resolving": ("resolve",),
+    "resolution": ("resolve",),
+}
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 _VALIDATION_RUNNER_SCAN_LIMIT = 512
 _SOURCE_FALLBACK_SCAN_LIMIT = 8
@@ -4165,6 +4170,9 @@ def _query_terms(query: str) -> list[str]:
         for candidate in [normalized, *split_terms(raw_token)]:
             if candidate and candidate not in terms:
                 terms.append(candidate)
+            for synonym in _QUERY_TERM_SYNONYMS.get(candidate, ()):
+                if synonym not in terms:
+                    terms.append(synonym)
     return terms
 
 
@@ -4174,11 +4182,17 @@ def _symbol_query_terms(query: str) -> list[str]:
         normalized = raw_token.lower()
         if normalized and normalized not in expanded_terms:
             expanded_terms.append(normalized)
+        for synonym in _QUERY_TERM_SYNONYMS.get(normalized, ()):
+            if synonym not in expanded_terms:
+                expanded_terms.append(synonym)
         if "_" in raw_token:
             continue
         for term in split_terms(raw_token):
             if term not in expanded_terms:
                 expanded_terms.append(term)
+            for synonym in _QUERY_TERM_SYNONYMS.get(term, ()):
+                if synonym not in expanded_terms:
+                    expanded_terms.append(synonym)
     return expanded_terms
 
 

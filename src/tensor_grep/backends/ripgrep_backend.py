@@ -245,16 +245,36 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-s")
             if config.invert_match:
                 cmd.append("-v")
+            if config.no_invert_match:
+                cmd.append("--no-invert-match")
             if config.word_regexp:
                 cmd.append("-w")
             if config.line_regexp:
                 cmd.append("-x")
             if config.fixed_strings:
                 cmd.append("-F")
+            if config.no_fixed_strings:
+                cmd.append("--no-fixed-strings")
+            if config.crlf:
+                cmd.append("--crlf")
+            if config.no_crlf:
+                cmd.append("--no-crlf")
+            if config.encoding != "auto":
+                cmd.extend(["--encoding", config.encoding])
+            if config.no_encoding:
+                cmd.append("--no-encoding")
+            if not config.mmap:
+                cmd.append("--no-mmap")
+            if config.no_mmap:
+                cmd.append("--no-mmap")
             if config.multiline:
                 cmd.append("--multiline")
+            if config.no_multiline:
+                cmd.append("--no-multiline")
             if config.multiline_dotall:
                 cmd.append("--multiline-dotall")
+            if config.no_multiline_dotall:
+                cmd.append("--no-multiline-dotall")
             if config.auto_hybrid_regex:
                 cmd.append("--auto-hybrid-regex")
             if config.no_auto_hybrid_regex:
@@ -460,6 +480,19 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--messages")
             if config.pcre2:
                 cmd.append("-P")
+            if config.no_pcre2:
+                cmd.append("--no-pcre2")
+            if config.pre:
+                cmd.extend(["--pre", config.pre])
+            if config.no_pre:
+                cmd.append("--no-pre")
+            if config.pre_glob:
+                for glob in config.pre_glob:
+                    cmd.extend(["--pre-glob", glob])
+            if config.search_zip:
+                cmd.append("--search-zip")
+            if config.no_search_zip:
+                cmd.append("--no-search-zip")
             if config.no_json:
                 cmd.append("--no-json")
             if config.max_filesize:
@@ -474,7 +507,12 @@ class RipgrepBackend(ComputeBackend):
                     cmd.append(file_path)
                 return cmd
 
-        patterns = list(config.regexp or []) if config and config.regexp else [pattern]
+        pattern_files = list(config.file_patterns or []) if config else []
+        for pattern_file in pattern_files:
+            cmd.extend(["--file", pattern_file])
+        patterns = list(config.regexp or []) if config and config.regexp else []
+        if not pattern_files:
+            patterns = patterns or [pattern]
         for current_pattern in patterns:
             if len(patterns) > 1 or current_pattern.startswith("-"):
                 cmd.extend(["-e", current_pattern])

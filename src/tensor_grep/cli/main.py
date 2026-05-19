@@ -4065,11 +4065,15 @@ def search_command(
     pre: str | None = typer.Option(
         None, "--pre", help="For each input PATH, search standard output of COMMAND PATH."
     ),
+    no_pre: bool = typer.Option(False, "--no-pre", help="Disable any configured --pre command."),
     pre_glob: list[str] | None = typer.Option(
         None, "--pre-glob", help="Only run --pre command on files matching this glob."
     ),
     search_zip: bool = typer.Option(
         False, "-z", "--search-zip", help="Search in compressed files (gzip, bzip2, xz, lz4, etc)."
+    ),
+    no_search_zip: bool = typer.Option(
+        False, "--no-search-zip", help="Do not search compressed files."
     ),
     # SEARCH OPTIONS
     case_sensitive: bool = typer.Option(
@@ -4078,11 +4082,17 @@ def search_command(
     crlf: bool = typer.Option(
         False, "--crlf", help="Treat CRLF as a line terminator instead of just LF."
     ),
+    no_crlf: bool = typer.Option(
+        False, "--no-crlf", help="Do not treat CRLF specially; useful for config overrides."
+    ),
     dfa_size_limit: str | None = typer.Option(
         None, "--dfa-size-limit", help="The upper size limit of the regex DFA."
     ),
     encoding: str = typer.Option(
         "auto", "-E", "--encoding", help="Specify the text encoding (e.g., auto, none, utf-8)."
+    ),
+    no_encoding: bool = typer.Option(
+        False, "--no-encoding", help="Disable configured explicit encoding."
     ),
     engine: str = typer.Option(
         "default", "--engine", help="Regex engine to use: 'default', 'pcre2', or 'auto'."
@@ -4090,11 +4100,17 @@ def search_command(
     fixed_strings: bool = typer.Option(
         False, "-F", "--fixed-strings", help="Treat all patterns as literals instead of regex."
     ),
+    no_fixed_strings: bool = typer.Option(
+        False, "--no-fixed-strings", help="Disable fixed-string mode."
+    ),
     ignore_case: bool = typer.Option(
         False, "-i", "--ignore-case", help="Search case insensitively."
     ),
     invert_match: bool = typer.Option(
         False, "-v", "--invert-match", help="Invert matching (print lines that don't match)."
+    ),
+    no_invert_match: bool = typer.Option(
+        False, "--no-invert-match", help="Disable inverted matching."
     ),
     line_regexp: bool = typer.Option(
         False, "-x", "--line-regexp", help="Only show matches surrounded by line boundaries."
@@ -4105,11 +4121,16 @@ def search_command(
     mmap: bool = typer.Option(
         True, "--mmap", help="Search using memory maps when possible (enabled by default)."
     ),
+    no_mmap: bool = typer.Option(False, "--no-mmap", help="Do not use memory maps."),
     multiline: bool = typer.Option(
         False, "-U", "--multiline", help="Enable searching across multiple lines."
     ),
+    no_multiline: bool = typer.Option(False, "--no-multiline", help="Disable multiline mode."),
     multiline_dotall: bool = typer.Option(
         False, "--multiline-dotall", help="Enable 'dot all' mode in multiline searches."
+    ),
+    no_multiline_dotall: bool = typer.Option(
+        False, "--no-multiline-dotall", help="Disable multiline dot-all mode."
     ),
     auto_hybrid_regex: bool = typer.Option(
         False,
@@ -4137,6 +4158,7 @@ def search_command(
         False, "--null-data", help="Use NUL as a line terminator instead of \\n."
     ),
     pcre2: bool = typer.Option(False, "-P", "--pcre2", help="Use the PCRE2 regex engine."),
+    no_pcre2: bool = typer.Option(False, "--no-pcre2", help="Disable PCRE2 regex mode."),
     regex_size_limit: str | None = typer.Option(
         None, "--regex-size-limit", help="Size limit of the compiled regex."
     ),
@@ -4539,6 +4561,10 @@ def search_command(
             )
         paths_to_search = args or ["."]
         paths_defaulted = not args
+    elif file:
+        pattern = ""
+        paths_to_search = args or ["."]
+        paths_defaulted = not args
     else:
         if not args:
             typer.echo("Error: Please provide a PATTERN to search.", err=True)
@@ -4597,21 +4623,30 @@ def search_command(
         regexp=regexp,
         file_patterns=file,
         pre=pre,
+        no_pre=no_pre,
         pre_glob=pre_glob,
         search_zip=search_zip,
+        no_search_zip=no_search_zip,
         case_sensitive=case_sensitive,
         crlf=crlf,
+        no_crlf=no_crlf,
         dfa_size_limit=dfa_size_limit,
         encoding=encoding,
+        no_encoding=no_encoding,
         engine=engine,
         fixed_strings=fixed_strings,
+        no_fixed_strings=no_fixed_strings,
         ignore_case=ignore_case,
         invert_match=invert_match,
+        no_invert_match=no_invert_match,
         line_regexp=line_regexp,
         max_count=max_count,
         mmap=mmap,
+        no_mmap=no_mmap,
         multiline=multiline,
+        no_multiline=no_multiline,
         multiline_dotall=multiline_dotall,
+        no_multiline_dotall=no_multiline_dotall,
         auto_hybrid_regex=auto_hybrid_regex,
         no_auto_hybrid_regex=no_auto_hybrid_regex,
         no_unicode=no_unicode,
@@ -4620,6 +4655,7 @@ def search_command(
         no_pcre2_unicode=no_pcre2_unicode,
         null_data=null_data,
         pcre2=pcre2,
+        no_pcre2=no_pcre2,
         regex_size_limit=regex_size_limit,
         smart_case=smart_case,
         stop_on_nonmatch=stop_on_nonmatch,
