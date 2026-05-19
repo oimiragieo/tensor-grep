@@ -35,6 +35,8 @@ from run_gpu_benchmarks import (  # noqa: E402
     summarize_gpu_pipeline_bottlenecks,
 )
 
+from tensor_grep.cli.runtime_paths import inspect_native_tg_binary  # noqa: E402
+
 DEFAULT_CORPUS_SIZES = (10 * MB, 100 * MB, 500 * MB, 1 * GB, 5 * GB)
 DEFAULT_RUNS = 3
 DEFAULT_WARMUP = 0
@@ -1378,6 +1380,90 @@ def _gpu_proof_status_from_native_summary(summary: dict[str, object]) -> dict[st
     }
 
 
+def build_public_managed_gpu_proof_gate(
+    *,
+    tg_binary_metadata: dict[str, object],
+    scale_gate_summary: dict[str, object],
+    requested: bool = True,
+) -> dict[str, object]:
+    contract = {
+        "required_binary_kind": "managed-native",
+        "required_native_frontdoor_flavor": "nvidia",
+        "required_native_frontdoor_requested_flavor": "nvidia",
+        "required_version_status": "matches",
+        "required_metadata_version": "matches_expected_version",
+        "required_native_frontdoor_asset_name": "nonempty_nvidia_release_asset",
+        "required_scale_gate_promotion_ready": True,
+    }
+    if not requested:
+        return {
+            "status": "NOT_REQUESTED",
+            "public_managed_promotion_ready": False,
+            "public_gpu_proof": False,
+            "blockers": [],
+            "contract": contract,
+            "summary": (
+                "Public managed GPU proof was not requested; local native CUDA evidence, if "
+                "present, must not be used as public release promotion proof."
+            ),
+        }
+
+    blockers: list[str] = []
+    if scale_gate_summary.get("promotion_ready") is not True:
+        blockers.append("native_cuda_scale_not_promotion_ready")
+    if tg_binary_metadata.get("kind") != "managed-native":
+        blockers.append("not_managed_native_frontdoor")
+    if tg_binary_metadata.get("version_status") != "matches":
+        blockers.append("managed_native_version_not_current")
+    if tg_binary_metadata.get("native_frontdoor_flavor") != "nvidia":
+        blockers.append("installed_frontdoor_not_nvidia")
+    if tg_binary_metadata.get("native_frontdoor_requested_flavor") != "nvidia":
+        blockers.append("nvidia_frontdoor_not_requested")
+    metadata_status = tg_binary_metadata.get("native_frontdoor_metadata_status")
+    if metadata_status != "present":
+        blockers.append("managed_native_metadata_missing")
+    expected_version = tg_binary_metadata.get("expected_version")
+    metadata_version = tg_binary_metadata.get("native_frontdoor_metadata_version")
+    if not isinstance(metadata_version, str) or not metadata_version:
+        blockers.append("managed_native_metadata_version_missing")
+    elif not isinstance(expected_version, str) or not expected_version:
+        blockers.append("managed_native_expected_version_missing")
+    elif metadata_version != expected_version:
+        blockers.append("managed_native_metadata_version_mismatch")
+    asset_name = tg_binary_metadata.get("native_frontdoor_asset_name")
+    if not isinstance(asset_name, str) or not asset_name:
+        blockers.append("managed_native_asset_name_missing")
+    elif "nvidia" not in asset_name.lower():
+        blockers.append("managed_native_asset_name_not_nvidia")
+
+    passed = not blockers
+    return {
+        "status": "PASS" if passed else "FAIL",
+        "public_managed_promotion_ready": passed,
+        "public_gpu_proof": passed,
+        "blockers": blockers,
+        "contract": contract,
+        "observed": {
+            "binary_kind": tg_binary_metadata.get("kind"),
+            "version_status": tg_binary_metadata.get("version_status"),
+            "native_frontdoor_flavor": tg_binary_metadata.get("native_frontdoor_flavor"),
+            "native_frontdoor_requested_flavor": tg_binary_metadata.get(
+                "native_frontdoor_requested_flavor"
+            ),
+            "native_frontdoor_asset_name": tg_binary_metadata.get("native_frontdoor_asset_name"),
+            "native_frontdoor_metadata_status": metadata_status,
+            "native_frontdoor_metadata_version": metadata_version,
+            "expected_version": expected_version,
+            "scale_gate_promotion_ready": scale_gate_summary.get("promotion_ready"),
+        },
+        "summary": (
+            "Public managed NVIDIA native front door and native CUDA scale proof passed."
+            if passed
+            else "Public managed GPU proof is blocked; do not promote public GPU acceleration."
+        ),
+    }
+
+
 def run_gpu_native_benchmarks(
     *,
     tg_binary: Path,
@@ -1703,6 +1789,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--advanced",
         action="store_true",
         help="Run advanced GPU-only measurements for overlap, transfer, multi-pattern, multi-GPU, long-line, graphs, and OOM handling.",
+    )
+    parser.add_argument(
+        "--public-managed-proof",
+        action="store_true",
+        help=(
+            "Require public managed NVIDIA native-front-door provenance in addition to "
+            "native CUDA 1GB/5GB correctness and speed gates."
+        ),
     )
     return parser
 
@@ -2353,6 +2447,7 @@ def main() -> int:
     tg_binary = resolve_tg_binary(args.binary)
     rg_binary = resolve_rg_binary()
     bench_dir = resolve_gpu_native_bench_data_dir()
+    tg_binary_metadata = inspect_native_tg_binary(tg_binary)
 
     payload: dict[str, object] = {
         "artifact": "bench_gpu_native_scale",
@@ -2364,6 +2459,7 @@ def main() -> int:
             "python_version": platform.python_version(),
         },
         "tg_binary": str(tg_binary),
+        "tg_binary_metadata": tg_binary_metadata,
         "rg_binary": str(rg_binary),
         "runs": args.runs,
         "warmup": args.warmup,
@@ -2397,6 +2493,16 @@ def main() -> int:
                 "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
             },
         })
+        public_gate = build_public_managed_gpu_proof_gate(
+            tg_binary_metadata=tg_binary_metadata,
+            scale_gate_summary=payload["scale_gate_summary"]
+            if isinstance(payload["scale_gate_summary"], dict)
+            else {},
+            requested=args.public_managed_proof,
+        )
+        payload["public_managed_gpu_proof_gate"] = public_gate
+        payload["public_managed_promotion_ready"] = public_gate["public_managed_promotion_ready"]
+        payload["public_gpu_proof"] = public_gate["public_gpu_proof"]
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 
@@ -2415,6 +2521,22 @@ def main() -> int:
         advanced=args.advanced,
     )
     payload.update(result)
+    scale_gate_summary = payload.get("scale_gate_summary")
+    public_gate = build_public_managed_gpu_proof_gate(
+        tg_binary_metadata=tg_binary_metadata,
+        scale_gate_summary=scale_gate_summary if isinstance(scale_gate_summary, dict) else {},
+        requested=args.public_managed_proof,
+    )
+    payload["public_managed_gpu_proof_gate"] = public_gate
+    payload["public_managed_promotion_ready"] = public_gate["public_managed_promotion_ready"]
+    payload["public_gpu_proof"] = public_gate["public_gpu_proof"]
+    if args.public_managed_proof and public_gate["status"] != "PASS":
+        errors = payload.setdefault("errors", [])
+        if isinstance(errors, list):
+            errors.append(
+                "public managed GPU proof gate failed: "
+                + ", ".join(str(blocker) for blocker in public_gate["blockers"])
+            )
     payload["passed"] = not payload.get("errors")
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return 0 if payload["passed"] else 1

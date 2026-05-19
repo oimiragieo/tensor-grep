@@ -11,6 +11,16 @@ from tensor_grep.cli.progress import ProgressReporter
 
 ARTIFACT_TAIL_LINE_LIMIT = 20
 ARTIFACT_TAIL_LINE_CHAR_LIMIT = 4000
+RELEASE_DOCS_GOVERNANCE_PATHS = (
+    "AGENTS.md",
+    "README.md",
+    "SKILL.md",
+    "docs/SESSION_HANDOFF.md",
+    "docs/CONTINUATION_PLAN.md",
+    "docs/CONTRACTS.md",
+    "tests/unit/test_public_docs_governance.py",
+)
+RELEASE_DOCS_STAMP_COMMAND = "python scripts/stamp_release_assets.py"
 
 
 def _json_from_stdout(stdout: str) -> dict[str, Any]:
@@ -117,6 +127,79 @@ def _build_world_class_readiness() -> dict[str, Any]:
     }
 
 
+def _parse_git_status_path(line: str) -> str:
+    raw_path = line[3:].strip() if len(line) > 3 else line.strip()
+    if " -> " in raw_path:
+        raw_path = raw_path.rsplit(" -> ", 1)[1]
+    return raw_path.strip('"')
+
+
+def _build_release_docs_worktree_status(root: Path) -> dict[str, Any]:
+    repo_root = root.expanduser().resolve()
+    command = [
+        "git",
+        "-C",
+        str(repo_root),
+        "status",
+        "--porcelain",
+        "--",
+        *RELEASE_DOCS_GOVERNANCE_PATHS,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        return {
+            "status": "unknown",
+            "read_only": True,
+            "tracked_paths": list(RELEASE_DOCS_GOVERNANCE_PATHS),
+            "dirty_paths": [],
+            "reason": str(exc),
+        }
+    if completed.returncode != 0:
+        return {
+            "status": "unknown",
+            "read_only": True,
+            "tracked_paths": list(RELEASE_DOCS_GOVERNANCE_PATHS),
+            "dirty_paths": [],
+            "stderr_tail": _bounded_tail_lines(completed.stderr),
+        }
+    dirty_paths = [
+        _parse_git_status_path(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
+    return {
+        "status": "dirty" if dirty_paths else "clean",
+        "read_only": True,
+        "tracked_paths": list(RELEASE_DOCS_GOVERNANCE_PATHS),
+        "dirty_paths": sorted(dirty_paths),
+    }
+
+
+def _build_write_policy(repo_root: Path, output: Path | None) -> dict[str, Any]:
+    allowed_writes = [
+        str((repo_root / "artifacts" / "agent_readiness").resolve()),
+    ]
+    if output is not None:
+        allowed_writes.append(str(output.expanduser().resolve()))
+    return {
+        "mode": "read_only_except_explicit_output_and_readiness_probes",
+        "allowed_writes": allowed_writes,
+        "tracked_release_docs_mutation": "not_performed",
+        "release_docs_stamp_command": RELEASE_DOCS_STAMP_COMMAND,
+        "summary": (
+            "tg dogfood validates readiness and only writes agent-readiness probe "
+            "artifacts plus the explicit --output artifact when requested; release-doc "
+            "stamping is a separate manual or release-workflow step."
+        ),
+    }
+
+
 def run_dogfood_readiness(
     *,
     root: Path,
@@ -209,6 +292,8 @@ def run_dogfood_readiness(
         "agent_readiness": agent_readiness,
         "verdict": _build_verdict(agent_readiness, returncode),
         "world_class_readiness": _build_world_class_readiness(),
+        "write_policy": _build_write_policy(repo_root, output),
+        "release_docs_worktree": _build_release_docs_worktree_status(repo_root),
         "stderr_tail": _bounded_tail_lines(stderr),
     }
     if output is not None:

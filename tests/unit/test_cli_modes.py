@@ -7050,6 +7050,16 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
         "tg-windows-amd64-cpu.exe",
     ]
     assert native_binary.read_text(encoding="utf-8") == "new native"
+    metadata = json.loads(
+        native_binary.with_name("tg-native-metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata == {
+        "artifact": "tensor_grep_native_frontdoor_metadata",
+        "asset_flavor": "cpu",
+        "asset_name": "tg-windows-amd64-cpu.exe",
+        "requested_asset_flavor": "nvidia",
+        "version": "0.33.0",
+    }
     assert "Native tg front door refreshed to 0.33.0." in result.stdout
     assert "Native asset flavor: cpu." in result.stdout
     assert "GPU promotion" not in result.stdout
@@ -7242,6 +7252,13 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
         "tg-windows-amd64-cpu.exe"
     ]
     assert native_binary.read_text(encoding="utf-8") == "new native"
+    metadata = json.loads(
+        native_binary.with_name("tg-native-metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata["asset_flavor"] == "cpu"
+    assert metadata["requested_asset_flavor"] == "cpu"
+    assert metadata["asset_name"] == "tg-windows-amd64-cpu.exe"
+    assert metadata["version"] == "0.33.0"
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
     assert "Native tg front door refreshed to 0.33.0." in result.stdout
 
@@ -7895,6 +7912,8 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
                 "tg-windows-amd64-nvidia.exe"
             ),
             "flavor": "nvidia",
+            "asset_name": "tg-windows-amd64-nvidia.exe",
+            "requested_flavor": "nvidia",
         },
         {
             "url": (
@@ -7902,6 +7921,8 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
                 "tg-windows-amd64-cpu.exe"
             ),
             "flavor": "cpu",
+            "asset_name": "tg-windows-amd64-cpu.exe",
+            "requested_flavor": "nvidia",
         },
     ]
     assert json.loads(popen_calls[0][8]) == [str(bridge_tg)]

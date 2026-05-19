@@ -157,7 +157,9 @@ mkdir -p "$STAGING_INSTALL_DIR/bin"
 INSTALLED_VERSION="$("$STAGING_INSTALL_DIR/.venv/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("tensor-grep"))')"
 NATIVE_BINARY="$INSTALL_DIR/bin/tg-native"
 STAGING_NATIVE_BINARY="$STAGING_INSTALL_DIR/bin/tg-native"
+STAGING_NATIVE_METADATA="$STAGING_INSTALL_DIR/bin/tg-native-metadata.json"
 TG_NATIVE_FRONTDOOR_FLAVOR="cpu"
+TG_NATIVE_FRONTDOOR_ASSET_NAME=""
 TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="${TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR:-${TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR:-cpu}}"
 TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="$(printf '%s' "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" | tr '[:upper:]' '[:lower:]')"
 case "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" in
@@ -201,6 +203,7 @@ if [ "$INSTALL_CHANNEL" != "main" ]; then
             chmod +x "$STAGING_NATIVE_BINARY"
             if "$STAGING_NATIVE_BINARY" --version; then
                 TG_NATIVE_FRONTDOOR_FLAVOR="$NATIVE_FLAVOR"
+                TG_NATIVE_FRONTDOOR_ASSET_NAME="$NATIVE_ASSET"
                 echo "      Native tg front door installed: $NATIVE_BINARY (asset flavor: $NATIVE_FLAVOR)"
                 break
             else
@@ -222,6 +225,17 @@ if [ "$INSTALL_CHANNEL" != "main" ]; then
     done
 else
     echo "      Main-channel install: using Python front door until release-native assets exist."
+fi
+if [ -x "$STAGING_NATIVE_BINARY" ]; then
+    cat > "$STAGING_NATIVE_METADATA" << EOF
+{
+  "artifact": "tensor_grep_native_frontdoor_metadata",
+  "asset_flavor": "$TG_NATIVE_FRONTDOOR_FLAVOR",
+  "asset_name": "$TG_NATIVE_FRONTDOOR_ASSET_NAME",
+  "requested_asset_flavor": "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR",
+  "version": "$INSTALLED_VERSION"
+}
+EOF
 fi
 cat > "$STAGING_INSTALL_DIR/bin/tg" << EOF
 #!/usr/bin/env bash

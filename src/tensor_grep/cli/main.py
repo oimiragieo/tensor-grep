@@ -35,6 +35,7 @@ from tensor_grep.cli.runtime_paths import (
     _native_tg_version_matches,
     env_flag_enabled,
     iter_in_tree_native_tg_binaries,
+    native_frontdoor_metadata_path,
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
@@ -234,6 +235,7 @@ class _NativeFrontdoorAssetCandidate:
 class _NativeFrontdoorInstallResult:
     url: str
     flavor: str
+    asset_name: str
 
 
 def _version_sort_key(version: str) -> tuple[tuple[int, int | str], ...]:
@@ -470,6 +472,25 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
     urllib.request.urlretrieve(url, destination)
 
 
+def _write_native_frontdoor_metadata(
+    destination: Path,
+    *,
+    version: str,
+    candidate: _NativeFrontdoorAssetCandidate,
+) -> None:
+    metadata = {
+        "artifact": "tensor_grep_native_frontdoor_metadata",
+        "asset_flavor": candidate.flavor,
+        "asset_name": candidate.asset_name,
+        "requested_asset_flavor": _requested_native_frontdoor_flavor(),
+        "version": version,
+    }
+    native_frontdoor_metadata_path(destination).write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _install_release_native_frontdoor(
     version: str, destination: Path
 ) -> _NativeFrontdoorInstallResult:
@@ -509,7 +530,16 @@ def _install_release_native_frontdoor(
                     f"tg front door reported {installed_version or 'no version'} instead of {version}"
                 )
                 continue
-            return _NativeFrontdoorInstallResult(url=url, flavor=candidate.flavor)
+            _write_native_frontdoor_metadata(
+                destination,
+                version=version,
+                candidate=candidate,
+            )
+            return _NativeFrontdoorInstallResult(
+                url=url,
+                flavor=candidate.flavor,
+                asset_name=candidate.asset_name,
+            )
         finally:
             temp_path.unlink(missing_ok=True)
 
@@ -959,7 +989,12 @@ def _schedule_windows_native_frontdoor_refresh(
     import textwrap
 
     asset_payload = json.dumps([
-        {"url": url, "flavor": candidate.flavor}
+        {
+            "url": url,
+            "flavor": candidate.flavor,
+            "asset_name": candidate.asset_name,
+            "requested_flavor": _requested_native_frontdoor_flavor(),
+        }
         for candidate, url in _native_frontdoor_download_candidates(expected_version)
     ])
     if asset_payload == "[]":
@@ -1018,6 +1053,8 @@ def _schedule_windows_native_frontdoor_refresh(
             for asset_candidate in asset_candidates:
                 url = asset_candidate.get("url", "")
                 flavor = asset_candidate.get("flavor", "unknown")
+                asset_name = asset_candidate.get("asset_name", "")
+                requested_flavor = asset_candidate.get("requested_flavor", "cpu")
                 temp_path = native_path.with_name(native_path.name + ".download-" + uuid4().hex)
                 try:
                     try:
@@ -1038,6 +1075,22 @@ def _schedule_windows_native_frontdoor_refresh(
                             "installed native tg front door reported "
                             + (installed_version or "no version")
                         )
+                    metadata_path = native_path.with_name("tg-native-metadata.json")
+                    metadata_path.write_text(
+                        json.dumps(
+                            {
+                                "artifact": "tensor_grep_native_frontdoor_metadata",
+                                "asset_flavor": flavor,
+                                "asset_name": asset_name,
+                                "requested_asset_flavor": requested_flavor,
+                                "version": expected_version,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\\n",
+                        encoding="utf-8",
+                    )
                     refreshed_bridges: list[str] = []
                     for bridge_path in bridge_paths:
                         shutil.copy2(native_path, bridge_path)
@@ -7351,7 +7404,7 @@ def dogfood(
     ),
     no_wsl_probe: bool = typer.Option(False, "--no-wsl-probe", help="Skip the optional WSL probe."),
 ) -> None:
-    """Run the agent-readiness dogfood gate and emit a release-readiness verdict."""
+    """Run the agent-readiness dogfood gate; writes only probe artifacts and --output."""
     from tensor_grep.cli.dogfood import run_dogfood_readiness
     from tensor_grep.cli.progress import normalize_progress_mode
 

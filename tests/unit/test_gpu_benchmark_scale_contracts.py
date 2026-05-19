@@ -131,6 +131,124 @@ def test_gpu_native_summary_should_report_workload_scoped_speed_blocker():
     assert proof["gpu_evidence_status"] == "experimental"
 
 
+def test_public_managed_gpu_proof_gate_requires_managed_nvidia_metadata():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_public_managed_proof",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    gate = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "managed-native",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary={"promotion_ready": True},
+    )
+
+    assert gate["status"] == "PASS"
+    assert gate["public_managed_promotion_ready"] is True
+    assert gate["public_gpu_proof"] is True
+    assert gate["blockers"] == []
+
+
+def test_public_managed_gpu_proof_gate_rejects_stale_or_incomplete_metadata():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_public_managed_proof_reject_stale_metadata",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    stale = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "managed-native",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.33",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary={"promotion_ready": True},
+    )
+
+    incomplete = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "managed-native",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary={"promotion_ready": True},
+    )
+
+    assert stale["status"] == "FAIL"
+    assert stale["public_gpu_proof"] is False
+    assert "managed_native_metadata_version_mismatch" in stale["blockers"]
+    assert incomplete["status"] == "FAIL"
+    assert incomplete["public_managed_promotion_ready"] is False
+    assert "managed_native_asset_name_missing" in incomplete["blockers"]
+
+
+def test_public_managed_gpu_proof_gate_rejects_in_tree_cuda_proof():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_public_managed_proof_reject_in_tree",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    gate = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "in-tree-release",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary={"promotion_ready": True},
+    )
+
+    assert gate["status"] == "FAIL"
+    assert gate["public_managed_promotion_ready"] is False
+    assert gate["public_gpu_proof"] is False
+    assert "not_managed_native_frontdoor" in gate["blockers"]
+
+
+def test_public_managed_gpu_proof_gate_rejects_cpu_frontdoor_fallback():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_public_managed_proof_reject_cpu",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    gate = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "managed-native",
+            "native_frontdoor_flavor": "cpu",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-cpu.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary={"promotion_ready": True},
+    )
+
+    assert gate["status"] == "FAIL"
+    assert gate["public_managed_promotion_ready"] is False
+    assert "installed_frontdoor_not_nvidia" in gate["blockers"]
+
+
 def test_gpu_python_summary_should_mark_native_cpu_fallback_as_unsupported_not_proof():
     module = _load_script_module(
         "run_gpu_benchmarks_native_cpu_fallback_scope",

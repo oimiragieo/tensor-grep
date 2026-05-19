@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -167,6 +168,42 @@ def test_inspect_native_tg_binary_reports_matching_in_tree_binary(monkeypatch, t
     assert inspected["kind"] == "in-tree-debug"
     assert inspected["version_status"] == "matches"
     assert inspected["version"] == "tensor-grep 1.12.4"
+
+
+def test_inspect_native_tg_binary_reads_managed_frontdoor_metadata(monkeypatch, tmp_path):
+    native_binary = (
+        tmp_path
+        / ".tensor-grep"
+        / "bin"
+        / ("tg.exe" if sys.platform.startswith("win") else "tg-native")
+    )
+    native_binary.parent.mkdir(parents=True, exist_ok=True)
+    native_binary.write_text("current\n", encoding="utf-8")
+    metadata_path = native_binary.with_name("tg-native-metadata.json")
+    metadata_path.write_text(
+        json.dumps({
+            "artifact": "tensor_grep_native_frontdoor_metadata",
+            "asset_flavor": "nvidia",
+            "requested_asset_flavor": "nvidia",
+            "asset_name": "tg-windows-amd64-nvidia.exe",
+            "version": "1.12.34",
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.12.34")
+
+    inspected = runtime_paths.inspect_native_tg_binary(
+        native_binary,
+        expected_version="1.12.34",
+    )
+
+    assert inspected["kind"] == "managed-native"
+    assert inspected["version_status"] == "matches"
+    assert inspected["native_frontdoor_flavor"] == "nvidia"
+    assert inspected["native_frontdoor_requested_flavor"] == "nvidia"
+    assert inspected["native_frontdoor_asset_name"] == "tg-windows-amd64-nvidia.exe"
+    assert inspected["native_frontdoor_metadata_status"] == "present"
 
 
 def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, tmp_path):

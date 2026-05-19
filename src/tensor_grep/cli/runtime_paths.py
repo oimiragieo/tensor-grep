@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -5,6 +6,8 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
+
+NATIVE_FRONTDOOR_METADATA_FILENAME = "tg-native-metadata.json"
 
 
 def env_flag_enabled(name: str) -> bool:
@@ -95,6 +98,36 @@ def _native_tg_version_matches(expected_version: str, version_text: str | None) 
     return bool(re.search(rf"\b{re.escape(expected_version)}\b", version_text))
 
 
+def native_frontdoor_metadata_path(native_binary: Path) -> Path:
+    return native_binary.with_name(NATIVE_FRONTDOOR_METADATA_FILENAME)
+
+
+def _read_native_frontdoor_metadata(native_binary: Path) -> dict[str, str]:
+    metadata_path = native_frontdoor_metadata_path(native_binary)
+    try:
+        raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {"native_frontdoor_metadata_status": "invalid"}
+    if not isinstance(raw, dict):
+        return {"native_frontdoor_metadata_status": "invalid"}
+    metadata = {
+        "native_frontdoor_metadata_status": "present",
+    }
+    field_map = {
+        "asset_flavor": "native_frontdoor_flavor",
+        "requested_asset_flavor": "native_frontdoor_requested_flavor",
+        "asset_name": "native_frontdoor_asset_name",
+        "version": "native_frontdoor_metadata_version",
+    }
+    for source_key, target_key in field_map.items():
+        value = raw.get(source_key)
+        if isinstance(value, str) and value:
+            metadata[target_key] = value
+    return metadata
+
+
 def _in_tree_native_tg_candidates(*, repo_root: Path, binary_name: str) -> list[Path]:
     candidates = [
         repo_root / "rust_core" / "target" / "release" / binary_name,
@@ -150,10 +183,13 @@ def inspect_native_tg_binary(
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
     release_binary = (root / "rust_core" / "target" / "release" / binary_name).resolve()
     debug_binary = (root / "rust_core" / "target" / "debug" / binary_name).resolve()
+    resolved_parts = {part.lower() for part in resolved.parts}
     if resolved == release_binary:
         kind = "in-tree-release"
     elif resolved == debug_binary:
         kind = "in-tree-debug"
+    elif ".tensor-grep" in resolved_parts and "bin" in resolved_parts:
+        kind = "managed-native"
     else:
         kind = "external"
 
@@ -167,13 +203,16 @@ def inspect_native_tg_binary(
     else:
         version_status = "unknown"
 
-    return {
+    metadata = _read_native_frontdoor_metadata(resolved)
+    payload = {
         "path": str(resolved),
         "kind": kind,
         "version": version_text,
         "expected_version": expected,
         "version_status": version_status,
     }
+    payload.update(metadata)
+    return payload
 
 
 @lru_cache(maxsize=1)
