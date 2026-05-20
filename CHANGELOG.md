@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.40 (2026-05-20)
+
+### Bug Fixes
+
+- Harden tight-budget agent resolver ranking
+  ([`f5da210`](https://github.com/oimiragieo/tensor-grep/commit/f5da210714df5a329e8d233a008e46d2e4283994))
+
+Harden tight-budget agent resolver ranking so the ripgrep binary resolution query selects
+  resolve_ripgrep_binary instead of the formatting helper.\n\nValidation: full local
+  Python/Rust/lint/type gates passed; PR CI passed including benchmark-regression.
+
+
 ## v1.12.39 (2026-05-20)
 
 ### Bug Fixes
