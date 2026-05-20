@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.37 (2026-05-20)
+
+### Bug Fixes
+
+- Harden lsp provider proof plumbing
+  ([`1af44f4`](https://github.com/oimiragieo/tensor-grep/commit/1af44f4c1c9224b8eca9a25c5e416437f35738d8))
+
+
 ## v1.12.36 (2026-05-20)
 
 ### Bug Fixes
