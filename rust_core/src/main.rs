@@ -1490,7 +1490,7 @@ fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
 }
 
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
-    args.globs.is_empty() && !args.word_regexp && !args.fixed_strings
+    !args.word_regexp && !args.fixed_strings
 }
 
 fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
@@ -2557,12 +2557,27 @@ mod tests {
     }
 
     #[test]
-    fn early_ripgrep_fast_path_rejects_glob_fixed_and_word_cases() {
+    fn early_ripgrep_fast_path_preserves_glob_cases() {
+        let spaced = parse_args(&["tg", "search", "--glob", "*.log", "ERROR", "bench_data"]);
+        let equals = parse_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
+
+        assert!(should_use_early_ripgrep_fast_path(&spaced));
+        assert!(should_use_early_ripgrep_fast_path(&equals));
+        assert_eq!(spaced.globs, vec!["*.log".to_string()]);
+        assert_eq!(equals.globs, vec!["*.log".to_string()]);
+
+        let frontdoor =
+            parse_default_frontdoor_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
+        assert_eq!(frontdoor.globs, vec!["*.log".to_string()]);
+    }
+
+    #[test]
+    fn early_ripgrep_fast_path_rejects_fixed_and_word_cases() {
         let glob = parse_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
         let fixed = parse_args(&["tg", "search", "-F", "[ERROR]", "bench_data"]);
         let word = parse_args(&["tg", "search", "-w", "timeout", "bench_data"]);
 
-        assert!(!should_use_early_ripgrep_fast_path(&glob));
+        assert!(should_use_early_ripgrep_fast_path(&glob));
         assert!(!should_use_early_ripgrep_fast_path(&fixed));
         assert!(!should_use_early_ripgrep_fast_path(&word));
     }
@@ -2837,13 +2852,8 @@ mod tests {
             .into_iter()
             .map(OsString::from)
             .collect::<Vec<_>>();
-        let glob = ["tg", "search", "--glob=*.log", "ERROR", "bench_data"]
-            .into_iter()
-            .map(OsString::from)
-            .collect::<Vec<_>>();
 
         assert!(parse_default_search_frontdoor_args(&structured).is_none());
-        assert!(parse_default_search_frontdoor_args(&glob).is_none());
     }
 
     #[test]
