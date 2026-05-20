@@ -9,6 +9,12 @@ module-name = "tensor_grep.rust_core"
 manifest-path = "rust_core/Cargo.toml"
 
 [tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rust_core/Cargo.toml" },
+    { file = "rust_core/Cargo.lock" },
+    { file = "rust_core/src/**/*.rs" },
+]
 constraint-dependencies = [
     "aiohttp>=3.13.4",
     "cryptography>=46.0.7",
