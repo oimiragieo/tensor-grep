@@ -956,7 +956,7 @@ Example: [`examples/defs.json`](examples/defs.json)
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
 | `provider_agreement` | `object` | Native-vs-provider merge summary including agreement status, counts, and fallback usage. |
 | `provider_status` | `object` | Provider health snapshot including attempted providers, capabilities, `health_status`, `health_check`, and last error. `available=true` means the provider command was found; it is not proof that initialization or navigation requests succeeded. |
-| `lsp_proof` | `boolean` | `true` only when an external LSP provider contributed usable evidence for the response. |
+| `lsp_proof` | `boolean` | `true` only when an external LSP provider contributed usable evidence for the response. Navigation rows must carry `lsp_provider_response = true`; provenance strings alone do not count as proof. |
 | `lsp_evidence_status` | `string` | LSP evidence status such as `not_requested`, `lsp_proof`, `fallback_native`, or `no_lsp_evidence`. |
 | `not_lsp_proof_reason` | `string` | Optional reason explaining why the response should not be treated as LSP-confirmed. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
@@ -972,6 +972,8 @@ Each `definitions[]` object contains `name`, `kind`, `file`, `line`, and may add
 | Field | Type | Notes |
 | --- | --- | --- |
 | `provenance` | `string` | Symbol-navigation source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
+| `lsp_provider_response` | `boolean` | Present and `true` only for rows returned by a completed external LSP request. Required before a row can contribute to top-level `lsp_proof`. |
+| `lsp_operation` | `string` | Provider operation that produced the row, for example `workspace/symbol` or `textDocument/references`. |
 
 ## Symbol Source JSON
 

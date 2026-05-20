@@ -25,6 +25,8 @@ def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None
                 "line": 1,
                 "end_line": 1,
                 "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "workspace/symbol",
             }
         ],
     )
@@ -54,6 +56,8 @@ def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> No
                 "line": 1,
                 "end_line": 2,
                 "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "workspace/symbol",
             }
         ],
     )
@@ -89,6 +93,8 @@ def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeyp
                 "end_line": 1,
                 "text": "def create_invoice(total: int) -> int:",
                 "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "textDocument/references",
             }
         ],
     )
@@ -225,6 +231,183 @@ def test_external_lsp_workspace_symbol_default_budget_is_agent_loop_sized(
     assert initialize_timeout <= 2.0
 
 
+def test_external_workspace_symbols_decodes_percent_encoded_file_uri(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_dir = tmp_path / "source dir"
+    source_dir.mkdir()
+    module_path = source_dir / "invoice module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            assert method == "workspace/symbol"
+            return [
+                {
+                    "name": "create_invoice",
+                    "kind": 12,
+                    "location": {
+                        "uri": module_path.resolve().as_uri(),
+                        "range": {
+                            "start": {"line": 0, "character": 4},
+                            "end": {"line": 0, "character": 18},
+                        },
+                    },
+                }
+            ]
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    matches = repo_map._external_workspace_symbols(
+        tmp_path,
+        "create_invoice",
+        repo_map={
+            "path": str(tmp_path),
+            "files": [str(module_path)],
+            "symbols": [
+                {
+                    "name": "create_invoice",
+                    "file": str(module_path),
+                    "line": 1,
+                    "kind": "function",
+                }
+            ],
+        },
+    )
+
+    assert matches[0]["file"] == str(module_path.resolve())
+    assert matches[0]["lsp_provider_response"] is True
+    assert matches[0]["lsp_operation"] == "workspace/symbol"
+
+
+def test_external_references_decodes_percent_encoded_file_uri_before_reading_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    consumer_dir = tmp_path / "consumer dir"
+    consumer_dir.mkdir()
+    consumer_path = consumer_dir / "invoice user.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+    consumer_path.write_text(
+        "from service import create_invoice\n\nresult = create_invoice(3)\n",
+        encoding="utf-8",
+    )
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            return None
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            assert method == "textDocument/references"
+            return [
+                {
+                    "uri": consumer_path.resolve().as_uri(),
+                    "range": {
+                        "start": {"line": 2, "character": 9},
+                        "end": {"line": 2, "character": 23},
+                    },
+                }
+            ]
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    refs = repo_map._external_references(
+        tmp_path,
+        "create_invoice",
+        [{"file": str(service_path), "line": 1}],
+    )
+
+    assert refs[0]["file"] == str(consumer_path.resolve())
+    assert refs[0]["text"] == "result = create_invoice(3)"
+    assert refs[0]["lsp_provider_response"] is True
+    assert refs[0]["lsp_operation"] == "textDocument/references"
+
+
+def test_external_workspace_symbols_queries_repo_file_languages_when_symbols_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_path = tmp_path / "payments.ts"
+    source_path.write_text(
+        "export function createInvoice() {\n  return 1;\n}\n",
+        encoding="utf-8",
+    )
+    languages: list[str] = []
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            assert method == "workspace/symbol"
+            return []
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            languages.append(language)
+            return _FakeClient()
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    repo_map._external_workspace_symbols(
+        tmp_path,
+        "createInvoice",
+        repo_map={
+            "path": str(tmp_path),
+            "files": [str(source_path)],
+            "symbols": [],
+        },
+    )
+
+    assert languages == ["typescript"]
+
+
+def test_lsp_proof_requires_provider_response_marker_not_provenance_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    monkeypatch.setattr(
+        repo_map,
+        "_external_workspace_symbols",
+        lambda root, symbol, **kwargs: [
+            {
+                "name": symbol,
+                "kind": "function",
+                "file": str(module_path.resolve()),
+                "line": 1,
+                "end_line": 1,
+                "provenance": "lsp-python",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+    assert "native fallback" in payload["not_lsp_proof_reason"].lower()
+
+
 def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
@@ -249,6 +432,8 @@ def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> N
                 "end_line": 3,
                 "text": "result = create_invoice(3)",
                 "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "textDocument/references",
             }
         ],
     )

@@ -879,6 +879,17 @@ def test_lsp_help_mentions_provider_modes() -> None:
     assert "--provider hybrid" in normalized_help
 
 
+def test_lsp_rejects_unknown_provider_mode() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp", "--provider", "remote"])
+
+    assert result.exit_code != 0
+    combined_output = _strip_ansi(result.stdout + result.stderr)
+    assert "Unsupported LSP provider mode" in combined_output
+    assert "native, lsp, hybrid" in combined_output
+
+
 def test_lsp_setup_help_mentions_managed_provider_install() -> None:
     runner = CliRunner()
 

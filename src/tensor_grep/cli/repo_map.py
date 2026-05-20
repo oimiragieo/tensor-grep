@@ -15,6 +15,7 @@ from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
+from urllib.parse import unquote, urlparse
 
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
@@ -9371,6 +9372,49 @@ def _language_for_path(path: str | Path) -> str:
     return "python"
 
 
+def _provider_language_for_path(path: str | Path) -> str | None:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".py":
+        return "python"
+    if suffix in {".js", ".jsx", ".mjs", ".cjs"}:
+        return "javascript"
+    if suffix in _TS_SUFFIXES:
+        return "typescript"
+    if suffix in _RUST_SUFFIXES:
+        return "rust"
+    if suffix == ".go":
+        return "go"
+    if suffix == ".java":
+        return "java"
+    if suffix == ".c":
+        return "c"
+    if suffix in {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+        return "cpp"
+    if suffix == ".cs":
+        return "csharp"
+    if suffix == ".php":
+        return "php"
+    if suffix in {".kt", ".kts"}:
+        return "kotlin"
+    if suffix == ".swift":
+        return "swift"
+    if suffix == ".lua":
+        return "lua"
+    return None
+
+
+def _path_from_lsp_file_uri(uri: str) -> Path | None:
+    if not uri.startswith("file://"):
+        return None
+    parsed = urlparse(uri)
+    path = unquote(parsed.path)
+    if parsed.netloc:
+        path = f"//{parsed.netloc}{path}"
+    if len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    return Path(path).expanduser().resolve()
+
+
 def _lsp_symbol_kind_name(value: object) -> str:
     mapping = {
         5: "class",
@@ -9407,12 +9451,22 @@ def _provider_languages_for_symbol(
 ) -> list[str]:
     languages: set[str] = set()
     for current in definitions or []:
-        languages.add(_language_for_path(str(current.get("file", ""))))
+        language = _provider_language_for_path(str(current.get("file", "")))
+        if language:
+            languages.add(language)
     if languages:
         return sorted(languages)
     for current in repo_map.get("symbols", []):
         if str(current.get("name", "")) == symbol:
-            languages.add(_language_for_path(str(current.get("file", ""))))
+            language = _provider_language_for_path(str(current.get("file", "")))
+            if language:
+                languages.add(language)
+    if languages:
+        return sorted(languages)
+    for current in repo_map.get("files", []):
+        language = _provider_language_for_path(str(current))
+        if language:
+            languages.add(language)
     return sorted(languages)
 
 
@@ -9508,7 +9562,11 @@ def _attach_lsp_evidence_status(
 
 def _is_lsp_proof_row(row: dict[str, Any]) -> bool:
     provenance = str(row.get("provenance", ""))
-    return provenance.startswith("lsp-") and "-fallback" not in provenance
+    return (
+        bool(row.get("lsp_provider_response"))
+        and provenance.startswith("lsp-")
+        and "-fallback" not in provenance
+    )
 
 
 def _lsp_proof_row_count(rows: list[dict[str, Any]]) -> int:
@@ -9588,11 +9646,8 @@ def _external_workspace_symbols(
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     deadline_monotonic = _lsp_operation_deadline()
-    languages = {
-        _language_for_path(current.get("file", ""))
-        for current in (repo_map or build_repo_map(repo_root)).get("symbols", [])
-        if current.get("file")
-    }
+    current_repo_map = repo_map or build_repo_map(repo_root)
+    languages = _provider_languages_for_symbol(current_repo_map, symbol)
     for language in sorted(languages):
         if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
             break
@@ -9631,22 +9686,18 @@ def _external_workspace_symbols(
             if not isinstance(payload_start, dict) or not isinstance(payload_end, dict):
                 continue
             uri = str(location.get("uri", ""))
-            if not uri.startswith("file://"):
+            resolved_path = _path_from_lsp_file_uri(uri)
+            if resolved_path is None:
                 continue
-            file_path = Path(
-                uri[8:] if uri.startswith("file:///") else uri.replace("file://", "", 1)
-            )
-            if len(str(file_path)) >= 2 and str(file_path)[1] == ":":
-                resolved_path = Path(str(file_path))
-            else:
-                resolved_path = file_path
             matches.append({
                 "name": symbol,
                 "kind": _lsp_symbol_kind_name(current.get("kind")),
-                "file": str(resolved_path.resolve()),
+                "file": str(resolved_path),
                 "line": int(payload_start.get("line") or 0) + 1,
                 "end_line": int(payload_end.get("line") or payload_start.get("line") or 0) + 1,
                 "provenance": f"lsp-{language}",
+                "lsp_provider_response": True,
+                "lsp_operation": "workspace/symbol",
             })
     matches.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
     deduped: list[dict[str, Any]] = []
@@ -9674,7 +9725,7 @@ def _external_references(
         if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
             break
         current_path = Path(str(definition["file"])).resolve()
-        language = _language_for_path(current_path)
+        language = _provider_language_for_path(current_path) or _language_for_path(current_path)
         try:
             client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(
                 language=language, workspace_root=repo_root
@@ -9738,12 +9789,9 @@ def _external_references(
             if not isinstance(start, dict) or not isinstance(end, dict):
                 continue
             uri = str(current.get("uri", ""))
-            if not uri.startswith("file://"):
+            resolved_path = _path_from_lsp_file_uri(uri)
+            if resolved_path is None:
                 continue
-            file_path = Path(
-                uri[8:] if uri.startswith("file:///") else uri.replace("file://", "", 1)
-            )
-            resolved_path = Path(str(file_path)).resolve()
             try:
                 lines = resolved_path.read_text(encoding="utf-8").splitlines()
             except (FileNotFoundError, OSError, UnicodeDecodeError):
@@ -9758,6 +9806,8 @@ def _external_references(
                 "end_line": int(end.get("line") or start.get("line") or 0) + 1,
                 "text": text,
                 "provenance": f"lsp-{language}",
+                "lsp_provider_response": True,
+                "lsp_operation": "textDocument/references",
             })
     references.sort(key=lambda item: (str(item["file"]), int(item["line"])))
     deduped: list[dict[str, Any]] = []

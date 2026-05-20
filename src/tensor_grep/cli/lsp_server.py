@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
@@ -101,12 +102,28 @@ def _get_repo_map(ls: TensorGrepLSPServer, uri: str) -> dict[str, Any]:
     return current
 
 
-def _external_client_for_uri(ls: TensorGrepLSPServer, uri: str) -> Any | None:
+def _external_client_for_uri(
+    ls: TensorGrepLSPServer,
+    uri: str,
+    *,
+    deadline_monotonic: float | None = None,
+) -> Any | None:
     language = _infer_language(uri)
     workspace_root = _resolve_repo_root(_uri_to_path(uri))
     try:
         client = ls.external_providers.get_client(language=language, workspace_root=workspace_root)
-        client.ensure_document(uri=uri, text=_document_text(ls, uri), language_id=language)
+        deadline = (
+            deadline_monotonic
+            if deadline_monotonic is not None
+            else repo_map._lsp_operation_deadline()
+        )
+        repo_map._run_lsp_with_operation_budget(
+            client,
+            deadline,
+            lambda: client.ensure_document(
+                uri=uri, text=_document_text(ls, uri), language_id=language
+            ),
+        )
         return client
     except (FileNotFoundError, LSPTransportError, ValueError):
         return None
@@ -239,13 +256,33 @@ def _location_from_external_payload(entry: dict[str, Any]) -> Location | None:
         return None
 
 
+def _run_external_lsp_operation(
+    client: Any,
+    operation: Callable[[], Any],
+    *,
+    deadline_monotonic: float | None = None,
+) -> Any:
+    return repo_map._run_lsp_with_operation_budget(
+        client,
+        deadline_monotonic
+        if deadline_monotonic is not None
+        else repo_map._lsp_operation_deadline(),
+        operation,
+    )
+
+
 def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[DocumentSymbol]:
     if ls.provider_mode != "native":
-        client = _external_client_for_uri(ls, uri)
+        deadline_monotonic = repo_map._lsp_operation_deadline()
+        client = _external_client_for_uri(ls, uri, deadline_monotonic=deadline_monotonic)
         if client is not None:
             try:
-                external_result = client.request(
-                    "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
+                external_result = _run_external_lsp_operation(
+                    client,
+                    lambda: client.request(
+                        "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
+                    ),
+                    deadline_monotonic=deadline_monotonic,
                 )
             except LSPTransportError:
                 external_result = None
@@ -316,10 +353,15 @@ def _workspace_symbols(
     ls: TensorGrepLSPServer, query: str, path_hint: str | None = None
 ) -> list[SymbolInformation]:
     if ls.provider_mode != "native" and path_hint is not None:
-        client = _external_client_for_uri(ls, path_hint)
+        deadline_monotonic = repo_map._lsp_operation_deadline()
+        client = _external_client_for_uri(ls, path_hint, deadline_monotonic=deadline_monotonic)
         if client is not None:
             try:
-                result = client.request("workspace/symbol", {"query": query})
+                result = _run_external_lsp_operation(
+                    client,
+                    lambda: client.request("workspace/symbol", {"query": query}),
+                    deadline_monotonic=deadline_monotonic,
+                )
             except LSPTransportError:
                 result = None
             if isinstance(result, list):
@@ -393,16 +435,21 @@ def _definitions_for_position(
     ]
     if ls.provider_mode == "native":
         return native_locations
-    client = _external_client_for_uri(ls, uri)
+    deadline_monotonic = repo_map._lsp_operation_deadline()
+    client = _external_client_for_uri(ls, uri, deadline_monotonic=deadline_monotonic)
     if client is None:
         return native_locations
     try:
-        result = client.request(
-            "textDocument/definition",
-            {
-                "textDocument": {"uri": uri},
-                "position": {"line": position.line, "character": position.character},
-            },
+        result = _run_external_lsp_operation(
+            client,
+            lambda: client.request(
+                "textDocument/definition",
+                {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": position.line, "character": position.character},
+                },
+            ),
+            deadline_monotonic=deadline_monotonic,
         )
     except LSPTransportError:
         return native_locations
@@ -447,17 +494,22 @@ def _references_for_position(
     ]
     if ls.provider_mode == "native":
         return native_locations
-    client = _external_client_for_uri(ls, uri)
+    deadline_monotonic = repo_map._lsp_operation_deadline()
+    client = _external_client_for_uri(ls, uri, deadline_monotonic=deadline_monotonic)
     if client is None:
         return native_locations
     try:
-        result = client.request(
-            "textDocument/references",
-            {
-                "textDocument": {"uri": uri},
-                "position": {"line": position.line, "character": position.character},
-                "context": {"includeDeclaration": True},
-            },
+        result = _run_external_lsp_operation(
+            client,
+            lambda: client.request(
+                "textDocument/references",
+                {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": position.line, "character": position.character},
+                    "context": {"includeDeclaration": True},
+                },
+            ),
+            deadline_monotonic=deadline_monotonic,
         )
     except LSPTransportError:
         return native_locations
@@ -494,16 +546,24 @@ def _workspace_edit_for_symbol(
         return None
     symbol, _ = resolved
     if ls.provider_mode != "native":
-        client = _external_client_for_uri(ls, uri)
+        deadline_monotonic = repo_map._lsp_operation_deadline()
+        client = _external_client_for_uri(ls, uri, deadline_monotonic=deadline_monotonic)
         if client is not None:
             try:
-                result = client.request(
-                    "textDocument/rename",
-                    {
-                        "textDocument": {"uri": uri},
-                        "position": {"line": position.line, "character": position.character},
-                        "newName": new_name,
-                    },
+                result = _run_external_lsp_operation(
+                    client,
+                    lambda: client.request(
+                        "textDocument/rename",
+                        {
+                            "textDocument": {"uri": uri},
+                            "position": {
+                                "line": position.line,
+                                "character": position.character,
+                            },
+                            "newName": new_name,
+                        },
+                    ),
+                    deadline_monotonic=deadline_monotonic,
                 )
             except LSPTransportError:
                 result = None
@@ -560,13 +620,7 @@ def did_open(ls: TensorGrepLSPServer, params: DidOpenTextDocumentParams) -> None
     _invalidate_repo_map_cache(ls, params.text_document.uri)
     _update_ast_tensor(ls, params.text_document.uri, params.text_document.text)
     if ls.provider_mode != "native":
-        client = _external_client_for_uri(ls, params.text_document.uri)
-        if client is not None:
-            client.ensure_document(
-                uri=params.text_document.uri,
-                text=params.text_document.text,
-                language_id=str(params.text_document.language_id),
-            )
+        _external_client_for_uri(ls, params.text_document.uri)
 
 
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)  # type: ignore
