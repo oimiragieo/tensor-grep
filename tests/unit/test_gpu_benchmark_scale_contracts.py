@@ -13,6 +13,52 @@ def _load_script_module(name: str, rel_path: str):
     return module
 
 
+def _passing_native_scale_summary(module):
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 1.2},
+            "tg_cpu": {"status": "PASS", "median_s": 1.0},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 0.5,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 1.4},
+            "tg_cpu": {"status": "PASS", "median_s": 1.1},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 0.6,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+    ]
+    correctness_checks = [
+        {
+            "size_label": size_label,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+    ]
+    return module.build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+
+
 def test_run_gpu_benchmarks_should_parse_5gb_corpus_size():
     module = _load_script_module(
         "run_gpu_benchmarks_scale_parse", "benchmarks/run_gpu_benchmarks.py"
@@ -113,6 +159,9 @@ def test_gpu_native_summary_should_report_workload_scoped_speed_blocker():
             "status": "PASS",
             "matches_equal": True,
             "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
         }
         for label in ("1GB", "5GB")
     ]
@@ -136,6 +185,7 @@ def test_public_managed_gpu_proof_gate_requires_managed_nvidia_metadata():
         "run_gpu_native_benchmarks_public_managed_proof",
         "benchmarks/run_gpu_native_benchmarks.py",
     )
+    scale_gate_summary = _passing_native_scale_summary(module)
 
     gate = module.build_public_managed_gpu_proof_gate(
         tg_binary_metadata={
@@ -148,7 +198,7 @@ def test_public_managed_gpu_proof_gate_requires_managed_nvidia_metadata():
             "expected_version": "1.12.34",
             "version_status": "matches",
         },
-        scale_gate_summary={"promotion_ready": True},
+        scale_gate_summary=scale_gate_summary,
     )
 
     assert gate["status"] == "PASS"
@@ -163,6 +213,8 @@ def test_public_managed_gpu_proof_gate_rejects_stale_or_incomplete_metadata():
         "benchmarks/run_gpu_native_benchmarks.py",
     )
 
+    scale_gate_summary = _passing_native_scale_summary(module)
+
     stale = module.build_public_managed_gpu_proof_gate(
         tg_binary_metadata={
             "kind": "managed-native",
@@ -174,7 +226,7 @@ def test_public_managed_gpu_proof_gate_rejects_stale_or_incomplete_metadata():
             "expected_version": "1.12.34",
             "version_status": "matches",
         },
-        scale_gate_summary={"promotion_ready": True},
+        scale_gate_summary=scale_gate_summary,
     )
 
     incomplete = module.build_public_managed_gpu_proof_gate(
@@ -187,7 +239,7 @@ def test_public_managed_gpu_proof_gate_rejects_stale_or_incomplete_metadata():
             "expected_version": "1.12.34",
             "version_status": "matches",
         },
-        scale_gate_summary={"promotion_ready": True},
+        scale_gate_summary=scale_gate_summary,
     )
 
     assert stale["status"] == "FAIL"
@@ -215,7 +267,7 @@ def test_public_managed_gpu_proof_gate_rejects_in_tree_cuda_proof():
             "expected_version": "1.12.34",
             "version_status": "matches",
         },
-        scale_gate_summary={"promotion_ready": True},
+        scale_gate_summary=_passing_native_scale_summary(module),
     )
 
     assert gate["status"] == "FAIL"
@@ -241,12 +293,103 @@ def test_public_managed_gpu_proof_gate_rejects_cpu_frontdoor_fallback():
             "expected_version": "1.12.34",
             "version_status": "matches",
         },
-        scale_gate_summary={"promotion_ready": True},
+        scale_gate_summary=_passing_native_scale_summary(module),
     )
 
     assert gate["status"] == "FAIL"
     assert gate["public_managed_promotion_ready"] is False
     assert "installed_frontdoor_not_nvidia" in gate["blockers"]
+
+
+def test_public_managed_gpu_proof_gate_rejects_weak_scale_summary():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_public_managed_proof_reject_weak_summary",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    gate = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "managed-native",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary={"promotion_ready": True},
+    )
+
+    assert gate["status"] == "FAIL"
+    assert gate["public_gpu_proof"] is False
+    assert "native_cuda_scale_surface_missing" in gate["blockers"]
+    assert "native_cuda_correctness_gate_not_passed" in gate["blockers"]
+    assert "native_cuda_speed_gate_not_passed" in gate["blockers"]
+
+
+def test_native_scale_gate_requires_rg_identity_correctness():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_rg_identity_gate",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 1.2},
+            "tg_cpu": {"status": "PASS", "median_s": 1.0},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 0.5,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 1.4},
+            "tg_cpu": {"status": "PASS", "median_s": 1.1},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 0.6,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+    ]
+    correctness_checks = [
+        {
+            "size_label": "1GB",
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
+        },
+        {
+            "size_label": "5GB",
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": False,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": False,
+        },
+    ]
+
+    summary = module.build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+
+    assert summary["promotion_ready"] is False
+    assert summary["correctness_gate"]["status"] == "FAIL"
+    assert summary["correctness_gate"]["rg_passing_sizes"] == ["1GB"]
+    assert "correctness_gate_failed" in summary["promotion_blockers"]
 
 
 def test_gpu_python_summary_should_mark_native_cpu_fallback_as_unsupported_not_proof():
@@ -1219,6 +1362,65 @@ def test_run_gpu_native_correctness_should_reject_sidecar_routed_gpu_json(monkey
     assert "not native CUDA scale proof" in result["error"]
 
 
+def test_run_gpu_native_correctness_should_compare_direct_rg_identity(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_rg_identity_correctness",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    corpus_dir = tmp_path / "corpus"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir.mkdir()
+
+    def _fake_run_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--json" in command_text and "--cpu" in command_text:
+            stdout = (
+                '{"routing_backend":"NativeCpuBackend","sidecar_used":false,'
+                '"total_matches":1,"total_files":1,'
+                '"matches":[{"file":"sample.log","line_number":2,"text":"ERROR sentinel"}]}'
+            )
+            return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if "--json" in command_text and "--gpu-device-ids" in command_text:
+            stdout = (
+                '{"routing_backend":"NativeGpuBackend","sidecar_used":false,'
+                '"total_matches":1,"total_files":1,'
+                '"matches":[{"file":"sample.log","line_number":2,"text":"ERROR sentinel"}]}'
+            )
+            return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        rg_stdout = (
+            '{"type":"begin","data":{"path":{"text":"sample.log"}}}\n'
+            '{"type":"match","data":{"path":{"text":"sample.log"},"line_number":2,'
+            '"lines":{"text":"ERROR sentinel\\n"},"submatches":[]}}\n'
+            '{"type":"end","data":{"path":{"text":"sample.log"},"binary_offset":null,'
+            '"stats":{"elapsed":{"secs":0,"nanos":1,"human":"0.000000001s"},'
+            '"searches":1,"searches_with_match":1,"bytes_searched":15,'
+            '"bytes_printed":15,"matched_lines":1,"matches":1}}}\n'
+        )
+        return module.subprocess.CompletedProcess(command, 0, stdout=rg_stdout, stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    result = module.run_correctness_check(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        corpus_dir=corpus_dir,
+        pattern="ERROR",
+        device_id=0,
+        env={},
+        timeout_s=5,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["matches_equal"] is True
+    assert result["files_equal"] is True
+    assert result["rg_matches_equal"] is True
+    assert result["rg_files_equal"] is True
+    assert result["rg_match_identity_equal"] is True
+    assert result["rg_total_matches"] == 1
+    assert result["gpu_total_matches"] == 1
+
+
 def test_run_gpu_native_benchmarks_should_not_time_sidecar_routed_gpu_rows(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_gpu_native_benchmarks_sidecar_rows",
@@ -1658,6 +1860,9 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
             "status": "PASS",
             "matches_equal": True,
             "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
         }
         for size_label in ("1GB", "5GB")
     ]
@@ -1699,6 +1904,8 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
         "status": "PASS",
         "required_sizes": ["1GB", "5GB"],
         "passing_sizes": ["1GB", "5GB"],
+        "rg_passing_sizes": ["1GB", "5GB"],
+        "requires_direct_rg_match_identity": True,
         "reason": "Native CUDA correctness passed at every required scale.",
     }
     assert summary["speed_gate"] == {

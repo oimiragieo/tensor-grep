@@ -4579,3 +4579,48 @@ def test_should_require_release_success_gate_parity_entrypoint_contract():
         "release-success-gate `Verify final npm parity before release success gate` step must invoke "
         "`python scripts/validate_release_version_parity.py`" in joined_errors
     )
+
+
+def test_should_validate_public_gpu_proof_workflow_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(encoding="utf-8")
+
+    assert module.validate_public_gpu_proof_workflow_content(workflow_content=workflow) == []
+
+
+def test_should_reject_public_gpu_proof_workflow_without_dispatch_only_fixed_runner():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = textwrap.dedent(
+        """
+        name: Public GPU Proof
+        on: [push, workflow_dispatch]
+        permissions:
+          contents: write
+        jobs:
+          public-managed-gpu-proof:
+            runs-on: ${{ inputs.runner }}
+            steps:
+              - run: uv run python benchmarks/run_gpu_native_benchmarks.py
+        """
+    )
+
+    errors = module.validate_public_gpu_proof_workflow_content(workflow_content=workflow)
+    joined_errors = "\n".join(errors)
+    assert "Public GPU proof workflow must be workflow_dispatch-only" in joined_errors
+    assert "Public GPU proof workflow must request read-only contents permission" in joined_errors
+    assert "Public GPU proof workflow must use fixed GPU runner labels" in joined_errors
+    assert "Public GPU proof workflow must run with --public-managed-proof" in joined_errors

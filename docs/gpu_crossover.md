@@ -12,6 +12,7 @@ The post-`v1.12.35` dogfood keeps public GPU not promotion-ready. Single-pattern
 - The public managed binary currently reports GPU requests through `GpuSidecar`, not `NativeGpuBackend`; `NativeGpuBackend` rows in this document refer to a local CUDA-feature release build. That is not public GPU readiness until matching CUDA-native assets are shipped and verified.
 - Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, declared workload class, correctness, and speed artifacts.
 - Public promotion additionally requires managed NVIDIA release provenance: the installed front door must include `tg-native-metadata.json`, and `benchmarks/run_gpu_native_benchmarks.py --public-managed-proof` must emit `public_managed_promotion_ready = true` and `public_gpu_proof = true`.
+- Public managed proof must now compare the GPU result directly with `rg --json`, not only with `tg --cpu`. Required 1GB and 5GB rows must pass match identity, file-set identity, `NativeGpuBackend`, `sidecar_used = false`, and speed wins over both `rg` and `tg_cpu`.
 - Current GPU artifacts expose `promotion_evidence_contract`, `fallback_or_sidecar_counts_as_gpu_proof`, `promotion_blockers`, `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` so sidecar routing, CPU fallback, missing correctness, or missing speed proof is machine-readable instead of buried in prose.
 
 Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary.
@@ -71,10 +72,10 @@ Reference principles:
 Do not promote GPU speed from device discovery, sidecar availability, or correctness alone. A promotion-ready artifact must show all of the following:
 
 1. Native CUDA backend, not only Python/Torch sidecar rows.
-2. Exact match and file-set correctness at every required 1GB and 5GB corpus.
+2. Exact match and file-set correctness at every required 1GB and 5GB corpus against both `tg --cpu` and direct `rg --json`.
 3. GPU faster than both `rg` and `tg_cpu` at the required scale and declared workload class.
 4. No failed error-handling or throughput gates.
-5. For public managed promotion, `--public-managed-proof` with managed NVIDIA `tg-native-metadata.json`, `public_managed_promotion_ready = true`, and `public_gpu_proof = true`.
+5. For public managed promotion, the dispatch-only `public-gpu-proof.yml` workflow, managed NVIDIA `tg-native-metadata.json`, `--public-managed-proof`, `public_managed_promotion_ready = true`, and `public_gpu_proof = true`.
 
 Until those are true, the public routing decision is explicit GPU search only.
 
