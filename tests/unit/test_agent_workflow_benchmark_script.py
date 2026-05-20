@@ -70,7 +70,135 @@ def test_run_agent_workflow_benchmarks_should_extract_capsule_contract_metrics()
         "edit_order_count": 1,
         "rollback_present": True,
         "omission_count": 3,
+        "target_selection_evaluated": True,
+        "expected_target_file_suffix": "src/app.ts",
+        "expected_target_symbol": "",
+        "target_rank": 1,
+        "hit_at_1": True,
+        "hit_at_3": True,
+        "mrr_at_3": 1.0,
+        "coverage_at_budget": True,
+        "wrong_confident_miss": False,
+        "safe_ambiguity": False,
         "passed": True,
+    }
+
+
+def test_run_agent_workflow_benchmarks_should_extract_target_selection_metrics():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_target_selection",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    payload = {
+        "confidence": {"overall": 0.82},
+        "primary_target": {
+            "file": "src/tensor_grep/cli/ripgrep_fmt.py",
+            "symbol": "_binary_notice",
+            "confidence": 0.82,
+        },
+        "ask_user_before_editing": {"required": True},
+        "alternative_targets": [
+            {
+                "file": "src/tensor_grep/cli/runtime_paths.py",
+                "symbol": "resolve_ripgrep_binary",
+            },
+            {"file": "src/tensor_grep/cli/bootstrap.py", "symbol": "resolve_native_binary"},
+        ],
+        "snippets": [
+            {"file": "src/tensor_grep/cli/ripgrep_fmt.py", "start_line": 1, "end_line": 4}
+        ],
+        "omissions": {
+            "follow_up_reads": [
+                {
+                    "file": "src/tensor_grep/cli/runtime_paths.py",
+                    "reason": "alternative target",
+                }
+            ]
+        },
+    }
+
+    metrics = module.extract_capsule_metrics(
+        payload,
+        {
+            "name": "ripgrep_binary_resolution",
+            "expected_target_file_suffix": "src/tensor_grep/cli/runtime_paths.py",
+            "expected_target_symbol": "resolve_ripgrep_binary",
+        },
+    )
+
+    assert metrics["target_selection_evaluated"] is True
+    assert metrics["expected_target_file_suffix"] == "src/tensor_grep/cli/runtime_paths.py"
+    assert metrics["expected_target_symbol"] == "resolve_ripgrep_binary"
+    assert metrics["target_rank"] == 2
+    assert metrics["hit_at_1"] is False
+    assert metrics["hit_at_3"] is True
+    assert metrics["mrr_at_3"] == 0.5
+    assert metrics["coverage_at_budget"] is True
+    assert metrics["wrong_confident_miss"] is False
+    assert metrics["safe_ambiguity"] is True
+
+
+def test_run_agent_workflow_benchmarks_should_summarize_target_selection_metrics():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_target_summary",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+
+    summary = module.build_agent_capsule_summary([
+        {
+            "scenario": "resolver",
+            "elapsed_s": 0.1,
+            "passed": True,
+            "ask_required": False,
+            "alternative_count": 0,
+            "snippet_count": 1,
+            "validation_command_count": 1,
+            "validation_filtered_count": 0,
+            "rollback_present": True,
+            "omission_count": 0,
+            "target_selection_evaluated": True,
+            "hit_at_1": True,
+            "hit_at_3": True,
+            "mrr_at_3": 1.0,
+            "coverage_at_budget": True,
+            "wrong_confident_miss": False,
+            "safe_ambiguity": False,
+        },
+        {
+            "scenario": "bridge",
+            "elapsed_s": 0.2,
+            "passed": True,
+            "ask_required": False,
+            "alternative_count": 0,
+            "snippet_count": 1,
+            "validation_command_count": 0,
+            "validation_filtered_count": 0,
+            "rollback_present": True,
+            "omission_count": 1,
+            "target_selection_evaluated": True,
+            "hit_at_1": False,
+            "hit_at_3": False,
+            "mrr_at_3": 0.0,
+            "coverage_at_budget": False,
+            "wrong_confident_miss": True,
+            "safe_ambiguity": False,
+        },
+    ])
+
+    assert summary["target_selection_summary"] == {
+        "evaluated_cases": 2,
+        "hit_at_1_cases": 1,
+        "hit_at_1_rate": 0.5,
+        "hit_at_3_cases": 1,
+        "hit_at_3_rate": 0.5,
+        "mrr_at_3": 0.5,
+        "coverage_at_budget_cases": 1,
+        "coverage_at_budget_rate": 0.5,
+        "wrong_confident_miss_cases": 1,
+        "wrong_confident_miss_rate": 0.5,
+        "safe_ambiguity_cases": 0,
+        "safe_ambiguity_rate": 0.0,
+        "wrong_confident_miss_threshold": 0.75,
     }
 
 
