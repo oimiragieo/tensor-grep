@@ -272,7 +272,13 @@ def resolve_ripgrep_binary() -> Path | None:
         if p.is_file():
             return p.resolve()
 
-    # Priority 2: In-tree bundled binary
+    # Priority 2: PATH. For explicit rg-compatible passthrough, prefer the same rg that
+    # caller gets from the shell so JSON event ordering and version-specific behavior
+    # match the user's baseline. Bundled rg remains the fallback when PATH has none.
+    if which_rg := shutil.which(binary_name):
+        return Path(which_rg).resolve()
+
+    # Priority 3: In-tree bundled binary
     repo_root = _repo_root()
     if sys.platform.startswith("win"):
         dev_path = repo_root / "benchmarks" / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
@@ -283,9 +289,5 @@ def resolve_ripgrep_binary() -> Path | None:
 
     if dev_path.is_file():
         return dev_path.resolve()
-
-    # Priority 3: PATH
-    if which_rg := shutil.which(binary_name):
-        return Path(which_rg).resolve()
 
     return None

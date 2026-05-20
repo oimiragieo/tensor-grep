@@ -2543,6 +2543,20 @@ mod tests {
     }
 
     #[test]
+    fn run_semantic_options_reject_existing_path_without_pattern_option() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+        let args = parse_run_args(&["tg", "run", "--selector", "call", &path]);
+
+        let error = validate_run_args(&args).unwrap_err().to_string();
+
+        assert!(
+            error.contains("require --pattern <PATTERN> before PATH"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn early_ripgrep_fast_path_rejects_glob_fixed_and_word_cases() {
         let glob = parse_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
         let fixed = parse_args(&["tg", "search", "-F", "[ERROR]", "bench_data"]);
@@ -5050,6 +5064,15 @@ fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
     }
     if args.stdin_flag && args.files_with_matches {
         anyhow::bail!("tg run --stdin cannot be combined with --files-with-matches");
+    }
+    if ast_run_requires_python_passthrough(args)
+        && args.pattern_option.is_none()
+        && args.positional.len() == 1
+        && Path::new(&args.positional[0]).exists()
+    {
+        anyhow::bail!(
+            "tg run ast-grep semantic options require --pattern <PATTERN> before PATH; positional arguments without --pattern are treated as PATTERN"
+        );
     }
     if ast_run_requires_python_passthrough(args) && run_has_mutating_options(args) {
         anyhow::bail!(

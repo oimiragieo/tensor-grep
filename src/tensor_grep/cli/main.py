@@ -8625,6 +8625,17 @@ def run(
         if len(positional_args) > 2:
             typer.echo("Error: tg run accepts at most PATTERN and PATH positionals.", err=True)
             raise typer.Exit(code=2)
+        if (
+            (selector is not None or strictness is not None or stdin or globs)
+            and len(positional_args) == 1
+            and Path(positional_args[0]).exists()
+        ):
+            typer.echo(
+                "Error: tg run ast-grep semantic options require --pattern <PATTERN> "
+                "before PATH; positional arguments without --pattern are treated as PATTERN.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
         resolved_pattern = positional_args[0]
         resolved_path = positional_args[1] if len(positional_args) > 1 else None
 

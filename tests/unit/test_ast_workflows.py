@@ -862,3 +862,18 @@ def test_ast_workflow_entry_accepts_ast_grep_semantic_run_options(monkeypatch):
     assert seen["kwargs"]["strictness"] == "relaxed"
     assert seen["kwargs"]["globs"] == ["*.py"]
     assert seen["kwargs"]["stdin"] is True
+
+
+def test_typer_run_rejects_existing_path_with_semantic_options_without_pattern(tmp_path):
+    from typer.testing import CliRunner
+
+    from tensor_grep.cli.main import app
+
+    project = tmp_path / "src"
+    project.mkdir()
+
+    result = CliRunner().invoke(app, ["run", "--selector", "call", str(project), "--json"])
+
+    assert result.exit_code == 2
+    assert "require --pattern <PATTERN> before PATH" in result.output
+    assert "Traceback" not in result.output

@@ -111,8 +111,11 @@ def _write_polyglot_invoice_monorepo(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _agent_payload(project: Path, query: str) -> dict[str, object]:
-    result = CliRunner().invoke(app, ["agent", "--query", query, "--json", str(project)])
+def _agent_payload(project: Path, query: str, *, max_files: int | None = None) -> dict[str, object]:
+    args = ["agent", "--query", query, "--json", str(project)]
+    if max_files is not None:
+        args.extend(["--max-files", str(max_files)])
+    result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     return json.loads(result.output)
 
@@ -319,6 +322,35 @@ def test_agent_capsule_prefers_ripgrep_resolver_for_binary_resolution_query(tmp_
 
         assert payload["primary_target"]["file"] == str(runtime_paths.resolve())
         assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
+
+
+def test_agent_capsule_tight_budget_prefers_exact_resolver_over_binary_notice(tmp_path):
+    project = tmp_path / "workspace"
+    cli_src = project / "src" / "tensor_grep" / "cli"
+    formatter_src = cli_src / "formatters"
+    cli_src.mkdir(parents=True)
+    formatter_src.mkdir(parents=True)
+    runtime_paths = cli_src / "runtime_paths.py"
+    runtime_paths.write_text(
+        "def resolve_ripgrep_binary():\n"
+        "    return resolve_ripgrep_binary_uncached()\n\n"
+        "def resolve_ripgrep_binary_uncached():\n"
+        "    return find_path_binary('rg')\n",
+        encoding="utf-8",
+    )
+    notice_file = formatter_src / "ripgrep_fmt.py"
+    notice_file.write_text(
+        "def _binary_notice_for_match(match):\n"
+        "    return f'binary file matches: {match.file}'\n\n"
+        "def _binary_notice(path):\n"
+        "    return f'binary file matches: {path}'\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_payload(project, "ripgrep binary resolution", max_files=3)
+
+    assert payload["primary_target"]["file"] == str(runtime_paths.resolve())
+    assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
 
 
 def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():

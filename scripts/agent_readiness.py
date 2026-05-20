@@ -744,9 +744,9 @@ def build_check_plan(
     checks.extend([
         Check(
             name="repo-cli-build-warmup",
-            command=["uv", "run", "--no-sync", "tg", "--version"],
+            command=["uv", "run", "tg", "--version"],
             description=(
-                "Warm the repo-local uv/tg editable build before bounded agent trust probes."
+                "Synchronize and warm the repo-local uv/tg editable build before bounded agent trust probes."
             ),
             timeout_s=240 if IS_WINDOWS else 180,
             validator=validate_repo_cli_warmup_version_output,

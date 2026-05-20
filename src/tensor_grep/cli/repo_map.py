@@ -4308,11 +4308,16 @@ def _score_file_path(path: str, terms: list[str]) -> int:
 
 
 def _score_symbol(symbol: dict[str, Any], terms: list[str]) -> int:
-    return (
+    score = (
         _score_text_terms(str(symbol["name"]), terms) * 3
         + _score_text_terms(str(symbol["kind"]), terms)
         + _score_file_path(str(symbol["file"]), terms)
     )
+    symbol_terms = set(split_terms(str(symbol["name"])))
+    meaningful_query_terms = {term for term in terms if len(term) > 2}
+    if symbol_terms and symbol_terms <= meaningful_query_terms:
+        score += 2
+    return score
 
 
 def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:

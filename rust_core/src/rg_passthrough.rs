@@ -489,7 +489,8 @@ fn resolve_ripgrep_binary_uncached() -> Option<PathBuf> {
         }
     }
 
-    if let Some(runtime_relative_rg) = resolve_existing_relative_to_current_exe(&[
+    let path_candidates = rg_path_candidates();
+    let runtime_relative_rg = resolve_existing_relative_to_current_exe(&[
         &[if cfg!(windows) { "rg.exe" } else { "rg" }],
         &[
             "benchmarks",
@@ -497,13 +498,22 @@ fn resolve_ripgrep_binary_uncached() -> Option<PathBuf> {
             if cfg!(windows) { "rg.exe" } else { "rg" },
         ],
         &["benchmarks", "rg"],
-    ]) {
-        return Some(runtime_relative_rg);
-    }
+    ]);
 
-    rg_path_candidates()
+    select_ripgrep_binary_candidate(path_candidates, runtime_relative_rg)
+}
+
+fn select_ripgrep_binary_candidate(
+    path_candidates: Vec<PathBuf>,
+    bundled_fallback: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(candidate) = path_candidates
         .into_iter()
         .find(|candidate| candidate.is_file())
+    {
+        return Some(candidate);
+    }
+    bundled_fallback
 }
 
 fn env_flag_enabled(name: &str) -> bool {
@@ -560,5 +570,22 @@ mod tests {
         assert_eq!(first, Some(expected.clone()));
         assert_eq!(second, Some(expected));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn resolve_ripgrep_binary_prefers_path_candidate_before_bundled_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_rg = dir.path().join(if cfg!(windows) { "rg.exe" } else { "rg" });
+        let bundled_rg =
+            dir.path()
+                .join("bundled")
+                .join(if cfg!(windows) { "rg.exe" } else { "rg" });
+        std::fs::write(&path_rg, "path").unwrap();
+        std::fs::create_dir_all(bundled_rg.parent().unwrap()).unwrap();
+        std::fs::write(&bundled_rg, "bundled").unwrap();
+
+        let selected = select_ripgrep_binary_candidate(vec![path_rg.clone()], Some(bundled_rg));
+
+        assert_eq!(selected, Some(path_rg));
     }
 }

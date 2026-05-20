@@ -364,6 +364,41 @@ def test_resolve_ripgrep_binary_env_override(tmp_path):
         assert resolved == rg_path.resolve()
 
 
+def test_resolve_ripgrep_binary_prefers_path_rg_before_bundled(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    binary_name = "rg.exe" if sys.platform.startswith("win") else "rg"
+    bundled = (
+        repo_root
+        / "benchmarks"
+        / (
+            "ripgrep-14.1.0-x86_64-pc-windows-msvc"
+            if sys.platform.startswith("win")
+            else "ripgrep-14.1.0-x86_64-apple-darwin"
+            if sys.platform.startswith("darwin")
+            else "ripgrep-14.1.0-x86_64-unknown-linux-musl"
+        )
+        / binary_name
+    )
+    bundled.parent.mkdir(parents=True)
+    bundled.write_text("bundled\n", encoding="utf-8")
+    path_rg = tmp_path / "path" / binary_name
+    path_rg.parent.mkdir()
+    path_rg.write_text("path\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.delenv("TG_RG_PATH", raising=False)
+    monkeypatch.setattr(
+        runtime_paths.shutil, "which", lambda name: str(path_rg) if name == binary_name else None
+    )
+    resolve_ripgrep_binary.cache_clear()
+
+    assert resolve_ripgrep_binary() == path_rg.resolve()
+
+
 def test_resolve_ripgrep_binary_cwd_independence(tmp_path, monkeypatch):
     """Ensure that native passthrough and binary discovery do not depend on current working directory."""
     with patch.dict(os.environ, clear=True):
