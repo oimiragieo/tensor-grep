@@ -123,6 +123,18 @@ def build_rg_multi_pattern_search_command(
     return command
 
 
+def build_rg_multi_pattern_json_command(
+    rg_binary: str,
+    patterns: list[str] | tuple[str, ...],
+    corpus_dir: Path,
+) -> list[str]:
+    command = [rg_binary, "--json", "--no-ignore", "-F"]
+    for pattern in patterns:
+        command.extend(["-e", pattern])
+    command.append(str(corpus_dir))
+    return command
+
+
 def build_tg_cpu_search_command(tg_binary: Path, pattern: str, corpus_dir: Path) -> list[str]:
     return [
         str(tg_binary),
@@ -167,6 +179,26 @@ def build_tg_json_command(
     if device_id is not None:
         command.extend(["--gpu-device-ids", str(device_id)])
     command.extend(["--json", "--no-ignore", "-F", pattern, str(corpus_dir)])
+    return command
+
+
+def build_tg_multi_pattern_json_command(
+    tg_binary: Path,
+    patterns: list[str] | tuple[str, ...],
+    corpus_dir: Path,
+    *,
+    force_cpu: bool = False,
+    device_id: int | None = None,
+) -> list[str]:
+    command = [str(tg_binary), "search"]
+    if force_cpu:
+        command.append("--cpu")
+    if device_id is not None:
+        command.extend(["--gpu-device-ids", str(device_id)])
+    command.extend(["--json", "--no-ignore", "-F"])
+    for pattern in patterns:
+        command.extend(["-e", pattern])
+    command.append(str(corpus_dir))
     return command
 
 
@@ -408,6 +440,17 @@ def _extract_rg_json_match_signatures(stdout: str) -> list[tuple[str, int, str]]
 
 def _signature_file_count(signatures: list[tuple[str, int, str]]) -> int:
     return len({signature[0] for signature in signatures if signature[0]})
+
+
+def _signature_files(signatures: list[tuple[str, int, str]]) -> set[str]:
+    return {signature[0] for signature in signatures if signature[0]}
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _timeout_stderr(timeout_s: int) -> str:
@@ -829,6 +872,157 @@ def run_correctness_check(
     }
 
 
+def run_many_pattern_correctness_check(
+    *,
+    tg_binary: Path,
+    rg_binary: str,
+    corpus_dir: Path,
+    patterns: list[str] | tuple[str, ...],
+    device_id: int,
+    env: dict[str, str],
+    timeout_s: int,
+) -> dict[str, object]:
+    cpu_result = _run_command(
+        build_tg_multi_pattern_json_command(
+            tg_binary,
+            patterns,
+            corpus_dir,
+            force_cpu=True,
+        ),
+        env=env,
+        capture_output=True,
+        timeout_s=timeout_s,
+    )
+    gpu_result = _run_command(
+        build_tg_multi_pattern_json_command(
+            tg_binary,
+            patterns,
+            corpus_dir,
+            device_id=device_id,
+        ),
+        env=env,
+        capture_output=True,
+        timeout_s=timeout_s,
+    )
+    rg_result = _run_command(
+        build_rg_multi_pattern_json_command(rg_binary, patterns, corpus_dir),
+        env=env,
+        capture_output=True,
+        timeout_s=timeout_s,
+    )
+    base_payload: dict[str, object] = {
+        "workload_class": NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
+        "patterns": list(patterns),
+        "fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
+    }
+    if isinstance(cpu_result, subprocess.TimeoutExpired):
+        return {
+            **base_payload,
+            "status": "FAIL",
+            "error": f"CPU many-pattern correctness {_timeout_stderr(timeout_s)}",
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    if isinstance(gpu_result, subprocess.TimeoutExpired):
+        return {
+            **base_payload,
+            "status": "FAIL",
+            "error": f"GPU many-pattern correctness {_timeout_stderr(timeout_s)}",
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    if isinstance(rg_result, subprocess.TimeoutExpired):
+        return {
+            **base_payload,
+            "status": "FAIL",
+            "error": f"rg many-pattern correctness {_timeout_stderr(timeout_s)}",
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    if cpu_result.returncode != 0:
+        return {
+            **base_payload,
+            "status": "FAIL",
+            "error": (cpu_result.stderr or "").strip(),
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    if gpu_result.returncode != 0:
+        return {
+            **base_payload,
+            "status": "FAIL",
+            "error": (gpu_result.stderr or "").strip(),
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    if rg_result.returncode not in {0, 1}:
+        return {
+            **base_payload,
+            "status": "FAIL",
+            "error": (rg_result.stderr or "").strip(),
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+
+    cpu_payload = _parse_json_payload(cpu_result.stdout or "{}")
+    gpu_payload = _parse_json_payload(gpu_result.stdout or "{}")
+    route_failure = _native_gpu_route_failure(gpu_payload)
+    if route_failure is not None:
+        return {
+            **base_payload,
+            **route_failure,
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    cpu_signatures = _extract_tg_match_signatures(cpu_payload)
+    gpu_signatures = _extract_tg_match_signatures(gpu_payload)
+    rg_signatures = _extract_rg_json_match_signatures(rg_result.stdout or "")
+    cpu_gpu_matches_equal = cpu_signatures == gpu_signatures
+    cpu_gpu_files_equal = _signature_files(cpu_signatures) == _signature_files(gpu_signatures)
+    rg_matches_equal = rg_signatures == gpu_signatures
+    rg_files_equal = _signature_files(rg_signatures) == _signature_files(gpu_signatures)
+    return {
+        **base_payload,
+        "status": (
+            "PASS"
+            if cpu_gpu_matches_equal and cpu_gpu_files_equal and rg_matches_equal and rg_files_equal
+            else "FAIL"
+        ),
+        "cpu_total_matches": len(cpu_signatures),
+        "gpu_total_matches": len(gpu_signatures),
+        "rg_total_matches": len(rg_signatures),
+        "cpu_total_files": _signature_file_count(cpu_signatures),
+        "gpu_total_files": _signature_file_count(gpu_signatures),
+        "rg_total_files": _signature_file_count(rg_signatures),
+        "matches_equal": cpu_gpu_matches_equal,
+        "files_equal": cpu_gpu_files_equal,
+        "rg_matches_equal": rg_matches_equal,
+        "rg_files_equal": rg_files_equal,
+        "rg_match_identity_equal": rg_matches_equal,
+    }
+
+
 def create_error_fixture(error_dir: Path) -> Path:
     error_dir.mkdir(parents=True, exist_ok=True)
     (error_dir / "good.log").write_text(
@@ -1103,6 +1297,101 @@ def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
         "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
+    }
+
+
+def build_many_pattern_proof_gate(
+    *,
+    multi_pattern: dict[str, object],
+    correctness_check: dict[str, object] | None,
+) -> dict[str, object]:
+    patterns = multi_pattern.get("patterns")
+    pattern_count = len(patterns) if isinstance(patterns, list) else 0
+    gpu_stats = multi_pattern.get("gpu_stats")
+    pipeline = gpu_stats.get("pipeline") if isinstance(gpu_stats, dict) else None
+    if not isinstance(pipeline, dict):
+        pipeline = {}
+    contract = {
+        "promotion_scope": "declared_workload_class_only",
+        "required_workload_class": NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
+        "required_runtime_backend": "NativeGpuBackend",
+        "required_sidecar_used": False,
+        "required_fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
+        "required_single_dispatch": True,
+        "required_pattern_count": pattern_count,
+        "required_speed_baselines": ["tg_cpu_sequential", "rg_multi_pattern"],
+        "required_direct_rg_match_identity": True,
+        "public_gpu_proof": False,
+    }
+    blockers: list[str] = []
+    if multi_pattern.get("status") != "PASS":
+        blockers.append("many_pattern_speed_or_dispatch_gate_failed")
+    if multi_pattern.get("workload_class") != NATIVE_MANY_PATTERN_WORKLOAD_CLASS:
+        blockers.append("many_pattern_workload_class_missing")
+    if multi_pattern.get("fair_rg_baseline") != contract["required_fair_rg_baseline"]:
+        blockers.append("many_pattern_fair_rg_baseline_missing")
+    if pattern_count <= 1:
+        blockers.append("many_pattern_pattern_count_too_low")
+    pipeline_pattern_count = _as_int(pipeline.get("pattern_count"))
+    if pipeline_pattern_count != pattern_count:
+        blockers.append("many_pattern_pipeline_pattern_count_mismatch")
+    if pipeline.get("single_dispatch") is not True:
+        blockers.append("many_pattern_single_dispatch_missing")
+    speedup_vs_cpu = multi_pattern.get("speedup_vs_cpu")
+    if not isinstance(speedup_vs_cpu, (float, int)) or float(speedup_vs_cpu) <= 1.0:
+        blockers.append("many_pattern_gpu_not_faster_than_cpu")
+    speedup_vs_rg = multi_pattern.get("speedup_vs_rg_multi_pattern")
+    if not isinstance(speedup_vs_rg, (float, int)) or float(speedup_vs_rg) <= 1.0:
+        blockers.append("many_pattern_gpu_not_faster_than_fair_rg")
+    if not isinstance(correctness_check, dict):
+        blockers.append("many_pattern_correctness_missing")
+    else:
+        if correctness_check.get("status") != "PASS":
+            blockers.append("many_pattern_correctness_not_passed")
+        if correctness_check.get("matches_equal") is not True:
+            blockers.append("many_pattern_cpu_gpu_match_identity_missing")
+        if correctness_check.get("files_equal") is not True:
+            blockers.append("many_pattern_cpu_gpu_file_identity_missing")
+        if correctness_check.get("rg_matches_equal") is not True:
+            blockers.append("many_pattern_rg_match_identity_missing")
+        if correctness_check.get("rg_files_equal") is not True:
+            blockers.append("many_pattern_rg_file_identity_missing")
+        if correctness_check.get("rg_match_identity_equal") is not True:
+            blockers.append("many_pattern_rg_match_identity_missing")
+
+    blockers = list(dict.fromkeys(blockers))
+    passed = not blockers
+    return {
+        "status": "PASS" if passed else "FAIL",
+        "workload_class": NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
+        "many_pattern_gpu_proof": passed,
+        "promotion_evidence": passed,
+        "public_gpu_proof": False,
+        "blockers": blockers,
+        "contract": contract,
+        "observed": {
+            "status": multi_pattern.get("status"),
+            "workload_class": multi_pattern.get("workload_class"),
+            "fair_rg_baseline": multi_pattern.get("fair_rg_baseline"),
+            "pattern_count": pattern_count,
+            "pipeline_pattern_count": pipeline_pattern_count,
+            "single_dispatch": pipeline.get("single_dispatch"),
+            "speedup_vs_cpu": speedup_vs_cpu,
+            "speedup_vs_rg_multi_pattern": speedup_vs_rg,
+            "correctness_status": (
+                correctness_check.get("status") if isinstance(correctness_check, dict) else None
+            ),
+            "rg_match_identity_equal": (
+                correctness_check.get("rg_match_identity_equal")
+                if isinstance(correctness_check, dict)
+                else None
+            ),
+        },
+        "summary": (
+            "Many-pattern GPU proof passed for the declared workload class."
+            if passed
+            else "Many-pattern GPU proof is blocked; keep this workload experimental."
+        ),
     }
 
 
@@ -2355,6 +2644,15 @@ def run_advanced_gpu_native_benchmarks(
         timeout_s=command_timeout_s,
         corpus_bytes=one_gib_actual_bytes,
     )
+    multi_pattern_correctness = run_many_pattern_correctness_check(
+        tg_binary=tg_binary,
+        rg_binary=rg_binary,
+        corpus_dir=one_gib_corpus,
+        patterns=multi_patterns,
+        device_id=device_id,
+        env=env,
+        timeout_s=command_timeout_s,
+    )
     multi_pattern_gpu_stats = (
         multi_pattern_gpu_benchmark.pop("payload", {})
         if isinstance(multi_pattern_gpu_benchmark.get("payload"), dict)
@@ -2391,7 +2689,7 @@ def run_advanced_gpu_native_benchmarks(
         and multi_pattern_rg_speedup > 1.0
         else "FAIL"
     )
-    advanced["multi_pattern"] = {
+    multi_pattern_payload = {
         "status": multi_pattern_status,
         "workload_class": NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
         "fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
@@ -2399,15 +2697,24 @@ def run_advanced_gpu_native_benchmarks(
         "gpu": multi_pattern_gpu_benchmark,
         "cpu_sequential": multi_pattern_cpu_benchmark,
         "rg_multi_pattern": multi_pattern_rg_benchmark,
+        "correctness_check": multi_pattern_correctness,
         "speedup_vs_cpu": multi_pattern_speedup,
         "speedup_vs_rg_multi_pattern": multi_pattern_rg_speedup,
         "gpu_stats": multi_pattern_gpu_stats,
     }
+    multi_pattern_payload["proof_gate"] = build_many_pattern_proof_gate(
+        multi_pattern=multi_pattern_payload,
+        correctness_check=multi_pattern_correctness,
+    )
+    advanced["multi_pattern"] = multi_pattern_payload
     if multi_pattern_status != "PASS":
         errors.append(
             "Multi-pattern GPU benchmark did not beat both sequential CPU and fair rg "
             "multi-pattern execution."
         )
+    proof_gate = multi_pattern_payload["proof_gate"]
+    if isinstance(proof_gate, dict) and proof_gate.get("status") != "PASS":
+        errors.append("Many-pattern GPU proof gate did not pass direct rg identity evidence.")
 
     single_gpu_benchmark = benchmark_json_metric_command(
         build_tg_gpu_native_stats_command(
