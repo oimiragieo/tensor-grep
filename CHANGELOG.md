@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.36 (2026-05-20)
+
+### Bug Fixes
+
+- Harden public gpu proof workflow ([#166](https://github.com/oimiragieo/tensor-grep/pull/166),
+  [`4a5a841`](https://github.com/oimiragieo/tensor-grep/commit/4a5a84155e3b0878b5002aa75aed71ca4704ee93))
+
+
 ## v1.12.35 (2026-05-19)
 
 ### Bug Fixes
