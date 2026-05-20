@@ -42,11 +42,30 @@ class AstGrepWrapperBackend(ComputeBackend):
         self, pattern: str, paths: list[str], config: SearchConfig | None = None
     ) -> tuple[list[str], AbstractContextManager[object]]:
         lang = normalize_ast_language(config.lang) if config and config.lang else None
+        selector = config.ast_selector if config else None
+        strictness = config.ast_strictness if config else None
+        globs = list(config.glob or []) if config else []
+        stdin_enabled = bool(config.ast_stdin) if config else False
+        if ("\n" in pattern or "\r" in pattern) and (
+            selector or strictness or globs or stdin_enabled
+        ):
+            raise RuntimeError(
+                "ast-grep semantic run options are not supported for multiline patterns yet"
+            )
         if "\n" not in pattern and "\r" not in pattern:
             cmd = [self._get_binary_name(), "run", "--json", "-p", pattern]
             if lang:
                 cmd.extend(["--lang", lang])
-            cmd.extend(paths)
+            if selector:
+                cmd.extend(["--selector", selector])
+            if strictness:
+                cmd.extend(["--strictness", strictness])
+            for glob in globs:
+                cmd.extend(["--globs", glob])
+            if stdin_enabled:
+                cmd.append("--stdin")
+            else:
+                cmd.extend(paths)
             return cmd, nullcontext()
 
         context = TemporaryDirectory(prefix="tg_ast_wrapper_rule_")
@@ -192,6 +211,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     text=True,
                     check=False,
                     encoding="utf-8",
+                    input=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
                 self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout)
@@ -215,6 +235,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     text=True,
                     check=False,
                     encoding="utf-8",
+                    input=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
                 self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout, fallback_file=file_path)

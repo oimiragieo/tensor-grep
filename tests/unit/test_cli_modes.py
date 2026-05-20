@@ -6609,6 +6609,10 @@ def test_tg_run_help_should_position_ast_as_validated_slice_not_ast_grep_parity(
     help_text = _strip_ansi(result.stdout)
     normalized_help = re.sub(r"\s+", " ", help_text)
     assert "validated AST slice" in normalized_help
+    assert "--selector" in help_text
+    assert "--strictness" in help_text
+    assert "--stdin" in help_text
+    assert "--globs" in help_text
     assert "ast-grep parity" not in help_text
     assert "ast-grep replacement" not in help_text
 
@@ -10705,15 +10709,49 @@ def test_run_update_all_aliases_apply_for_rewrite(monkeypatch, tmp_path: Path) -
     assert seen["kwargs"]["apply"] is True
 
 
-def test_run_ast_grep_semantic_flags_fail_explicitly() -> None:
+def test_run_ast_grep_semantic_flags_are_forwarded_to_run_workflow(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_command(pattern: str, path: str | None = None, **kwargs: object) -> int:
+        seen["pattern"] = pattern
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr("tensor_grep.cli.ast_workflows.run_command", fake_run_command)
+
     result = CliRunner().invoke(
         app,
-        ["run", "--pattern", "print($A)", "--selector", "call", "src"],
+        [
+            "run",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call",
+            "--strictness",
+            "relaxed",
+            "--globs",
+            "*.py",
+            "src",
+        ],
     )
 
-    assert result.exit_code == 2
-    assert "not supported by tg run yet" in result.output
-    assert "--selector" in result.output
+    assert result.exit_code == 0, result.output
+    assert seen["pattern"] == "print($A)"
+    assert seen["path"] == "src"
+    assert seen["kwargs"]["selector"] == "call"
+    assert seen["kwargs"]["strictness"] == "relaxed"
+    assert seen["kwargs"]["globs"] == ["*.py"]
+
+
+def test_run_ast_grep_semantic_rewrite_combinations_fail_explicitly() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["run", "--pattern", "print($A)", "--selector", "call", "--rewrite", "logger.info($A)"],
+    )
+
+    assert result.exit_code == 1
+    assert "ast-grep semantic run options are read-only" in result.output
 
 
 def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
