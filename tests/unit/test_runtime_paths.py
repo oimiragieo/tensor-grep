@@ -1,3 +1,4 @@
+import importlib.metadata
 import json
 import os
 import sys
@@ -168,6 +169,17 @@ def test_inspect_native_tg_binary_reports_matching_in_tree_binary(monkeypatch, t
     assert inspected["kind"] == "in-tree-debug"
     assert inspected["version_status"] == "matches"
     assert inspected["version"] == "tensor-grep 1.12.4"
+
+
+def test_expected_tg_version_prefers_repo_source_when_editable_metadata_is_stale(monkeypatch):
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda package_name: "1.12.39" if package_name == "tensor-grep" else "0.0.0",
+    )
+    monkeypatch.setattr(runtime_paths, "_read_project_version_fallback", lambda: "1.12.40")
+
+    assert runtime_paths._expected_tg_version() == "1.12.40"
 
 
 def test_inspect_native_tg_binary_reads_managed_frontdoor_metadata(monkeypatch, tmp_path):
