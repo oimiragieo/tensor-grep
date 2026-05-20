@@ -1313,6 +1313,83 @@ def validate_dependabot_config(*, dependabot_content: str) -> list[str]:
     return errors
 
 
+def validate_public_gpu_proof_workflow_content(*, workflow_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        parsed = yaml.safe_load(workflow_content) or {}
+    except yaml.YAMLError as exc:
+        return [f"Public GPU proof workflow is not valid YAML: {exc}"]
+    if not isinstance(parsed, dict):
+        return ["Public GPU proof workflow must deserialize to a mapping"]
+
+    triggers = parsed.get("on")
+    if triggers is None:
+        triggers = parsed.get(True)
+    if not isinstance(triggers, dict) or set(triggers) != {"workflow_dispatch"}:
+        errors.append("Public GPU proof workflow must be workflow_dispatch-only")
+    permissions = parsed.get("permissions")
+    if not isinstance(permissions, dict) or permissions.get("contents") != "read":
+        errors.append("Public GPU proof workflow must request read-only contents permission")
+    elif any(value == "write" for value in permissions.values()):
+        errors.append("Public GPU proof workflow must not request write permissions")
+
+    jobs = parsed.get("jobs")
+    job = jobs.get("public-managed-gpu-proof") if isinstance(jobs, dict) else None
+    if not isinstance(job, dict):
+        errors.append("Public GPU proof workflow must define public-managed-gpu-proof job")
+        return errors
+
+    runs_on = job.get("runs-on")
+    if not isinstance(runs_on, list) or any("${{" in str(item) for item in runs_on):
+        errors.append("Public GPU proof workflow must use fixed GPU runner labels")
+    else:
+        required_labels = {"self-hosted", "linux", "x64", "gpu", "tensor-grep-public-gpu-proof"}
+        observed_labels = {str(item) for item in runs_on}
+        if not required_labels.issubset(observed_labels):
+            errors.append("Public GPU proof workflow must use fixed GPU runner labels")
+
+    job_env = job.get("env", {})
+    if (
+        not isinstance(job_env, dict)
+        or job_env.get("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR") != "nvidia"
+    ):
+        errors.append("Public GPU proof workflow must request the managed NVIDIA native front door")
+
+    steps = job.get("steps", [])
+    if not isinstance(steps, list):
+        errors.append("Public GPU proof workflow steps must be a list")
+        steps = []
+    joined_runs = "\n".join(
+        str(step.get("run"))
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    )
+    joined_uses = "\n".join(
+        str(step.get("uses"))
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("uses"), str)
+    )
+    if "scripts/verify_github_release_assets.py" not in joined_runs:
+        errors.append("Public GPU proof workflow must verify GitHub release native assets")
+    if "--expected-profile native-frontdoor-gpu" not in joined_runs:
+        errors.append(
+            "Public GPU proof workflow must verify the native-frontdoor-gpu asset profile"
+        )
+    if 'TENSOR_GREP_VERSION="$TG_PUBLIC_GPU_PROOF_RELEASE_VERSION"' not in joined_runs:
+        errors.append("Public GPU proof workflow must install the requested release version")
+    if "--public-managed-proof" not in joined_runs:
+        errors.append("Public GPU proof workflow must run with --public-managed-proof")
+    if "--corpus-sizes 1GB,5GB" not in joined_runs:
+        errors.append("Public GPU proof workflow must require 1GB and 5GB proof corpora")
+    if "nvidia-smi" not in joined_runs:
+        errors.append("Public GPU proof workflow must collect nvidia-smi device provenance")
+    if "v[0-9]+\\.[0-9]+\\.[0-9]+" not in joined_runs:
+        errors.append("Public GPU proof workflow must validate release_tag format")
+    if "actions/upload-artifact@v7" not in joined_uses:
+        errors.append("Public GPU proof workflow must upload proof artifacts")
+    return errors
+
+
 def validate_dependabot_automation_workflow_content(*, workflow_content: str) -> list[str]:
     errors: list[str] = []
     for expected in (
@@ -3221,6 +3298,11 @@ def validate_all() -> list[str]:
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
+
+    public_gpu_proof_workflow = _read(ROOT / ".github" / "workflows" / "public-gpu-proof.yml")
+    errors.extend(
+        validate_public_gpu_proof_workflow_content(workflow_content=public_gpu_proof_workflow)
+    )
 
     audit_workflow = _read(ROOT / ".github" / "workflows" / "audit.yml")
     errors.extend(validate_audit_workflow_content(workflow_content=audit_workflow))

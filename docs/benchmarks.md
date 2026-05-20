@@ -625,7 +625,7 @@ The post-`v1.12.35` native CUDA work splits the GPU story by workload. Single-pa
 
 Native CUDA error diagnostic probes such as invalid device, NVRTC failure, timeout, and malformed-input handling run only after the runtime probe proves `NativeGpuBackend` with `sidecar_used = false`. If the runtime route is `GpuSidecar`, a non-CUDA front door, or another unsupported route, those diagnostics are recorded as `UNSUPPORTED` rather than native CUDA `FAIL` rows.
 
-Native CUDA correctness passed, but speed/promotion failed remains the public promotion read until a shipped managed binary produces qualifying `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins for the declared workload class. Public managed promotion has a stricter artifact gate than local CUDA dogfood: the installed native front door must carry `tg-native-metadata.json` proving an NVIDIA release asset was both requested and installed, and `benchmarks/run_gpu_native_benchmarks.py --public-managed-proof` must emit `public_managed_promotion_ready = true` and `public_gpu_proof = true`.
+Native CUDA correctness passed, but speed/promotion failed remains the public promotion read until a shipped managed binary produces qualifying `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins for the declared workload class. Public managed promotion has a stricter artifact gate than local CUDA dogfood: the installed native front door must carry `tg-native-metadata.json` proving an NVIDIA release asset was both requested and installed, and `benchmarks/run_gpu_native_benchmarks.py --public-managed-proof` must emit `public_managed_promotion_ready = true` and `public_gpu_proof = true`. The public proof path also requires direct `rg --json` match-identity evidence for the required scale rows; CPU-vs-GPU `tg` agreement alone is not enough.
 
 | Workload | Route | Speed read | Result |
 | --- | --- | --- | --- |
@@ -652,7 +652,8 @@ The Python benchmark now exposes the distinction directly:
 - `scale_gate_summary.promotion_blockers` names blocking states such as `sidecar_routing_observed`, `correctness_not_run`, and `speed_not_run`
 - top-level `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, and `not_gpu_proof_reason` summarize whether any row is usable as native GPU proof
 - `promotion_ready = false` unless native CUDA correctness and speed evidence both pass
-- top-level `public_managed_promotion_ready` and `public_gpu_proof` stay false unless `--public-managed-proof` sees a current managed NVIDIA native front door with `tg-native-metadata.json`, `NativeGpuBackend`, `sidecar_used = false`, 1GB/5GB correctness, and speed wins over both baselines
+- `correctness_gate.requires_direct_rg_match_identity` and `correctness_gate.rg_passing_sizes` record whether required scale rows matched direct `rg --json`, not just `tg --cpu`
+- top-level `public_managed_promotion_ready` and `public_gpu_proof` stay false unless `--public-managed-proof` sees a current managed NVIDIA native front door with `tg-native-metadata.json`, `NativeGpuBackend`, `sidecar_used = false`, direct `rg --json` 1GB/5GB correctness, and speed wins over both baselines
 
 If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, and empty timing rows. The Python GPU scale script defaults to 5GB and checks exact rg-vs-GPU match/file sets for every >=1GB corpus, but those rows still need native backend support before they can feed a routing promotion.
 

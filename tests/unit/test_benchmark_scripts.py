@@ -60,6 +60,52 @@ def _load_script_module(name: str, rel_path: str):
     return module
 
 
+def _passing_native_gpu_scale_summary(module):
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 1.2},
+            "tg_cpu": {"status": "PASS", "median_s": 1.0},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 0.5,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 1.4},
+            "tg_cpu": {"status": "PASS", "median_s": 1.1},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 0.6,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+    ]
+    correctness_checks = [
+        {
+            "size_label": size_label,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+    ]
+    return module.build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+
+
 def test_run_pytest_stable_should_build_windows_friendly_default_command():
     module = _load_script_module("run_pytest_stable_script", "scripts/run_pytest_stable.py")
 
@@ -3529,7 +3575,7 @@ def test_run_gpu_native_benchmarks_public_managed_proof_requires_metadata(monkey
                 "summary": "not relevant",
             },
             "scale_gate_summary": {
-                "promotion_ready": True,
+                **_passing_native_gpu_scale_summary(module),
                 "summary": "Native CUDA correctness and speed gates passed.",
             },
             "warnings": [],
@@ -3595,7 +3641,7 @@ def test_run_gpu_native_benchmarks_public_managed_proof_fails_without_managed_me
                 "summary": "not relevant",
             },
             "scale_gate_summary": {
-                "promotion_ready": True,
+                **_passing_native_gpu_scale_summary(module),
                 "summary": "Native CUDA correctness and speed gates passed.",
             },
             "warnings": [],

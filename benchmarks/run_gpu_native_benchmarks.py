@@ -107,6 +107,10 @@ def build_rg_search_command(rg_binary: str, pattern: str, corpus_dir: Path) -> l
     return [rg_binary, "--no-ignore", "-F", pattern, str(corpus_dir)]
 
 
+def build_rg_json_command(rg_binary: str, pattern: str, corpus_dir: Path) -> list[str]:
+    return [rg_binary, "--json", "--no-ignore", "-F", pattern, str(corpus_dir)]
+
+
 def build_rg_multi_pattern_search_command(
     rg_binary: str,
     patterns: list[str] | tuple[str, ...],
@@ -347,6 +351,63 @@ def _parse_json_payload(stdout: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError("search output did not produce a JSON object")
     return payload
+
+
+def _normalized_match_path(value: object) -> str:
+    return str(value or "").replace("\\", "/")
+
+
+def _normalized_match_text(value: object) -> str:
+    return str(value or "").rstrip("\r\n")
+
+
+def _extract_tg_match_signatures(payload: dict[str, object]) -> list[tuple[str, int, str]]:
+    matches = payload.get("matches")
+    if not isinstance(matches, list):
+        return []
+    signatures: list[tuple[str, int, str]] = []
+    for match in matches:
+        if not isinstance(match, dict):
+            continue
+        line_number = match.get("line_number")
+        if not isinstance(line_number, int):
+            line_number = 0
+        signatures.append((
+            _normalized_match_path(match.get("file")),
+            line_number,
+            _normalized_match_text(match.get("text")),
+        ))
+    return sorted(signatures)
+
+
+def _extract_rg_json_match_signatures(stdout: str) -> list[tuple[str, int, str]]:
+    signatures: list[tuple[str, int, str]] = []
+    for raw_line in stdout.splitlines():
+        if not raw_line.strip():
+            continue
+        event = json.loads(raw_line)
+        if not isinstance(event, dict) or event.get("type") != "match":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        path = data.get("path")
+        path_text = path.get("text") if isinstance(path, dict) else ""
+        line_number = data.get("line_number")
+        if not isinstance(line_number, int):
+            line_number = 0
+        lines = data.get("lines")
+        line_text = lines.get("text") if isinstance(lines, dict) else ""
+        signatures.append((
+            _normalized_match_path(path_text),
+            line_number,
+            _normalized_match_text(line_text),
+        ))
+    return sorted(signatures)
+
+
+def _signature_file_count(signatures: list[tuple[str, int, str]]) -> int:
+    return len({signature[0] for signature in signatures if signature[0]})
 
 
 def _timeout_stderr(timeout_s: int) -> str:
@@ -651,6 +712,7 @@ def _infer_total_files(payload: dict[str, object]) -> int:
 def run_correctness_check(
     *,
     tg_binary: Path,
+    rg_binary: str = "rg",
     corpus_dir: Path,
     pattern: str,
     device_id: int,
@@ -704,18 +766,66 @@ def run_correctness_check(
             "matches_equal": False,
             "files_equal": False,
         }
+
+    rg_result = _run_command(
+        build_rg_json_command(rg_binary, pattern, corpus_dir),
+        env=env,
+        capture_output=True,
+        timeout_s=timeout_s,
+    )
+    if isinstance(rg_result, subprocess.TimeoutExpired):
+        return {
+            "status": "FAIL",
+            "error": f"rg correctness {_timeout_stderr(timeout_s)}",
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+    if rg_result.returncode not in {0, 1}:
+        return {
+            "status": "FAIL",
+            "error": (rg_result.stderr or "").strip(),
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+
     cpu_total_matches = int(cpu_payload.get("total_matches", 0))
     gpu_total_matches = int(gpu_payload.get("total_matches", 0))
     cpu_total_files = _infer_total_files(cpu_payload)
     gpu_total_files = _infer_total_files(gpu_payload)
+    cpu_signatures = _extract_tg_match_signatures(cpu_payload)
+    gpu_signatures = _extract_tg_match_signatures(gpu_payload)
+    rg_signatures = _extract_rg_json_match_signatures(rg_result.stdout or "")
+    cpu_gpu_matches_equal = cpu_signatures == gpu_signatures
+    cpu_gpu_files_equal = cpu_total_files == gpu_total_files
+    rg_matches_equal = rg_signatures == gpu_signatures
+    rg_files_equal = _signature_file_count(rg_signatures) == gpu_total_files
     return {
-        "status": "PASS" if cpu_total_matches == gpu_total_matches else "FAIL",
+        "status": (
+            "PASS"
+            if cpu_total_matches == gpu_total_matches
+            and cpu_gpu_matches_equal
+            and cpu_gpu_files_equal
+            and rg_matches_equal
+            and rg_files_equal
+            else "FAIL"
+        ),
         "cpu_total_matches": cpu_total_matches,
         "gpu_total_matches": gpu_total_matches,
+        "rg_total_matches": len(rg_signatures),
         "cpu_total_files": cpu_total_files,
         "gpu_total_files": gpu_total_files,
-        "matches_equal": cpu_total_matches == gpu_total_matches,
-        "files_equal": cpu_total_files == gpu_total_files,
+        "rg_total_files": _signature_file_count(rg_signatures),
+        "matches_equal": cpu_total_matches == gpu_total_matches and cpu_gpu_matches_equal,
+        "files_equal": cpu_gpu_files_equal,
+        "rg_matches_equal": rg_matches_equal,
+        "rg_files_equal": rg_files_equal,
+        "rg_match_identity_equal": rg_matches_equal,
     }
 
 
@@ -1009,6 +1119,9 @@ def _passing_correctness_size_labels(
         and check.get("status") == "PASS"
         and check.get("matches_equal") is True
         and check.get("files_equal") is True
+        and check.get("rg_matches_equal") is True
+        and check.get("rg_files_equal") is True
+        and check.get("rg_match_identity_equal") is True
     }
     return sorted(passing, key=_required_size_labels(required_corpus_sizes).index)
 
@@ -1288,6 +1401,8 @@ def build_native_scale_gate_summary(
         "status": correctness_status,
         "required_sizes": required_labels,
         "passing_sizes": passing_sizes,
+        "rg_passing_sizes": passing_sizes,
+        "requires_direct_rg_match_identity": True,
         "reason": (
             "Native CUDA correctness passed at every required scale."
             if correctness_status == "PASS"
@@ -1393,6 +1508,14 @@ def build_public_managed_gpu_proof_gate(
         "required_version_status": "matches",
         "required_metadata_version": "matches_expected_version",
         "required_native_frontdoor_asset_name": "nonempty_nvidia_release_asset",
+        "required_benchmark_surface": "native-cuda-scale",
+        "required_workload_class": NATIVE_SCALE_WORKLOAD_CLASS,
+        "required_runtime_gate_status": "PASS",
+        "required_correctness_gate_status": "PASS",
+        "required_speed_gate_status": "PASS",
+        "required_correctness_sizes": ["1GB", "5GB"],
+        "required_direct_rg_match_identity": True,
+        "required_promotion_blockers": [],
         "required_scale_gate_promotion_ready": True,
     }
     if not requested:
@@ -1411,6 +1534,43 @@ def build_public_managed_gpu_proof_gate(
     blockers: list[str] = []
     if scale_gate_summary.get("promotion_ready") is not True:
         blockers.append("native_cuda_scale_not_promotion_ready")
+    if scale_gate_summary.get("benchmark_surface") != "native-cuda-scale":
+        blockers.append("native_cuda_scale_surface_missing")
+    if scale_gate_summary.get("workload_class") != NATIVE_SCALE_WORKLOAD_CLASS:
+        blockers.append("native_cuda_workload_class_missing")
+    runtime_gate = scale_gate_summary.get("native_cuda_runtime_gate")
+    correctness_gate = scale_gate_summary.get("correctness_gate")
+    speed_gate = scale_gate_summary.get("speed_gate")
+    if not isinstance(runtime_gate, dict) or runtime_gate.get("status") != "PASS":
+        blockers.append("native_cuda_runtime_gate_not_passed")
+    else:
+        if runtime_gate.get("sidecar_observed") is True:
+            blockers.append("native_cuda_runtime_sidecar_observed")
+        observed_backends = runtime_gate.get("observed_backends")
+        if observed_backends != ["NativeGpuBackend"]:
+            blockers.append("native_cuda_runtime_backend_not_exclusive")
+    required_sizes = ["1GB", "5GB"]
+    if not isinstance(correctness_gate, dict) or correctness_gate.get("status") != "PASS":
+        blockers.append("native_cuda_correctness_gate_not_passed")
+    else:
+        if correctness_gate.get("required_sizes") != required_sizes:
+            blockers.append("native_cuda_correctness_required_sizes_missing")
+        if correctness_gate.get("passing_sizes") != required_sizes:
+            blockers.append("native_cuda_correctness_passing_sizes_missing")
+        if correctness_gate.get("rg_passing_sizes") != required_sizes:
+            blockers.append("native_cuda_rg_identity_sizes_missing")
+        if correctness_gate.get("requires_direct_rg_match_identity") is not True:
+            blockers.append("native_cuda_direct_rg_identity_not_required")
+    if not isinstance(speed_gate, dict) or speed_gate.get("status") != "PASS":
+        blockers.append("native_cuda_speed_gate_not_passed")
+    else:
+        if speed_gate.get("winning_sizes") != required_sizes:
+            blockers.append("native_cuda_speed_winning_sizes_missing")
+    promotion_blockers = scale_gate_summary.get("promotion_blockers")
+    if promotion_blockers != []:
+        blockers.append("native_cuda_promotion_blockers_present")
+    if scale_gate_summary.get("workload_evidence_status") != "promotion_ready":
+        blockers.append("native_cuda_workload_not_promotion_ready")
     if tg_binary_metadata.get("kind") != "managed-native":
         blockers.append("not_managed_native_frontdoor")
     if tg_binary_metadata.get("version_status") != "matches":
@@ -1455,6 +1615,23 @@ def build_public_managed_gpu_proof_gate(
             "native_frontdoor_metadata_version": metadata_version,
             "expected_version": expected_version,
             "scale_gate_promotion_ready": scale_gate_summary.get("promotion_ready"),
+            "scale_gate_benchmark_surface": scale_gate_summary.get("benchmark_surface"),
+            "scale_gate_workload_class": scale_gate_summary.get("workload_class"),
+            "scale_gate_runtime_status": (
+                runtime_gate.get("status") if isinstance(runtime_gate, dict) else None
+            ),
+            "scale_gate_correctness_status": (
+                correctness_gate.get("status") if isinstance(correctness_gate, dict) else None
+            ),
+            "scale_gate_speed_status": (
+                speed_gate.get("status") if isinstance(speed_gate, dict) else None
+            ),
+            "scale_gate_rg_passing_sizes": (
+                correctness_gate.get("rg_passing_sizes")
+                if isinstance(correctness_gate, dict)
+                else None
+            ),
+            "scale_gate_promotion_blockers": promotion_blockers,
         },
         "summary": (
             "Public managed NVIDIA native front door and native CUDA scale proof passed."
@@ -1620,6 +1797,7 @@ def run_gpu_native_benchmarks(
         if runtime_probe.get("status") == "PASS":
             correctness = run_correctness_check(
                 tg_binary=tg_binary,
+                rg_binary=rg_binary,
                 corpus_dir=corpus_dir,
                 pattern=benchmark_pattern,
                 device_id=device_id,

@@ -1,0 +1,117 @@
+name: Public GPU Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Published release tag to prove, for example v1.12.35"
+        required: true
+        type: string
+      device_id:
+        description: "CUDA device id to benchmark"
+        required: false
+        default: "0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  public-managed-gpu-proof:
+    name: public-managed-gpu-proof
+    runs-on: [self-hosted, linux, x64, gpu, tensor-grep-public-gpu-proof]
+    timeout-minutes: 360
+    env:
+      TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR: nvidia
+      TG_PUBLIC_GPU_PROOF_RELEASE_TAG: ${{ inputs.release_tag }}
+      TG_PUBLIC_GPU_PROOF_DEVICE_ID: ${{ inputs.device_id }}
+    steps:
+      - name: Validate release tag input
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          import sys
+
+          tag = os.environ["TG_PUBLIC_GPU_PROOF_RELEASE_TAG"]
+          if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) is None:
+              print(f"Invalid release_tag: {tag}", file=sys.stderr)
+              raise SystemExit(2)
+          device_id = os.environ["TG_PUBLIC_GPU_PROOF_DEVICE_ID"]
+          if re.fullmatch(r"[0-9]+", device_id) is None:
+              print(f"Invalid device_id: {device_id}", file=sys.stderr)
+              raise SystemExit(2)
+          PY
+          echo "TG_PUBLIC_GPU_PROOF_RELEASE_VERSION=${TG_PUBLIC_GPU_PROOF_RELEASE_TAG#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+
+      - name: Install uv
+        shell: bash
+        run: python -m pip install uv
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install benchmark dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+
+      - name: Verify GitHub release native asset coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/verify_github_release_assets.py \
+            --tag "$TG_PUBLIC_GPU_PROOF_RELEASE_TAG" \
+            --expected-profile native-frontdoor-gpu \
+            --wait-seconds 300 \
+            --poll-interval-seconds 10
+
+      - name: Install public managed NVIDIA front door
+        shell: bash
+        run: |
+          set -euo pipefail
+          TENSOR_GREP_VERSION="$TG_PUBLIC_GPU_PROOF_RELEASE_VERSION" \
+          TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR="nvidia" \
+            bash scripts/install.sh
+          "$HOME/.tensor-grep/bin/tg" --version
+
+      - name: Collect public GPU environment provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/public-gpu-proof
+          nvidia-smi --query-gpu=index,name,driver_version,compute_cap,memory.total --format=csv,noheader \
+            | tee artifacts/public-gpu-proof/nvidia-smi.csv
+          "$HOME/.tensor-grep/bin/tg" doctor --json \
+            > artifacts/public-gpu-proof/tg-doctor.json
+
+      - name: Run public managed GPU proof benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python benchmarks/run_gpu_native_benchmarks.py \
+            --binary "$HOME/.tensor-grep/bin/tg" \
+            --device-id "$TG_PUBLIC_GPU_PROOF_DEVICE_ID" \
+            --corpus-sizes 1GB,5GB \
+            --runs 3 \
+            --warmup 1 \
+            --advanced \
+            --public-managed-proof \
+            --output artifacts/public-gpu-proof/bench-gpu-native-public-managed-proof.json
+
+      - name: Upload public GPU proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-gpu-proof-${{ inputs.release_tag }}
+          path: artifacts/public-gpu-proof/
