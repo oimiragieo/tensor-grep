@@ -22,14 +22,24 @@ def test_audit_workflow_audits_exported_locked_requirements_with_isolated_tool()
         "uv export --format requirements.txt --all-extras --no-emit-project --output-file "
         '"$RUNNER_TEMP/python-audit-requirements.txt" --locked'
     )
-    run_audit = (
-        "uv run --no-project --python 3.12 --with pip-audit -- pip-audit --require-hashes "
-        '--disable-pip --progress-spinner off -r "$RUNNER_TEMP/python-audit-requirements.txt"'
-    )
+    run_audit = "uv run --no-project --python 3.12 --with pip-audit -- pip-audit"
 
     assert setup_python in workflow
     assert export_requirements in workflow
     assert run_audit in workflow
+    assert "--require-hashes" in workflow
+    assert "--disable-pip" in workflow
+    assert "--progress-spinner off" in workflow
+    assert '-r "$RUNNER_TEMP/python-audit-requirements.txt"' in workflow
+    assert "upstream no-fixed-version advisories" in workflow
+    for ignored_id in [
+        "PYSEC-2025-183",
+        "PYSEC-2025-189",
+        "PYSEC-2025-210",
+        "PYSEC-2025-218",
+        "PYSEC-2026-139",
+    ]:
+        assert f"--ignore-vuln {ignored_id}" in workflow
     assert (
         workflow.index(setup_python)
         < workflow.index(export_requirements)

@@ -125,7 +125,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "broad_generated_root_scan" in broad_scan_check.command
 
     warmup_check = next(check for check in checks if check.name == "repo-cli-build-warmup")
-    assert warmup_check.command == ["uv", "run", "--no-sync", "tg", "--version"]
+    assert warmup_check.command == ["uv", "run", "tg", "--version"]
     assert warmup_check.timeout_s >= 180
     assert warmup_check.validator is module.validate_repo_cli_warmup_version_output
 
