@@ -8573,17 +8573,22 @@ def run(
     selector: str | None = typer.Option(
         None,
         "--selector",
-        help="Unsupported ast-grep semantic matcher selector; fails explicitly.",
+        help="ast-grep matcher selector for read-only structural search.",
     ),
     strictness: str | None = typer.Option(
         None,
         "--strictness",
-        help="Unsupported ast-grep strictness control; fails explicitly.",
+        help="ast-grep strictness control for read-only structural search.",
     ),
     stdin: bool = typer.Option(
         False,
         "--stdin",
-        help="Unsupported ast-grep stdin mode; fails explicitly.",
+        help="Read source code from stdin for read-only structural search.",
+    ),
+    globs: list[str] | None = typer.Option(
+        None,
+        "--globs",
+        help="ast-grep include/exclude glob. May be repeated; prefix with ! to exclude.",
     ),
     filter_regex: str | None = typer.Option(
         None, "--filter", help="Filter matched AST nodes by text regex"
@@ -8596,23 +8601,6 @@ def run(
 ) -> None:
     from tensor_grep.cli.ast_workflows import run_command as execute_run
 
-    unsupported_semantic_flags = [
-        flag
-        for flag, value in (
-            ("--selector", selector),
-            ("--strictness", strictness),
-            ("--stdin", stdin),
-        )
-        if value
-    ]
-    if unsupported_semantic_flags:
-        typer.echo(
-            "Error: "
-            + ", ".join(unsupported_semantic_flags)
-            + " is not supported by tg run yet. Use ast-grep directly for this semantic matcher.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
     if update_all and rewrite is None:
         typer.echo("Error: tg run --update-all requires --rewrite.", err=True)
         raise typer.Exit(code=2)
@@ -8652,6 +8640,10 @@ def run(
         interactive=interactive,
         filter_regex=filter_regex,
         files_with_matches=files_with_matches,
+        selector=selector,
+        strictness=strictness,
+        stdin=stdin,
+        globs=globs,
     )
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

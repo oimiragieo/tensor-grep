@@ -165,6 +165,10 @@ class SearchConfig:
     ast: bool = False
     ast_prefer_native: bool = False
     lang: str | None = None
+    ast_selector: str | None = None
+    ast_strictness: str | None = None
+    ast_stdin: bool = False
+    ast_stdin_input: str | None = None
     use_jit: bool = False
     ltl: bool = False
     query_pattern: str | None = None

@@ -737,17 +737,21 @@ pub struct RunArgs {
     #[arg(long = "files-with-matches")]
     pub files_with_matches: bool,
 
-    /// Unsupported ast-grep selector option; accepted only for explicit diagnostics
+    /// ast-grep matcher selector for read-only structural search
     #[arg(long)]
     pub selector: Option<String>,
 
-    /// Unsupported ast-grep strictness option; accepted only for explicit diagnostics
+    /// ast-grep strictness control for read-only structural search
     #[arg(long)]
     pub strictness: Option<String>,
 
-    /// Unsupported ast-grep stdin mode; accepted only for explicit diagnostics
+    /// Read source code from stdin for read-only structural search
     #[arg(long = "stdin")]
     pub stdin_flag: bool,
+
+    /// ast-grep include/exclude glob. Repeat for multiple globs; prefix with ! to exclude.
+    #[arg(long = "globs")]
+    pub globs: Vec<String>,
 
     /// Positional PATTERN and optional PATH, or just PATH when --pattern is used
     #[arg(value_name = "PATTERN_OR_PATH")]
@@ -2481,6 +2485,61 @@ mod tests {
 
         let error = validate_run_args(&rewrite).unwrap_err().to_string();
         assert!(error.contains("read-only search output mode"));
+    }
+
+    #[test]
+    fn run_ast_grep_semantic_options_are_read_only_python_passthrough() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call",
+            "--strictness",
+            "relaxed",
+            "--globs",
+            "*.py",
+            "fixture.py",
+        ]);
+
+        assert!(validate_run_args(&args).is_ok());
+        assert!(ast_run_requires_python_passthrough(&args));
+
+        let rewrite = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call",
+            "--rewrite",
+            "logger.info($A)",
+            "fixture.py",
+        ]);
+        let error = validate_run_args(&rewrite).unwrap_err().to_string();
+        assert!(error.contains("ast-grep semantic run options are read-only"));
+    }
+
+    #[test]
+    fn run_stdin_rejects_files_with_matches() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "print($A)",
+            "--stdin",
+            "--files-with-matches",
+        ]);
+
+        let error = validate_run_args(&args).unwrap_err().to_string();
+        assert!(error.contains("--stdin cannot be combined with --files-with-matches"));
     }
 
     #[test]
@@ -4983,24 +5042,19 @@ fn ast_match_to_search_json(
 }
 
 fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
-    let mut unsupported_flags = Vec::new();
-    if args.selector.is_some() {
-        unsupported_flags.push("--selector");
-    }
-    if args.strictness.is_some() {
-        unsupported_flags.push("--strictness");
-    }
-    if args.stdin_flag {
-        unsupported_flags.push("--stdin");
-    }
-    if !unsupported_flags.is_empty() {
-        anyhow::bail!(
-            "{} is not supported by tg run yet. Use ast-grep directly for this semantic matcher.",
-            unsupported_flags.join(", ")
-        );
-    }
     if args.batch_rewrite.is_some() && args.pattern_option.is_some() {
         anyhow::bail!("tg run --batch-rewrite uses the positional argument as PATH and does not accept --pattern");
+    }
+    if args.stdin_flag && run_has_path_arg(args) {
+        anyhow::bail!("tg run --stdin cannot be combined with a PATH argument");
+    }
+    if args.stdin_flag && args.files_with_matches {
+        anyhow::bail!("tg run --stdin cannot be combined with --files-with-matches");
+    }
+    if ast_run_requires_python_passthrough(args) && run_has_mutating_options(args) {
+        anyhow::bail!(
+            "ast-grep semantic run options are read-only in tg run; use ast-grep directly for semantic rewrites"
+        );
     }
     if args.files_with_matches
         && (args.rewrite.is_some()
@@ -5025,6 +5079,36 @@ fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
         anyhow::bail!("--checkpoint requires --apply");
     }
     Ok(())
+}
+
+fn ast_run_requires_python_passthrough(args: &RunArgs) -> bool {
+    args.selector.is_some()
+        || args.strictness.is_some()
+        || args.stdin_flag
+        || !args.globs.is_empty()
+}
+
+fn run_has_path_arg(args: &RunArgs) -> bool {
+    if args.pattern_option.is_some() {
+        return !args.positional.is_empty();
+    }
+    args.positional.len() > 1
+}
+
+fn run_has_mutating_options(args: &RunArgs) -> bool {
+    args.rewrite.is_some()
+        || args.batch_rewrite.is_some()
+        || args.apply
+        || args.update_all
+        || args.diff
+        || args.verify
+        || args.checkpoint
+        || args.audit_manifest.is_some()
+        || args.audit_signing_key.is_some()
+        || !args.apply_edit_ids.is_empty()
+        || !args.reject_edit_ids.is_empty()
+        || args.lint_cmd.is_some()
+        || args.test_cmd.is_some()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6197,6 +6281,9 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
         args.apply = true;
     }
     validate_run_args(&args)?;
+    if ast_run_requires_python_passthrough(&args) {
+        return handle_python_passthrough("run", ast_run_python_passthrough_args(&args)?);
+    }
     let backend = AstBackend::new();
 
     if let Some(config_path) = &args.batch_rewrite {
@@ -6264,6 +6351,46 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn ast_run_python_passthrough_args(args: &RunArgs) -> anyhow::Result<Vec<String>> {
+    let mut passthrough_args = vec!["--lang".to_string(), args.lang.clone()];
+    let pattern = run_pattern(args)?.to_string();
+    passthrough_args.push("--pattern".to_string());
+    passthrough_args.push(pattern);
+
+    if let Some(path) = run_optional_path(args) {
+        passthrough_args.push(path.to_string());
+    }
+    if args.json {
+        passthrough_args.push("--json".to_string());
+    }
+    if args.files_with_matches {
+        passthrough_args.push("--files-with-matches".to_string());
+    }
+    if let Some(selector) = &args.selector {
+        passthrough_args.push("--selector".to_string());
+        passthrough_args.push(selector.clone());
+    }
+    if let Some(strictness) = &args.strictness {
+        passthrough_args.push("--strictness".to_string());
+        passthrough_args.push(strictness.clone());
+    }
+    if args.stdin_flag {
+        passthrough_args.push("--stdin".to_string());
+    }
+    for glob in &args.globs {
+        passthrough_args.push("--globs".to_string());
+        passthrough_args.push(glob.clone());
+    }
+    Ok(passthrough_args)
+}
+
+fn run_optional_path(args: &RunArgs) -> Option<&str> {
+    if args.pattern_option.is_some() {
+        return args.positional.first().map(String::as_str);
+    }
+    args.positional.get(1).map(String::as_str)
 }
 
 fn handle_ast_rewrite(

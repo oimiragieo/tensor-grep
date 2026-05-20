@@ -522,6 +522,10 @@ def run_command(
     interactive: bool = False,
     filter_regex: str | None = None,
     files_with_matches: bool = False,
+    selector: str | None = None,
+    strictness: str | None = None,
+    stdin: bool = False,
+    globs: list[str] | None = None,
 ) -> int:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
@@ -542,6 +546,31 @@ def run_command(
         return 1
     if interactive and not rewrite:
         print("--interactive requires --rewrite.", file=sys.stderr)
+        return 1
+    semantic_run_options = bool(selector or strictness or stdin or globs)
+    if semantic_run_options and (
+        rewrite is not None
+        or apply
+        or verify
+        or checkpoint
+        or audit_manifest is not None
+        or audit_signing_key is not None
+        or lint_cmd is not None
+        or test_cmd is not None
+        or policy is not None
+        or interactive
+    ):
+        print(
+            "ast-grep semantic run options are read-only in tg run; use ast-grep directly "
+            "for semantic rewrites.",
+            file=sys.stderr,
+        )
+        return 1
+    if stdin and files_with_matches:
+        print("--stdin cannot be combined with --files-with-matches.", file=sys.stderr)
+        return 1
+    if stdin and path:
+        print("--stdin cannot be combined with a PATH argument.", file=sys.stderr)
         return 1
 
     if files_with_matches and (
@@ -592,7 +621,18 @@ def run_command(
         return exit_code
 
     search_path = path or "."
-    cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)
+    stdin_input = sys.stdin.read() if stdin else None
+    cfg = SearchConfig(
+        ast=True,
+        ast_prefer_native=not semantic_run_options,
+        lang=lang or ("python" if stdin else None),
+        query_pattern=pattern,
+        ast_selector=selector,
+        ast_strictness=strictness,
+        ast_stdin=stdin,
+        ast_stdin_input=stdin_input,
+        glob=list(globs or []),
+    )
     backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
 
@@ -609,7 +649,8 @@ def run_command(
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
     if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-        result = cast(Any, backend).search_many([search_path], pattern, config=cfg)
+        search_paths = [] if stdin else [search_path]
+        result = cast(Any, backend).search_many(search_paths, pattern, config=cfg)
         all_results.matches.extend(result.matches)
         all_results.matched_file_paths.extend(result.matched_file_paths)
         all_results.total_matches += result.total_matches
@@ -779,7 +820,7 @@ def _check_backend_available(name: str) -> bool:
 def _select_ast_backend_for_pattern(
     base_config: SearchConfig,
     pattern: str,
-    backend_cache: dict[tuple[str | None, str, bool], Any] | None = None,
+    backend_cache: dict[tuple[str | None, str, bool, bool], Any] | None = None,
 ) -> Any:
     global _SUPPORTED_NATIVE_PATTERN_RE, _BACKEND_AVAILABILITY, _CACHED_BACKENDS
 
@@ -796,16 +837,28 @@ def _select_ast_backend_for_pattern(
             or _SUPPORTED_NATIVE_PATTERN_RE.fullmatch(stripped_pattern)
         )
     )
+    requires_ast_grep_wrapper = bool(
+        base_config.ast_selector
+        or base_config.ast_strictness
+        or base_config.ast_stdin
+        or base_config.glob
+    )
     pattern_kind = (
         "native"
         if (
             base_config.ast_prefer_native
+            and not requires_ast_grep_wrapper
             and supports_native_pattern
             and is_native_ast_language(base_config.lang)
         )
         else "wrapper"
     )
-    cache_key = (base_config.lang, pattern_kind, base_config.ast_prefer_native)
+    cache_key = (
+        base_config.lang,
+        pattern_kind,
+        base_config.ast_prefer_native,
+        requires_ast_grep_wrapper,
+    )
     if backend_cache is not None and cache_key in backend_cache:
         return backend_cache[cache_key]
 
@@ -1194,7 +1247,7 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_names_used: set[str] = set()
     rule_case_groups: dict[tuple[int, str, str], dict[str, Any]] = {}
-    backend_cache: dict[tuple[str | None, str, bool], Any] = {}
+    backend_cache: dict[tuple[str | None, str, bool, bool], Any] = {}
 
     total_cases = 0
     failures: list[str] = []
@@ -1375,6 +1428,10 @@ def main_entry(argv: list[str] | None = None) -> None:
     run_parser.add_argument("--test-cmd", default=None)
     run_parser.add_argument("--policy", default=None)
     run_parser.add_argument("--files-with-matches", action="store_true")
+    run_parser.add_argument("--selector", default=None)
+    run_parser.add_argument("--strictness", default=None)
+    run_parser.add_argument("--stdin", action="store_true")
+    run_parser.add_argument("--globs", action="append", default=None)
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("path", nargs="?", default=".")
@@ -1423,6 +1480,10 @@ def main_entry(argv: list[str] | None = None) -> None:
                 test_cmd=args.test_cmd,
                 policy=args.policy,
                 files_with_matches=args.files_with_matches,
+                selector=args.selector,
+                strictness=args.strictness,
+                stdin=args.stdin,
+                globs=args.globs,
             )
         )
     if args.command == "scan":

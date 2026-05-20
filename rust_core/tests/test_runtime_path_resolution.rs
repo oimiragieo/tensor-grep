@@ -245,6 +245,10 @@ fn test_run_help_positions_ast_as_validated_slice_not_ast_grep_parity() {
     );
     assert!(stdout.contains("--pattern"), "stdout={stdout}");
     assert!(stdout.contains("--files-with-matches"), "stdout={stdout}");
+    assert!(stdout.contains("--selector"), "stdout={stdout}");
+    assert!(stdout.contains("--strictness"), "stdout={stdout}");
+    assert!(stdout.contains("--stdin"), "stdout={stdout}");
+    assert!(stdout.contains("--globs"), "stdout={stdout}");
     assert!(!stdout.contains("ast-grep parity"), "stdout={stdout}");
     assert!(!stdout.contains("ast-grep replacement"), "stdout={stdout}");
 }

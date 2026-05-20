@@ -691,6 +691,109 @@ def test_run_command_files_with_matches_outputs_only_paths(tmp_path, monkeypatch
     assert capsys.readouterr().out.splitlines() == [str(first), str(second)]
 
 
+def test_run_command_should_force_wrapper_for_ast_grep_semantic_options(monkeypatch):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    seen: dict[str, object] = {}
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            seen["file_paths"] = file_paths
+            seen["pattern"] = pattern
+            seen["config"] = config
+            return SearchResult(matches=[], matched_file_paths=[], total_files=0, total_matches=0)
+
+    def fake_select(config, pattern):
+        seen["selected_config"] = config
+        seen["selected_pattern"] = pattern
+        return AstGrepWrapperBackend()
+
+    monkeypatch.setattr(ast_workflows, "_select_ast_backend_for_pattern", fake_select)
+
+    exit_code = run_command(
+        pattern="print($A)",
+        path="src",
+        lang="python",
+        selector="call",
+        strictness="relaxed",
+        globs=["*.py", "!generated/**"],
+        json_mode=True,
+    )
+
+    assert exit_code == 0
+    config = seen["config"]
+    assert config.ast_prefer_native is False
+    assert config.ast_selector == "call"
+    assert config.ast_strictness == "relaxed"
+    assert config.glob == ["*.py", "!generated/**"]
+    assert seen["file_paths"] == ["src"]
+
+
+def test_run_command_should_forward_stdin_without_default_path(monkeypatch):
+    import io
+
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    seen: dict[str, object] = {}
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            seen["file_paths"] = file_paths
+            seen["pattern"] = pattern
+            seen["config"] = config
+            return SearchResult(matches=[], matched_file_paths=[], total_files=0, total_matches=0)
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+    monkeypatch.setattr(ast_workflows.sys, "stdin", io.StringIO("print('hello')\n"))
+
+    exit_code = run_command(
+        pattern="print($A)",
+        lang="python",
+        stdin=True,
+        json_mode=True,
+    )
+
+    assert exit_code == 0
+    config = seen["config"]
+    assert seen["file_paths"] == []
+    assert config.ast_stdin is True
+    assert config.ast_stdin_input == "print('hello')\n"
+    assert config.lang == "python"
+
+
+def test_run_command_should_reject_stdin_files_with_matches(capsys):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    exit_code = run_command(
+        pattern="print($A)",
+        lang="python",
+        stdin=True,
+        files_with_matches=True,
+    )
+
+    assert exit_code == 1
+    assert "--stdin cannot be combined with --files-with-matches" in capsys.readouterr().err
+
+
+def test_run_command_should_reject_ast_grep_semantic_options_for_rewrites(capsys):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    exit_code = run_command(
+        pattern="print($A)",
+        rewrite="logger.info($A)",
+        selector="call",
+    )
+
+    assert exit_code == 1
+    assert "ast-grep semantic run options are read-only" in capsys.readouterr().err
+
+
 def test_ast_workflow_entry_accepts_ast_grep_pattern_option(monkeypatch):
     """Verify the lightweight workflow parser accepts `run --pattern`, like ast-grep."""
     from tensor_grep.cli import ast_workflows
@@ -720,3 +823,42 @@ def test_ast_workflow_entry_accepts_ast_grep_pattern_option(monkeypatch):
     assert seen["pattern"] == "class $NAME: $$$BODY"
     assert seen["path"] == "src"
     assert seen["kwargs"]["files_with_matches"] is True
+
+
+def test_ast_workflow_entry_accepts_ast_grep_semantic_run_options(monkeypatch):
+    """Verify the lightweight workflow parser accepts supported ast-grep run options."""
+    from tensor_grep.cli import ast_workflows
+
+    seen: dict[str, object] = {}
+
+    def fake_run_command(pattern: str, path: str | None = None, **kwargs: object) -> int:
+        seen["pattern"] = pattern
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(ast_workflows, "run_command", fake_run_command)
+
+    with pytest.raises(SystemExit) as raised:
+        ast_workflows.main_entry([
+            "run",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call",
+            "--strictness",
+            "relaxed",
+            "--globs",
+            "*.py",
+            "--stdin",
+            "--lang",
+            "python",
+        ])
+
+    assert raised.value.code == 0
+    assert seen["pattern"] == "print($A)"
+    assert seen["path"] is None
+    assert seen["kwargs"]["selector"] == "call"
+    assert seen["kwargs"]["strictness"] == "relaxed"
+    assert seen["kwargs"]["globs"] == ["*.py"]
+    assert seen["kwargs"]["stdin"] is True

@@ -1190,22 +1190,46 @@ fn test_ast_compatibility_flags_route_or_fail_explicitly_on_public_native_frontd
         String::from_utf8_lossy(&new_output.stdout)
     );
 
-    let selector_output = run_tg(
+    let run_python = fake_python_passthrough_asserting_args_script(
+        dir.path(),
         &[
+            "-m",
+            "tensor_grep",
             "run",
             "--pattern",
             "print($A)",
             "--selector",
             "call_expression",
+            "--strictness",
+            "relaxed",
+            "--globs",
+            "*.py",
             ".",
         ],
-        dir.path(),
+        "python-route-ok",
     );
-    assert!(!selector_output.status.success());
+    let selector_output = tg()
+        .current_dir(dir.path())
+        .args([
+            "run",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call_expression",
+            "--strictness",
+            "relaxed",
+            "--globs",
+            "*.py",
+            ".",
+        ])
+        .env("TG_SIDECAR_PYTHON", &run_python)
+        .output()
+        .unwrap();
+    assert!(selector_output.status.success());
     assert!(
-        String::from_utf8_lossy(&selector_output.stderr).contains("not supported by tg run yet"),
-        "stderr={}",
-        String::from_utf8_lossy(&selector_output.stderr)
+        String::from_utf8_lossy(&selector_output.stdout).contains("python-route-ok"),
+        "stdout={}",
+        String::from_utf8_lossy(&selector_output.stdout)
     );
 }
 
