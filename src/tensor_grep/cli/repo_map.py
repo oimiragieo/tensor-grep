@@ -4303,6 +4303,12 @@ def _symbol_name_matches_query_bridge(symbol_name: str, query: str) -> bool:
     )
 
 
+def _symbol_name_terms_cover_query(symbol_name: str, terms: list[str]) -> bool:
+    symbol_terms = set(split_terms(symbol_name))
+    meaningful_query_terms = {term for term in terms if len(term) > 2}
+    return bool(len(symbol_terms) >= 2 and symbol_terms <= meaningful_query_terms)
+
+
 def _score_file_path(path: str, terms: list[str]) -> int:
     return _score_text_terms(Path(path).name, terms) + _score_text_terms(path, terms)
 
@@ -4313,9 +4319,7 @@ def _score_symbol(symbol: dict[str, Any], terms: list[str]) -> int:
         + _score_text_terms(str(symbol["kind"]), terms)
         + _score_file_path(str(symbol["file"]), terms)
     )
-    symbol_terms = set(split_terms(str(symbol["name"])))
-    meaningful_query_terms = {term for term in terms if len(term) > 2}
-    if symbol_terms and symbol_terms <= meaningful_query_terms:
+    if _symbol_name_terms_cover_query(str(symbol["name"]), terms):
         score += 2
     return score
 
@@ -4902,11 +4906,16 @@ def _build_context_pack_from_map(
             symbol_name = str(scored_symbol["name"])
             exact_query_match = _symbol_name_matches_query_exactly(symbol_name, query)
             bridge_query_match = _symbol_name_matches_query_bridge(symbol_name, query)
-            if symbol_name_score > 0 and (exact_query_match or bridge_query_match):
+            covered_query_match = _symbol_name_terms_cover_query(symbol_name, symbol_terms)
+            if symbol_name_score > 0 and (
+                exact_query_match or bridge_query_match or covered_query_match
+            ):
                 if exact_query_match:
                     scored_symbol["exact_query_match"] = True
                 elif bridge_query_match:
                     scored_symbol["bridge_query_match"] = True
+                elif covered_query_match:
+                    scored_symbol["covered_query_match"] = True
                 _append_reason(file_reasons, current_path, "definition")
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
@@ -4915,11 +4924,13 @@ def _build_context_pack_from_map(
             current = str(symbol["file"])
             exact_symbol_bonus = 36 if bool(symbol.get("exact_query_match")) else 0
             bridge_symbol_bonus = 8 if bool(symbol.get("bridge_query_match")) else 0
+            covered_symbol_bonus = 24 if bool(symbol.get("covered_query_match")) else 0
             file_scores[current] = (
                 file_scores.get(current, 0)
                 + int(symbol["score"]) * 3
                 + exact_symbol_bonus
                 + bridge_symbol_bonus
+                + covered_symbol_bonus
             )
 
         scored_imports: list[dict[str, Any]] = []

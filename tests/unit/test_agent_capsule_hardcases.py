@@ -353,6 +353,21 @@ def test_agent_capsule_tight_budget_prefers_exact_resolver_over_binary_notice(tm
     assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
 
 
+def test_agent_capsule_live_repo_tight_budget_prefers_ripgrep_resolver():
+    repo_root = Path(__file__).resolve().parents[2]
+
+    payload = _agent_payload(
+        repo_root / "src" / "tensor_grep",
+        "ripgrep binary resolution",
+        max_files=3,
+    )
+
+    assert payload["primary_target"]["file"] == str(
+        (repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py").resolve()
+    )
+    assert payload["primary_target"]["symbol"] == "resolve_ripgrep_binary"
+
+
 def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():
     repo_root = Path(__file__).resolve().parents[2]
 
