@@ -40,3 +40,19 @@ def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> N
         "benchmarks/gpu_bench_data",
         "benchmarks/external_repos",
     ]
+
+
+def test_uv_cache_keys_should_include_rust_native_inputs_without_forced_reinstall() -> None:
+    uv_config = _pyproject_payload()["tool"]["uv"]
+    cache_keys = uv_config["cache-keys"]
+    file_entries = {
+        str(entry["file"])
+        for entry in cache_keys
+        if isinstance(entry, dict) and isinstance(entry.get("file"), str)
+    }
+
+    assert "pyproject.toml" in file_entries
+    assert "rust_core/Cargo.toml" in file_entries
+    assert "rust_core/Cargo.lock" in file_entries
+    assert "rust_core/src/**/*.rs" in file_entries
+    assert "tensor-grep" not in uv_config.get("reinstall-package", [])
