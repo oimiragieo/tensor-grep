@@ -128,6 +128,123 @@ def _configuration_settings(language: str) -> dict[str, Any]:
     }
 
 
+def _health_probe_document(language: str, workspace_root: Path) -> dict[str, str]:
+    normalized = canonical_language(language)
+    probes = {
+        "python": (
+            "__tg_lsp_health_probe.py",
+            "python",
+            "def tg_lsp_health_probe():\n    return 1\n",
+            "tg_lsp_health_probe",
+        ),
+        "javascript": (
+            "__tg_lsp_health_probe.js",
+            "javascript",
+            "function tgLspHealthProbe() { return 1; }\n",
+            "tgLspHealthProbe",
+        ),
+        "typescript": (
+            "__tg_lsp_health_probe.ts",
+            "typescript",
+            "function tgLspHealthProbe(): number { return 1; }\n",
+            "tgLspHealthProbe",
+        ),
+        "go": (
+            "__tg_lsp_health_probe.go",
+            "go",
+            "package main\n\nfunc tgLspHealthProbe() int { return 1 }\n",
+            "tgLspHealthProbe",
+        ),
+        "rust": (
+            "__tg_lsp_health_probe.rs",
+            "rust",
+            "fn tg_lsp_health_probe() -> i32 { 1 }\n",
+            "tg_lsp_health_probe",
+        ),
+        "java": (
+            "__TgLspHealthProbe.java",
+            "java",
+            "class TgLspHealthProbe { int tgLspHealthProbe() { return 1; } }\n",
+            "TgLspHealthProbe",
+        ),
+        "c": (
+            "__tg_lsp_health_probe.c",
+            "c",
+            "int tg_lsp_health_probe(void) { return 1; }\n",
+            "tg_lsp_health_probe",
+        ),
+        "cpp": (
+            "__tg_lsp_health_probe.cpp",
+            "cpp",
+            "int tg_lsp_health_probe() { return 1; }\n",
+            "tg_lsp_health_probe",
+        ),
+        "csharp": (
+            "__TgLspHealthProbe.cs",
+            "csharp",
+            "class TgLspHealthProbe { int Probe() { return 1; } }\n",
+            "TgLspHealthProbe",
+        ),
+        "php": (
+            "__tg_lsp_health_probe.php",
+            "php",
+            "<?php function tg_lsp_health_probe() { return 1; }\n",
+            "tg_lsp_health_probe",
+        ),
+        "kotlin": (
+            "__TgLspHealthProbe.kt",
+            "kotlin",
+            "fun tgLspHealthProbe(): Int = 1\n",
+            "tgLspHealthProbe",
+        ),
+        "swift": (
+            "__TgLspHealthProbe.swift",
+            "swift",
+            "func tgLspHealthProbe() -> Int { return 1 }\n",
+            "tgLspHealthProbe",
+        ),
+        "lua": (
+            "__tg_lsp_health_probe.lua",
+            "lua",
+            "function tg_lsp_health_probe()\n  return 1\nend\n",
+            "tg_lsp_health_probe",
+        ),
+    }
+    filename, language_id, text, symbol = probes.get(
+        normalized,
+        (
+            "__tg_lsp_health_probe.txt",
+            normalized,
+            "tg_lsp_health_probe\n",
+            "tg_lsp_health_probe",
+        ),
+    )
+    return {
+        "uri": (workspace_root.resolve() / filename).as_uri(),
+        "language_id": language_id,
+        "text": text,
+        "symbol": symbol,
+    }
+
+
+def _document_symbol_names(result: object) -> list[str]:
+    names: list[str] = []
+    if not isinstance(result, list):
+        return names
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if isinstance(name, str):
+            names.append(name)
+        names.extend(_document_symbol_names(item.get("children")))
+    return names
+
+
+def _document_symbol_result_contains(result: object, expected_symbol: str) -> bool:
+    return expected_symbol in _document_symbol_names(result)
+
+
 def _lookup_configuration_section(settings: dict[str, Any], section: object) -> Any:
     if not isinstance(section, str) or not section:
         return settings
@@ -177,6 +294,7 @@ class ExternalLSPClient:
         self.last_error: str | None = None
         self.disabled_until_monotonic = 0.0
         self.initialized = False
+        self.lsp_provider_response = False
 
     def start(self) -> None:
         if self.process is not None and self.process.poll() is None:
@@ -286,6 +404,7 @@ class ExternalLSPClient:
             self._opened_documents.clear()
             self.capabilities = {}
             self.initialized = False
+            self.lsp_provider_response = False
             if self._reader_thread is reader_thread:
                 self._reader_thread = None
             self._message_queue = queue.Queue()
@@ -411,6 +530,7 @@ class ExternalLSPClient:
             "running": self.process is not None and self.process.poll() is None,
             "initialized": self.initialized,
             "capabilities": dict(self.capabilities),
+            "lsp_provider_response": self.lsp_provider_response,
             "last_error": self.last_error,
             "opened_documents": len(self._opened_documents),
             "request_timeout_seconds": self.request_timeout_seconds,
@@ -545,6 +665,13 @@ class ExternalLSPProviderManager:
         key = (language.lower(), str(workspace_root.resolve()))
         current = self._clients.get(key)
         if current is not None:
+            if verify_health:
+                return self._verified_provider_status(
+                    client=current,
+                    language=language,
+                    workspace_root=workspace_root,
+                    probe_timeout_seconds=probe_timeout_seconds,
+                )
             status = current.status()
             status["available"] = True
             status["health_status"] = _provider_health_status(status)
@@ -597,25 +724,13 @@ class ExternalLSPProviderManager:
                 request_timeout_seconds=timeout,
                 initialize_timeout_seconds=timeout,
             )
-            try:
-                client.start()
-                status = client.status()
-                status["available"] = True
-                status["initialized"] = True
-                status["health_status"] = "ready"
-                status["health_check"] = "probe"
-                status["probe_timeout_seconds"] = timeout
-                return _attach_lsp_proof_fields(status)
-            except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
-                status = client.status()
-                status["available"] = True
-                status["health_status"] = "unhealthy"
-                status["health_check"] = "probe"
-                status["last_error"] = status.get("last_error") or str(exc)
-                status["probe_timeout_seconds"] = timeout
-                return _attach_lsp_proof_fields(status)
-            finally:
-                client.stop()
+            return self._verified_provider_status(
+                client=client,
+                language=language,
+                workspace_root=workspace_root,
+                probe_timeout_seconds=timeout,
+                stop_after_probe=True,
+            )
         return _attach_lsp_proof_fields({
             "language": language.lower(),
             "workspace_root": str(workspace_root.resolve()),
@@ -634,6 +749,71 @@ class ExternalLSPProviderManager:
             "initialize_timeout_seconds": initialize_timeout_seconds,
             "cooldown_remaining_s": 0.0,
         })
+
+    def _verified_provider_status(
+        self,
+        *,
+        client: ExternalLSPClient,
+        language: str,
+        workspace_root: Path,
+        probe_timeout_seconds: float | None,
+        stop_after_probe: bool = False,
+    ) -> dict[str, Any]:
+        timeout = (
+            max(float(probe_timeout_seconds), 0.0)
+            if probe_timeout_seconds is not None
+            else min(client.request_timeout_seconds, client.initialize_timeout_seconds)
+        )
+        probe = _health_probe_document(language, workspace_root)
+        phase = "initialize"
+        original_request_timeout = client.request_timeout_seconds
+        original_initialize_timeout = client.initialize_timeout_seconds
+        probe_succeeded = False
+        probe_error: Exception | None = None
+        client.request_timeout_seconds = timeout
+        client.initialize_timeout_seconds = timeout
+        try:
+            client.start()
+            phase = "did_open"
+            client.ensure_document(
+                uri=probe["uri"],
+                text=probe["text"],
+                language_id=probe["language_id"],
+            )
+            phase = "document_symbol"
+            result = client.request(
+                "textDocument/documentSymbol",
+                {"textDocument": {"uri": probe["uri"]}},
+            )
+            if not _document_symbol_result_contains(result, probe["symbol"]):
+                raise LSPTransportError("semantic documentSymbol probe returned no matching symbol")
+            probe_succeeded = True
+            client.lsp_provider_response = True
+        except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
+            probe_error = exc
+            client.lsp_provider_response = False
+        finally:
+            client.request_timeout_seconds = original_request_timeout
+            client.initialize_timeout_seconds = original_initialize_timeout
+        status = client.status()
+        status["available"] = True
+        status["health_check"] = "semantic-document-symbol"
+        status["health_phase"] = phase
+        status["probe_timeout_seconds"] = timeout
+        status["probe_document_uri"] = probe["uri"]
+        status["probe_symbol"] = probe["symbol"]
+        if probe_succeeded:
+            status["health_status"] = "ready"
+        else:
+            status["health_status"] = "unhealthy"
+            status["lsp_provider_response"] = False
+            if probe_error is not None:
+                status["last_error"] = status.get("last_error") or str(probe_error)
+        try:
+            return _attach_lsp_proof_fields(status)
+        finally:
+            if stop_after_probe:
+                client.stop()
 
     def stop_all(self) -> None:
         clients = list(self._clients.values())
@@ -675,7 +855,12 @@ def _provider_health_status(status: dict[str, Any]) -> str:
 def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
     health_status = str(status.get("health_status", _provider_health_status(status)))
     health_check = str(status.get("health_check", "not_run"))
-    lsp_proof = bool(status.get("available")) and health_status == "ready"
+    status.setdefault("lsp_provider_response", False)
+    lsp_proof = (
+        bool(status.get("available"))
+        and health_status == "ready"
+        and status.get("lsp_provider_response") is True
+    )
     status["health_status"] = health_status
     status["health_check"] = health_check
     status["lsp_proof"] = lsp_proof
@@ -687,7 +872,9 @@ def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
     elif health_status == "available_unverified" and health_check == "not_run":
         reason = "Provider binary is available but health was not verified."
     elif health_status == "unhealthy":
-        reason = "Provider health probe failed or timed out."
+        reason = "Provider semantic health probe failed or timed out."
+    elif health_status == "ready" and status.get("lsp_provider_response") is not True:
+        reason = "Provider initialized, but semantic health has not been verified in this session."
     else:
         reason = "Provider has not completed a successful initialization probe."
     status["not_lsp_proof_reason"] = reason

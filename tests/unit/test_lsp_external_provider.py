@@ -25,6 +25,7 @@ def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
     assert status["health_status"] == "missing"
     assert status["running"] is False
     assert status["capabilities"] == {}
+    assert status["lsp_provider_response"] is False
     assert status["last_error"]
 
 
@@ -54,6 +55,35 @@ def test_provider_status_reports_cached_client_state(
         status["initialize_timeout_seconds"]
         == provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS
     )
+
+
+def test_provider_status_cached_initialized_client_is_not_lsp_proof_without_provider_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    class _FakeProcess:
+        def poll(self) -> None:
+            return None
+
+    manager = ExternalLSPProviderManager()
+    client = manager.get_client(language="python", workspace_root=tmp_path)
+    client.process = _FakeProcess()  # type: ignore[assignment]
+    client.initialized = True
+    client.capabilities = {"documentSymbolProvider": True}
+
+    status = manager.provider_status(language="python", workspace_root=tmp_path)
+
+    assert status["health_status"] == "ready"
+    assert status["health_check"] == "cached-client"
+    assert status["lsp_provider_response"] is False
+    assert status["lsp_proof"] is False
+    assert "not been verified" in status["not_lsp_proof_reason"]
 
 
 def test_provider_manager_uses_configured_timeouts(
@@ -93,6 +123,7 @@ def test_provider_status_reports_configured_timeouts_without_cached_client(
     assert status["available"] is True
     assert status["health_status"] == "available_unverified"
     assert status["health_check"] == "not_run"
+    assert status["lsp_provider_response"] is False
     assert status["lsp_proof"] is False
     assert "not verified" in status["not_lsp_proof_reason"]
     assert status["request_timeout_seconds"] == 6.0
@@ -117,6 +148,7 @@ def test_provider_status_available_binary_is_unverified_without_probe(
     assert status["available"] is True
     assert status["health_status"] == "available_unverified"
     assert status["health_check"] == "not_run"
+    assert status["lsp_provider_response"] is False
     assert status["lsp_proof"] is False
     assert status["not_lsp_proof_reason"]
 
@@ -131,12 +163,23 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
         lambda _language: ["fake-lsp", "--stdio"],
     )
     seen_timeouts: list[tuple[float, float]] = []
+    opened_documents: list[dict[str, object]] = []
+    requests: list[str] = []
 
     def _fake_start(self: ExternalLSPClient) -> None:
         seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
-        self.capabilities = {"definitionProvider": True}
+        self.capabilities = {"definitionProvider": True, "documentSymbolProvider": True}
+
+    def _fake_ensure_document(self: ExternalLSPClient, **kwargs: object) -> None:
+        opened_documents.append(dict(kwargs))
+
+    def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
+        requests.append(method)
+        return [{"name": "tg_lsp_health_probe", "kind": 12}]
 
     monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", _fake_ensure_document)
+    monkeypatch.setattr(ExternalLSPClient, "request", _fake_request)
     monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
 
     status = ExternalLSPProviderManager().provider_status(
@@ -147,11 +190,148 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
     )
 
     assert seen_timeouts == [(0.25, 0.25)]
+    assert opened_documents
+    assert requests == ["textDocument/documentSymbol"]
     assert status["available"] is True
     assert status["health_status"] == "ready"
-    assert status["health_check"] == "probe"
+    assert status["health_check"] == "semantic-document-symbol"
+    assert status["health_phase"] == "document_symbol"
+    assert status["lsp_provider_response"] is True
     assert status["lsp_proof"] is True
     assert "not_lsp_proof_reason" not in status
+
+
+def test_provider_status_verify_health_persists_semantic_provider_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    class _FakeProcess:
+        def poll(self) -> None:
+            return None
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        self.process = _FakeProcess()  # type: ignore[assignment]
+        self.initialized = True
+        self.capabilities = {"documentSymbolProvider": True}
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
+    monkeypatch.setattr(
+        ExternalLSPClient,
+        "request",
+        lambda self, method, params: [{"name": "tg_lsp_health_probe", "kind": 12}],
+    )
+
+    manager = ExternalLSPProviderManager()
+    manager.get_client(language="python", workspace_root=tmp_path)
+    probed = manager.provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.25,
+    )
+    cached = manager.provider_status(language="python", workspace_root=tmp_path)
+
+    assert probed["lsp_provider_response"] is True
+    assert probed["lsp_proof"] is True
+    assert cached["health_status"] == "ready"
+    assert cached["health_check"] == "cached-client"
+    assert cached["lsp_provider_response"] is True
+    assert cached["lsp_proof"] is True
+
+
+def test_provider_status_verify_health_bounds_cached_probe_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    seen_timeouts: list[tuple[float, float]] = []
+
+    class _FakeProcess:
+        def poll(self) -> None:
+            return None
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
+        self.process = _FakeProcess()  # type: ignore[assignment]
+        self.initialized = True
+        self.capabilities = {"documentSymbolProvider": True}
+
+    def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
+        seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
+        return [{"name": "tg_lsp_health_probe", "kind": 12}]
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
+    monkeypatch.setattr(ExternalLSPClient, "request", _fake_request)
+
+    manager = ExternalLSPProviderManager()
+    client = manager.get_client(language="python", workspace_root=tmp_path)
+    client.request_timeout_seconds = 3.0
+    client.initialize_timeout_seconds = 15.0
+
+    status = manager.provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.2,
+    )
+
+    assert seen_timeouts == [(0.2, 0.2), (0.2, 0.2)]
+    assert status["lsp_proof"] is True
+    assert status["probe_timeout_seconds"] == 0.2
+    assert client.request_timeout_seconds == 3.0
+    assert client.initialize_timeout_seconds == 15.0
+
+
+def test_provider_status_verify_health_requires_semantic_provider_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    requests: list[str] = []
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        self.capabilities = {"documentSymbolProvider": True}
+
+    def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
+        requests.append(method)
+        return []
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
+    monkeypatch.setattr(ExternalLSPClient, "request", _fake_request)
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.2,
+    )
+
+    assert requests == ["textDocument/documentSymbol"]
+    assert status["available"] is True
+    assert status["health_status"] == "unhealthy"
+    assert status["health_check"] == "semantic-document-symbol"
+    assert status["health_phase"] == "document_symbol"
+    assert status["lsp_provider_response"] is False
+    assert status["lsp_proof"] is False
+    assert "semantic" in status["not_lsp_proof_reason"].lower()
 
 
 def test_provider_status_verify_health_failure_reports_unhealthy(
@@ -180,7 +360,9 @@ def test_provider_status_verify_health_failure_reports_unhealthy(
 
     assert status["available"] is True
     assert status["health_status"] == "unhealthy"
-    assert status["health_check"] == "probe"
+    assert status["health_check"] == "semantic-document-symbol"
+    assert status["health_phase"] == "initialize"
+    assert status["lsp_provider_response"] is False
     assert status["lsp_proof"] is False
     assert status["last_error"] == "timeout waiting for LSP response: initialize"
     assert status["probe_timeout_seconds"] == 0.2
