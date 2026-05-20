@@ -42,10 +42,20 @@ DEFAULT_AGENT_SCENARIOS: list[dict[str, object]] = [
         "name": "python_invoice",
         "query": "in src/payments.py update create_invoice tax calculation",
         "expected_primary_file_suffix": "src/payments.py",
+        "expected_target_file_suffix": "src/payments.py",
+        "expected_target_symbol": "create_invoice",
         "expected_ask_required": False,
         "min_validation_commands": 1,
     },
+    {
+        "name": "ripgrep_binary_resolution",
+        "query": "ripgrep binary resolution",
+        "expected_primary_file_suffix": "src/tensor_grep/cli/runtime_paths.py",
+        "expected_target_file_suffix": "src/tensor_grep/cli/runtime_paths.py",
+        "expected_target_symbol": "resolve_ripgrep_binary",
+    },
 ]
+WRONG_CONFIDENT_MISS_THRESHOLD = 0.75
 
 
 def default_output_path() -> Path:
@@ -143,6 +153,31 @@ def test_create_invoice_taxable_lines_only():
         """{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"latest"}}\n""",
     )
     _write_file(corpus_dir / "pytest.ini", "[pytest]\npythonpath = .\n")
+    _write_file(
+        corpus_dir / "src" / "tensor_grep" / "cli" / "runtime_paths.py",
+        """from pathlib import Path
+
+
+def resolve_ripgrep_binary(configured_path: str | None = None) -> Path:
+    if configured_path:
+        return Path(configured_path)
+    return Path("rg")
+
+
+def resolve_native_binary() -> Path:
+    return Path("tg")
+""",
+    )
+    _write_file(
+        corpus_dir / "src" / "tensor_grep" / "cli" / "ripgrep_fmt.py",
+        """def _binary_notice(path: str) -> str:
+    return f"Binary file {path} matches"
+
+
+def format_ripgrep_match(path: str, line: int, text: str) -> str:
+    return f"{path}:{line}:{text}"
+""",
+    )
 
     manifest_path = output_dir / "agent_capsule_manifest.json"
     manifest = {
@@ -248,6 +283,91 @@ def _primary_file_matches(primary_file: str, expected_suffix: object) -> bool:
     return normalized_file.endswith(normalized_suffix)
 
 
+def _target_file_suffix(scenario: dict[str, object]) -> str:
+    for key in ("expected_target_file_suffix", "expected_primary_file_suffix"):
+        value = scenario.get(key)
+        if isinstance(value, str) and value:
+            return value.replace("\\", "/")
+    return ""
+
+
+def _target_symbol(scenario: dict[str, object]) -> str:
+    value = scenario.get("expected_target_symbol")
+    return value if isinstance(value, str) else ""
+
+
+def _candidate_matches_target(
+    candidate: dict[str, Any],
+    *,
+    expected_file_suffix: str,
+    expected_symbol: str,
+) -> bool:
+    if not expected_file_suffix:
+        return False
+    candidate_file = str(candidate.get("file") or "").replace("\\", "/")
+    if not candidate_file.endswith(expected_file_suffix):
+        return False
+    if not expected_symbol:
+        return True
+    candidate_symbol = str(candidate.get("symbol") or candidate.get("name") or "")
+    return candidate_symbol == expected_symbol
+
+
+def _target_rank(
+    primary_target: dict[str, Any],
+    alternatives: list[object],
+    *,
+    expected_file_suffix: str,
+    expected_symbol: str,
+    limit: int = 3,
+) -> int | None:
+    candidates: list[dict[str, Any]] = [primary_target]
+    candidates.extend(item for item in alternatives if isinstance(item, dict))
+    for rank, candidate in enumerate(candidates[:limit], start=1):
+        if _candidate_matches_target(
+            candidate,
+            expected_file_suffix=expected_file_suffix,
+            expected_symbol=expected_symbol,
+        ):
+            return rank
+    return None
+
+
+def _source_file_from_item(item: object) -> str:
+    if isinstance(item, dict):
+        return str(item.get("file") or "").replace("\\", "/")
+    if isinstance(item, str):
+        return item.split("#", maxsplit=1)[0].replace("\\", "/")
+    return ""
+
+
+def _target_covered_by_budget(
+    payload: dict[str, object],
+    *,
+    expected_file_suffix: str,
+) -> bool:
+    if not expected_file_suffix:
+        return False
+    budget_items = list(_as_list(payload.get("snippets")))
+    budget_items.extend(_as_list(_as_dict(payload.get("omissions")).get("follow_up_reads")))
+    for item in budget_items:
+        if _source_file_from_item(item).endswith(expected_file_suffix):
+            return True
+    return False
+
+
+def _rate(numerator: int, denominator: int) -> float | None:
+    if denominator == 0:
+        return None
+    return round(numerator / denominator, 3)
+
+
+def _average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 3)
+
+
 def extract_capsule_metrics(
     payload: dict[str, object],
     scenario: dict[str, object],
@@ -264,6 +384,22 @@ def extract_capsule_metrics(
     validation_filtered_count = consistency.get("validation_filtered_count")
     if not isinstance(validation_filtered_count, int):
         validation_filtered_count = 0
+    expected_file_suffix = _target_file_suffix(scenario)
+    expected_symbol = _target_symbol(scenario)
+    target_rank = _target_rank(
+        primary_target,
+        alternatives,
+        expected_file_suffix=expected_file_suffix,
+        expected_symbol=expected_symbol,
+    )
+    target_selection_evaluated = bool(expected_file_suffix)
+    hit_at_1 = target_selection_evaluated and target_rank == 1
+    hit_at_3 = target_selection_evaluated and target_rank is not None and target_rank <= 3
+    mrr_at_3 = round(1.0 / target_rank, 3) if target_rank is not None else 0.0
+    coverage_at_budget = _target_covered_by_budget(
+        payload,
+        expected_file_suffix=expected_file_suffix,
+    )
 
     ask_required = _ask_required(payload)
     passed = bool(primary_file)
@@ -278,12 +414,21 @@ def extract_capsule_metrics(
     min_validation_commands = scenario.get("min_validation_commands")
     if isinstance(min_validation_commands, int):
         passed = passed and len(validation_commands) >= min_validation_commands
+    confidence_overall = _float_or_none(confidence.get("overall"))
+    wrong_confident_miss = bool(
+        target_selection_evaluated
+        and not hit_at_3
+        and not ask_required
+        and confidence_overall is not None
+        and confidence_overall >= WRONG_CONFIDENT_MISS_THRESHOLD
+    )
+    safe_ambiguity = bool(target_selection_evaluated and not hit_at_1 and ask_required)
 
     return {
         "scenario": str(scenario["name"]),
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
-        "confidence_overall": _float_or_none(confidence.get("overall")),
+        "confidence_overall": confidence_overall,
         "primary_confidence": _float_or_none(primary_target.get("confidence")),
         "ask_required": ask_required,
         "alternative_count": len(alternatives),
@@ -294,6 +439,16 @@ def extract_capsule_metrics(
         "edit_order_count": len(edit_order),
         "rollback_present": bool(payload.get("rollback") or payload.get("checkpoint")),
         "omission_count": _omission_count(payload),
+        "target_selection_evaluated": target_selection_evaluated,
+        "expected_target_file_suffix": expected_file_suffix,
+        "expected_target_symbol": expected_symbol,
+        "target_rank": target_rank,
+        "hit_at_1": hit_at_1,
+        "hit_at_3": hit_at_3,
+        "mrr_at_3": mrr_at_3,
+        "coverage_at_budget": coverage_at_budget,
+        "wrong_confident_miss": wrong_confident_miss,
+        "safe_ambiguity": safe_ambiguity,
         "passed": passed,
     }
 
@@ -354,10 +509,37 @@ def build_agent_capsule_summary(rows: list[dict[str, object]]) -> dict[str, obje
         "rollback_cases": sum(1 for row in rows if bool(row["rollback_present"])),
         "total_omissions": sum(int(row["omission_count"]) for row in rows),
     }
+    target_rows = [row for row in rows if bool(row["target_selection_evaluated"])]
+    target_count = len(target_rows)
+    hit_at_1_cases = sum(1 for row in target_rows if bool(row["hit_at_1"]))
+    hit_at_3_cases = sum(1 for row in target_rows if bool(row["hit_at_3"]))
+    coverage_cases = sum(1 for row in target_rows if bool(row["coverage_at_budget"]))
+    wrong_confident_miss_cases = sum(1 for row in target_rows if bool(row["wrong_confident_miss"]))
+    safe_ambiguity_cases = sum(1 for row in target_rows if bool(row["safe_ambiguity"]))
+    target_selection_summary = {
+        "evaluated_cases": target_count,
+        "hit_at_1_cases": hit_at_1_cases,
+        "hit_at_1_rate": _rate(hit_at_1_cases, target_count),
+        "hit_at_3_cases": hit_at_3_cases,
+        "hit_at_3_rate": _rate(hit_at_3_cases, target_count),
+        "mrr_at_3": _average([
+            float(row["mrr_at_3"])
+            for row in target_rows
+            if isinstance(row.get("mrr_at_3"), int | float)
+        ]),
+        "coverage_at_budget_cases": coverage_cases,
+        "coverage_at_budget_rate": _rate(coverage_cases, target_count),
+        "wrong_confident_miss_cases": wrong_confident_miss_cases,
+        "wrong_confident_miss_rate": _rate(wrong_confident_miss_cases, target_count),
+        "safe_ambiguity_cases": safe_ambiguity_cases,
+        "safe_ambiguity_rate": _rate(safe_ambiguity_cases, target_count),
+        "wrong_confident_miss_threshold": WRONG_CONFIDENT_MISS_THRESHOLD,
+    }
     return {
         "all_passed": all(bool(row["passed"]) for row in rows),
         "scenario_medians_s": scenario_medians_s,
         "contract_summary": contract_summary,
+        "target_selection_summary": target_selection_summary,
         "rows": rows,
     }
 
