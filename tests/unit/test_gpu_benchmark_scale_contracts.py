@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -131,6 +132,126 @@ def test_gpu_workload_taxonomy_should_name_candidate_classes():
                 "fair_rg_baseline": "not_applicable_until_benchmark_exists",
             },
         ]
+
+
+def test_gpu_native_many_pattern_proof_gate_requires_rg_identity_correctness():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_many_pattern_proof_gate",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    multi_pattern = {
+        "status": "PASS",
+        "workload_class": "many_fixed_patterns_single_dispatch",
+        "fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
+        "patterns": ["ERROR alpha", "ERROR beta"],
+        "speedup_vs_cpu": 2.0,
+        "speedup_vs_rg_multi_pattern": 1.4,
+        "gpu_stats": {
+            "pipeline": {
+                "pattern_count": 2,
+                "single_dispatch": True,
+            }
+        },
+    }
+
+    failed = module.build_many_pattern_proof_gate(
+        multi_pattern=multi_pattern,
+        correctness_check={
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": False,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": False,
+        },
+    )
+    passed = module.build_many_pattern_proof_gate(
+        multi_pattern=multi_pattern,
+        correctness_check={
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
+        },
+    )
+
+    assert failed["status"] == "FAIL"
+    assert failed["many_pattern_gpu_proof"] is False
+    assert "many_pattern_rg_match_identity_missing" in failed["blockers"]
+    assert passed["status"] == "PASS"
+    assert passed["many_pattern_gpu_proof"] is True
+    assert passed["contract"]["required_workload_class"] == "many_fixed_patterns_single_dispatch"
+
+
+def test_gpu_native_many_pattern_correctness_uses_single_invocation_rg_json(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_many_pattern_correctness",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    match_file = corpus_dir / "a.log"
+    pattern_a = "ERROR alpha"
+    pattern_b = "ERROR beta"
+    tg_payload = {
+        "routing_backend": "NativeGpuBackend",
+        "sidecar_used": False,
+        "matches": [
+            {"file": str(match_file), "line_number": 1, "text": f"{pattern_a}\n"},
+            {"file": str(match_file), "line_number": 2, "text": f"{pattern_b}\n"},
+        ],
+    }
+    rg_stdout = "\n".join(
+        json.dumps(event)
+        for event in [
+            {
+                "type": "match",
+                "data": {
+                    "path": {"text": str(match_file)},
+                    "line_number": 1,
+                    "lines": {"text": f"{pattern_a}\n"},
+                },
+            },
+            {
+                "type": "match",
+                "data": {
+                    "path": {"text": str(match_file)},
+                    "line_number": 2,
+                    "lines": {"text": f"{pattern_b}\n"},
+                },
+            },
+        ]
+    )
+    seen_commands: list[list[str]] = []
+
+    def _fake_run_command(command, **_kwargs):
+        seen_commands.append(list(command))
+        if command[0] == "rg":
+            return module.subprocess.CompletedProcess(command, 0, rg_stdout, "")
+        return module.subprocess.CompletedProcess(command, 0, json.dumps(tg_payload), "")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    check = module.run_many_pattern_correctness_check(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        corpus_dir=corpus_dir,
+        patterns=[pattern_a, pattern_b],
+        device_id=0,
+        env={},
+        timeout_s=5,
+    )
+
+    rg_command = seen_commands[-1]
+    assert rg_command[:4] == ["rg", "--json", "--no-ignore", "-F"]
+    assert rg_command.count("-e") == 2
+    assert check["status"] == "PASS"
+    assert check["rg_match_identity_equal"] is True
+    assert check["fair_rg_baseline"] == "single_invocation_rg_fixed_multi_pattern"
 
 
 def test_gpu_native_summary_should_report_workload_scoped_speed_blocker():
