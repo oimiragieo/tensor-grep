@@ -233,7 +233,9 @@ def test_lsp_external_definition_mode_prefers_external_result(tmp_path: Path, mo
 
     server = TensorGrepLSPServer("test", "v1")
     server.provider_mode = "lsp"
-    monkeypatch.setattr(lsp_module, "_external_client_for_uri", lambda ls, uri: _FakeClient())
+    monkeypatch.setattr(
+        lsp_module, "_external_client_for_uri", lambda ls, uri, **kwargs: _FakeClient()
+    )
     module_uri = _open_document(server, module_path, "python")
 
     definition_locations = definition(
@@ -246,6 +248,129 @@ def test_lsp_external_definition_mode_prefers_external_result(tmp_path: Path, mo
 
     assert len(definition_locations) == 1
     assert definition_locations[0].range.start.character == 4
+
+
+def test_lsp_external_definition_request_is_operation_budgeted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    observed_timeouts: list[tuple[float, float]] = []
+
+    class _FakeClient:
+        request_timeout_seconds = 20.0
+        initialize_timeout_seconds = 20.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            return None
+
+        def request(self, method: str, params: dict[str, object]) -> object:
+            assert method == "textDocument/definition"
+            observed_timeouts.append((
+                self.request_timeout_seconds,
+                self.initialize_timeout_seconds,
+            ))
+            return {
+                "uri": module_path.resolve().as_uri(),
+                "range": {
+                    "start": {"line": 0, "character": 4},
+                    "end": {"line": 0, "character": 18},
+                },
+            }
+
+    server = TensorGrepLSPServer("test", "v1")
+    server.provider_mode = "lsp"
+    monkeypatch.setenv("TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS", "0.25")
+    monkeypatch.setattr(
+        lsp_module, "_external_client_for_uri", lambda ls, uri, **kwargs: _FakeClient()
+    )
+    module_uri = _open_document(server, module_path, "python")
+
+    definition(
+        server,
+        DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=module_uri),
+            position=Position(line=0, character=8),
+        ),
+    )
+
+    assert observed_timeouts
+    request_timeout, initialize_timeout = observed_timeouts[0]
+    assert request_timeout <= 0.25
+    assert initialize_timeout <= 0.25
+
+
+def test_lsp_external_document_open_uses_same_operation_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    observed: list[tuple[str, float, float]] = []
+
+    class _FakeClient:
+        request_timeout_seconds = 30.0
+        initialize_timeout_seconds = 30.0
+
+        def __init__(self) -> None:
+            self.opened: set[str] = set()
+
+        def ensure_document(self, *, uri: str, **kwargs: object) -> None:
+            if uri in self.opened:
+                return None
+            self.opened.add(uri)
+            observed.append((
+                "ensure_document",
+                self.request_timeout_seconds,
+                self.initialize_timeout_seconds,
+            ))
+            return None
+
+        def request(self, method: str, params: dict[str, object]) -> object:
+            assert method == "textDocument/definition"
+            observed.append((
+                method,
+                self.request_timeout_seconds,
+                self.initialize_timeout_seconds,
+            ))
+            return {
+                "uri": module_path.resolve().as_uri(),
+                "range": {
+                    "start": {"line": 0, "character": 4},
+                    "end": {"line": 0, "character": 18},
+                },
+            }
+
+    fake_client = _FakeClient()
+
+    class _FakeProviders:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return fake_client
+
+    server = TensorGrepLSPServer("test", "v1")
+    server.provider_mode = "lsp"
+    server.external_providers = _FakeProviders()  # type: ignore[assignment]
+    monkeypatch.setenv("TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS", "0.25")
+    module_uri = _open_document(server, module_path, "python")
+
+    definition(
+        server,
+        DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=module_uri),
+            position=Position(line=0, character=8),
+        ),
+    )
+
+    assert [current[0] for current in observed] == ["ensure_document", "textDocument/definition"]
+    assert all(request_timeout <= 0.25 for _, request_timeout, _ in observed)
+    assert all(initialize_timeout <= 0.25 for _, _, initialize_timeout in observed)
 
 
 def test_lsp_hybrid_references_merge_external_and_native(tmp_path: Path, monkeypatch) -> None:
@@ -280,7 +405,9 @@ def test_lsp_hybrid_references_merge_external_and_native(tmp_path: Path, monkeyp
 
     server = TensorGrepLSPServer("test", "v1")
     server.provider_mode = "hybrid"
-    monkeypatch.setattr(lsp_module, "_external_client_for_uri", lambda ls, uri: _FakeClient())
+    monkeypatch.setattr(
+        lsp_module, "_external_client_for_uri", lambda ls, uri, **kwargs: _FakeClient()
+    )
     consumer_uri = _open_document(server, consumer_path, "python")
     _open_document(server, service_path, "python")
 
@@ -296,6 +423,94 @@ def test_lsp_hybrid_references_merge_external_and_native(tmp_path: Path, monkeyp
     uris = {location.uri for location in reference_locations}
     assert service_path.resolve().as_uri() in uris
     assert consumer_path.resolve().as_uri() in uris
+
+
+def test_lsp_external_references_and_rename_are_operation_budgeted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    observed: list[tuple[str, float, float]] = []
+
+    class _FakeClient:
+        request_timeout_seconds = 30.0
+        initialize_timeout_seconds = 30.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            return None
+
+        def request(self, method: str, params: dict[str, object]) -> object:
+            observed.append((
+                method,
+                self.request_timeout_seconds,
+                self.initialize_timeout_seconds,
+            ))
+            if method == "textDocument/references":
+                return [
+                    {
+                        "uri": module_path.resolve().as_uri(),
+                        "range": {
+                            "start": {"line": 0, "character": 4},
+                            "end": {"line": 0, "character": 18},
+                        },
+                    }
+                ]
+            if method == "textDocument/rename":
+                return {
+                    "documentChanges": [
+                        {
+                            "textDocument": {
+                                "uri": module_path.resolve().as_uri(),
+                                "version": None,
+                            },
+                            "edits": [
+                                {
+                                    "range": {
+                                        "start": {"line": 0, "character": 4},
+                                        "end": {"line": 0, "character": 18},
+                                    },
+                                    "newText": "issue_invoice",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            raise AssertionError(method)
+
+    server = TensorGrepLSPServer("test", "v1")
+    server.provider_mode = "lsp"
+    monkeypatch.setenv("TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS", "0.5")
+    monkeypatch.setattr(
+        lsp_module, "_external_client_for_uri", lambda ls, uri, **kwargs: _FakeClient()
+    )
+    module_uri = _open_document(server, module_path, "python")
+
+    references(
+        server,
+        ReferenceParams(
+            text_document=TextDocumentIdentifier(uri=module_uri),
+            position=Position(line=0, character=8),
+            context=ReferenceContext(include_declaration=True),
+        ),
+    )
+    rename(
+        server,
+        RenameParams(
+            text_document=TextDocumentIdentifier(uri=module_uri),
+            position=Position(line=0, character=8),
+            new_name="issue_invoice",
+        ),
+    )
+
+    assert {current[0] for current in observed} == {
+        "textDocument/references",
+        "textDocument/rename",
+    }
+    assert all(request_timeout <= 0.5 for _, request_timeout, _ in observed)
+    assert all(initialize_timeout <= 0.5 for _, _, initialize_timeout in observed)
 
 
 def test_lsp_external_rename_uses_provider_workspace_edit(tmp_path: Path, monkeypatch) -> None:
@@ -330,7 +545,9 @@ def test_lsp_external_rename_uses_provider_workspace_edit(tmp_path: Path, monkey
 
     server = TensorGrepLSPServer("test", "v1")
     server.provider_mode = "lsp"
-    monkeypatch.setattr(lsp_module, "_external_client_for_uri", lambda ls, uri: _FakeClient())
+    monkeypatch.setattr(
+        lsp_module, "_external_client_for_uri", lambda ls, uri, **kwargs: _FakeClient()
+    )
     module_uri = _open_document(server, module_path, "python")
 
     edit = rename(

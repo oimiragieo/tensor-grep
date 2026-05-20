@@ -477,6 +477,15 @@ def test_failure_mode_examples_exist_and_have_actionable_shapes() -> None:
         elif file_name == "defs_provider_disagreement.json":
             assert payload["provider_agreement"]["agreement_status"] == "diverged"
             assert payload["provider_status"]["mode"] == "hybrid"
+            if payload.get("lsp_proof") is True:
+                proof_rows = [
+                    row
+                    for row in payload.get("definitions", [])
+                    if row.get("lsp_provider_response") is True
+                    and str(row.get("provenance", "")).startswith("lsp-")
+                ]
+                assert proof_rows
+                assert all(row.get("lsp_operation") for row in proof_rows)
         elif file_name == "provider_status_unavailable.json":
             assert payload["provider_status"]["available"] is False
             assert payload["provider_status"]["last_error"]
@@ -517,6 +526,15 @@ def test_harness_api_failure_mode_examples_exist_and_match_documented_shapes() -
         "native-fallback",
     }
     assert provider["provider_status"]["mode"] in {"lsp", "hybrid"}
+    if provider.get("lsp_proof") is True:
+        proof_rows = [
+            row
+            for row in provider.get("definitions", [])
+            if row.get("lsp_provider_response") is True
+            and str(row.get("provenance", "")).startswith("lsp-")
+        ]
+        assert proof_rows
+        assert all(row.get("lsp_operation") for row in proof_rows)
 
     provider_unavailable = json.loads(
         (EXAMPLES_DIR / "provider_status_unavailable.json").read_text(encoding="utf-8")

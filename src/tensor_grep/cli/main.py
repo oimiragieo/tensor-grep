@@ -7458,7 +7458,8 @@ def lsp(
         "--provider",
         help=(
             "Experimental semantic provider mode. native=repo-map only, "
-            "lsp=external provider only, hybrid=merge both."
+            "lsp=external provider only, hybrid=merge both. Invalid modes "
+            "fail before the server starts."
         ),
     ),
 ) -> None:
@@ -7481,7 +7482,14 @@ def lsp(
 
     from tensor_grep.cli.lsp_server import run_lsp
 
-    os.environ["TG_LSP_PROVIDER"] = provider
+    normalized_provider = provider.strip().lower()
+    if normalized_provider not in {"native", "lsp", "hybrid"}:
+        typer.echo(
+            "Unsupported LSP provider mode; expected one of: native, lsp, hybrid",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    os.environ["TG_LSP_PROVIDER"] = normalized_provider
     run_lsp()
 
 
