@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.12.38 (2026-05-20)
+
+### Bug Fixes
+
+- Harden ast run semantic flag routing
+  ([`09da67b`](https://github.com/oimiragieo/tensor-grep/commit/09da67b14c0e06dbc63585a5620776139774d089))
+
+Summary: - routes ast-grep semantic read-only run flags through the Python sidecar when native
+  cannot execute them faithfully - supports --selector, --strictness, --stdin, and repeated --globs
+  for tg run without claiming full ast-grep parity - rejects mutating or files-with-matches
+  combinations that would produce unsafe or misleading semantics
+
+Validation: - uv run pytest tests/unit/test_ast_wrapper_backend.py tests/unit/test_ast_workflows.py
+  tests/unit/test_cli_modes.py::test_tg_run_help_should_position_ast_as_validated_slice_not_ast_grep_parity
+  tests/unit/test_cli_modes.py::test_run_ast_grep_semantic_flags_are_forwarded_to_run_workflow
+  tests/unit/test_cli_modes.py::test_run_ast_grep_semantic_rewrite_combinations_fail_explicitly -q -
+  cargo test --manifest-path rust_core/Cargo.toml --test test_runtime_path_resolution
+  test_run_help_positions_ast_as_validated_slice_not_ast_grep_parity -- --exact --nocapture - cargo
+  test --manifest-path rust_core/Cargo.toml
+  run_ast_grep_semantic_options_are_read_only_python_passthrough - cargo test --manifest-path
+  rust_core/Cargo.toml run_stdin_rejects_files_with_matches - cargo test --manifest-path
+  rust_core/Cargo.toml --test test_public_native_cli_parity
+  test_ast_compatibility_flags_route_or_fail_explicitly_on_public_native_frontdoor -- --exact
+  --nocapture - uv run ruff check . - uv run ruff format --check --preview . - uv run mypy
+  src/tensor_grep - cargo fmt --manifest-path rust_core/Cargo.toml --check - git diff --check - PR
+  CI passed
+
+
 ## v1.12.37 (2026-05-20)
 
 ### Bug Fixes
