@@ -65,12 +65,16 @@ def _read_project_version_fallback() -> str:
 
 
 def _expected_tg_version() -> str:
+    source_version = _read_project_version_fallback()
     try:
         from importlib.metadata import version
 
-        return version("tensor-grep")
+        installed_version = version("tensor-grep")
     except Exception:
-        return _read_project_version_fallback()
+        return source_version
+    if source_version != "0.0.0" and source_version != installed_version:
+        return source_version
+    return installed_version
 
 
 def _native_tg_version(candidate: Path) -> str | None:
