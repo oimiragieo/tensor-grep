@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.12.41 (2026-05-20)
+
+### Bug Fixes
+
+- Gate many-pattern gpu proof
+  ([`14c4fff`](https://github.com/oimiragieo/tensor-grep/commit/14c4fffc43b9f0497b107d00841dd9388ef238a5))
+
+Require single-dispatch many-fixed-pattern GPU proof to beat CPU and fair rg baselines with
+  match/file identity before any promotion evidence.
+
+- Harden lsp proof semantics
+  ([`fe2116a`](https://github.com/oimiragieo/tensor-grep/commit/fe2116a5ea8b7e5bac0bb1b50756436429518bcf))
+
+Require semantic provider responses before LSP proof claims and persist/cache proof markers safely.
+
+- Prefer source version for dev diagnostics
+  ([`aefdcef`](https://github.com/oimiragieo/tensor-grep/commit/aefdcefc2d701473463d47b2e426384c95905e6e))
+
+Prefer repo source version metadata when editable install metadata is stale so dev diagnostics do
+  not falsely mark freshly rebuilt in-tree native binaries stale.
+
+- Route glob cold search through early rg
+  ([`cd49815`](https://github.com/oimiragieo/tensor-grep/commit/cd498154ab9ab95173c65e527ba7b44ebdd7ac3f))
+
+Route simple glob-shaped rg-backed searches through the early native ripgrep passthrough while
+  preserving fixed-string and word-boundary exclusions.
+
+### Chores
+
+- Add uv rust cache keys
+  ([`126f13f`](https://github.com/oimiragieo/tensor-grep/commit/126f13f58b56cb568ad4fdfd0b5781efb183975c))
+
+Add uv cache keys covering Rust source and Cargo metadata so repo-local uv runs rebuild only when
+  the native extension inputs actually change.
+
+### Testing
+
+- Add agent target selection metrics
+  ([`b7e3286`](https://github.com/oimiragieo/tensor-grep/commit/b7e3286fbfc6f5d556448a3d272f0cf9a60d5d99))
+
+Add benchmark artifact metrics for target selection and a synthetic ripgrep resolver
+  hardcase.\n\nValidation: local full pytest/lint/format/mypy passed; Gemini Flash review approved;
+  PR CI passed.
+
+
 ## v1.12.40 (2026-05-20)
 
 ### Bug Fixes
