@@ -1,11 +1,12 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.12.47 (2026-05-21)
 
 ### Bug Fixes
 
-- Restore the README `broad generated-root scan` wording required by dogfood docs-claim checks.
+- Restore dogfood docs claim wording ([#182](https://github.com/oimiragieo/tensor-grep/pull/182),
+  [`eea05c6`](https://github.com/oimiragieo/tensor-grep/commit/eea05c64d1eb273652df4da87aba9025d4e1ec08))
 
 
 ## v1.12.46 (2026-05-21)
