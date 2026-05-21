@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.12.42 (2026-05-21)
+
+### Bug Fixes
+
+- Clean stale python launchers after upgrade
+  ([#177](https://github.com/oimiragieo/tensor-grep/pull/177),
+  [`12c3b4c`](https://github.com/oimiragieo/tensor-grep/commit/12c3b4c63433eac85efd6b9ced20e81589362d4a))
+
+* fix: clean stale python launchers after upgrade
+
+* test: make launcher ownership fixtures platform neutral
+
+
 ## v1.12.41 (2026-05-20)
 
 ### Bug Fixes
