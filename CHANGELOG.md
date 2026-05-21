@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Add `tg doctor` shell escaping guidance for PowerShell `$NAME` expansion and `cmd.exe`
+  metacharacter escaping, and document the guidance in `tg --help` and the README.
+
+
 ## v1.12.45 (2026-05-21)
 
 ### Bug Fixes
