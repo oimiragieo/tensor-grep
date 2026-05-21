@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.44 (2026-05-21)
+
+### Bug Fixes
+
+- Harden rg json-lines parity contract ([#179](https://github.com/oimiragieo/tensor-grep/pull/179),
+  [`281221a`](https://github.com/oimiragieo/tensor-grep/commit/281221ade706db6554b3323d1a92e4e0736df256))
+
+
 ## v1.12.43 (2026-05-21)
 
 ### Bug Fixes
