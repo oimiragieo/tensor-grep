@@ -167,7 +167,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
 - Use `tg repair-launcher --allow-foreign-rename` only when Windows Python subprocess resolution is blocked by a foreign `tg.exe` that you own and want tensor-grep to back up.
-- Use `tg session --help` for cached edit-loop and daemon commands.
+- Use `tg session --help` for cached edit-loop and daemon commands; daemon edit-plan/context requests keep a short connect probe and a longer work response timeout.
 
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
