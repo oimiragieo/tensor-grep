@@ -6568,22 +6568,36 @@ def session_list(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """List cached sessions for the current root."""
-    from tensor_grep.cli.session_store import list_sessions
+    """List cached sessions for the current root, with nearby-scope discovery."""
+    from tensor_grep.cli.session_store import list_sessions_with_discovery
 
     try:
-        records = [record.__dict__ for record in list_sessions(path)]
+        session_records, scope_root, discovered = list_sessions_with_discovery(path)
+        records = [record.__dict__ for record in session_records]
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps({"version": 1, "sessions": records}, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "version": 1,
+                    "root": scope_root,
+                    "discovered": discovered,
+                    "sessions": records,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not records:
         typer.echo("No sessions found.")
         return
+
+    if discovered:
+        typer.echo(f"Discovered sessions outside current scope under {scope_root}.")
 
     for record in records:
         typer.echo(
