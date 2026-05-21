@@ -113,6 +113,15 @@ RG_CONTRACT_ROWS: tuple[RGContractRow, ...] = (
         "benchmarkable": False,
     },
     {
+        "id": "rg-json-lines",
+        "public_flags": ("--format", "--json"),
+        "rg_args": ("--json",),
+        "tg_args": ("--format", "rg", "--json"),
+        "output_mode": "json",
+        "parity_expectation": "normalized",
+        "benchmarkable": False,
+    },
+    {
         "id": "ndjson",
         "public_flags": ("--ndjson",),
         "rg_args": ("--ndjson",),

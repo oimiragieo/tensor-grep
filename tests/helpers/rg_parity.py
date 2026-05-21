@@ -80,6 +80,7 @@ ROW_SCENARIOS: dict[str, _ScenarioSpec] = {
         ("files-match.txt", "files-nested-miss.txt"),
     ),
     "json": _ScenarioSpec("json sentinel", ("root",)),
+    "rg-json-lines": _ScenarioSpec("json sentinel", ("root",)),
     # ripgrep exposes only --json, so the parity comparator normalizes tg --ndjson
     # against rg --json match events.
     "ndjson": _ScenarioSpec("ndjson sentinel", ("root",), rg_args=("--json",)),
@@ -497,6 +498,9 @@ def _normalize_machine_output(
     matches: list[tuple[str, int, str]] = []
 
     if tool == "tg":
+        if rows and all(isinstance(row, dict) and "type" in row for row in rows):
+            return _normalize_rg_json_events(rows, corpus=corpus)
+
         if len(rows) == 1 and isinstance(rows[0], dict) and "matches" in rows[0]:
             for match in rows[0]["matches"]:
                 matches.append((
@@ -514,7 +518,18 @@ def _normalize_machine_output(
             ))
         return {"matches": sorted(matches)}
 
+    return _normalize_rg_json_events(rows, corpus=corpus)
+
+
+def _normalize_rg_json_events(
+    rows: list[object],
+    *,
+    corpus: RGParityCorpus,
+) -> dict[str, list[tuple[str, int, str]]]:
+    matches: list[tuple[str, int, str]] = []
     for row in rows:
+        if not isinstance(row, dict):
+            continue
         if row.get("type") != "match":
             continue
         data = row["data"]

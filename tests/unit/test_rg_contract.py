@@ -16,6 +16,7 @@ EXPECTED_ROWS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "files-with-matches": (("-l", "--files-with-matches"), ("--files-with-matches",)),
     "files-without-match": (("--files-without-match",), ("--files-without-match",)),
     "json": (("--json",), ("--json",)),
+    "rg-json-lines": (("--format", "--json"), ("--json",)),
     "ndjson": (("--ndjson",), ("--ndjson",)),
     "fixed-strings": (("-F", "--fixed-strings"), ("--fixed-strings",)),
     "word-regexp": (("-w", "--word-regexp"), ("--word-regexp",)),
@@ -46,6 +47,9 @@ EXPECTED_ROWS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "type-list": (("--type-list",), ("--type-list",)),
     "pcre2-version": (("--pcre2-version",), ("--pcre2-version",)),
 }
+EXPECTED_TG_ARGS_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "rg-json-lines": ("--format", "rg", "--json"),
+}
 
 
 def _load_rows() -> tuple[RGContractRow, ...]:
@@ -62,7 +66,6 @@ def _assert_row_contract(row: RGContractRow) -> None:
     )
     assert len(set(row["rg_args"])) == len(row["rg_args"]), f"Row {row['id']} has duplicate rg args"
     assert len(set(row["tg_args"])) == len(row["tg_args"]), f"Row {row['id']} has duplicate tg args"
-    assert row["rg_args"] == row["tg_args"], f"Row {row['id']} must use one canonical scenario"
     assert row["output_mode"] in {
         "text",
         "count",
@@ -79,9 +82,10 @@ def _assert_row_contract(row: RGContractRow) -> None:
     )
 
     expected_public_flags, expected_args = EXPECTED_ROWS[row["id"]]
+    expected_tg_args = EXPECTED_TG_ARGS_OVERRIDES.get(row["id"], expected_args)
     assert row["public_flags"] == expected_public_flags
     assert row["rg_args"] == expected_args
-    assert row["tg_args"] == expected_args
+    assert row["tg_args"] == expected_tg_args
 
 
 def test_rg_contract_rows_have_unique_ids_and_expected_shapes() -> None:
