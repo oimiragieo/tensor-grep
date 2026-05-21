@@ -7521,6 +7521,74 @@ def test_upgrade_removes_stale_tensor_grep_python_scripts_launcher(
     assert [str(stale_python), "-m", "pip", "uninstall", "-y", "tensor-grep"] in calls
 
 
+def test_upgrade_removes_shadowing_tensor_grep_python_scripts_launcher_even_when_current(
+    monkeypatch,
+    tmp_path,
+):
+    native_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    stale_dir = tmp_path / "Python314" / "Scripts"
+    native_binary.parent.mkdir(parents=True)
+    stale_dir.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    stale_tg = stale_dir / "tg.exe"
+    stale_tg.write_text("shadowing tensor-grep launcher", encoding="utf-8")
+    stale_python = stale_dir.parent / "python.exe"
+    stale_python.write_text("", encoding="utf-8")
+    package_location = stale_dir.parent / "Lib" / "site-packages"
+    package_launcher = os.path.relpath(stale_tg, package_location)
+    calls: list[list[str]] = []
+
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate == native_binary:
+            return "tg 0.33.0"
+        if candidate == stale_tg:
+            return "tensor-grep 0.33.0"
+        return None
+
+    def _fake_run(cmd, capture_output=True, text=True, timeout=None, **_kwargs):
+        command = [str(part) for part in cmd]
+        calls.append(command)
+        if command[:5] == [str(stale_python), "-m", "pip", "show", "-f"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "Name: tensor-grep\n"
+                    "Version: 0.33.0\n"
+                    f"Location: {package_location}\n"
+                    "Files:\n"
+                    f"{package_launcher}\n"
+                ),
+                stderr="",
+            )
+        if command[:4] == [str(stale_python), "-m", "pip", "uninstall"]:
+            stale_tg.unlink(missing_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout="uninstalled\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", f"{native_binary.parent};{stale_dir}")
+    monkeypatch.setattr(
+        cli_main,
+        "_doctor_fresh_shell_path_value",
+        lambda: f"{stale_dir};{native_binary.parent}",
+    )
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    message = cli_main._remove_windows_stale_tensor_grep_python_launchers(
+        "0.33.0",
+        native_binary,
+    )
+
+    assert message is not None
+    assert "Removed stale tensor-grep Python package launchers" in message
+    assert not stale_tg.exists()
+    assert [str(stale_python), "-m", "pip", "show", "-f", "tensor-grep"] in calls
+    assert [str(stale_python), "-m", "pip", "uninstall", "-y", "tensor-grep"] in calls
+
+
 def test_upgrade_removes_broken_tensor_grep_python_scripts_launcher_by_package_owner(
     monkeypatch,
     tmp_path,
@@ -7835,6 +7903,46 @@ def test_managed_frontdoor_refresh_runs_stale_python_launcher_cleanup(
 
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(sys, "executable", str(python_executable))
+    monkeypatch.setattr(cli_main, "_native_tg_version", lambda path: "tg 0.33.0")
+    monkeypatch.setattr(cli_main, "_ensure_windows_managed_native_first_on_path", lambda path: None)
+    monkeypatch.setattr(cli_main, "_windows_stale_tensor_grep_com_bridges", lambda *_args: [])
+    monkeypatch.setattr(cli_main, "_refresh_windows_tensor_grep_com_bridges", lambda *_args: [])
+
+    def _fake_cleanup(expected_version, native_path):
+        cleanup_calls.append((expected_version, native_path))
+        return "Removed stale tensor-grep Python package launchers from PATH:\n- stale"
+
+    monkeypatch.setattr(
+        cli_main,
+        "_remove_windows_stale_tensor_grep_python_launchers",
+        _fake_cleanup,
+    )
+
+    message = cli_main._refresh_managed_native_frontdoor("0.33.0")
+
+    assert cleanup_calls == [("0.33.0", native_binary)]
+    assert message is not None
+    assert "Removed stale tensor-grep Python package launchers" in message
+
+
+def test_managed_frontdoor_refresh_uses_default_install_when_upgrade_runs_from_external_python(
+    monkeypatch,
+    tmp_path,
+):
+    install_dir = tmp_path / ".tensor-grep"
+    external_python = tmp_path / "Python314" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    external_python.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    external_python.write_text("", encoding="utf-8")
+    native_binary.write_text("managed native", encoding="utf-8")
+    cleanup_calls: list[tuple[str, Path]] = []
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "executable", str(external_python))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_SIDECAR_PYTHON", raising=False)
     monkeypatch.setattr(cli_main, "_native_tg_version", lambda path: "tg 0.33.0")
     monkeypatch.setattr(cli_main, "_ensure_windows_managed_native_first_on_path", lambda path: None)
     monkeypatch.setattr(cli_main, "_windows_stale_tensor_grep_com_bridges", lambda *_args: [])
@@ -8619,7 +8727,10 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
     assert result.exit_code == 0
     assert popen_calls
     helper_code = popen_calls[0][2]
-    assert "refresh native front door and stale PATH tensor-grep front-door copies" in helper_code
+    compile(helper_code, "<scheduled-upgrade-helper>", "exec")
+    assert "refresh native front door, stale PATH copies, and stale Python launchers" in helper_code
+    assert '"show",' in helper_code
+    assert "Removed stale tensor-grep Python package launchers from PATH" in helper_code
     assert popen_calls[0][7] == str(native_binary)
     helper_assets = json.loads(popen_calls[0][8])
     assert helper_assets == [
