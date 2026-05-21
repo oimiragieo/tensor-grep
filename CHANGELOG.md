@@ -1,11 +1,15 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.12.45 (2026-05-21)
 
 ### Bug Fixes
 
-- Guard unbounded searches against multi-project workspace roots before broad walks; scope to one project, add `--glob`, `--type`, or `--max-depth`, or opt in with `--allow-broad-generated-scan`.
+- Guard broad workspace root searches
+  ([`e15e99d`](https://github.com/oimiragieo/tensor-grep/commit/e15e99de5b235b9c7559ce4a854220cc8ea71cab))
+
+Refuse unbounded multi-project workspace-root searches unless callers scope the path, add a search
+  bound, or explicitly opt in. Updates help, README, changelog, and contract docs.
 
 
 ## v1.12.44 (2026-05-21)
