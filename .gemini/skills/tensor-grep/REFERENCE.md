@@ -4,6 +4,9 @@
 
 ```powershell
 tg --version
+tg "PATTERN" REPO_PATH
+tg -t js "PATTERN" REPO_PATH
+tg --count-matches "PATTERN" REPO_PATH
 tg search --format rg "PATTERN" REPO_PATH
 tg agent REPO_PATH --query "change behavior" --json
 tg edit-plan REPO_PATH --query "change behavior" --json

@@ -629,6 +629,8 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "  -u, --unrestricted",
                     "      --sort <SORTBY>",
                     "      --format <FORMAT>",
+                    "  -t, --type <TYPE>",
+                    "      --count-matches",
                     "  -n, --line-number",
                     "  -F, --fixed-strings",
                 ]),
@@ -790,6 +792,8 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "  -u, --unrestricted",
                     "      --sort <SORTBY>",
                     "      --format <FORMAT>",
+                    "  -t, --type <TYPE>",
+                    "      --count-matches",
                     "  -n, --line-number",
                     "  -F, --fixed-strings",
                 ]),
@@ -815,6 +819,8 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     assert any(" --no-auto-hybrid-regex " in command for command in flattened)
     assert any("search --no-hidden" in command for command in flattened)
     assert any(command.startswith("tg --sort path") for command in flattened)
+    assert any(command.startswith("tg -t rust") for command in flattened)
+    assert any(command.startswith("tg --count-matches") for command in flattened)
 
 
 def test_agent_readiness_public_search_flag_sweep_rejects_missing_help_advertisement(

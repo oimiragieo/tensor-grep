@@ -240,6 +240,11 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
             "root-option-first-sort",
             ["tg", "--sort", "path", "-n", "-F", "ERROR", str(probe_dir)],
         ),
+        ("root-option-first-type", ["tg", "-t", "rust", "fn", str(probe_dir)]),
+        (
+            "root-option-first-count-matches",
+            ["tg", "--count-matches", "ERROR", str(log_file)],
+        ),
     ]
 
 

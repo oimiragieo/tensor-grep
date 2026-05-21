@@ -161,7 +161,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `classify` is local by default; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into CyBERT/Triton.
 
 **Notes**
-- Bare patterns are treated as `tg search`.
+- Bare patterns and option-first common search flags are treated as `tg search`, including `tg -t js PATTERN PATH` and `tg --count-matches PATTERN PATH`.
 - Use `tg search --help` for the current validated rg-compatible flag subset.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
