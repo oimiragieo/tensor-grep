@@ -1,14 +1,12 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.12.49 (2026-05-21)
 
 ### Bug Fixes
 
-- Bound cached-session edit-plan graph, test, and blast-radius work so large session maps do not
-  turn the warm path into a broad repo scan.
-- Keep the session daemon's fast connect probe but allow longer edit-plan responses, fixing
-  daemon-routed session requests that failed quickly with `timed out`.
+- Bound session warm edit-plan work
+  ([`0e3d666`](https://github.com/oimiragieo/tensor-grep/commit/0e3d6661e5ca2a6c781baa12d712274e2c02b3a6))
 
 
 ## v1.12.48 (2026-05-21)
