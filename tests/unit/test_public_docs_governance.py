@@ -59,6 +59,7 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "--apply" in readme
     assert "atomic temp-file rename contract" in readme
     assert "multi-project workspace roots" in readme
+    assert "broad generated-root scan" in readme
     assert "PowerShell double quotes expand `$NAME`" in readme
     assert "cmd.exe metacharacters" in readme
 
@@ -596,6 +597,23 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "agent-capsule-hardcases" in skill
     assert "validation_alignment" in skill
     assert "$file" in skill
+
+
+def test_tensor_grep_skill_should_match_current_public_cli_syntax() -> None:
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+
+    assert "PR #181 `524f6d4 fix: expose windows shell escaping diagnostics`" in skill
+    assert "Release commit: `6fb1c0d chore(release): v1.12.46 [skip ci]`" in skill
+    assert "Main CI run `26213038896` passed" in skill
+    assert "CodeQL run `26213037961` passed" in skill
+    assert "shell_escaping_guidance" in skill
+    assert "use single quotes or escape `$`" in skill
+    assert "tg checkpoint create [PATH]" in skill
+    assert "tg checkpoint undo <checkpoint_id> [PATH]" in skill
+    assert "tg checkpoint create [checkpoint_name]" not in skill
+    assert "dramatically speed" not in skill
+    assert "ensure zero data loss" not in skill
+    assert "Provider availability is not navigation proof" in skill
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

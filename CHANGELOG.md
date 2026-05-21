@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Restore the README `broad generated-root scan` wording required by dogfood docs-claim checks.
+
+
 ## v1.12.46 (2026-05-21)
 
 ### Bug Fixes

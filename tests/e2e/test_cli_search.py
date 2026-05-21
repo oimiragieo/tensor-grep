@@ -7,6 +7,8 @@ import pytest
 
 pytestmark = pytest.mark.acceptance
 
+CLI_SUBPROCESS_TIMEOUT_SECONDS = 20 if os.name == "nt" else 5
+
 
 class TestCLISearch:
     def _write_fake_rg_json_binary(self, tmp_path):
@@ -76,7 +78,7 @@ class TestCLISearch:
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=CLI_SUBPROCESS_TIMEOUT_SECONDS,
         )
 
         assert result.returncode == 0
@@ -104,7 +106,7 @@ class TestCLISearch:
             capture_output=True,
             text=True,
             env=env,
-            timeout=5,
+            timeout=CLI_SUBPROCESS_TIMEOUT_SECONDS,
         )
 
         assert result.returncode == 0

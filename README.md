@@ -464,7 +464,7 @@ tg dogfood --output artifacts/dogfood_readiness.json
 
 This checks the current `v1.12.46` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
-It also covers the broad generated/workspace-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories, and unbounded searches against a parent containing multiple child project roots, must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
+It also covers the broad generated-root scan and workspace-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories, and unbounded searches against a parent containing multiple child project roots, must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
 ## Bounded Heavy-Root AI Handoff
 
