@@ -480,6 +480,24 @@ def _managed_native_frontdoor_path_from_env() -> Path | None:
     return native_path
 
 
+def _managed_native_frontdoor_path() -> Path | None:
+    native_path = _managed_native_frontdoor_path_from_env()
+    if native_path is not None:
+        return native_path
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        if not Path(sys.executable).expanduser().is_absolute():
+            return None
+    except RuntimeError:
+        return None
+    managed_bin_dir = _windows_managed_native_bin_dir()
+    if managed_bin_dir is None:
+        return None
+    native_path = managed_bin_dir / "tg.exe"
+    return native_path if native_path.is_file() else None
+
+
 def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
     import urllib.request
 
@@ -773,7 +791,8 @@ def _windows_tensor_grep_python_launcher_scan(
                 continue
 
             version = candidate.get("version")
-            if _native_tg_version_matches(expected_version, version):
+            shadows_managed_native = not native_seen
+            if _native_tg_version_matches(expected_version, version) and not shadows_managed_native:
                 continue
 
             if not _doctor_tg_version_looks_like_tensor_grep(version):
@@ -1385,7 +1404,7 @@ def _schedule_windows_native_frontdoor_refresh(
 
 
 def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
-    native_path = _managed_native_frontdoor_path_from_env()
+    native_path = _managed_native_frontdoor_path()
     if native_path is None:
         return None
 
@@ -8065,8 +8084,155 @@ def upgrade() -> None:
             def _version_matches(version_text: str) -> bool:
                 return bool(expected_version and expected_version in version_text)
 
+            def _same_path(left: Path, right: Path) -> bool:
+                try:
+                    return left.resolve() == right.resolve()
+                except OSError:
+                    return left == right
+
+            def _python_scripts_launcher_python(candidate: Path) -> Path | None:
+                if candidate.name.lower() != "tg.exe":
+                    return None
+                if candidate.parent.name.lower() != "scripts":
+                    return None
+                parts = tuple(part.lower() for part in candidate.parts)
+                if ".tensor-grep" in parts or ".venv" in parts or "venv" in parts:
+                    return None
+                python_executable = candidate.parent.parent / "python.exe"
+                if not python_executable.is_file():
+                    return None
+                return python_executable
+
+            def _package_owns_launcher(
+                python_executable: Path,
+                launcher_path: Path,
+            ) -> str:
+                try:
+                    result = subprocess.run(
+                        [
+                            str(python_executable),
+                            "-m",
+                            "pip",
+                            "show",
+                            "-f",
+                            "tensor-grep",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                except Exception:
+                    return ""
+                if result.returncode != 0:
+                    return ""
+                location: Path | None = None
+                version = ""
+                files_started = False
+                files: list[str] = []
+                for raw_line in result.stdout.splitlines():
+                    line = raw_line.rstrip()
+                    if line.startswith("Location:"):
+                        value = line.split(":", 1)[1].strip()
+                        if value:
+                            location = Path(value)
+                    elif line.startswith("Version:"):
+                        version = line.split(":", 1)[1].strip()
+                    elif line.strip() == "Files:":
+                        files_started = True
+                    elif files_started:
+                        value = line.strip()
+                        if value:
+                            files.append(value)
+                if location is None:
+                    return ""
+                try:
+                    resolved_launcher = launcher_path.resolve()
+                except OSError:
+                    resolved_launcher = launcher_path
+                for relative_file in files:
+                    try:
+                        resolved_file = (location / relative_file).resolve()
+                    except OSError:
+                        resolved_file = location / relative_file
+                    if _same_path(resolved_file, resolved_launcher):
+                        return version or "installed"
+                return ""
+
+            def _cleanup_stale_python_launchers() -> str:
+                if not expected_version or native_path is None:
+                    return ""
+                removed: list[str] = []
+                failed: list[str] = []
+                seen: set[str] = set()
+                native_seen = False
+                for entry in os.environ.get("PATH", "").split(os.pathsep):
+                    if not entry:
+                        continue
+                    candidate = Path(entry.strip('"')) / "tg.exe"
+                    if _same_path(candidate, native_path):
+                        native_seen = True
+                        continue
+                    python_executable = _python_scripts_launcher_python(candidate)
+                    if python_executable is None:
+                        continue
+                    try:
+                        key = str(candidate.resolve()).lower()
+                    except OSError:
+                        key = str(candidate).lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    version = _version(candidate)
+                    if _version_matches(version) and native_seen:
+                        continue
+                    if version and not version.strip().lower().startswith("tensor-grep "):
+                        continue
+                    package_version = _package_owns_launcher(python_executable, candidate)
+                    if not package_version:
+                        continue
+                    reason = version or "tensor-grep package " + package_version
+                    try:
+                        result = subprocess.run(
+                            [
+                                str(python_executable),
+                                "-m",
+                                "pip",
+                                "uninstall",
+                                "-y",
+                                "tensor-grep",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        if result.returncode != 0:
+                            error = (result.stderr or result.stdout or "").strip()
+                            raise RuntimeError(
+                                "pip uninstall tensor-grep failed"
+                                + (": " + error if error else "")
+                            )
+                        candidate.unlink(missing_ok=True)
+                        if candidate.exists():
+                            raise OSError("launcher still exists after cleanup")
+                        removed.append("- " + str(candidate) + " (" + reason + ")")
+                    except Exception as exc:
+                        failed.append("- " + str(candidate) + " (" + reason + "): " + str(exc))
+                sections: list[str] = []
+                if removed:
+                    sections.append(
+                        "Removed stale tensor-grep Python package launchers from PATH:\\n"
+                        + "\\n".join(removed)
+                    )
+                if failed:
+                    sections.append(
+                        "WARNING: stale tensor-grep Python package launchers remain "
+                        "ahead of managed native tg.exe:\\n"
+                        + "\\n".join(failed)
+                    )
+                return "\\n".join(sections)
+
             def _refresh_native_frontdoor_and_bridges() -> str:
-                # refresh native front door and stale PATH tensor-grep front-door copies after locked self-upgrade
+                # refresh native front door, stale PATH copies, and stale Python launchers after locked self-upgrade
                 if not expected_version or native_path is None:
                     return ""
 
@@ -8148,6 +8314,9 @@ def upgrade() -> None:
                         "Refreshed PATH tensor-grep front-door copies:\\n"
                         + "\\n".join(refreshed_bridges)
                     )
+                cleanup_payload = _cleanup_stale_python_launchers()
+                if cleanup_payload:
+                    messages.append(cleanup_payload)
                 return "\\n".join(messages)
 
             ok, method, payload = _run_attempts()
@@ -8290,7 +8459,7 @@ def upgrade() -> None:
                 expected_version = latest_version
             else:
                 package_spec = "tensor-grep"
-            native_path = _managed_native_frontdoor_path_from_env()
+            native_path = _managed_native_frontdoor_path()
             path_order_message = (
                 _ensure_windows_managed_native_first_on_path(native_path)
                 if native_path is not None
