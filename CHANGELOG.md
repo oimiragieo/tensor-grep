@@ -1,14 +1,15 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.12.48 (2026-05-21)
 
 ### Bug Fixes
 
-- Keep cached-session requests on the warm path by using snapshot-file stale checks by default,
-  while retaining added-file discovery for explicit refresh paths.
-- Make `tg session list` and `tg session daemon status` discover nearby session scopes when the
-  current directory has no direct session metadata.
+- Keep session requests on warm path
+  ([`c0c7955`](https://github.com/oimiragieo/tensor-grep/commit/c0c7955c8977f40e56df00b8242cc6aad862f7cd))
+
+Keep cached session edit-plan/context requests on the warm snapshot path by default, preserve
+  explicit refresh stale detection, and make session/daemon status discover nearby scopes.
 
 
 ## v1.12.47 (2026-05-21)
