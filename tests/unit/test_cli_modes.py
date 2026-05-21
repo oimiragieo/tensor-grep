@@ -7463,6 +7463,8 @@ def test_upgrade_removes_stale_tensor_grep_python_scripts_launcher(
     stale_tg.write_text("stale tensor-grep launcher", encoding="utf-8")
     stale_python = stale_dir.parent / "python.exe"
     stale_python.write_text("", encoding="utf-8")
+    package_location = stale_dir.parent / "Lib" / "site-packages"
+    package_launcher = os.path.relpath(stale_tg, package_location)
     foreign_tg = foreign_dir / "tg.exe"
     foreign_tg.write_text("foreign launcher", encoding="utf-8")
     calls: list[list[str]] = []
@@ -7487,9 +7489,9 @@ def test_upgrade_removes_stale_tensor_grep_python_scripts_launcher(
                 stdout=(
                     "Name: tensor-grep\n"
                     "Version: 0.32.0\n"
-                    f"Location: {stale_dir.parent / 'Lib' / 'site-packages'}\n"
+                    f"Location: {package_location}\n"
                     "Files:\n"
-                    "..\\..\\Scripts\\tg.exe\n"
+                    f"{package_launcher}\n"
                 ),
                 stderr="",
             )
@@ -7532,6 +7534,8 @@ def test_upgrade_removes_broken_tensor_grep_python_scripts_launcher_by_package_o
     stale_tg.write_text("broken tensor-grep launcher", encoding="utf-8")
     stale_python = stale_dir.parent / "python.exe"
     stale_python.write_text("", encoding="utf-8")
+    package_location = stale_dir.parent / "Lib" / "site-packages"
+    package_launcher = os.path.relpath(stale_tg, package_location)
     calls: list[list[str]] = []
 
     def _fake_candidate_version(path):
@@ -7552,9 +7556,9 @@ def test_upgrade_removes_broken_tensor_grep_python_scripts_launcher_by_package_o
                 stdout=(
                     "Name: tensor-grep\n"
                     "Version: 0.32.0\n"
-                    f"Location: {stale_dir.parent / 'Lib' / 'site-packages'}\n"
+                    f"Location: {package_location}\n"
                     "Files:\n"
-                    "..\\..\\Scripts\\tg.exe\n"
+                    f"{package_launcher}\n"
                 ),
                 stderr="",
             )
@@ -7593,6 +7597,8 @@ def test_upgrade_detects_owned_python_scripts_launcher_without_python_named_root
     stale_tg.write_text("stale tensor-grep launcher", encoding="utf-8")
     stale_python = stale_dir.parent / "python.exe"
     stale_python.write_text("", encoding="utf-8")
+    package_location = stale_dir.parent / "Lib" / "site-packages"
+    package_launcher = os.path.relpath(stale_tg, package_location)
 
     def _fake_candidate_version(path):
         candidate = Path(path)
@@ -7611,9 +7617,9 @@ def test_upgrade_detects_owned_python_scripts_launcher_without_python_named_root
                 stdout=(
                     "Name: tensor-grep\n"
                     "Version: 0.32.0\n"
-                    f"Location: {stale_dir.parent / 'Lib' / 'site-packages'}\n"
+                    f"Location: {package_location}\n"
                     "Files:\n"
-                    "..\\..\\Scripts\\tg.exe\n"
+                    f"{package_launcher}\n"
                 ),
                 stderr="",
             )
@@ -7650,6 +7656,8 @@ def test_upgrade_does_not_unlink_owned_python_launcher_when_uninstall_fails(
     stale_tg.write_text("stale tensor-grep launcher", encoding="utf-8")
     stale_python = stale_dir.parent / "python.exe"
     stale_python.write_text("", encoding="utf-8")
+    package_location = stale_dir.parent / "Lib" / "site-packages"
+    package_launcher = os.path.relpath(stale_tg, package_location)
 
     def _fake_candidate_version(path):
         candidate = Path(path)
@@ -7668,9 +7676,9 @@ def test_upgrade_does_not_unlink_owned_python_launcher_when_uninstall_fails(
                 stdout=(
                     "Name: tensor-grep\n"
                     "Version: 0.32.0\n"
-                    f"Location: {stale_dir.parent / 'Lib' / 'site-packages'}\n"
+                    f"Location: {package_location}\n"
                     "Files:\n"
-                    "..\\..\\Scripts\\tg.exe\n"
+                    f"{package_launcher}\n"
                 ),
                 stderr="",
             )
