@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.43 (2026-05-21)
+
+### Bug Fixes
+
+- Harden stale python launcher cleanup
+  ([`b10a6e2`](https://github.com/oimiragieo/tensor-grep/commit/b10a6e275b57bd7aa37e9d622f67bf2014eb9f5a))
+
+
 ## v1.12.42 (2026-05-21)
 
 ### Bug Fixes
