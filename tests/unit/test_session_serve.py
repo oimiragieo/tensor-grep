@@ -1,4 +1,5 @@
 import json
+import socket
 from io import BytesIO, StringIO
 from pathlib import Path
 
@@ -313,3 +314,48 @@ def test_session_daemon_retries_initial_missing_session_payload(
         assert calls["count"] == 2
     finally:
         server.server_close()
+
+
+def test_daemon_request_separates_connect_and_response_timeouts(monkeypatch) -> None:
+    seen_timeouts: list[float | None] = []
+
+    class _Reader:
+        def readline(self) -> str:
+            return '{"ok": true}\n'
+
+    class _Connection:
+        def __enter__(self) -> "_Connection":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def settimeout(self, timeout: float | None) -> None:
+            seen_timeouts.append(timeout)
+
+        def sendall(self, _payload: bytes) -> None:
+            return None
+
+        def makefile(self, *_args: object, **_kwargs: object) -> _Reader:
+            return _Reader()
+
+    def _fake_create_connection(
+        address: tuple[str, int],
+        timeout: float | None = None,
+    ) -> _Connection:
+        assert address == ("127.0.0.1", 12345)
+        seen_timeouts.append(timeout)
+        return _Connection()
+
+    monkeypatch.setattr(socket, "create_connection", _fake_create_connection)
+
+    response = session_daemon_module._daemon_request(
+        "127.0.0.1",
+        12345,
+        {"command": "edit-plan"},
+    )
+
+    assert response == {"ok": True}
+    assert seen_timeouts[0] == session_daemon_module._DAEMON_CONNECT_TIMEOUT_SECONDS
+    assert seen_timeouts[1] == session_daemon_module._DAEMON_RESPONSE_TIMEOUT_SECONDS
+    assert seen_timeouts[1] > seen_timeouts[0]

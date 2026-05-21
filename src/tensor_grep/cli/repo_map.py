@@ -111,6 +111,9 @@ _VALIDATION_RUNNER_SCAN_LIMIT = 512
 _SOURCE_FALLBACK_SCAN_LIMIT = 8
 _DIRECT_VALIDATION_SYMBOL_SCAN_LIMIT = 64
 _DIRECT_VALIDATION_TEST_SCAN_LIMIT = 256
+_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64
+_EDIT_PLAN_BLAST_RADIUS_FILE_MULTIPLIER = 4
+_FRAMEWORK_TEST_PATTERN_SMALL_TEST_LIMIT = 128
 _SYMBOL_LITERAL_SEED_SCAN_LIMIT = 4096
 _SYMBOL_LITERAL_SEED_MAX_FILES = 16
 _SYMBOL_LITERAL_SEED_MAX_BYTES = 2_000_000
@@ -4625,6 +4628,20 @@ def _module_aliases_for_path(path: str) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
+def _import_alias_candidates(import_name: str) -> set[str]:
+    lowered = import_name.lower().strip()
+    if not lowered:
+        return set()
+    normalized = re.sub(r"[^a-z0-9_]+", ".", lowered).strip(".")
+    parts = [part for part in normalized.split(".") if part]
+    candidates = {lowered, normalized}
+    candidates.update(parts)
+    for start in range(len(parts)):
+        for end in range(start + 2, len(parts) + 1):
+            candidates.add(".".join(parts[start:end]))
+    return {candidate for candidate in candidates if candidate}
+
+
 def _import_graph_bonus(
     file_path: str,
     dependency_aliases: dict[str, set[str]],
@@ -4679,15 +4696,17 @@ def _reverse_importers(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, set[str]]:
     with _profiling_phase(_profiling_collector, "graph_construction"):
-        aliases_by_file = {current: _module_aliases_for_path(current) for current in all_files}
+        alias_to_files: dict[str, set[str]] = {}
+        for current in all_files:
+            for alias in _module_aliases_for_path(current):
+                alias_to_files.setdefault(alias, set()).add(current)
         reverse: dict[str, set[str]] = {current: set() for current in all_files}
         for importer in all_files:
             for import_name in imports_by_file.get(importer, []):
-                lowered = import_name.lower()
-                for current, aliases in aliases_by_file.items():
-                    if current == importer:
-                        continue
-                    if any(alias and alias in lowered for alias in aliases):
+                for alias in _import_alias_candidates(import_name):
+                    for current in alias_to_files.get(alias, set()):
+                        if current == importer:
+                            continue
                         reverse[current].add(importer)
         return reverse
 
@@ -4705,7 +4724,16 @@ def _personalized_reverse_import_pagerank(
         if not seed_files:
             return {}
 
-        unique_seeds = [current for current in seed_files if current in set(all_files)]
+        all_file_set = set(all_files)
+        seen_seeds: set[str] = set()
+        unique_seeds: list[str] = []
+        for current in seed_files:
+            if current not in all_file_set or current in seen_seeds:
+                continue
+            seen_seeds.add(current)
+            unique_seeds.append(current)
+            if len(unique_seeds) >= _GRAPH_PAGERANK_SEED_FILE_LIMIT:
+                break
         if not unique_seeds:
             return {}
 
@@ -4806,6 +4834,7 @@ def _context_tests(
     raw_query: str | None = None,
 ) -> list[dict[str, Any]]:
     related: list[dict[str, Any]] = []
+    allow_unrelated_framework_scan = len(tests) <= _FRAMEWORK_TEST_PATTERN_SMALL_TEST_LIMIT
     source_stems = {Path(current).stem.lower() for current in source_files}
     source_tokens = _source_tokens(source_files)
     for current in tests:
@@ -4821,10 +4850,6 @@ def _context_tests(
         score += import_bonus
         if import_bonus > 0:
             reasons.append("test-graph")
-        framework_bonus = _framework_test_pattern_bonus(current, terms, raw_query=raw_query)
-        score += framework_bonus
-        if framework_bonus > 0:
-            reasons.append("framework-pattern")
         graph_score = _test_graph_score(
             current,
             source_files,
@@ -4832,6 +4857,14 @@ def _context_tests(
             graph_scores,
             file_scores,
         )
+        framework_bonus = (
+            _framework_test_pattern_bonus(current, terms, raw_query=raw_query)
+            if score > 0 or graph_score > 0.0 or allow_unrelated_framework_scan
+            else 0
+        )
+        score += framework_bonus
+        if framework_bonus > 0:
+            reasons.append("framework-pattern")
         if graph_score > 0.0:
             reasons.append("graph-centrality")
             score += max(1, round(graph_score * 10))
@@ -4869,6 +4902,7 @@ def _build_context_pack_from_map(
     payload: dict[str, Any],
     query: str,
     *,
+    _test_source_limit: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "context_scoring"):
@@ -5094,8 +5128,13 @@ def _build_context_pack_from_map(
                 current = str(entry["file"])
                 if current not in ranked_files:
                     ranked_files.append(current)
+        test_source_files = (
+            ranked_files[: max(1, _test_source_limit)]
+            if _test_source_limit is not None
+            else ranked_files
+        )
         test_matches = _context_tests(
-            ranked_files,
+            test_source_files,
             payload["tests"],
             terms,
             imports_by_file,
@@ -8110,6 +8149,80 @@ def _should_build_edit_plan_blast_radius(
     return symbol_score >= 8 and bool(reasons & {"definition", "source", "import"})
 
 
+def _scoped_repo_map_for_edit_plan_blast_radius(
+    repo_map: dict[str, Any],
+    payload: dict[str, Any],
+    symbol: str,
+    *,
+    max_files: int,
+) -> dict[str, Any]:
+    limit = max(1, int(max_files)) * _EDIT_PLAN_BLAST_RADIUS_FILE_MULTIPLIER
+    all_files = [str(current) for current in repo_map.get("files", [])]
+    all_file_set = set(all_files)
+    selected_files: list[str] = []
+    selected_file_set: set[str] = set()
+
+    def _add_file(path_value: object) -> None:
+        if len(selected_files) >= limit:
+            return
+        path = str(path_value or "")
+        if not path or path in selected_file_set or path not in all_file_set:
+            return
+        selected_files.append(path)
+        selected_file_set.add(path)
+
+    for current in repo_map.get("symbols", []):
+        if not isinstance(current, dict) or str(current.get("name", "")) != symbol:
+            continue
+        _add_file(current.get("file"))
+    for current in payload.get("files", []):
+        _add_file(current)
+    for current in payload.get("tests", []):
+        _add_file(current)
+
+    if len(selected_files) < limit:
+        definition_aliases: set[str] = set()
+        for current in selected_files:
+            definition_aliases.update(_module_aliases_for_path(current))
+        for entry in repo_map.get("imports", []):
+            if not isinstance(entry, dict):
+                continue
+            importer = str(entry.get("file", "") or "")
+            if importer in selected_file_set:
+                continue
+            imported_aliases: set[str] = set()
+            for import_name in entry.get("imports", []):
+                imported_aliases.update(_import_alias_candidates(str(import_name)))
+            if definition_aliases & imported_aliases:
+                _add_file(importer)
+            if len(selected_files) >= limit:
+                break
+
+    selected_file_set = set(selected_files)
+    scoped = dict(repo_map)
+    scoped["files"] = selected_files
+    scoped["symbols"] = [
+        dict(current)
+        for current in repo_map.get("symbols", [])
+        if isinstance(current, dict) and str(current.get("file", "")) in selected_file_set
+    ]
+    scoped["imports"] = [
+        dict(current)
+        for current in repo_map.get("imports", [])
+        if isinstance(current, dict) and str(current.get("file", "")) in selected_file_set
+    ]
+    scoped["tests"] = [
+        str(current) for current in repo_map.get("tests", []) if str(current) in selected_file_set
+    ]
+    scoped["edit_plan_blast_radius_scope"] = {
+        "max_files": limit,
+        "source": "selected-context",
+        "original_file_count": len(all_files),
+        "scoped_file_count": len(selected_files),
+    }
+    return scoped
+
+
 def _rollback_risk_from_blast_radius(
     *,
     dependent_matches: list[dict[str, Any]],
@@ -8250,11 +8363,20 @@ def _build_edit_plan_seed(
     ):
         edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
         if edit_symbol_name:
-            radius_payload = build_symbol_blast_radius_from_map(
+            radius_repo_map = _scoped_repo_map_for_edit_plan_blast_radius(
                 repo_map,
+                payload,
+                edit_symbol_name,
+                max_files=max_files,
+            )
+            radius_payload = build_symbol_blast_radius_from_map(
+                radius_repo_map,
                 edit_symbol_name,
                 max_depth=max_depth,
             )
+            scope = radius_repo_map.get("edit_plan_blast_radius_scope")
+            if isinstance(scope, dict):
+                radius_payload["edit_plan_blast_radius_scope"] = dict(scope)
     if edit_anchor_symbol is not None and radius_payload is not None:
         dependent_matches = _ordered_dependent_file_matches(
             radius_payload,
@@ -8343,6 +8465,9 @@ def _build_edit_plan_seed(
             [str(current) for current in payload.get("tests", [])],
         ),
         "rollback_risk": rollback_risk,
+        "blast_radius_scope": dict(radius_payload.get("edit_plan_blast_radius_scope", {}))
+        if isinstance(radius_payload, dict)
+        else {},
     }
 
 
@@ -8407,12 +8532,21 @@ def _attach_edit_plan_metadata(
             edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
             if edit_symbol_name:
                 with _profiling_phase(_profiling_collector, "edit_plan_blast_radius"):
-                    resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
+                    radius_repo_map = _scoped_repo_map_for_edit_plan_blast_radius(
                         repo_map,
+                        payload,
+                        edit_symbol_name,
+                        max_files=max_files,
+                    )
+                    resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
+                        radius_repo_map,
                         edit_symbol_name,
                         max_depth=max_depth,
                         _profiling_collector=_profiling_collector,
                     )
+                    scope = radius_repo_map.get("edit_plan_blast_radius_scope")
+                    if isinstance(scope, dict):
+                        resolved_blast_radius_payload["edit_plan_blast_radius_scope"] = dict(scope)
         with _profiling_phase(_profiling_collector, "edit_plan_seed"):
             payload["edit_plan_seed"] = _build_edit_plan_seed(
                 repo_map,
@@ -8652,6 +8786,7 @@ def build_context_edit_plan_from_map(
     payload = build_context_pack_from_map(
         repo_map,
         query,
+        _test_source_limit=max_files,
         _profiling_collector=collector,
     )
     normalized_max_files = max(1, max_files)
@@ -9355,6 +9490,7 @@ def build_context_pack_from_map(
     repo_map: dict[str, Any],
     query: str,
     *,
+    _test_source_limit: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
@@ -9367,6 +9503,7 @@ def build_context_pack_from_map(
     payload = _build_context_pack_from_map(
         payload,
         query,
+        _test_source_limit=_test_source_limit,
         _profiling_collector=_profiling_collector,
     )
     return _attach_profiling(payload, _profiling_collector)

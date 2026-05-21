@@ -761,6 +761,43 @@ def test_session_context_can_use_daemon(tmp_path: Path) -> None:
     session_daemon.stop_session_daemon(str(project))
 
 
+def test_session_edit_plan_can_use_daemon(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "create invoice",
+            "--daemon",
+            "--json",
+        ],
+    )
+
+    try:
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["session_id"] == opened["session_id"]
+        assert payload["routing_reason"] == "session-context-edit-plan"
+        assert payload["files"] == [str(module_path.resolve())]
+        assert payload["serve_cache"]["status"] in {"hit", "miss"}
+    finally:
+        session_daemon.stop_session_daemon(str(project))
+
+
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"

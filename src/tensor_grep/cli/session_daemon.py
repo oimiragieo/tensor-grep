@@ -28,6 +28,7 @@ from tensor_grep.cli.session_store import (
 _DAEMON_METADATA_FILE = "daemon.json"
 _DAEMON_HOST = "127.0.0.1"
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
+_DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 
@@ -85,11 +86,18 @@ def _remove_daemon_metadata(root: Path) -> None:
         pass
 
 
-def _daemon_request(host: str, port: int, request: dict[str, Any]) -> dict[str, Any]:
+def _daemon_request(
+    host: str,
+    port: int,
+    request: dict[str, Any],
+    *,
+    response_timeout: float | None = _DAEMON_RESPONSE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     with socket.create_connection(
         (host, int(port)),
         timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
     ) as conn:
+        conn.settimeout(response_timeout)
         conn.sendall((json.dumps(request) + "\n").encode("utf-8"))
         reader = conn.makefile("r", encoding="utf-8")
         line = reader.readline()
@@ -107,6 +115,7 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
             str(metadata.get("host", _DAEMON_HOST)),
             int(metadata["port"]),
             {"command": "ping"},
+            response_timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
         )
     except Exception:
         return None
