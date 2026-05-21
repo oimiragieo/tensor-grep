@@ -163,6 +163,34 @@ def test_install_ps1_should_uninstall_python_package_that_owns_stale_launcher():
     assert "Attempting to uninstall stale tensor-grep package that owns PATH launcher" in content
     assert "-m pip uninstall -y tensor-grep" in content
     assert "Removed stale tensor-grep Python package from PATH owner" in content
+    assert "$candidateOwnedByPackage" in content
+
+
+def test_install_ps1_should_try_python_package_cleanup_when_version_probe_fails():
+    content = _read_script("scripts/install.ps1")
+
+    assert "$versionProbeFailed = $false" in content
+    assert "$versionProbeFailed = $true" in content
+    assert "if ($versionProbeFailed -or !$candidateVersion)" in content
+    assert "-m pip show -f tensor-grep" in content
+    assert "Remove-StalePythonPackageLauncher `" in content
+    assert "<unreadable --version>" in content
+
+
+def test_install_ps1_should_verify_python_package_ownership_before_removing_readable_launcher():
+    content = _read_script("scripts/install.ps1")
+    stale_path_function = content[content.index("function Remove-StalePathLauncher") :]
+    cleanup_call = (
+        "if (Remove-StalePythonPackageLauncher `\n"
+        "                    -candidatePath $candidatePath `\n"
+        "                    -candidateVersion $candidateVersion)"
+    )
+
+    assert cleanup_call in stale_path_function
+    assert stale_path_function.index(cleanup_call) < stale_path_function.index(
+        "Remove-Item -LiteralPath $candidatePath -Force -ErrorAction Stop"
+    )
+    assert "package ownership could not be verified" in stale_path_function
 
 
 def test_install_ps1_should_skip_inaccessible_path_entries_when_scanning_launchers():

@@ -158,11 +158,43 @@ function Remove-StalePythonPackageLauncher {
         if (!(Test-Path -LiteralPath $pythonExe -ErrorAction Stop)) {
             return $false
         }
-        $packageInfo = & $pythonExe -m pip show tensor-grep 2>$null
+        $packageInfo = & $pythonExe -m pip show -f tensor-grep 2>$null
     } catch {
         return $false
     }
     if (!$packageInfo) {
+        return $false
+    }
+    $packageLocation = $null
+    $candidateOwnedByPackage = $false
+    try {
+        $resolvedCandidate = (Resolve-Path -LiteralPath $candidatePath -ErrorAction Stop).Path
+    } catch {
+        return $false
+    }
+    foreach ($packageLine in $packageInfo) {
+        if ($packageLine -match '^Location:\s*(.+)$') {
+            $packageLocation = $Matches[1].Trim()
+            continue
+        }
+        if (!$packageLocation) {
+            continue
+        }
+        $packageFile = $packageLine.Trim()
+        if (!$packageFile -or $packageFile -eq "Files:") {
+            continue
+        }
+        try {
+            $resolvedPackageFile = (Resolve-Path -LiteralPath (Join-Path $packageLocation $packageFile) -ErrorAction Stop).Path
+        } catch {
+            continue
+        }
+        if ($resolvedPackageFile.ToLowerInvariant() -eq $resolvedCandidate.ToLowerInvariant()) {
+            $candidateOwnedByPackage = $true
+            break
+        }
+    }
+    if (!$candidateOwnedByPackage) {
         return $false
     }
 
@@ -245,12 +277,36 @@ function Remove-StalePathLauncher {
                 continue
             }
             $candidateVersion = ""
+            $versionProbeFailed = $false
             try {
                 $candidateVersion = (& $candidatePath --version 2>$null | Select-Object -First 1)
             } catch {
+                $versionProbeFailed = $true
+            }
+            if ($versionProbeFailed -or !$candidateVersion) {
+                if (Remove-StalePythonPackageLauncher `
+                        -candidatePath $candidatePath `
+                        -candidateVersion "<unreadable --version>") {
+                    continue
+                }
                 continue
             }
             if (!(Test-TensorGrepLauncher -CandidatePath $candidatePath -VersionLine $candidateVersion)) {
+                continue
+            }
+            if (Remove-StalePythonPackageLauncher `
+                    -candidatePath $candidatePath `
+                    -candidateVersion $candidateVersion) {
+                continue
+            }
+            $candidateDir = Split-Path -Parent $candidatePath
+            if ((Split-Path -Leaf $candidateDir) -eq "Scripts") {
+                Write-Warning (
+                    "WARNING: tensor-grep-looking Python Scripts tg launcher remains ahead of " +
+                    "managed shim because package ownership could not be verified: " +
+                    "$candidatePath ($candidateVersion). Remove it or move the managed shim " +
+                    "directories earlier in Machine PATH."
+                )
                 continue
             }
             try {
