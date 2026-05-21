@@ -58,6 +58,7 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "tg run --rewrite" in readme
     assert "--apply" in readme
     assert "atomic temp-file rename contract" in readme
+    assert "multi-project workspace roots" in readme
 
 
 def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
@@ -66,6 +67,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "Direct `.cmd` invocation from PowerShell" in contracts
     assert "--allow-broad-generated-scan" in contracts
     assert "broad generated-root scan" in contracts
+    assert "multi-project workspace root" in contracts
     assert "semantic result parity" in contracts
     assert "validated compatibility set" in contracts
     assert "`--sort path`" in contracts
@@ -217,6 +219,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "no runner evidence exists" in handoff
     assert "agent-readiness dogfood gate" in handoff
     assert "--allow-broad-generated-scan" in handoff
+    assert "multi-project workspace root" in handoff
     assert "--pcre2 --sort path" in handoff
     assert "multiline searches forward" in handoff
     assert "Exact symbol context queries" in handoff

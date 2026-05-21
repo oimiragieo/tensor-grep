@@ -70,6 +70,19 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "target",
     "venv",
 }
+_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
+_BROAD_WORKSPACE_PROJECT_MARKERS = {
+    ".git",
+    "Cargo.toml",
+    "build.gradle",
+    "composer.json",
+    "deno.json",
+    "go.mod",
+    "package.json",
+    "pom.xml",
+    "pyproject.toml",
+    "settings.gradle",
+}
 _GUARDED_BROAD_ROOT_RG_GLOBS = (
     "!context/**",
     "!**/context/**",
@@ -141,7 +154,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
 - The search surface is a validated common rg-compatible subset, not a full ripgrep replacement.
 - Use `--format rg --json` for ripgrep JSON Lines events; plain `--json` is tensor-grep aggregate JSON.
-- Broad generated-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
+- Broad generated-root and multi-project workspace-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
 - `--smart-case`, `--hidden`, `--max-depth`, and `--text` are honored by structured CPU and sidecar search; native GPU falls back when a requested switch changes semantics it cannot safely execute yet.
 - `--gpu-device-ids` pins selected GPUs for explicit search, benchmark, and agent evidence probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
 - `classify` is local by default; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into CyBERT/Triton.
@@ -2867,6 +2880,51 @@ def _has_generated_scan_bound(config: "SearchConfig") -> bool:
     )
 
 
+def _path_has_project_marker(path: Path) -> bool:
+    for marker in _BROAD_WORKSPACE_PROJECT_MARKERS:
+        try:
+            if (path / marker).exists():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _workspace_project_child_names(paths: list[str]) -> list[str]:
+    found: set[str] = set()
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir() or _path_has_project_marker(path):
+                continue
+            child_project_names: list[str] = []
+            for child in path.iterdir():
+                try:
+                    if child.is_dir() and _path_has_project_marker(child):
+                        child_project_names.append(child.name)
+                except OSError:
+                    continue
+            if len(child_project_names) >= _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD:
+                found.update(child_project_names)
+        except OSError:
+            continue
+    return sorted(found, key=lambda item: item.lower())
+
+
+def _should_refuse_unbounded_workspace_root_scan(
+    paths: list[str],
+    config: "SearchConfig",
+    *,
+    allow_broad_generated_scan: bool,
+) -> tuple[bool, list[str]]:
+    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+        return False, []
+    project_dirs = _workspace_project_child_names(paths)
+    return bool(project_dirs), project_dirs
+
+
 def _should_refuse_unbounded_generated_scan(
     paths: list[str],
     config: "SearchConfig",
@@ -2898,6 +2956,22 @@ def _format_broad_generated_scan_error(generated_dirs: list[str]) -> str:
         "or --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
         "For bounded output:\n"
         "tg search --files <path> --hidden --max-depth <N>\n"
+        "For intentional broad scans:\n"
+        "--allow-broad-generated-scan"
+    )
+
+
+def _format_broad_workspace_scan_error(project_dirs: list[str]) -> str:
+    visible_dirs = ", ".join(project_dirs[:8])
+    if len(project_dirs) > 8:
+        visible_dirs = f"{visible_dirs}, ..."
+    return (
+        "Error: broad workspace-root scan refused: path looks like a multi-project "
+        f"workspace root ({visible_dirs}). Scope the path to one project, add --glob, "
+        "--type, or --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
+        "For bounded output:\n"
+        'tg search <pattern> <workspace> --glob "*.py"\n'
+        "tg search <pattern> <workspace> --max-depth <N>\n"
         "For intentional broad scans:\n"
         "--allow-broad-generated-scan"
     )
@@ -4817,8 +4891,9 @@ def search_command(
         False,
         "--allow-broad-generated-scan",
         help=(
-            "Permit unbounded file-list/search scans through generated, cache, or dependency "
-            "directories. Prefer scoped paths, --glob, --type, or --max-depth for agent runs."
+            "Permit unbounded file-list/search scans through generated, cache, dependency, "
+            "or multi-project workspace roots. Prefer scoped paths, --glob, --type, or "
+            "--max-depth for agent runs."
         ),
     ),
 ) -> None:
@@ -5089,6 +5164,14 @@ def search_command(
     )
     if refuse_generated_scan:
         typer.echo(_format_broad_generated_scan_error(generated_scan_dirs), err=True)
+        raise typer.Exit(2)
+    refuse_workspace_scan, workspace_project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        paths_to_search,
+        config,
+        allow_broad_generated_scan=allow_broad_generated_scan,
+    )
+    if refuse_workspace_scan:
+        typer.echo(_format_broad_workspace_scan_error(workspace_project_dirs), err=True)
         raise typer.Exit(2)
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
