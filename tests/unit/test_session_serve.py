@@ -191,6 +191,35 @@ def test_session_serve_refresh_updates_in_memory_cache_entry(tmp_path: Path, mon
     assert len(calls) == 2
 
 
+def test_session_serve_refresh_on_stale_detects_added_files(tmp_path: Path) -> None:
+    project = _build_project(tmp_path / "project", "payments", "create_invoice")
+    module_path = project / "src" / "refunds.py"
+    session_id = session_store.open_session(str(project)).session_id
+
+    stdout = StringIO()
+    served = session_store.serve_session_stream(
+        session_id,
+        str(project),
+        refresh_on_stale=True,
+        input_stream=_MutatingRequestStream(
+            [
+                json.dumps({"command": "defs", "symbol": "create_invoice"}) + "\n",
+                json.dumps({"command": "defs", "symbol": "issue_refund"}) + "\n",
+            ],
+            before_line_index=1,
+            mutate=lambda: _write_python_file(
+                module_path,
+                "def issue_refund():\n    return 'issue_refund'\n",
+            ),
+        ),
+        output_stream=stdout,
+    )
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    assert served == 2
+    assert responses[1]["definitions"][0]["name"] == "issue_refund"
+
+
 def test_session_daemon_returns_invalid_request_for_malformed_json(tmp_path: Path) -> None:
     project = _build_project(tmp_path / "project", "payments", "create_invoice")
     server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0))

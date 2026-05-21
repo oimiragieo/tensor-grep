@@ -13,11 +13,15 @@ As of 2026-05-21, the current tagged version is `v1.12.47`, and the latest compl
 
 Current release facts:
 
-- PR #181 `524f6d4 fix: expose windows shell escaping diagnostics` merged and released as `v1.12.46`.
-- Release commit: `6fb1c0d chore(release): v1.12.46 [skip ci]`.
-- Main CI run `26213038896` passed; CodeQL run `26213037961` passed.
+- PR #182 `eea05c6 fix: restore dogfood docs claim wording (#182)` merged and released as `v1.12.47`.
+- Release commit: `9c538ba chore(release): v1.12.47 [skip ci]`.
+- Main CI run `26236451411` passed; CodeQL/push run `26236447550` passed.
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.12.47>.
-- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.46 tg --version` reports `tensor-grep 1.12.46`.
+- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.12.47 tg --version` reports `tensor-grep 1.12.47`.
+
+Recent release history:
+
+- PR #181 `524f6d4 fix: expose windows shell escaping diagnostics` merged and released as `v1.12.46`; release commit `6fb1c0d chore(release): v1.12.46 [skip ci]`; main CI run `26213038896` passed; CodeQL run `26213037961` passed.
 - PR #180 `e15e99d fix: guard broad workspace root searches` merged and released as `v1.12.45`; release commit `a2312c7 chore(release): v1.12.45 [skip ci]`.
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`.
 - Historical v1.12.34 proof retained for docs-governance context: `c0cb613 fix: harden v1.12.33 dogfood contracts`; `e069f67 chore(release): v1.12.34 [skip ci]`; Main CI run `26094452260`; CodeQL proof run `26064676072`; prior CodeQL run `25951813292`.
@@ -102,6 +106,8 @@ Current post-`v1.12.47` dogfood slice ledger:
 
 - PR order: 1; scope: guard broad multi-project workspace-root searches while preserving scoped `tg search --files` workflows; Exa anchors: not applicable beyond existing generated-root guardrail policy; thinktank/planning consensus: local planning review; subagent ownership: not applicable; Gemini review: unavailable; validation: targeted guardrail/docs tests plus local gates; PR CI/main CI: PR #180 passed, squash merge produced `e15e99d`, main CI released `v1.12.45`.
 - PR order: 2; scope: expose Windows shell escaping diagnostics in `tg doctor`, `tg --help`, README, contracts, and this skill so PowerShell `$NAME` expansion and `cmd.exe` metacharacter escaping are visible; Exa anchors: Microsoft PowerShell quoting/parsing docs and Microsoft cmd metacharacter docs; thinktank/planning consensus: not applicable for this narrow UX/docs contract; subagent ownership: not applicable; Gemini review: pass with low-risk notes; validation: targeted CLI/docs tests, ruff, format check, mypy, diff whitespace, PR CI, main CI, CodeQL, GitHub release assets, PyPI, and public `uvx` install proof; PR CI/main CI: PR #181 passed, squash merge produced `524f6d4`, main CI released `v1.12.46`.
+- PR order: 3; scope: restore the README docs-claim wording for `broad generated-root scan`, sync this skill, and add governance coverage so dogfood catches stale wording/proof drift; Exa anchors: not applicable for this narrow docs-governance wording fix; thinktank/planning consensus: not applicable; subagent ownership: not applicable; Gemini review: pass; validation: docs-governance tests, targeted e2e CLI timeout tests, no-shell agent readiness, no-shell `tg dogfood`, PR CI, main CI, CodeQL/push run, GitHub release assets, PyPI, and public `uvx` install proof; PR CI/main CI: PR #182 passed, squash merge produced `eea05c6`, main CI released `v1.12.47`.
+- PR order: 4; scope: keep cached-session requests on the warm path by avoiding full repo added-file scans unless callers explicitly refresh, and make `session list` / `session daemon status` discover nearby scopes; Exa anchors: ripgrep docs confirmed `--count-matches` and `--sort path` behavior for separate CLI parity/perf slices, not this session fix; thinktank/planning consensus: Gemini read-only review agreed stale detection was walking the repo on every cached request and recommended this narrow session slice; subagent ownership: not applicable; Gemini review: PASS; validation: targeted session/docs tests, full pytest, mypy, ruff, format check, diff whitespace, no-shell agent readiness, no-shell `tg dogfood`, and session benchmark artifact passed locally; PR CI/main CI: pending.
 
 Known current weak spots:
 
@@ -117,6 +123,7 @@ Known current weak spots:
 - Validation commands must align with the selected primary target language unless verified cross-language dependency evidence exists. `validation_alignment` reports filtered mismatches; do not silently pair a TypeScript primary target with pytest-only validation or a Python primary target with JS-only validation.
 - Implicit native resolution should ignore stale in-tree standalone binaries. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep searches on the Rust extension or Python path unless `TG_NATIVE_TG_BINARY` explicitly pins a standalone binary.
 - Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are regression-covered rg parity edges.
+- Cached-session requests should stay warm. Normal `tg session ...` reads validate only snapshot files by size/mtime and should not walk the full repo to discover added files; use `tg session refresh ...` or `--refresh-on-stale` when newly added files must enter the session map. `tg session list` and `tg session daemon status` discover nearby session scopes when the current directory has no direct session metadata.
 - Stable managed install scripts and `tg upgrade` must not trust stale package metadata immediately after publish and must not delete a working managed install before the replacement environment and front-door files have installed successfully. PowerShell native installer steps must check `$LASTEXITCODE` before the staged swap. `tg upgrade` must skip yanked PyPI releases, must not report "latest PyPI version" from unchanged local metadata without post-upgrade import/version verification, and must refresh or schedule refresh of the managed native front door when the sidecar package version changes. A PyPI-only publish is not enough when installers point at GitHub assets; release assets must be uploaded and verified first.
 - Public launcher dogfood must exercise at least one sidecar-backed command (`tg doctor --json` or `tg upgrade`) in addition to `tg --version`; a copied `tg.com` bridge can pass version probes while still falling through to the wrong ambient Python for sidecar commands.
 - GPU is not production-ready from device detection alone. Single-pattern public dogfood still loses badly or routes through sidecar; many-pattern CUDA-native wins are workload-specific and must be backed by accepted end-to-end artifacts before claims move into public docs.
@@ -229,7 +236,8 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 For agentic editing loops, `tg` supports structured edit tracking and map caches.
 - **Edit Plan**: `tg edit-plan` constructs a plan of edits across files matching a natural language query, specifying targets and files to touch.
 - **Session Open**: `tg session open [PATH] --json` creates a cached repo-map session for repeated edit loops.
-- **Session Daemon**: `tg session daemon start [PATH] --json` starts or reuses the warm localhost daemon for repeated repo-map and symbol requests.
+- **Session Refresh**: `tg session refresh <session_id> [PATH] --json` refreshes the cached repo map and performs added/removed/modified file discovery.
+- **Session Daemon**: `tg session daemon start [PATH] --json` starts or reuses the warm localhost daemon for repeated repo-map and symbol requests. `tg session list` and `tg session daemon status` discover nearby scopes when the current directory has no direct session metadata.
 
 ### 3. Checkpoints & Rollbacks (Rewind)
 Before initiating a complex code rewrite, agents should create a checkpoint when rollback evidence matters.

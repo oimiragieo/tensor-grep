@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Keep cached-session requests on the warm path by using snapshot-file stale checks by default,
+  while retaining added-file discovery for explicit refresh paths.
+- Make `tg session list` and `tg session daemon status` discover nearby session scopes when the
+  current directory has no direct session metadata.
+
+
 ## v1.12.47 (2026-05-21)
 
 ### Bug Fixes

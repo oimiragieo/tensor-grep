@@ -36,6 +36,31 @@ def _daemon_metadata_path(root: Path) -> Path:
     return _sessions_dir(root) / _DAEMON_METADATA_FILE
 
 
+def _nearby_daemon_roots(path: str = ".") -> list[Path]:
+    root = _resolve_root(Path(path))
+    candidates: list[Path] = [root]
+    candidates.extend(parent for parent in root.parents if parent != root)
+    try:
+        candidates.extend(child for child in root.iterdir() if child.is_dir())
+    except OSError:
+        pass
+
+    seen: set[str] = set()
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = str(resolved).lower() if sys.platform.startswith("win") else str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _daemon_metadata_path(resolved).exists():
+            roots.append(resolved)
+    return roots
+
+
 def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
     metadata_path = _daemon_metadata_path(root)
     if not metadata_path.exists():
@@ -94,9 +119,27 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
     metadata = _read_daemon_metadata(root)
     if metadata is None:
+        for discovered_root in _nearby_daemon_roots(path):
+            if discovered_root == root:
+                continue
+            live = _probe_daemon(discovered_root)
+            if live is None:
+                continue
+            return {
+                "version": _SESSION_VERSION,
+                "root": str(discovered_root),
+                "requested_root": str(root),
+                "discovered": True,
+                "running": True,
+                "host": str(live.get("host", _DAEMON_HOST)),
+                "port": int(live["port"]),
+                "pid": int(live["pid"]),
+                "started_at": str(live["started_at"]),
+            }
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
+            "discovered": False,
             "running": False,
         }
     live = _probe_daemon(root)
@@ -104,12 +147,14 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
+            "discovered": False,
             "running": False,
             "stale_metadata": True,
         }
     return {
         "version": _SESSION_VERSION,
         "root": str(root),
+        "discovered": False,
         "running": True,
         "host": str(live.get("host", _DAEMON_HOST)),
         "port": int(live["port"]),

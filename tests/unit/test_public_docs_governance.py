@@ -602,10 +602,11 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
 def test_tensor_grep_skill_should_match_current_public_cli_syntax() -> None:
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
 
+    assert "PR #182 `eea05c6 fix: restore dogfood docs claim wording (#182)`" in skill
+    assert "Release commit: `9c538ba chore(release): v1.12.47 [skip ci]`" in skill
+    assert "Main CI run `26236451411` passed" in skill
+    assert "CodeQL/push run `26236447550` passed" in skill
     assert "PR #181 `524f6d4 fix: expose windows shell escaping diagnostics`" in skill
-    assert "Release commit: `6fb1c0d chore(release): v1.12.46 [skip ci]`" in skill
-    assert "Main CI run `26213038896` passed" in skill
-    assert "CodeQL run `26213037961` passed" in skill
     assert "shell_escaping_guidance" in skill
     assert "use single quotes or escape `$`" in skill
     assert "tg checkpoint create [PATH]" in skill
@@ -1006,6 +1007,22 @@ def test_agent_docs_should_lock_pr_merge_release_completion_contract() -> None:
         assert "PyPI/public installer availability is verified" in doc
 
 
+def test_skill_current_release_proof_should_match_project_version() -> None:
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    version = CURRENT_RELEASE_TAG.removeprefix("v")
+    current_release_proof = skill.split("Current release facts:", 1)[1].split(
+        "Recent release history:",
+        1,
+    )[0]
+
+    assert f"released as `{CURRENT_RELEASE_TAG}`" in current_release_proof
+    assert f"/releases/tag/{CURRENT_RELEASE_TAG}" in current_release_proof
+    assert f"tensor-grep=={version}" in current_release_proof
+    assert f"reports `tensor-grep {version}`" in current_release_proof
+    assert "v1.12.46" not in current_release_proof
+    assert "tensor-grep==1.12.46" not in current_release_proof
+
+
 def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags() -> None:
     agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
@@ -1015,6 +1032,22 @@ def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags
     for doc in (agents, skill, contracts, handoff):
         assert "Use scoped paths, globs, file types, and `--max-depth` for `tg search`" in doc
         assert "`--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence" in doc
+
+
+def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
+
+    for doc in (readme, skill, contracts):
+        assert "snapshot" in doc
+        assert "size/mtime" in doc
+        assert "`tg session refresh" in doc
+        assert "`--refresh-on-stale`" in doc
+        assert "discover nearby" in doc
+
+    assert "must not walk the full repository" in contracts
+    assert "should not walk the full repo" in skill
 
 
 def test_agent_docs_should_lock_agent_context_and_validation_contracts() -> None:

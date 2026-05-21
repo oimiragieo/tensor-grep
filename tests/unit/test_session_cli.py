@@ -120,6 +120,80 @@ def test_session_edit_plan_and_blast_radius_plan_reuse_cached_repo_map(tmp_path:
     assert "rendered_context" not in radius_payload
 
 
+def test_session_edit_plan_does_not_walk_repo_for_default_stale_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    monkeypatch.setattr(
+        session_store,
+        "_iter_repo_files",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("warm session request should not rescan the repo")
+        ),
+    )
+
+    edit_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "create invoice",
+            "--json",
+        ],
+    )
+
+    assert edit_plan.exit_code == 0, edit_plan.output
+    payload = json.loads(edit_plan.stdout)
+    assert payload["routing_reason"] == "session-context-edit-plan"
+    assert payload["files"] == [str(module_path.resolve())]
+
+
+def test_session_refresh_on_stale_detects_added_files_when_requested(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    added_path = src_dir / "refunds.py"
+    added_path.write_text("def issue_refund():\n    return 2\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "issue refund",
+            "--refresh-on-stale",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert any(symbol["name"] == "issue_refund" for symbol in payload["symbols"])
+
+
 def test_session_list_returns_newest_first(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -134,6 +208,28 @@ def test_session_list_returns_newest_first(tmp_path: Path) -> None:
     payload = json.loads(listing.stdout)
     assert payload["sessions"][0]["session_id"] == second["session_id"]
     assert payload["sessions"][1]["session_id"] == first["session_id"]
+
+
+def test_session_list_discovers_child_scope_from_parent_cwd(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    parent = tmp_path / "workspace"
+    project = parent / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("value = 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    monkeypatch.chdir(parent)
+    listing = runner.invoke(app, ["session", "list", "--json"])
+
+    assert listing.exit_code == 0, listing.output
+    payload = json.loads(listing.stdout)
+    assert payload["discovered"] is True
+    assert payload["sessions"][0]["session_id"] == opened["session_id"]
+    assert payload["sessions"][0]["root"] == str(project.resolve())
 
 
 def test_session_open_generates_unique_ids_within_same_second(tmp_path: Path) -> None:
@@ -604,6 +700,31 @@ def test_session_daemon_lifecycle(tmp_path: Path) -> None:
     stopped_payload = session_daemon.stop_session_daemon(str(project))
     assert stopped_payload["stopped"] is True
     assert stopped_payload["running"] is False
+
+
+def test_session_daemon_status_discovers_child_scope_from_parent_cwd(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    parent = tmp_path / "workspace"
+    project = parent / "project"
+    project.mkdir(parents=True)
+
+    started = session_daemon.start_session_daemon(str(project))
+    try:
+        monkeypatch.chdir(parent)
+        result = CliRunner().invoke(app, ["session", "daemon", "status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["running"] is True
+        assert payload["discovered"] is True
+        assert payload["root"] == str(project.resolve())
+        assert payload["port"] == started["port"]
+    finally:
+        session_daemon.stop_session_daemon(str(project))
 
 
 def test_session_context_can_use_daemon(tmp_path: Path) -> None:

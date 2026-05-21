@@ -182,6 +182,31 @@ def _session_payload_path(root: Path, session_id: str) -> Path:
     return _sessions_dir(root) / f"{session_id}.json"
 
 
+def _nearby_session_roots(path: str = ".") -> list[Path]:
+    root = _resolve_root(Path(path))
+    candidates: list[Path] = [root]
+    candidates.extend(parent for parent in root.parents if parent != root)
+    try:
+        candidates.extend(child for child in root.iterdir() if child.is_dir())
+    except OSError:
+        pass
+
+    seen: set[str] = set()
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = str(resolved).lower() if sys.platform.startswith("win") else str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _index_path(resolved).exists():
+            roots.append(resolved)
+    return roots
+
+
 def _load_index(root: Path) -> list[SessionRecord]:
     index_path = _index_path(root)
     if not index_path.exists():
@@ -233,7 +258,9 @@ def _changeset_message(changeset: dict[str, list[str]]) -> str:
     return f"cached session files changed on disk ({'; '.join(details)})"
 
 
-def _stale_changeset(payload: dict[str, Any]) -> dict[str, list[str]] | None:
+def _stale_changeset(
+    payload: dict[str, Any], *, detect_added_files: bool = True
+) -> dict[str, list[str]] | None:
     snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
     if not snapshot:
         return None
@@ -242,25 +269,27 @@ def _stale_changeset(payload: dict[str, Any]) -> dict[str, list[str]] | None:
     snapshot_by_path = {
         str(Path(str(entry["path"])).expanduser().resolve()): entry for entry in snapshot
     }
-    context_root = root if root.is_dir() else root.parent
-    current_files = [
-        current
-        for current in _iter_repo_files(root)
-        if _is_repo_context_file(current, context_root)
-    ]
-    current_paths = {str(current): current for current in current_files}
 
-    added = sorted(path for path in current_paths if path not in snapshot_by_path)
-    removed = sorted(path for path in snapshot_by_path if path not in current_paths)
+    added: list[str] = []
+    current_paths: dict[str, Path] = {}
+    if detect_added_files:
+        context_root = root if root.is_dir() else root.parent
+        current_files = [
+            current
+            for current in _iter_repo_files(root)
+            if _is_repo_context_file(current, context_root)
+        ]
+        current_paths = {str(current): current for current in current_files}
+        added = sorted(path for path in current_paths if path not in snapshot_by_path)
+
+    removed: list[str] = []
     modified: list[str] = []
-    for current_path, path_obj in current_paths.items():
-        snapshot_entry = snapshot_by_path.get(current_path)
-        if snapshot_entry is None:
-            continue
+    for current_path, snapshot_entry in snapshot_by_path.items():
+        path_obj = current_paths.get(current_path) or Path(current_path)
         try:
             stat = path_obj.stat()
         except OSError:
-            modified.append(current_path)
+            removed.append(current_path)
             continue
         if int(stat.st_size) != int(snapshot_entry["size"]) or int(stat.st_mtime_ns) != int(
             snapshot_entry["mtime_ns"]
@@ -274,8 +303,8 @@ def _stale_changeset(payload: dict[str, Any]) -> dict[str, list[str]] | None:
     }
 
 
-def _ensure_session_not_stale(payload: dict[str, Any]) -> None:
-    changeset = _stale_changeset(payload)
+def _ensure_session_not_stale(payload: dict[str, Any], *, detect_added_files: bool = False) -> None:
+    changeset = _stale_changeset(payload, detect_added_files=detect_added_files)
     if _changeset_has_entries(changeset):
         raise SessionStaleError(_changeset_message(cast(dict[str, list[str]], changeset)))
 
@@ -344,7 +373,7 @@ def refresh_session(
 ) -> SessionRefreshResult:
     root = _resolve_root(Path(path))
     existing = get_session(session_id, path)
-    changeset = _stale_changeset(existing)
+    changeset = _stale_changeset(existing, detect_added_files=True)
     refresh_type = "full"
     if changeset is not None:
         try:
@@ -420,6 +449,25 @@ def list_sessions(path: str = ".") -> list[SessionRecord]:
     return _load_index(root)
 
 
+def list_sessions_with_discovery(path: str = ".") -> tuple[list[SessionRecord], str, bool]:
+    root = _resolve_root(Path(path))
+    direct = _load_index(root)
+    if direct:
+        return direct, str(root), False
+
+    records: list[SessionRecord] = []
+    discovered_roots = [candidate for candidate in _nearby_session_roots(path) if candidate != root]
+    for discovered_root in discovered_roots:
+        records.extend(_load_index(discovered_root))
+
+    records.sort(key=lambda record: record.created_at, reverse=True)
+    return (
+        records,
+        str(discovered_roots[0]) if len(discovered_roots) == 1 else str(root),
+        bool(records),
+    )
+
+
 def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
     session_path = _session_payload_path(root, session_id)
@@ -437,19 +485,19 @@ def _load_session_payload(
 ) -> dict[str, Any]:
     payload = get_session(session_id, path)
     try:
-        _ensure_session_not_stale(payload)
+        _ensure_session_not_stale(payload, detect_added_files=refresh_on_stale)
     except SessionStaleError:
         if not refresh_on_stale:
             raise
         refresh_session(session_id, path, payload_cache=payload_cache)
         payload = get_session(session_id, path)
-        _ensure_session_not_stale(payload)
+        _ensure_session_not_stale(payload, detect_added_files=True)
     return payload
 
 
 def _session_health_payload(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     repo_map = cast(dict[str, Any], payload.get("repo_map") or {})
-    changeset = _stale_changeset(payload) or _empty_changeset()
+    changeset = _stale_changeset(payload, detect_added_files=False) or _empty_changeset()
     stale = _changeset_has_entries(changeset)
     return {
         "version": _SESSION_VERSION,
@@ -629,7 +677,10 @@ def _serve_session_request_from_payload(
         response["session_id"] = session_id
         return response
 
-    _ensure_session_not_stale(payload)
+    _ensure_session_not_stale(
+        payload,
+        detect_added_files=bool(request.get("refresh_on_stale", False)),
+    )
 
     if command == "repo_map":
         response = dict(repo_map)
@@ -825,6 +876,9 @@ def serve_session_stream(
             request_session_id, request_path = _resolve_request_session_target(
                 request, session_id, path
             )
+            if refresh_on_stale and not bool(request.get("refresh_on_stale", False)):
+                request = dict(request)
+                request["refresh_on_stale"] = True
             command = str(request.get("command", "")).strip().lower()
             if command == "stats":
                 response = {
