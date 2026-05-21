@@ -155,6 +155,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - The search surface is a validated common rg-compatible subset, not a full ripgrep replacement.
 - Use `--format rg --json` for ripgrep JSON Lines events; plain `--json` is tensor-grep aggregate JSON.
 - Broad generated-root and multi-project workspace-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
+- On Windows, PowerShell double quotes expand $NAME before `tg` receives literal patterns; use single quotes or escape `$`. In `cmd.exe`, quote or caret-escape metacharacters such as `|` and `&`.
 - `--smart-case`, `--hidden`, `--max-depth`, and `--text` are honored by structured CPU and sidecar search; native GPU falls back when a requested switch changes semantics it cannot safely execute yet.
 - `--gpu-device-ids` pins selected GPUs for explicit search, benchmark, and agent evidence probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
 - `classify` is local by default; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into CyBERT/Triton.
@@ -2205,6 +2206,30 @@ def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
     return status
 
 
+def _doctor_shell_escaping_guidance() -> dict[str, Any]:
+    return {
+        "platform": "windows",
+        "status": "informational",
+        "powershell": {
+            "summary": ("PowerShell double quotes expand $NAME before tensor-grep receives argv."),
+            "recommendation": (
+                "Use single quotes for literal patterns containing $, or escape `$` "
+                "inside double-quoted PowerShell strings."
+            ),
+            "literal_pattern_example": "tg search '$NAME' .",
+        },
+        "cmd": {
+            "summary": "cmd.exe parses metacharacters before tensor-grep receives argv.",
+            "metacharacters": ["|", "&", "<", ">", "^", "(", ")"],
+            "recommendation": (
+                "Quote arguments or caret-escape cmd.exe metacharacters such as ^| and ^&; "
+                "prefer normal PowerShell `tg` or `tg.ps1` over direct `tg.cmd` from PowerShell."
+            ),
+            "literal_pattern_example": 'cmd /c tg search "foo^|bar" .',
+        },
+    }
+
+
 def _build_doctor_payload(
     path: str, config: str | None = None, *, with_lsp: bool
 ) -> dict[str, Any]:
@@ -2412,6 +2437,7 @@ def _build_doctor_payload(
             fresh_kind=fresh_shell_path_tg_first_launcher_kind,
             fresh_path=fresh_shell_path_tg_first_path,
         ),
+        "shell_escaping_guidance": _doctor_shell_escaping_guidance(),
         "gpu": gpu_status,
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
@@ -2511,6 +2537,27 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     ):
         lines.append(
             f"python_subprocess_path_tg_foreign_remediation: {python_subprocess_remediation}"
+        )
+    shell_escaping_guidance = cast(dict[str, Any], payload.get("shell_escaping_guidance", {}))
+    if shell_escaping_guidance:
+        powershell_guidance = cast(
+            dict[str, Any],
+            shell_escaping_guidance.get("powershell", {}),
+        )
+        cmd_guidance = cast(dict[str, Any], shell_escaping_guidance.get("cmd", {}))
+        lines.append("shell_escaping_guidance:")
+        lines.append(
+            "  PowerShell: "
+            f"{powershell_guidance.get('summary')} "
+            f"{powershell_guidance.get('recommendation')} "
+            f"example={powershell_guidance.get('literal_pattern_example')}"
+        )
+        metacharacters = ", ".join(str(item) for item in cmd_guidance.get("metacharacters", []))
+        lines.append(
+            "  cmd.exe metacharacters: "
+            f"{metacharacters}. "
+            f"{cmd_guidance.get('recommendation')} "
+            f"example={cmd_guidance.get('literal_pattern_example')}"
         )
 
     gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
@@ -7933,7 +7980,10 @@ def doctor(
         ),
     ),
 ) -> None:
-    """Print system, GPU, cache, daemon, and provider-proof diagnostics."""
+    """Print system, GPU, cache, daemon, shell-escaping, and provider-proof diagnostics.
+
+    Reports Windows shell guidance for PowerShell literal patterns and cmd.exe metacharacters.
+    """
     payload = _build_doctor_payload(path, config=config, with_lsp=with_lsp)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))

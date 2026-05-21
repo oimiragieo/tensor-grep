@@ -673,7 +673,9 @@ Installer defaults and channels:
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs managed PowerShell, `cmd.exe`, Git Bash, and WSL shims in `~/.local/bin` and `~/bin`, removes stale same-directory `tg.exe`/`tg.bat` launchers that would shadow the shim, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, replaces stale aliases, forces UTF-8 mode, and writes bash shims with LF newlines for WSL.
-- In PowerShell, invoke `tg` or `tg.ps1` for regex metacharacters. Directly invoking `tg.cmd` with an unescaped `|` is still parsed by `cmd.exe` before tensor-grep receives argv.
+- PowerShell double quotes expand `$NAME` before tensor-grep receives literal patterns. Use single quotes for AST metavariables and regexes that contain `$`, or escape `$` as `` `$ `` inside double-quoted PowerShell strings.
+- In PowerShell, invoke `tg` or `tg.ps1` for regex metacharacters. Directly invoking `tg.cmd` with an unescaped `|` is still parsed by `cmd.exe` before tensor-grep receives argv; cmd.exe metacharacters such as `|`, `&`, `<`, `>`, `^`, `(`, and `)` must be quoted or caret-escaped for `cmd.exe`.
+- `tg doctor --json` includes `shell_escaping_guidance` with the same PowerShell and `cmd.exe` argv notes for automation.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell

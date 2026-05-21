@@ -59,6 +59,8 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "--apply" in readme
     assert "atomic temp-file rename contract" in readme
     assert "multi-project workspace roots" in readme
+    assert "PowerShell double quotes expand `$NAME`" in readme
+    assert "cmd.exe metacharacters" in readme
 
 
 def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
@@ -103,6 +105,9 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "fresh_shell_path_tg_first_launcher_kind" in contracts
     assert "python_subprocess_path_tg_first_launcher_kind" in contracts
     assert "path_tg_launcher_warning" in contracts
+    assert "shell_escaping_guidance" in contracts
+    assert "PowerShell `$` expansion" in contracts
+    assert "`cmd.exe` metacharacter escaping" in contracts
     assert "tg_launcher_command_kind" in contracts
     assert "tg_binary_version_status" in contracts
     assert "stale in-tree native tg binary" in contracts

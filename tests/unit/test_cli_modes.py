@@ -68,6 +68,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "gpu_acceleration",
     "sidecar-routed GPU results",
     "multi-project workspace-root scans",
+    "PowerShell double quotes expand $NAME",
 )
 
 
@@ -1003,6 +1004,9 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert "provider availability is not navigation proof" in normalized_help.lower()
     assert "health_status" in normalized_help
     assert "health_check" in normalized_help
+    assert "PowerShell" in normalized_help
+    assert "cmd.exe" in normalized_help
+    assert "literal patterns" in normalized_help
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
@@ -1057,6 +1061,13 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["lsp"]["providers"][0]["health_status"] == "ready"
     assert payload["lsp"]["providers"][0]["health_check"] == "probe"
     assert payload["lsp"]["providers"][0]["lsp_proof"] is True
+    guidance = payload["shell_escaping_guidance"]
+    assert guidance["platform"] == "windows"
+    assert "PowerShell double quotes expand $NAME" in guidance["powershell"]["summary"]
+    assert "single quotes" in guidance["powershell"]["recommendation"]
+    assert guidance["powershell"]["literal_pattern_example"] == "tg search '$NAME' ."
+    assert "|" in guidance["cmd"]["metacharacters"]
+    assert "^" in guidance["cmd"]["recommendation"]
 
 
 def test_doctor_json_includes_gpu_search_runtime_probe(monkeypatch, tmp_path: Path) -> None:
@@ -1753,6 +1764,9 @@ def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_pa
     assert "native_tg_binary: missing" in result.stdout
     assert "session_daemon: stopped" in result.stdout
     assert "lsp_providers: disabled" in result.stdout
+    assert "shell_escaping_guidance:" in result.stdout
+    assert "PowerShell double quotes expand $NAME" in result.stdout
+    assert "cmd.exe metacharacters" in result.stdout
 
 
 def test_doctor_text_reports_lsp_health_and_proof_fields(monkeypatch, tmp_path: Path) -> None:
