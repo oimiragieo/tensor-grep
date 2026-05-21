@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Guard unbounded searches against multi-project workspace roots before broad walks; scope to one project, add `--glob`, `--type`, or `--max-depth`, or opt in with `--allow-broad-generated-scan`.
+
+
 ## v1.12.44 (2026-05-21)
 
 ### Bug Fixes

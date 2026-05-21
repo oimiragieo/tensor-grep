@@ -25,6 +25,7 @@ from tensor_grep.cli.main import (
     _safe_stdout_line,
     _select_ast_backend_for_pattern,
     _should_refuse_unbounded_generated_scan,
+    _should_refuse_unbounded_workspace_root_scan,
     _write_path_list,
     app,
 )
@@ -66,6 +67,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "native GPU falls back",
     "gpu_acceleration",
     "sidecar-routed GPU results",
+    "multi-project workspace-root scans",
 )
 
 
@@ -443,6 +445,31 @@ def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
     assert "--allow-broad-generated-scan" in result.output
 
 
+def test_plain_search_refuses_unbounded_multi_project_workspace_root(tmp_path: Path):
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    for project_name, marker_name in (
+        ("alpha", "pyproject.toml"),
+        ("beta", "package.json"),
+        ("gamma", "Cargo.toml"),
+    ):
+        project = workspace / project_name
+        (project / "src").mkdir(parents=True)
+        (project / marker_name).write_text("", encoding="utf-8")
+        (project / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "needle", str(workspace)])
+
+    assert result.exit_code == 2
+    assert "broad workspace-root scan refused" in result.output
+    assert "alpha" in result.output
+    assert "beta" in result.output
+    assert "gamma" in result.output
+    assert "--glob" in result.output
+    assert "--max-depth" in result.output
+    assert "--allow-broad-generated-scan" in result.output
+
+
 def test_files_mode_refuses_generated_root_before_rg_passthrough(monkeypatch, tmp_path: Path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
@@ -604,6 +631,61 @@ def test_no_ignore_search_treats_cwd_generated_root_as_broad_generated_scan(
 
     assert refused is True
     assert generated_dirs == [".venv"]
+
+
+def test_workspace_root_guard_allows_bounded_workspace_scan(tmp_path: Path):
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    for project_name in ("alpha", "beta", "gamma"):
+        project = workspace / project_name
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(workspace)],
+        SearchConfig(glob=["*.py"]),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+    assert project_dirs == []
+
+
+def test_workspace_root_guard_allows_explicit_workspace_scan(tmp_path: Path):
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    for project_name in ("alpha", "beta", "gamma"):
+        project = workspace / project_name
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(workspace)],
+        SearchConfig(),
+        allow_broad_generated_scan=True,
+    )
+
+    assert refused is False
+    assert project_dirs == []
+
+
+def test_workspace_root_guard_allows_real_repo_root(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text("", encoding="utf-8")
+    for project_name in ("alpha", "beta", "gamma"):
+        project = repo / project_name
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(repo)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+    assert project_dirs == []
 
 
 def test_glob_case_insensitive_matches_case_folded_paths(
@@ -11567,6 +11649,8 @@ def test_search_help_should_render_python_search_help_smoke() -> None:
     help_text = _strip_ansi(result.stdout)
     for snippet in SEARCH_HELP_REQUIRED_SNIPPETS:
         assert snippet in help_text
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[│┌┐└┘─]+", " ", help_text))
+    assert "multi-project workspace roots" in normalized_help
 
 
 def test_worker_help_should_render_dedicated_hidden_command_help() -> None:
