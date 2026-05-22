@@ -49,6 +49,13 @@ def test_dogfood_command_wraps_agent_readiness_report(tmp_path: Path) -> None:
     assert payload["artifact"] == "dogfood_readiness_report"
     assert payload["verdict"]["status"] == "PASS"
     assert payload["world_class_readiness"]["status"] == "not_claimed"
+    assert payload["world_class_readiness"]["raw_cold_search_baseline"] == "rg"
+    assert payload["world_class_readiness"]["raw_cold_search_claim_status"] == "not_claimed"
+    assert payload["world_class_readiness"]["launcher_startup_tax_status"] == "measured_separately"
+    assert payload["world_class_readiness"]["gpu_promotion_ready"] is False
+    assert "NativeGpuBackend" in payload["world_class_readiness"]["gpu_promotion_blockers"]
+    assert "sidecar_used=false" in payload["world_class_readiness"]["gpu_promotion_blockers"]
+    assert "public managed NVIDIA" in payload["world_class_readiness"]["gpu_promotion_blockers"]
     assert "fast release-readiness gate" in payload["world_class_readiness"]["summary"]
     limitation_surfaces = {
         item["surface"] for item in payload["world_class_readiness"]["limitations"]
