@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.56 (2026-05-22)
+
+### Bug Fixes
+
+- Warn on PowerShell shim MCP stdio
+  ([`27c5671`](https://github.com/oimiragieo/tensor-grep/commit/27c56719282da4b1e7e6a78cf9c056848d1dac5e))
+
+Expose a doctor warning when PowerShell shims are likely to break MCP stdio launchers.
+
+
 ## v1.12.55 (2026-05-22)
 
 ### Bug Fixes
