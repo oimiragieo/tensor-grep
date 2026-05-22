@@ -7232,57 +7232,69 @@ def checkpoint_list(
         discover_checkpoint_scopes,
     )
 
+    def _discovered_payloads() -> tuple[list[dict[str, Any]], int]:
+        scope_payloads = [
+            {
+                "root": scope.root,
+                "mode": scope.mode,
+                "checkpoint_count": scope.checkpoint_count,
+                "checkpoints": [record.__dict__ for record in scope.checkpoints],
+            }
+            for scope in discover_checkpoint_scopes(path)
+        ]
+        checkpoint_count = sum(
+            int(cast(int, scope_payload["checkpoint_count"])) for scope_payload in scope_payloads
+        )
+        return scope_payloads, checkpoint_count
+
+    def _emit_discovered(
+        scope_payloads: list[dict[str, Any]], checkpoint_count: int, *, auto_discovered: bool
+    ) -> None:
+        if json_output:
+            payload = {
+                "version": 1,
+                "path": str(Path(path).expanduser().resolve()),
+                "checkpoint_count": checkpoint_count,
+                "discovered_scopes": scope_payloads,
+            }
+            if auto_discovered:
+                payload["auto_discovered"] = True
+            typer.echo(json.dumps(payload, indent=2))
+            return
+
+        if not scope_payloads:
+            typer.echo(f"No checkpoint scopes found under {Path(path).expanduser().resolve()}.")
+            return
+
+        prefix = "Auto-discovered" if auto_discovered else "Discovered"
+        typer.echo(
+            f"{prefix} {checkpoint_count} checkpoint(s) across {len(scope_payloads)} scope(s)."
+        )
+        for scope_payload in scope_payloads:
+            typer.echo(
+                f"Checkpoint root: {scope_payload['root']} "
+                f"({scope_payload['mode']}, count={scope_payload['checkpoint_count']})"
+            )
+            checkpoint_records = cast(list[dict[str, object]], scope_payload["checkpoints"])
+            for record in checkpoint_records:
+                typer.echo(
+                    f"  {record['checkpoint_id']}  {record['mode']}  "
+                    f"{record['created_at']}  files={record['file_count']}"
+                )
+
     try:
         if discover:
-            scope_payloads: list[dict[str, Any]] = [
-                {
-                    "root": scope.root,
-                    "mode": scope.mode,
-                    "checkpoint_count": scope.checkpoint_count,
-                    "checkpoints": [record.__dict__ for record in scope.checkpoints],
-                }
-                for scope in discover_checkpoint_scopes(path)
-            ]
-            checkpoint_count = sum(
-                int(cast(int, scope_payload["checkpoint_count"]))
-                for scope_payload in scope_payloads
-            )
-            if json_output:
-                typer.echo(
-                    json.dumps(
-                        {
-                            "version": 1,
-                            "path": str(Path(path).expanduser().resolve()),
-                            "checkpoint_count": checkpoint_count,
-                            "discovered_scopes": scope_payloads,
-                        },
-                        indent=2,
-                    )
-                )
-                return
-
-            if not scope_payloads:
-                typer.echo(f"No checkpoint scopes found under {Path(path).expanduser().resolve()}.")
-                return
-
-            typer.echo(
-                f"Discovered {checkpoint_count} checkpoint(s) across {len(scope_payloads)} scope(s)."
-            )
-            for scope_payload in scope_payloads:
-                typer.echo(
-                    f"Checkpoint root: {scope_payload['root']} "
-                    f"({scope_payload['mode']}, count={scope_payload['checkpoint_count']})"
-                )
-                checkpoint_records = cast(list[dict[str, object]], scope_payload["checkpoints"])
-                for record in checkpoint_records:
-                    typer.echo(
-                        f"  {record['checkpoint_id']}  {record['mode']}  "
-                        f"{record['created_at']}  files={record['file_count']}"
-                    )
+            scope_payloads, checkpoint_count = _discovered_payloads()
+            _emit_discovered(scope_payloads, checkpoint_count, auto_discovered=False)
             return
 
         scope_result = describe_checkpoint_scope(path)
         records = [record.__dict__ for record in scope_result.checkpoints]
+        if not records:
+            scope_payloads, checkpoint_count = _discovered_payloads()
+            if scope_payloads:
+                _emit_discovered(scope_payloads, checkpoint_count, auto_discovered=True)
+                return
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -7321,15 +7333,36 @@ def checkpoint_list(
 
 @checkpoint_app.command("undo")
 def checkpoint_undo(
-    checkpoint_id: str = typer.Argument(..., help="Checkpoint ID to restore."),
+    checkpoint_id: str | None = typer.Argument(
+        None,
+        help="Checkpoint ID to restore, or omit when using --last.",
+    ),
     path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    last: bool = typer.Option(False, "--last", help="Restore the newest checkpoint in scope."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Restore a checkpoint."""
-    from tensor_grep.cli.checkpoint_store import undo_checkpoint
+    from tensor_grep.cli.checkpoint_store import resolve_latest_checkpoint, undo_checkpoint
 
     try:
-        payload = undo_checkpoint(checkpoint_id, path)
+        if last:
+            if checkpoint_id is not None and path != ".":
+                typer.echo("Use either a checkpoint id or --last, not both.", err=True)
+                raise typer.Exit(1)
+            latest_path = path
+            if checkpoint_id is not None:
+                candidate = Path(checkpoint_id).expanduser()
+                if not candidate.exists() and checkpoint_id.startswith("ckpt-"):
+                    typer.echo("Use either a checkpoint id or --last, not both.", err=True)
+                    raise typer.Exit(1)
+                latest_path = checkpoint_id
+            latest = resolve_latest_checkpoint(latest_path)
+            payload = undo_checkpoint(latest.checkpoint_id, latest.root)
+        else:
+            if checkpoint_id is None:
+                typer.echo("Checkpoint id is required unless --last is provided.", err=True)
+                raise typer.Exit(1)
+            payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
