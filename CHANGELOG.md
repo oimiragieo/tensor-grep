@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.61 (2026-05-22)
+
+### Bug Fixes
+
+- Restore doctor lsp provider json alias
+  ([`7ccb670`](https://github.com/oimiragieo/tensor-grep/commit/7ccb670c99688eb7f145018c5f36f40061e121a6))
+
+
 ## v1.12.60 (2026-05-22)
 
 ### Bug Fixes
