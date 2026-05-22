@@ -108,6 +108,8 @@ def test_stamp_release_assets_syncs_release_doc_current_version_prose(tmp_path):
     (root / "SKILL.md").write_text(
         "release_docs_current_tag: v1.9.10\n"
         "The current tagged version is `v1.9.10`, and the latest complete public PyPI/release-asset distribution is also `v1.9.10`.\n"
+        "- Current release tag: `v1.9.10`.\n"
+        "- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.9.10 tg --version` reports `tensor-grep 1.9.10`.\n"
         "This gate checks current `v1.9.9` positioning.\n",
         encoding="utf-8",
     )
@@ -137,6 +139,9 @@ def test_stamp_release_assets_syncs_release_doc_current_version_prose(tmp_path):
     assert "current `v1.9.12` positioning" in skill
     assert "latest complete public PyPI/release-asset distribution is also `v1.9.12`" in skill
     assert "latest complete public PyPI/release-asset distribution is also `v1.9.10`" not in skill
+    assert "- Current release tag: `v1.9.12`." in skill
+    assert "tensor-grep==1.9.12 tg --version` reports `tensor-grep 1.9.12`" in skill
+    assert "tensor-grep==1.9.10" not in skill
     for relative in ("AGENTS.md", "docs/SESSION_HANDOFF.md", "docs/CONTINUATION_PLAN.md"):
         content = (root / relative).read_text(encoding="utf-8")
         assert "latest complete public PyPI/release-asset distribution is also `v1.9.12`" in content

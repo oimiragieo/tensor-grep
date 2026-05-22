@@ -506,6 +506,26 @@ def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process()
             assert fragment in content, f"{path} missing `{fragment}`"
 
 
+def test_skill_ledger_should_record_root_forwarding_release_proof() -> None:
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    ledger_lines = [
+        line
+        for line in skill.splitlines()
+        if "PR order: 6;" in line
+        and "preserve root `tg` shortcut forwarding" in line
+        and "`tg --count-matches PATTERN PATH`" in line
+    ]
+    assert len(ledger_lines) == 1
+
+    ledger = ledger_lines[0]
+    assert "pending" not in ledger
+    assert "Gemini review: PASS" in ledger
+    assert "PR #185 passed" in ledger
+    assert "main CI run `26260569216` passed" in ledger
+    assert "semantic-release published `v1.12.50`" in ledger
+    assert "PyPI/uvx public install proof verified" in ledger
+
+
 def test_agent_success_harness_should_remain_workflow_not_search_speed_contract() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
@@ -1015,7 +1035,7 @@ def test_skill_current_release_proof_should_match_project_version() -> None:
         1,
     )[0]
 
-    assert f"released as `{CURRENT_RELEASE_TAG}`" in current_release_proof
+    assert f"- Current release tag: `{CURRENT_RELEASE_TAG}`" in current_release_proof
     assert f"/releases/tag/{CURRENT_RELEASE_TAG}" in current_release_proof
     assert f"tensor-grep=={version}" in current_release_proof
     assert f"reports `tensor-grep {version}`" in current_release_proof
