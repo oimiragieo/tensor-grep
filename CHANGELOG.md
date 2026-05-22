@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.54 (2026-05-22)
+
+### Bug Fixes
+
+- Discover checkpoints for rollback UX
+  ([`3214540`](https://github.com/oimiragieo/tensor-grep/commit/32145400cee0d8f5bd011d77357352d4e3904805))
+
+Auto-discover checkpoint scopes and add undo --last for rollback ergonomics.
+
+
 ## v1.12.53 (2026-05-22)
 
 ### Bug Fixes
