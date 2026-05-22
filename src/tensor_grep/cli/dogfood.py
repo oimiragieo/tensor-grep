@@ -74,6 +74,18 @@ def _build_world_class_readiness() -> dict[str, Any]:
     """Describe proof-gated surfaces that a passing dogfood gate does not promote."""
     return {
         "status": "not_claimed",
+        "raw_cold_search_baseline": "rg",
+        "raw_cold_search_claim_status": "not_claimed",
+        "launcher_startup_tax_status": "measured_separately",
+        "launcher_startup_tax_note": (
+            "Cold search benchmark artifacts must separate native-exe timings "
+            "from shim, uv, and Python-module launcher overhead before speed claims."
+        ),
+        "gpu_promotion_ready": False,
+        "gpu_promotion_blockers": (
+            "NativeGpuBackend; sidecar_used=false; 1GB/5GB correctness; "
+            "speed wins over rg and tg_cpu; public managed NVIDIA release metadata"
+        ),
         "summary": (
             "PASS means the fast release-readiness gate passed; it is not proof "
             "that tensor-grep replaces rg, ast-grep, public GPU search, or "
