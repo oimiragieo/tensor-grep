@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.12.62 (2026-05-22)
+
+### Bug Fixes
+
+- Bound checkpoint scope discovery
+  ([`255e56e`](https://github.com/oimiragieo/tensor-grep/commit/255e56e8fca83663e077cdb527cb309b7291398c))
+
+Bound checkpoint auto-discovery to avoid unbounded workspace walks, with explicit --discover-full
+  escape hatch and regression coverage.
+
+
 ## v1.12.61 (2026-05-22)
 
 ### Bug Fixes
