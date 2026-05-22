@@ -1,12 +1,15 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.12.50 (2026-05-22)
 
 ### Bug Fixes
 
-- Preserve root `tg` shortcut forwarding for option-first search flags such as `-t/--type`
-  and `--count-matches`.
+- Preserve root search flag forwarding
+  ([`c631a1a`](https://github.com/oimiragieo/tensor-grep/commit/c631a1a9d65b671651789ad9a61b31700b730f3f))
+
+Preserve root tg shortcut forwarding for option-first search flags and add public dogfood coverage
+  for -t/--type and --count-matches.
 
 
 ## v1.12.49 (2026-05-21)
