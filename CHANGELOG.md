@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.57 (2026-05-22)
+
+### Bug Fixes
+
+- Require real LSP proof rows
+  ([`e9ef11d`](https://github.com/oimiragieo/tensor-grep/commit/e9ef11d3cfbc0a354956806a150431057bce6124))
+
+Require real provider-response markers for LSP proof and report native fallback diagnostics.
+
+
 ## v1.12.56 (2026-05-22)
 
 ### Bug Fixes
