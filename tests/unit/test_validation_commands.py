@@ -66,6 +66,41 @@ def _validation_commands(
     )
 
 
+def test_validation_commands_without_precomputed_paths_uses_cold_file_walk(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    calls: list[tuple[Path, int | None]] = []
+
+    def fake_iter_repo_files(
+        root: Path,
+        *,
+        max_files: int | None = None,
+        _profiling_collector=None,
+    ) -> list[Path]:
+        calls.append((Path(root).resolve(), max_files))
+        return [Path(root) / "tests" / "test_payments.py"]
+
+    monkeypatch.setattr(repo_map, "_iter_repo_files", fake_iter_repo_files)
+
+    commands = repo_map._validation_commands_for_tests(
+        [],
+        repo_root=project,
+        primary_symbol={
+            "file": str(project / "src" / "payments.py"),
+            "name": "create_invoice",
+        },
+        precomputed_file_paths=None,
+    )
+
+    assert commands == ["uv run pytest -q"]
+    assert calls
+    assert all(root == project.resolve() for root, _max_files in calls)
+    assert any(max_files == repo_map._VALIDATION_RUNNER_SCAN_LIMIT for _root, max_files in calls)
+
+
 @pytest.mark.parametrize(
     ("test_source", "expected_filter"),
     [

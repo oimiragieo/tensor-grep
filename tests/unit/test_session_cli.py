@@ -162,6 +162,109 @@ def test_session_edit_plan_does_not_walk_repo_for_default_stale_check(
     assert payload["files"] == [str(module_path.resolve())]
 
 
+def test_session_edit_plan_does_not_walk_repo_for_validation_discovery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import repo_map
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    monkeypatch.setattr(
+        repo_map,
+        "_iter_repo_files",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("warm session edit-plan should not rescan validation files")
+        ),
+    )
+
+    edit_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "create invoice",
+            "--json",
+        ],
+    )
+
+    assert edit_plan.exit_code == 0, edit_plan.output
+    payload = json.loads(edit_plan.stdout)
+    assert payload["routing_reason"] == "session-context-edit-plan"
+    assert payload["files"] == [str(module_path.resolve())]
+    assert payload["validation_commands"] == []
+
+
+def test_session_edit_plan_uses_cached_validation_evidence_after_open(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import repo_map
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    monkeypatch.setattr(
+        repo_map,
+        "_iter_repo_files",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("warm session edit-plan should use cached validation paths")
+        ),
+    )
+
+    edit_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "create invoice",
+            "--json",
+        ],
+    )
+
+    assert edit_plan.exit_code == 0, edit_plan.output
+    payload = json.loads(edit_plan.stdout)
+    assert payload["routing_reason"] == "session-context-edit-plan"
+    assert payload["files"] == [str(module_path.resolve())]
+    assert payload["validation_commands"] == [
+        "uv run pytest tests/test_payments.py -k test_create_invoice -q",
+        "uv run pytest tests/test_payments.py -q",
+        "uv run pytest -q",
+    ]
+
+
 def test_session_refresh_on_stale_detects_added_files_when_requested(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
