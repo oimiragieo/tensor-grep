@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.12.63 (2026-05-22)
+
+### Bug Fixes
+
+- Expose Windows LSP doctor timeout budget
+  ([`93966cd`](https://github.com/oimiragieo/tensor-grep/commit/93966cd4983f9cd40d8f3eb353ca8e71cffa8fc0))
+
+Expose the LSP doctor probe timeout in JSON/text output and raise the Windows default probe budget
+  so provider startup diagnostics are observable instead of silently timing out too aggressively.
+
+### Testing
+
+- Cover windows js ast run path
+  ([`f1d56b5`](https://github.com/oimiragieo/tensor-grep/commit/f1d56b54680b3f31e29aed419e50169219272d0a))
+
+Adds a Windows-specific JS AST smoke test for absolute-path tg run matching.
+
+- Expose session edit plan timing
+  ([`1c77c89`](https://github.com/oimiragieo/tensor-grep/commit/1c77c89c34a0e7c481b2401a0a7e7e5f7687218f))
+
+Adds timing telemetry to session edit-plan responses so follow-up warm-path fixes can be measured.
+
+
 ## v1.12.62 (2026-05-22)
 
 ### Bug Fixes
