@@ -408,6 +408,113 @@ def test_lsp_proof_requires_provider_response_marker_not_provenance_only(
     assert "native fallback" in payload["not_lsp_proof_reason"].lower()
 
 
+def test_lsp_proof_requires_boolean_provider_response_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    monkeypatch.setattr(
+        repo_map,
+        "_external_workspace_symbols",
+        lambda root, symbol, **kwargs: [
+            {
+                "name": symbol,
+                "kind": "function",
+                "file": str(module_path.resolve()),
+                "line": 1,
+                "end_line": 1,
+                "provenance": "lsp-python",
+                "lsp_provider_response": "false",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+    assert payload["definitions"][0]["provenance"] == "python-ast"
+    assert "native fallback" in payload["not_lsp_proof_reason"].lower()
+
+
+@pytest.mark.parametrize(
+    ("command", "collection_key"),
+    [
+        ("defs", "definitions"),
+        ("source", "sources"),
+        ("refs", "references"),
+        ("callers", "callers"),
+        ("blast-radius", "callers"),
+    ],
+)
+def test_cli_lsp_timeout_reports_explicit_native_fallback_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    collection_key: str,
+) -> None:
+    service_path = tmp_path / "service.py"
+    consumer_path = tmp_path / "consumer.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+    consumer_path.write_text(
+        "from service import create_invoice\n\nresult = create_invoice(3)\n",
+        encoding="utf-8",
+    )
+
+    class _TimeoutClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            _ = kwargs
+            raise repo_map.LSPTransportError("timeout waiting for LSP response: initialize")
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            _ = method
+            _ = params
+            raise repo_map.LSPTransportError("timeout waiting for LSP response: initialize")
+
+    class _TimeoutManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _TimeoutClient:
+            _ = language
+            _ = workspace_root
+            return _TimeoutClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "unhealthy",
+                "health_check": "semantic-document-symbol",
+                "health_phase": "initialize",
+                "lsp_provider_response": False,
+                "lsp_proof": False,
+                "lsp_evidence_status": "fallback_native",
+                "not_lsp_proof_reason": "Provider semantic health probe failed or timed out.",
+                "last_error": "timeout waiting for LSP response: initialize",
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _TimeoutManager())
+
+    result = CliRunner().invoke(
+        app,
+        [command, str(tmp_path), "--symbol", "create_invoice", "--provider", "lsp", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["semantic_provider"] == "lsp"
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+    assert "native fallback" in payload["not_lsp_proof_reason"].lower()
+    assert payload["provider_status"]["providers"][0]["lsp_proof"] is False
+    assert "timed out" in payload["provider_status"]["providers"][0]["not_lsp_proof_reason"]
+    assert collection_key in payload
+
+
 def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
@@ -775,6 +882,7 @@ def test_repo_map_blast_radius_propagates_semantic_provider(tmp_path: Path, monk
                 "line": 1,
                 "end_line": 1,
                 "provenance": "lsp-python",
+                "lsp_provider_response": True,
             }
         ],
     )
