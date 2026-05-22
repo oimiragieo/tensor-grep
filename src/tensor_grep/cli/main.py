@@ -6014,6 +6014,49 @@ def edit_plan(
     )
 
 
+def _positive_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number
+
+
+def _format_symbol_location_row(row: dict[str, Any]) -> str:
+    file_name = str(row.get("file", "")).strip()
+    if not file_name:
+        return ""
+
+    line = _positive_int(row.get("line", row.get("start_line")))
+    location = file_name if line is None else f"{file_name}:{line}"
+    column = _positive_int(row.get("column", row.get("col", row.get("start_column"))))
+    if line is not None and column is not None:
+        location = f"{location}:{column}"
+
+    details: list[str] = []
+    kind = str(row.get("kind", "")).strip()
+    name = str(row.get("name", "")).strip()
+    text = " ".join(str(row.get("text", "")).strip().split())
+    if kind:
+        details.append(kind)
+    if name:
+        details.append(name)
+    if text:
+        details.append(f"| {text}")
+    if not details:
+        return location
+    return f"{location} {' '.join(details)}"
+
+
+def _echo_symbol_location_rows(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        rendered = _format_symbol_location_row(row)
+        if rendered:
+            typer.echo(rendered)
+
+
 @app.command()
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -6056,6 +6099,7 @@ def defs(
 
     typer.echo(f"Definitions for {payload['symbol']} in {payload['path']}")
     typer.echo(f"definitions={len(payload['definitions'])}")
+    _echo_symbol_location_rows(payload["definitions"])
 
 
 @app.command()
@@ -6189,6 +6233,7 @@ def refs(
 
     typer.echo(f"References for {payload['symbol']} in {payload['path']}")
     typer.echo(f"references={len(payload['references'])} files={len(payload['files'])}")
+    _echo_symbol_location_rows(payload["references"])
 
 
 @app.command()
@@ -6233,6 +6278,7 @@ def callers(
 
     typer.echo(f"Callers for {payload['symbol']} in {payload['path']}")
     typer.echo(f"callers={len(payload['callers'])} files={len(payload['files'])}")
+    _echo_symbol_location_rows(payload["callers"])
 
 
 @app.command(name="blast-radius")

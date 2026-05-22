@@ -2872,6 +2872,28 @@ def test_defs_json_returns_exact_symbol_definitions(tmp_path):
     assert [symbol["name"] for symbol in payload["symbols"]] == ["create_invoice"]
 
 
+def test_defs_text_lists_definition_locations(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["defs", "--symbol", "create_invoice", str(project)])
+
+    assert result.exit_code == 0
+    assert "definitions=1" in result.stdout
+    assert f"{module_path.resolve()}:4" in result.stdout
+    assert "create_invoice" in result.stdout
+
+
 def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -3068,6 +3090,30 @@ def test_refs_json_returns_python_references_for_symbol(tmp_path):
     assert str(other_path.resolve()) in payload["files"]
 
 
+def test_refs_text_lists_reference_locations(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\nresult = create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["refs", "--symbol", "create_invoice", str(project)])
+
+    assert result.exit_code == 0
+    assert "references=" in result.stdout
+    assert f"{other_path.resolve()}:3" in result.stdout
+    assert "result = create_invoice(10, 2)" in result.stdout
+
+
 def test_refs_json_deduplicates_parser_call_references(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -3136,6 +3182,32 @@ def test_callers_json_returns_python_call_sites_for_symbol(tmp_path):
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert str(other_path.resolve()) in payload["files"]
     assert payload["tests"][0] == str(test_path.resolve())
+
+
+def test_callers_text_lists_caller_locations(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_total():\n"
+        "    return create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["callers", "--symbol", "create_invoice", str(project)])
+
+    assert result.exit_code == 0
+    assert "callers=1" in result.stdout
+    assert f"{other_path.resolve()}:4" in result.stdout
+    assert "return create_invoice(10, 2)" in result.stdout
 
 
 def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
