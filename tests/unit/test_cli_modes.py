@@ -1009,6 +1009,34 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert "literal patterns" in normalized_help
 
 
+def test_doctor_lsp_probe_timeout_defaults_to_windows_budget(monkeypatch) -> None:
+    monkeypatch.delenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(3.0)
+
+
+def test_doctor_lsp_probe_timeout_keeps_short_posix_default(monkeypatch) -> None:
+    monkeypatch.delenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(cli_main.sys, "platform", "linux")
+
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(1.0)
+
+
+def test_doctor_lsp_probe_timeout_allows_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(7.5)
+
+
+def test_doctor_lsp_probe_timeout_ignores_invalid_env(monkeypatch) -> None:
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "slow")
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(3.0)
+
+
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
     monkeypatch.setattr(
@@ -1040,6 +1068,7 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("TG_RUST_EARLY_POSITIONAL_RG", "1")
     monkeypatch.setenv("TG_FORCE_CPU", "1")
     monkeypatch.setenv("TG_RESIDENT_AST", "1")
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "6.5")
 
     runner = CliRunner()
     result = runner.invoke(app, ["doctor", str(tmp_path), "--json"])
@@ -1055,6 +1084,7 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["env"]["TG_RESIDENT_AST"] == "1"
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
+    assert payload["lsp"]["probe_timeout_seconds"] == pytest.approx(6.5)
     assert payload["lsp"]["providers"][0]["language"] == "python"
     assert payload["lsp"]["providers"][0]["command_source"] == "managed"
     assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
@@ -1882,6 +1912,7 @@ def test_doctor_text_reports_lsp_health_and_proof_fields(monkeypatch, tmp_path: 
         "tensor_grep.cli.main._doctor_session_daemon_status",
         lambda path: {"running": False},
     )
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setattr(
         "tensor_grep.cli.main._doctor_lsp_provider_statuses",
         lambda path: [
@@ -1904,6 +1935,7 @@ def test_doctor_text_reports_lsp_health_and_proof_fields(monkeypatch, tmp_path: 
     result = CliRunner().invoke(app, ["doctor", str(tmp_path)])
 
     assert result.exit_code == 0
+    assert "lsp_probe_timeout_seconds: 4.5" in result.stdout
     assert "health=available_unverified" in result.stdout
     assert "health_check=not_run" in result.stdout
     assert "lsp_proof=False" in result.stdout
