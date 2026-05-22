@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.58 (2026-05-22)
+
+### Bug Fixes
+
+- Expose agent target selection metrics
+  ([`b84f048`](https://github.com/oimiragieo/tensor-grep/commit/b84f048d196bd13afd43a4283cc0ee5ebeb6649b))
+
+Report hit-rate, MRR, false-primary, and ambiguity metrics for agent workflow target selection.
+
+
 ## v1.12.57 (2026-05-22)
 
 ### Bug Fixes
