@@ -69,6 +69,13 @@ class CheckpointUndoResult:
     removed_paths: int
 
 
+@dataclass
+class CheckpointLatestResult:
+    checkpoint_id: str
+    root: str
+    mode: str
+
+
 @dataclass(frozen=True)
 class _CheckpointScope:
     root: Path
@@ -351,6 +358,40 @@ def discover_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
             )
         )
     return scopes
+
+
+def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
+    scope = describe_checkpoint_scope(path)
+    if scope.checkpoints:
+        record = scope.checkpoints[0]
+        return CheckpointLatestResult(
+            checkpoint_id=record.checkpoint_id,
+            root=scope.root,
+            mode=scope.mode,
+        )
+
+    discovered = [
+        child_scope for child_scope in discover_checkpoint_scopes(path) if child_scope.checkpoints
+    ]
+    if not discovered:
+        resolved = Path(path).expanduser().resolve()
+        raise FileNotFoundError(f"No checkpoints found under {resolved}.")
+    if len(discovered) > 1:
+        roots = ", ".join(scope.root for scope in discovered[:5])
+        suffix = "" if len(discovered) <= 5 else f", ... ({len(discovered)} total)"
+        raise ValueError(
+            "Multiple checkpoint scopes found under "
+            f"{Path(path).expanduser().resolve()}; pass a narrower PATH or explicit checkpoint id. "
+            f"Scopes: {roots}{suffix}"
+        )
+
+    child_scope = discovered[0]
+    record = child_scope.checkpoints[0]
+    return CheckpointLatestResult(
+        checkpoint_id=record.checkpoint_id,
+        root=child_scope.root,
+        mode=child_scope.mode,
+    )
 
 
 def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, Any]:
