@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.12.59 (2026-05-22)
+
+### Bug Fixes
+
+- Expose dogfood promotion guardrails
+  ([`5cd3a65`](https://github.com/oimiragieo/tensor-grep/commit/5cd3a658d6969dd4c2b6e908cf2697d1a877494e))
+
+Add machine-readable dogfood guardrails for raw cold search, launcher tax, and GPU promotion claims.
+
+
 ## v1.12.58 (2026-05-22)
 
 ### Bug Fixes
