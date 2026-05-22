@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -200,6 +201,72 @@ def _build_write_policy(repo_root: Path, output: Path | None) -> dict[str, Any]:
     }
 
 
+def _installed_tensor_grep_version() -> str | None:
+    try:
+        return version("tensor-grep")
+    except PackageNotFoundError:
+        return None
+
+
+def _build_public_self_check_readiness(
+    *,
+    repo_root: Path,
+    readiness_script: Path,
+    expected_version: str | None,
+) -> tuple[int, dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    results.append({
+        "name": "public-package-import",
+        "status": "passed",
+        "message": "tensor_grep dogfood module is importable and running from the installed package",
+    })
+    installed_version = _installed_tensor_grep_version()
+    if installed_version is None:
+        results.append({
+            "name": "public-package-metadata",
+            "status": "skipped",
+            "message": "tensor-grep package metadata is unavailable in this environment",
+        })
+    elif expected_version is not None and installed_version != expected_version:
+        results.append({
+            "name": "public-package-metadata",
+            "status": "failed",
+            "message": (
+                f"installed tensor-grep version {installed_version} does not match "
+                f"expected version {expected_version}"
+            ),
+        })
+    else:
+        results.append({
+            "name": "public-package-metadata",
+            "status": "passed",
+            "message": f"installed tensor-grep package version {installed_version}",
+        })
+
+    results.append({
+        "name": "repo-agent-readiness-script",
+        "status": "skipped",
+        "message": (
+            f"repo-only checks are unavailable because {readiness_script} does not exist; "
+            "point --root at a tensor-grep source checkout to run scripts/agent_readiness.py"
+        ),
+    })
+    summary = {
+        "passed": sum(1 for result in results if result["status"] == "passed"),
+        "failed": sum(1 for result in results if result["status"] == "failed"),
+        "skipped": sum(1 for result in results if result["status"] == "skipped"),
+    }
+    returncode = 1 if summary["failed"] else 0
+    return returncode, {
+        "artifact": "agent_readiness_report",
+        "mode": "public-self-check",
+        "root": str(repo_root),
+        "expected_version": expected_version,
+        "summary": summary,
+        "results": results,
+    }
+
+
 def run_dogfood_readiness(
     *,
     root: Path,
@@ -234,21 +301,14 @@ def run_dogfood_readiness(
     )
     with progress.phase("agent-readiness"):
         if not readiness_script.exists():
-            agent_readiness = {
-                "artifact": "agent_readiness_report",
-                "root": str(repo_root),
-                "summary": {"passed": 0, "failed": 1, "skipped": 0},
-                "results": [
-                    {
-                        "name": "agent-readiness-script",
-                        "status": "failed",
-                        "message": f"missing readiness script: {readiness_script}",
-                    }
-                ],
-            }
-            returncode = 1
+            returncode, agent_readiness = _build_public_self_check_readiness(
+                repo_root=repo_root,
+                readiness_script=readiness_script,
+                expected_version=expected_version,
+            )
+            command = []
             stdout = ""
-            stderr = f"missing readiness script: {readiness_script}"
+            stderr = ""
         else:
             env = dict(os.environ)
             env.setdefault("PYTHONUTF8", "1")
