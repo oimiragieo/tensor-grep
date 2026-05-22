@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.52 (2026-05-22)
+
+### Bug Fixes
+
+- List symbol locations in text output
+  ([`6392752`](https://github.com/oimiragieo/tensor-grep/commit/6392752dd66793540bca95d2657f501e34d41ce6))
+
+
 ## v1.12.51 (2026-05-22)
 
 ### Bug Fixes

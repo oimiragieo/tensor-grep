@@ -4,7 +4,7 @@
 class TensorGrep < Formula
   desc "GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT"
   homepage "https://github.com/oimiragieo/tensor-grep"
-  TENSOR_GREP_VERSION = "1.12.51"
+  TENSOR_GREP_VERSION = "1.12.52"
   version TENSOR_GREP_VERSION
   
   if OS.mac?
