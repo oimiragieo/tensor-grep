@@ -909,6 +909,67 @@ fn test_option_first_root_search_flags_forward_to_search_frontdoor() {
 }
 
 #[test]
+fn test_option_first_root_type_flag_forwards_to_search_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg =
+        fake_rg_asserting_args_script(dir.path(), &["-t", "js", "-e", "ERROR", "."], "accepted\n");
+    fs::write(dir.path().join("app.js"), "console.error('ERROR');\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["-t", "js", "ERROR", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "accepted\n"
+    );
+}
+
+#[test]
+fn test_option_first_root_count_matches_forwards_to_search_frontdoor() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_asserting_args_script(
+        dir.path(),
+        &["--count-matches", "-e", "ERROR", "."],
+        "app.js:2\n",
+    );
+    fs::write(
+        dir.path().join("app.js"),
+        "console.error('ERROR');\nconsole.error('ERROR');\n",
+    )
+    .unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["--count-matches", "ERROR", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "app.js:2\n"
+    );
+}
+
+#[test]
 fn test_option_first_root_search_forwards_no_line_number_to_rg() {
     let dir = tempdir().unwrap();
     let fake_rg =
