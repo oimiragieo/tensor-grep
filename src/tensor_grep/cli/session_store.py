@@ -13,6 +13,7 @@ from uuid import uuid4
 from tensor_grep.cli.repo_map import (
     _is_repo_context_file,
     _iter_repo_files,
+    apply_repo_map_output_limits,
     build_context_edit_plan_from_map,
     build_context_pack_from_map,
     build_context_render_from_map,
@@ -32,6 +33,7 @@ _TG_DIRNAME = ".tensor-grep"
 _SESSIONS_SUBDIR = "sessions"
 _INDEX_FILE = "index.json"
 _SESSION_SERVE_CACHE_MAX_ENTRIES = 32
+_DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = 512
 
 
 @dataclass
@@ -537,13 +539,18 @@ def session_context_edit_plan(
     max_sources: int | None = None,
     max_tokens: int | None = None,
     max_symbols: int = 5,
+    max_repo_files: int | None = _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
     refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
     started_at = monotonic()
     payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     loaded_at = monotonic()
+    repo_map = _session_edit_plan_repo_map(
+        cast(dict[str, Any], payload["repo_map"]),
+        max_repo_files=max_repo_files,
+    )
     context = build_context_edit_plan_from_map(
-        payload["repo_map"],
+        repo_map,
         query,
         max_files=max_files,
         max_sources=max_sources,
@@ -560,6 +567,16 @@ def session_context_edit_plan(
         "total_seconds": max(0.0, built_at - started_at),
     }
     return context
+
+
+def _session_edit_plan_repo_map(
+    repo_map: dict[str, Any],
+    *,
+    max_repo_files: int | None,
+) -> dict[str, Any]:
+    if max_repo_files is None:
+        return repo_map
+    return apply_repo_map_output_limits(repo_map, max_files=max(1, int(max_repo_files)))
 
 
 def session_context_render(
@@ -737,8 +754,15 @@ def _serve_session_request_from_payload(
         query = str(request.get("query", "")).strip()
         if not query:
             raise ValueError("context_edit_plan requests require a non-empty query")
-        response = build_context_edit_plan_from_map(
+        max_repo_files = request.get("max_repo_files", _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT)
+        scoped_repo_map = _session_edit_plan_repo_map(
             repo_map,
+            max_repo_files=(
+                None if max_repo_files in (None, "") else int(cast(int | str, max_repo_files))
+            ),
+        )
+        response = build_context_edit_plan_from_map(
+            scoped_repo_map,
             query,
             max_files=int(request.get("max_files", 3)),
             max_sources=(
