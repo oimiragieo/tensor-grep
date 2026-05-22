@@ -17,6 +17,7 @@ _CHECKPOINTS_SUBDIR = "checkpoints"
 _INDEX_FILE = "index.json"
 _SNAPSHOT_SUBDIR = "snapshot"
 _METADATA_FILE = "metadata.json"
+_DISCOVERY_MAX_DEPTH = 4
 _NON_GIT_IGNORED_DIRS = {
     ".git",
     ".hg",
@@ -29,6 +30,10 @@ _NON_GIT_IGNORED_DIRS = {
     ".ruff_cache",
     ".tensor-grep",
 }
+
+
+def _is_generated_discovery_dir(path: Path) -> bool:
+    return path.name in _NON_GIT_IGNORED_DIRS
 
 
 @dataclass
@@ -323,9 +328,43 @@ def describe_checkpoint_scope(path: str = ".") -> CheckpointScopeResult:
     )
 
 
-def discover_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
-    resolved = Path(path).expanduser().resolve()
-    search_root = resolved if resolved.is_dir() else resolved.parent
+def _bounded_checkpoint_index_paths(
+    search_root: Path,
+    *,
+    include_generated: bool,
+    max_depth: int = _DISCOVERY_MAX_DEPTH,
+) -> set[Path]:
+    index_paths: set[Path] = set()
+    stack: list[tuple[Path, int]] = [(search_root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        index_path = _index_path(current)
+        if index_path.exists():
+            index_paths.add(index_path)
+
+        if depth >= max_depth:
+            continue
+
+        try:
+            children = sorted(current.iterdir(), key=lambda child: child.name)
+        except OSError:
+            continue
+        for child in reversed(children):
+            try:
+                is_dir = child.is_dir()
+            except OSError:
+                continue
+            if not is_dir:
+                continue
+            if child.name == _CHECKPOINT_DIRNAME:
+                continue
+            if not include_generated and _is_generated_discovery_dir(child):
+                continue
+            stack.append((child, depth + 1))
+    return index_paths
+
+
+def _full_checkpoint_index_paths(search_root: Path) -> set[Path]:
     index_paths: set[Path] = set()
     own_index = _index_path(search_root)
     if own_index.exists():
@@ -339,6 +378,21 @@ def discover_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
         )
     except OSError:
         pass
+    return index_paths
+
+
+def discover_checkpoint_scopes(
+    path: str = ".",
+    *,
+    full: bool = False,
+) -> list[CheckpointScopeResult]:
+    resolved = Path(path).expanduser().resolve()
+    search_root = resolved if resolved.is_dir() else resolved.parent
+    index_paths = (
+        _full_checkpoint_index_paths(search_root)
+        if full
+        else _bounded_checkpoint_index_paths(search_root, include_generated=False)
+    )
 
     scopes: list[CheckpointScopeResult] = []
     seen_roots: set[Path] = set()

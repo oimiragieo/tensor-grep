@@ -7271,7 +7271,18 @@ def checkpoint_list(
     discover: bool = typer.Option(
         False,
         "--discover",
-        help="Recursively discover checkpoint scopes under PATH instead of listing one detected scope.",
+        help=(
+            "Discover bounded child checkpoint scopes under PATH instead of listing one detected "
+            "scope. Generated/cache roots are skipped."
+        ),
+    ),
+    discover_full: bool = typer.Option(
+        False,
+        "--discover-full",
+        help=(
+            "Exhaustively discover checkpoint scopes under PATH, including generated/cache roots. "
+            "May be slow on broad workspaces."
+        ),
     ),
 ) -> None:
     """List available checkpoints."""
@@ -7280,7 +7291,7 @@ def checkpoint_list(
         discover_checkpoint_scopes,
     )
 
-    def _discovered_payloads() -> tuple[list[dict[str, Any]], int]:
+    def _discovered_payloads(*, full: bool = False) -> tuple[list[dict[str, Any]], int]:
         scope_payloads = [
             {
                 "root": scope.root,
@@ -7288,7 +7299,7 @@ def checkpoint_list(
                 "checkpoint_count": scope.checkpoint_count,
                 "checkpoints": [record.__dict__ for record in scope.checkpoints],
             }
-            for scope in discover_checkpoint_scopes(path)
+            for scope in discover_checkpoint_scopes(path, full=full)
         ]
         checkpoint_count = sum(
             int(cast(int, scope_payload["checkpoint_count"])) for scope_payload in scope_payloads
@@ -7331,8 +7342,11 @@ def checkpoint_list(
                 )
 
     try:
-        if discover:
-            scope_payloads, checkpoint_count = _discovered_payloads()
+        if discover and discover_full:
+            typer.echo("Use either --discover or --discover-full, not both.", err=True)
+            raise typer.Exit(1)
+        if discover or discover_full:
+            scope_payloads, checkpoint_count = _discovered_payloads(full=discover_full)
             _emit_discovered(scope_payloads, checkpoint_count, auto_discovered=False)
             return
 

@@ -263,6 +263,76 @@ def test_checkpoint_list_auto_discovers_child_scope_when_direct_scope_is_empty(
     assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
 
 
+def test_checkpoint_list_auto_discovery_does_not_use_unbounded_rglob(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError(f"unbounded rglob should not run for {self} pattern={pattern}")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["auto_discovered"] is True
+    assert payload["discovered_scopes"][0]["root"] == str(project.resolve())
+    assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
+def test_checkpoint_list_default_discovery_skips_generated_roots(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    generated_project = workspace / "node_modules" / "dep"
+    generated_project.mkdir(parents=True)
+    (generated_project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(generated_project), "--json"])
+    assert create_result.exit_code == 0
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["checkpoint_count"] == 0
+    assert "auto_discovered" not in payload
+    assert "discovered_scopes" not in payload
+
+
+def test_checkpoint_list_discover_full_can_include_generated_roots(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    generated_project = workspace / "node_modules" / "dep"
+    generated_project.mkdir(parents=True)
+    (generated_project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(generated_project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+
+    list_result = runner.invoke(
+        app,
+        ["checkpoint", "list", str(workspace), "--discover-full", "--json"],
+    )
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["checkpoint_count"] == 1
+    assert payload["discovered_scopes"][0]["root"] == str(generated_project.resolve())
+    assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
 def test_checkpoint_list_keeps_direct_scope_when_records_exist(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     project = workspace / "project"
