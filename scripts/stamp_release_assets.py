@@ -84,11 +84,19 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
             rf"\g<1>`{tag}`",
         ),
         (
+            r"(?m)^(- Current release tag:\s*)`v\d+\.\d+\.\d+`",
+            rf"\g<1>`{tag}`",
+        ),
+        (
             r"(?m)^(- GitHub release: <https://github\.com/oimiragieo/tensor-grep/releases/tag/)v\d+\.\d+\.\d+(>)",
             rf"\g<1>{tag}\2",
         ),
         (
             r"(?m)^(- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==)\d+\.\d+\.\d+( tg --version` reports `tensor-grep )\d+\.\d+\.\d+(`)",
+            rf"\g<1>{version}\g<2>{version}\3",
+        ),
+        (
+            r"(?m)^(- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==)\d+\.\d+\.\d+( tg --version` reports `tensor-grep )\d+\.\d+\.\d+(`)",
             rf"\g<1>{version}\g<2>{version}\3",
         ),
         (
