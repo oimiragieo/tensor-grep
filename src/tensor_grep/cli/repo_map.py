@@ -9716,7 +9716,7 @@ def _attach_lsp_evidence_status(
 def _is_lsp_proof_row(row: dict[str, Any]) -> bool:
     provenance = str(row.get("provenance", ""))
     return (
-        bool(row.get("lsp_provider_response"))
+        row.get("lsp_provider_response") is True
         and provenance.startswith("lsp-")
         and "-fallback" not in provenance
     )
@@ -10024,8 +10024,11 @@ def build_symbol_defs_from_map(
             repo_map=repo_map,
         )
         if normalized_provider == "lsp":
-            fallback_used = not bool(_lsp_proof_row_count(external_definitions))
-            definitions = external_definitions or definitions
+            proof_definitions = [
+                dict(current) for current in external_definitions if _is_lsp_proof_row(current)
+            ]
+            fallback_used = not bool(proof_definitions)
+            definitions = proof_definitions or definitions
         else:
             merged: dict[tuple[str, int, int, str], dict[str, Any]] = {}
             for current in [*external_definitions, *definitions]:
@@ -10549,8 +10552,9 @@ def build_symbol_refs_from_map(
             if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
         ]
         if normalized_provider == "lsp":
-            fallback_used = not bool(_lsp_proof_row_count(external_refs))
-            references = external_refs or references
+            proof_refs = [dict(current) for current in external_refs if _is_lsp_proof_row(current)]
+            fallback_used = not bool(proof_refs)
+            references = proof_refs or references
         else:
             merged_refs: dict[tuple[str, int, int], dict[str, Any]] = {}
             for current_ref in [*external_refs, *references]:
