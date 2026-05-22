@@ -52,6 +52,8 @@ _DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
 _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
 _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
 _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 1.0
+_DOCTOR_LSP_WINDOWS_PROBE_TIMEOUT_SECONDS = 3.0
+_DOCTOR_LSP_PROBE_TIMEOUT_ENV = "TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS"
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "__pycache__",
@@ -1612,18 +1614,33 @@ def _doctor_lsp_languages() -> list[str]:
     return supported_lsp_languages()
 
 
+def _doctor_lsp_probe_timeout_seconds() -> float:
+    raw_timeout = os.environ.get(_DOCTOR_LSP_PROBE_TIMEOUT_ENV)
+    if raw_timeout:
+        try:
+            parsed_timeout = float(raw_timeout)
+        except ValueError:
+            parsed_timeout = 0.0
+        if parsed_timeout > 0:
+            return parsed_timeout
+    if sys.platform.startswith("win"):
+        return _DOCTOR_LSP_WINDOWS_PROBE_TIMEOUT_SECONDS
+    return _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS
+
+
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
     from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
 
     manager = ExternalLSPProviderManager()
     workspace_root = Path(path).resolve()
+    probe_timeout_seconds = _doctor_lsp_probe_timeout_seconds()
     try:
         return [
             manager.provider_status(
                 language=language,
                 workspace_root=workspace_root,
                 verify_health=True,
-                probe_timeout_seconds=_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS,
+                probe_timeout_seconds=probe_timeout_seconds,
             )
             for language in _doctor_lsp_languages()
         ]
@@ -2278,6 +2295,7 @@ def _build_doctor_payload(
         "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS",
         "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS",
         "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS",
+        _DOCTOR_LSP_PROBE_TIMEOUT_ENV,
     ]
     installed_version = _doctor_installed_version()
     rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
@@ -2491,11 +2509,16 @@ def _build_doctor_payload(
         lsp_providers = _doctor_lsp_provider_statuses(str(root))
         payload["lsp"] = {
             "enabled": True,
+            "probe_timeout_seconds": _doctor_lsp_probe_timeout_seconds(),
             "providers": lsp_providers,
         }
     else:
         lsp_providers = []
-        payload["lsp"] = {"enabled": False, "providers": lsp_providers}
+        payload["lsp"] = {
+            "enabled": False,
+            "probe_timeout_seconds": None,
+            "providers": lsp_providers,
+        }
     payload["lsp_providers"] = lsp_providers
     return payload
 
@@ -2647,6 +2670,8 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     lsp_payload = cast(dict[str, Any], payload.get("lsp", {}))
     if lsp_payload.get("enabled"):
         lines.append("lsp_providers:")
+        if lsp_payload.get("probe_timeout_seconds") is not None:
+            lines.append(f"lsp_probe_timeout_seconds: {lsp_payload['probe_timeout_seconds']}")
         for current in cast(list[dict[str, Any]], lsp_payload.get("providers", [])):
             command = current.get("command") or []
             command_str = " ".join(str(part) for part in command) if command else "missing"
