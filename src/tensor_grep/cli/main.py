@@ -2488,12 +2488,15 @@ def _build_doctor_payload(
         "session_daemon": _doctor_session_daemon_status(str(root)),
     }
     if with_lsp:
+        lsp_providers = _doctor_lsp_provider_statuses(str(root))
         payload["lsp"] = {
             "enabled": True,
-            "providers": _doctor_lsp_provider_statuses(str(root)),
+            "providers": lsp_providers,
         }
     else:
-        payload["lsp"] = {"enabled": False, "providers": []}
+        lsp_providers = []
+        payload["lsp"] = {"enabled": False, "providers": lsp_providers}
+    payload["lsp_providers"] = lsp_providers
     return payload
 
 
