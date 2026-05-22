@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Preserve root `tg` shortcut forwarding for option-first search flags such as `-t/--type`
+  and `--count-matches`.
+
+
 ## v1.12.49 (2026-05-21)
 
 ### Bug Fixes

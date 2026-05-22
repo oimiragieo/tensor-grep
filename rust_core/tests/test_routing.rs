@@ -192,6 +192,54 @@ fn write_rg_wrapper(dir: &Path) -> PathBuf {
     }
 }
 
+fn write_rg_required_args_wrapper(dir: &Path, required_args: &[&str]) -> PathBuf {
+    if cfg!(windows) {
+        let script = dir.join("rg-required-wrapper.cmd");
+        let mut body = String::from("@echo off\r\n");
+        for (index, required) in required_args.iter().enumerate() {
+            body.push_str(&format!("set FOUND_{index}=\r\n"));
+            body.push_str("for %%A in (%*) do (\r\n");
+            body.push_str(&format!(
+                "  if \"%%~A\"==\"{required}\" set FOUND_{index}=1\r\n"
+            ));
+            body.push_str(")\r\n");
+            body.push_str(&format!(
+                "if not \"%FOUND_{index}%\"==\"1\" echo missing {required} 1>&2 & exit /b 9\r\n"
+            ));
+        }
+        body.push_str(&format!("echo {RG_SENTINEL}\r\n"));
+        fs::write(&script, body).unwrap();
+        script
+    } else {
+        let script = dir.join("rg-required-wrapper.sh");
+        let mut body = String::from("#!/bin/sh\n");
+        for required in required_args {
+            body.push_str("found=0\n");
+            body.push_str("for arg in \"$@\"; do\n");
+            body.push_str(&format!(
+                "  if [ \"$arg\" = '{}' ]; then found=1; fi\n",
+                required.replace('\'', "'\\''")
+            ));
+            body.push_str("done\n");
+            body.push_str(&format!(
+                "if [ \"$found\" != 1 ]; then echo 'missing {}' >&2; exit 9; fi\n",
+                required.replace('\'', "'\\''")
+            ));
+        }
+        body.push_str(&format!("printf '{RG_SENTINEL}\\n'\n"));
+        fs::write(&script, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = fs::metadata(&script).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script, permissions).unwrap();
+        }
+        script
+    }
+}
+
 fn write_mock_gpu_sidecar_script(dir: &Path, matched_file: &Path, marker: &Path) -> PathBuf {
     let script = dir.join("mock_gpu_sidecar.py");
     fs::write(
@@ -576,6 +624,61 @@ fn test_top_level_format_rg_json_routes_before_positional_parser() {
             "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
             "native search should not handle explicit root rg json",
         )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
+fn test_top_level_type_flag_rewrites_to_search_subcommand() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_required_args_wrapper(dir.path(), &["-t", "js"]);
+
+    let output = tg()
+        .arg("-t")
+        .arg("js")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
+fn test_top_level_count_matches_rewrites_to_search_subcommand() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_required_args_wrapper(dir.path(), &["--count-matches"]);
+
+    let output = tg()
+        .arg("--count-matches")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 

@@ -21,6 +21,7 @@ Use this skill when you need to locate code precisely, understand likely edit im
 2. Start with direct text search when you need rg-shaped output:
    - `tg search --format rg "PATTERN" REPO_PATH`
    - `tg search --format rg --sort path "PATTERN" REPO_PATH`
+   - Root shortcuts are also valid for common search flags: `tg "PATTERN" REPO_PATH`, `tg -t js "PATTERN" REPO_PATH`, and `tg --count-matches "PATTERN" REPO_PATH`.
 3. Use agent/context commands for task routing:
    - `tg agent REPO_PATH --query "change invoice tax" --json`
    - `tg edit-plan REPO_PATH --query "change invoice tax" --json`
@@ -49,6 +50,7 @@ Use this skill when you need to locate code precisely, understand likely edit im
 
 - Prefer `tg` over repeated manual grep loops when working inside a real repository.
 - Prefer `--format rg` for automation that expects ripgrep-shaped text output.
+- Preserve common root search shortcut syntax when using the top-level entrypoint: `tg PATTERN PATH`, `tg -t js PATTERN PATH`, and `tg --count-matches PATTERN PATH` are treated as `tg search ...`.
 - Keep edits narrow and grounded in the files `tg` ranks highest.
 - Inspect `ambiguity` before editing; `tie_requires_confirmation` is a stop sign for autonomous edits.
 - Do not expand context blindly if `tg` already identified the primary file and span.
