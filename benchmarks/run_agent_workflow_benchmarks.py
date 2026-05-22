@@ -296,6 +296,37 @@ def _target_symbol(scenario: dict[str, object]) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _expected_targets(scenario: dict[str, object]) -> list[dict[str, str]]:
+    explicit_targets = scenario.get("expected_targets")
+    targets: list[dict[str, str]] = []
+    if isinstance(explicit_targets, list):
+        for item in explicit_targets:
+            if not isinstance(item, dict):
+                continue
+            file_suffix = item.get("file_suffix") or item.get("file")
+            if not isinstance(file_suffix, str) or not file_suffix:
+                continue
+            symbol = item.get("symbol") or item.get("name") or ""
+            targets.append({
+                "file_suffix": file_suffix.replace("\\", "/"),
+                "symbol": symbol if isinstance(symbol, str) else "",
+            })
+    else:
+        file_suffix = _target_file_suffix(scenario)
+        if file_suffix:
+            targets.append({
+                "file_suffix": file_suffix,
+                "symbol": _target_symbol(scenario),
+            })
+    return targets
+
+
+def _candidate_identity(candidate: dict[str, Any]) -> tuple[str, str]:
+    candidate_file = str(candidate.get("file") or "").replace("\\", "/")
+    candidate_symbol = str(candidate.get("symbol") or candidate.get("name") or "")
+    return candidate_file, candidate_symbol
+
+
 def _candidate_matches_target(
     candidate: dict[str, Any],
     *,
@@ -313,21 +344,55 @@ def _candidate_matches_target(
     return candidate_symbol == expected_symbol
 
 
+def _candidate_matches_any_target(
+    candidate: dict[str, Any],
+    *,
+    expected_targets: list[dict[str, str]],
+) -> bool:
+    return any(
+        _candidate_matches_target(
+            candidate,
+            expected_file_suffix=target["file_suffix"],
+            expected_symbol=target["symbol"],
+        )
+        for target in expected_targets
+    )
+
+
+def _alternative_target_ranks(
+    alternatives: list[object],
+    *,
+    expected_targets: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    ranked: list[dict[str, object]] = []
+    for rank, item in enumerate(alternatives, start=2):
+        if not isinstance(item, dict):
+            continue
+        candidate_file, candidate_symbol = _candidate_identity(item)
+        ranked.append({
+            "rank": rank,
+            "file": candidate_file,
+            "symbol": candidate_symbol,
+            "matches_expected_target": _candidate_matches_any_target(
+                item,
+                expected_targets=expected_targets,
+            ),
+        })
+    return ranked
+
+
 def _target_rank(
     primary_target: dict[str, Any],
     alternatives: list[object],
     *,
-    expected_file_suffix: str,
-    expected_symbol: str,
-    limit: int = 3,
+    expected_targets: list[dict[str, str]],
 ) -> int | None:
     candidates: list[dict[str, Any]] = [primary_target]
     candidates.extend(item for item in alternatives if isinstance(item, dict))
-    for rank, candidate in enumerate(candidates[:limit], start=1):
-        if _candidate_matches_target(
+    for rank, candidate in enumerate(candidates, start=1):
+        if _candidate_matches_any_target(
             candidate,
-            expected_file_suffix=expected_file_suffix,
-            expected_symbol=expected_symbol,
+            expected_targets=expected_targets,
         ):
             return rank
     return None
@@ -344,14 +409,18 @@ def _source_file_from_item(item: object) -> str:
 def _target_covered_by_budget(
     payload: dict[str, object],
     *,
-    expected_file_suffix: str,
+    expected_targets: list[dict[str, str]],
 ) -> bool:
-    if not expected_file_suffix:
+    if not expected_targets:
         return False
     budget_items = list(_as_list(payload.get("snippets")))
     budget_items.extend(_as_list(_as_dict(payload.get("omissions")).get("follow_up_reads")))
     for item in budget_items:
-        if _source_file_from_item(item).endswith(expected_file_suffix):
+        item_file = _source_file_from_item(item)
+        if any(
+            target["file_suffix"] and item_file.endswith(target["file_suffix"])
+            for target in expected_targets
+        ):
             return True
     return False
 
@@ -386,19 +455,20 @@ def extract_capsule_metrics(
         validation_filtered_count = 0
     expected_file_suffix = _target_file_suffix(scenario)
     expected_symbol = _target_symbol(scenario)
+    expected_targets = _expected_targets(scenario)
     target_rank = _target_rank(
         primary_target,
         alternatives,
-        expected_file_suffix=expected_file_suffix,
-        expected_symbol=expected_symbol,
+        expected_targets=expected_targets,
     )
-    target_selection_evaluated = bool(expected_file_suffix)
+    target_selection_evaluated = bool(expected_targets)
     hit_at_1 = target_selection_evaluated and target_rank == 1
     hit_at_3 = target_selection_evaluated and target_rank is not None and target_rank <= 3
-    mrr_at_3 = round(1.0 / target_rank, 3) if target_rank is not None else 0.0
+    mrr = round(1.0 / target_rank, 3) if target_rank is not None else 0.0
+    mrr_at_3 = mrr if target_rank is not None and target_rank <= 3 else 0.0
     coverage_at_budget = _target_covered_by_budget(
         payload,
-        expected_file_suffix=expected_file_suffix,
+        expected_targets=expected_targets,
     )
 
     ask_required = _ask_required(payload)
@@ -423,13 +493,16 @@ def extract_capsule_metrics(
         and confidence_overall >= WRONG_CONFIDENT_MISS_THRESHOLD
     )
     safe_ambiguity = bool(target_selection_evaluated and not hit_at_1 and ask_required)
+    false_primary = bool(target_selection_evaluated and primary_file and not hit_at_1)
+    ambiguous_requires_confirmation = bool(false_primary and ask_required)
+    primary_confidence = _float_or_none(primary_target.get("confidence"))
 
     return {
         "scenario": str(scenario["name"]),
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
         "confidence_overall": confidence_overall,
-        "primary_confidence": _float_or_none(primary_target.get("confidence")),
+        "primary_confidence": primary_confidence,
         "ask_required": ask_required,
         "alternative_count": len(alternatives),
         "snippet_count": len(snippets),
@@ -442,11 +515,24 @@ def extract_capsule_metrics(
         "target_selection_evaluated": target_selection_evaluated,
         "expected_target_file_suffix": expected_file_suffix,
         "expected_target_symbol": expected_symbol,
+        "expected_targets": expected_targets,
+        "observed_primary_target": {
+            "file": primary_file,
+            "symbol": primary_symbol,
+            "confidence": primary_confidence,
+        },
+        "alternative_target_ranks": _alternative_target_ranks(
+            alternatives,
+            expected_targets=expected_targets,
+        ),
         "target_rank": target_rank,
         "hit_at_1": hit_at_1,
         "hit_at_3": hit_at_3,
+        "mrr": mrr,
         "mrr_at_3": mrr_at_3,
         "coverage_at_budget": coverage_at_budget,
+        "false_primary": false_primary,
+        "ambiguous_requires_confirmation": ambiguous_requires_confirmation,
         "wrong_confident_miss": wrong_confident_miss,
         "safe_ambiguity": safe_ambiguity,
         "passed": passed,
@@ -514,21 +600,43 @@ def build_agent_capsule_summary(rows: list[dict[str, object]]) -> dict[str, obje
     hit_at_1_cases = sum(1 for row in target_rows if bool(row["hit_at_1"]))
     hit_at_3_cases = sum(1 for row in target_rows if bool(row["hit_at_3"]))
     coverage_cases = sum(1 for row in target_rows if bool(row["coverage_at_budget"]))
+    false_primary_cases = sum(1 for row in target_rows if bool(row["false_primary"]))
+    ambiguous_requires_confirmation_cases = sum(
+        1 for row in target_rows if bool(row["ambiguous_requires_confirmation"])
+    )
     wrong_confident_miss_cases = sum(1 for row in target_rows if bool(row["wrong_confident_miss"]))
     safe_ambiguity_cases = sum(1 for row in target_rows if bool(row["safe_ambiguity"]))
+    hit_at_1_rate = _rate(hit_at_1_cases, target_count)
+    hit_at_3_rate = _rate(hit_at_3_cases, target_count)
+    mrr = _average([
+        float(row.get("mrr", row.get("mrr_at_3")))
+        for row in target_rows
+        if isinstance(row.get("mrr", row.get("mrr_at_3")), int | float)
+    ])
+    mrr_at_3 = _average([
+        float(row["mrr_at_3"])
+        for row in target_rows
+        if isinstance(row.get("mrr_at_3"), int | float)
+    ])
     target_selection_summary = {
         "evaluated_cases": target_count,
+        "hit_at_1": hit_at_1_rate,
         "hit_at_1_cases": hit_at_1_cases,
-        "hit_at_1_rate": _rate(hit_at_1_cases, target_count),
+        "hit_at_1_rate": hit_at_1_rate,
+        "hit_at_3": hit_at_3_rate,
         "hit_at_3_cases": hit_at_3_cases,
-        "hit_at_3_rate": _rate(hit_at_3_cases, target_count),
-        "mrr_at_3": _average([
-            float(row["mrr_at_3"])
-            for row in target_rows
-            if isinstance(row.get("mrr_at_3"), int | float)
-        ]),
+        "hit_at_3_rate": hit_at_3_rate,
+        "mrr": mrr,
+        "mrr_at_3": mrr_at_3,
         "coverage_at_budget_cases": coverage_cases,
         "coverage_at_budget_rate": _rate(coverage_cases, target_count),
+        "false_primary_cases": false_primary_cases,
+        "false_primary_rate": _rate(false_primary_cases, target_count),
+        "ambiguous_requires_confirmation_cases": ambiguous_requires_confirmation_cases,
+        "ambiguous_requires_confirmation_rate": _rate(
+            ambiguous_requires_confirmation_cases,
+            target_count,
+        ),
         "wrong_confident_miss_cases": wrong_confident_miss_cases,
         "wrong_confident_miss_rate": _rate(wrong_confident_miss_cases, target_count),
         "safe_ambiguity_cases": safe_ambiguity_cases,
