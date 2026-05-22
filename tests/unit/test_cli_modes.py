@@ -913,14 +913,42 @@ def test_new_rule_should_respect_base_dir_and_requested_name(tmp_path: Path) -> 
     assert not (base_dir / "rules" / "sample-rule.yml").exists()
 
 
-def test_new_project_should_reject_ignored_project_name(tmp_path: Path) -> None:
+def test_new_project_name_should_scaffold_named_directory() -> None:
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        result = runner.invoke(app, ["new", "project", "demo"])
+
+        assert result.exit_code == 0, result.output
+        assert (Path("demo") / "sgconfig.yml").exists()
+        assert (Path("demo") / "rules" / "sample-rule.yml").exists()
+        assert (Path("demo") / "tests" / "sample-test.yml").exists()
+        assert not Path("sgconfig.yml").exists()
+
+
+def test_new_project_name_with_base_dir_should_scaffold_under_named_directory(
+    tmp_path: Path,
+) -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["new", "project", "demo", "--base-dir", str(tmp_path)])
 
-    assert result.exit_code == 1
-    assert "does not accept a name" in result.stderr
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "demo" / "sgconfig.yml").exists()
+    assert (tmp_path / "demo" / "rules" / "sample-rule.yml").exists()
+    assert (tmp_path / "demo" / "tests" / "sample-test.yml").exists()
     assert not (tmp_path / "sgconfig.yml").exists()
+
+
+def test_new_unknown_scaffold_kind_should_reject_before_writing(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["new", "widget", "demo", "--base-dir", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Unsupported scaffold kind" in result.stderr
+    assert not (tmp_path / "sgconfig.yml").exists()
+    assert not (tmp_path / "widget").exists()
     assert not (tmp_path / "rules").exists()
     assert not (tmp_path / "tests").exists()
 
