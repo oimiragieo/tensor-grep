@@ -73,11 +73,28 @@ def test_run_agent_workflow_benchmarks_should_extract_capsule_contract_metrics()
         "target_selection_evaluated": True,
         "expected_target_file_suffix": "src/app.ts",
         "expected_target_symbol": "",
+        "expected_targets": [{"file_suffix": "src/app.ts", "symbol": ""}],
+        "observed_primary_target": {
+            "file": "src/app.ts",
+            "symbol": "createInvoice",
+            "confidence": 0.65,
+        },
+        "alternative_target_ranks": [
+            {
+                "rank": 2,
+                "file": "src/payments.py",
+                "symbol": "",
+                "matches_expected_target": False,
+            }
+        ],
         "target_rank": 1,
         "hit_at_1": True,
         "hit_at_3": True,
+        "mrr": 1.0,
         "mrr_at_3": 1.0,
         "coverage_at_budget": True,
+        "false_primary": False,
+        "ambiguous_requires_confirmation": False,
         "wrong_confident_miss": False,
         "safe_ambiguity": False,
         "passed": True,
@@ -132,10 +149,70 @@ def test_run_agent_workflow_benchmarks_should_extract_target_selection_metrics()
     assert metrics["target_rank"] == 2
     assert metrics["hit_at_1"] is False
     assert metrics["hit_at_3"] is True
+    assert metrics["mrr"] == 0.5
     assert metrics["mrr_at_3"] == 0.5
     assert metrics["coverage_at_budget"] is True
     assert metrics["wrong_confident_miss"] is False
     assert metrics["safe_ambiguity"] is True
+    assert metrics["expected_targets"] == [
+        {
+            "file_suffix": "src/tensor_grep/cli/runtime_paths.py",
+            "symbol": "resolve_ripgrep_binary",
+        }
+    ]
+    assert metrics["observed_primary_target"] == {
+        "file": "src/tensor_grep/cli/ripgrep_fmt.py",
+        "symbol": "_binary_notice",
+        "confidence": 0.82,
+    }
+    assert metrics["alternative_target_ranks"] == [
+        {
+            "rank": 2,
+            "file": "src/tensor_grep/cli/runtime_paths.py",
+            "symbol": "resolve_ripgrep_binary",
+            "matches_expected_target": True,
+        },
+        {
+            "rank": 3,
+            "file": "src/tensor_grep/cli/bootstrap.py",
+            "symbol": "resolve_native_binary",
+            "matches_expected_target": False,
+        },
+    ]
+    assert metrics["false_primary"] is True
+    assert metrics["ambiguous_requires_confirmation"] is True
+
+
+def test_run_agent_workflow_benchmarks_should_keep_mrr_at_3_bounded_for_late_hits():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_late_target_selection",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    payload = {
+        "confidence": {"overall": 0.7},
+        "primary_target": {"file": "src/wrong0.py", "symbol": "wrong0"},
+        "ask_before_editing": {"ask_required": False},
+        "alternative_targets": [
+            {"file": "src/wrong1.py", "symbol": "wrong1"},
+            {"file": "src/wrong2.py", "symbol": "wrong2"},
+            {"file": "src/right.py", "symbol": "target_symbol"},
+        ],
+        "snippets": [{"file": "src/right.py", "start_line": 1, "end_line": 4}],
+    }
+
+    metrics = module.extract_capsule_metrics(
+        payload,
+        {
+            "name": "late_hit",
+            "expected_targets": [{"file_suffix": "src/right.py", "symbol": "target_symbol"}],
+        },
+    )
+
+    assert metrics["target_rank"] == 4
+    assert metrics["hit_at_3"] is False
+    assert metrics["mrr"] == 0.25
+    assert metrics["mrr_at_3"] == 0.0
+    assert metrics["coverage_at_budget"] is True
 
 
 def test_run_agent_workflow_benchmarks_should_summarize_target_selection_metrics():
@@ -163,6 +240,8 @@ def test_run_agent_workflow_benchmarks_should_summarize_target_selection_metrics
             "coverage_at_budget": True,
             "wrong_confident_miss": False,
             "safe_ambiguity": False,
+            "false_primary": False,
+            "ambiguous_requires_confirmation": False,
         },
         {
             "scenario": "bridge",
@@ -182,18 +261,27 @@ def test_run_agent_workflow_benchmarks_should_summarize_target_selection_metrics
             "coverage_at_budget": False,
             "wrong_confident_miss": True,
             "safe_ambiguity": False,
+            "false_primary": True,
+            "ambiguous_requires_confirmation": False,
         },
     ])
 
     assert summary["target_selection_summary"] == {
         "evaluated_cases": 2,
+        "hit_at_1": 0.5,
         "hit_at_1_cases": 1,
         "hit_at_1_rate": 0.5,
+        "hit_at_3": 0.5,
         "hit_at_3_cases": 1,
         "hit_at_3_rate": 0.5,
+        "mrr": 0.5,
         "mrr_at_3": 0.5,
         "coverage_at_budget_cases": 1,
         "coverage_at_budget_rate": 0.5,
+        "false_primary_cases": 1,
+        "false_primary_rate": 0.5,
+        "ambiguous_requires_confirmation_cases": 0,
+        "ambiguous_requires_confirmation_rate": 0.0,
         "wrong_confident_miss_cases": 1,
         "wrong_confident_miss_rate": 0.5,
         "safe_ambiguity_cases": 0,
