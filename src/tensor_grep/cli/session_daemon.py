@@ -357,22 +357,27 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "root_count": server.payload_cache.root_count,
                 }
             else:
+                overall_started_at = monotonic()
                 try:
+                    load_started_at = monotonic()
                     payload, cache_status = _load_payload_with_status_retry(
                         server.payload_cache,
                         request_session_id,
                         request_path,
                     )
+                    loaded_at = monotonic()
                     response = serve_session_request(
                         request_session_id,
                         request,
                         request_path,
                         payload=payload,
                     )
+                    served_at = monotonic()
                 except Exception:
                     refresh_on_stale = bool(request.get("refresh_on_stale", False))
                     if not refresh_on_stale:
                         raise
+                    load_started_at = monotonic()
                     refresh_session(
                         request_session_id,
                         request_path,
@@ -384,17 +389,26 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         request_session_id,
                         request_path,
                     )
+                    loaded_at = monotonic()
                     response = serve_session_request(
                         request_session_id,
                         request,
                         request_path,
                         payload=payload,
                     )
+                    served_at = monotonic()
                 response["serve_cache"] = {
                     "status": cache_status,
                     "session_count": server.payload_cache.session_count,
                     "root_count": server.payload_cache.root_count,
                 }
+                if command == "context_edit_plan":
+                    response["session_timing"] = {
+                        "cache_status": cache_status,
+                        "load_session_seconds": max(0.0, loaded_at - load_started_at),
+                        "build_edit_plan_seconds": max(0.0, served_at - loaded_at),
+                        "total_seconds": max(0.0, served_at - overall_started_at),
+                    }
         except Exception as exc:
             response = {
                 "version": _SESSION_VERSION,

@@ -203,6 +203,11 @@ def test_session_edit_plan_does_not_walk_repo_for_validation_discovery(
     assert payload["routing_reason"] == "session-context-edit-plan"
     assert payload["files"] == [str(module_path.resolve())]
     assert payload["validation_commands"] == []
+    timing = payload["session_timing"]
+    assert timing["cache_status"] == "disk-load"
+    assert timing["load_session_seconds"] >= 0
+    assert timing["build_edit_plan_seconds"] >= 0
+    assert timing["total_seconds"] >= 0
 
 
 def test_session_edit_plan_uses_cached_validation_evidence_after_open(
@@ -861,6 +866,7 @@ def test_session_context_can_use_daemon(tmp_path: Path) -> None:
     assert payload["session_id"] == opened["session_id"]
     assert payload["routing_reason"] == "session-context"
     assert payload["files"] == [str(module_path.resolve())]
+    assert "session_timing" not in payload
     session_daemon.stop_session_daemon(str(project))
 
 
@@ -897,6 +903,10 @@ def test_session_edit_plan_can_use_daemon(tmp_path: Path) -> None:
         assert payload["routing_reason"] == "session-context-edit-plan"
         assert payload["files"] == [str(module_path.resolve())]
         assert payload["serve_cache"]["status"] in {"hit", "miss"}
+        assert payload["session_timing"]["cache_status"] == payload["serve_cache"]["status"]
+        assert payload["session_timing"]["load_session_seconds"] >= 0
+        assert payload["session_timing"]["build_edit_plan_seconds"] >= 0
+        assert payload["session_timing"]["total_seconds"] >= 0
     finally:
         session_daemon.stop_session_daemon(str(project))
 
