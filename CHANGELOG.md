@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.12.55 (2026-05-22)
+
+### Bug Fixes
+
+- Make dogfood self-check public roots
+  ([`4960e4b`](https://github.com/oimiragieo/tensor-grep/commit/4960e4bb1c6534d81c5d60ddbe51b42c431f8dca))
+
+Use a self-contained public readiness path when dogfood runs outside the tensor-grep repository.
+
+### Testing
+
+- Lock bare search flag forwarding
+  ([`2292160`](https://github.com/oimiragieo/tensor-grep/commit/229216091ddcf96e5f2f2cb4dfc1902871bfca95))
+
+Add regression coverage for option-first bare search forwarding.
+
+
 ## v1.12.54 (2026-05-22)
 
 ### Bug Fixes
