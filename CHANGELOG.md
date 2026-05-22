@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.12.53 (2026-05-22)
+
+### Bug Fixes
+
+- Reuse cached session validation files
+  ([`10a1ebe`](https://github.com/oimiragieo/tensor-grep/commit/10a1ebe791149120c600fff9fe0c09d2c91a698a))
+
+Reuse session cached file metadata for validation planning so warm edit-plan paths avoid cold repo
+  walks.
+
+
 ## v1.12.52 (2026-05-22)
 
 ### Bug Fixes
