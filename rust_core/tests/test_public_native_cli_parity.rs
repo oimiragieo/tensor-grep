@@ -1321,25 +1321,31 @@ fn test_new_rejects_unsupported_shapes_without_scaffolding_cwd_root() {
 }
 
 #[test]
-fn test_new_project_rejects_ignored_name_without_scaffolding_cwd_root() {
+fn test_new_project_name_scaffolds_named_directory_without_scaffolding_cwd_root() {
     let dir = tempdir().unwrap();
     let output = run_tg(&["new", "project", "demo"], dir.path());
 
     assert!(
-        !output.status.success(),
+        output.status.success(),
         "status={:?}\nstdout={}\nstderr={}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("does not accept a name"),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     assert!(!dir.path().join("sgconfig.yml").exists());
-    assert!(!dir.path().join("rules").exists());
-    assert!(!dir.path().join("tests").exists());
+    assert!(dir.path().join("demo").join("sgconfig.yml").exists());
+    assert!(dir
+        .path()
+        .join("demo")
+        .join("rules")
+        .join("sample-rule.yml")
+        .exists());
+    assert!(dir
+        .path()
+        .join("demo")
+        .join("tests")
+        .join("sample-test.yml")
+        .exists());
 }
 
 #[test]

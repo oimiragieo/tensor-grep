@@ -530,7 +530,7 @@ fn validate_ast_new_name(name: &str) -> Result<()> {
         || name == "."
         || name == ".."
     {
-        anyhow::bail!("Invalid item name {name:?}; use a bare rule/test/util identifier.");
+        anyhow::bail!("Invalid item name {name:?}; use a bare scaffold identifier.");
     }
     Ok(())
 }
@@ -607,10 +607,6 @@ fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
     if kind != AstNewKind::Project && name.is_none() {
         anyhow::bail!("tg new {:?} requires a name", kind);
     }
-    if kind == AstNewKind::Project && name.is_some() {
-        anyhow::bail!("tg new project does not accept a name; use --base-dir DIR.");
-    }
-
     Ok(AstNewRequest {
         kind,
         name,
@@ -657,13 +653,19 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
             "usage: tg new [project|rule|test|util] [NAME] [--lang LANG] [--base-dir DIR] [--yes]"
         );
         println!();
-        println!("Create a new AST project configuration or a named rule/test/util item.");
+        println!("Create a new AST project configuration or named project/rule/test/util item.");
         return Ok(());
     }
 
     let request = parse_ast_new_args(&args)?;
     match request.kind {
-        AstNewKind::Project => write_ast_project_scaffold(&request.base_dir, &request.lang),
+        AstNewKind::Project => {
+            let project_dir = match request.name.as_deref() {
+                Some(name) => request.base_dir.join(name),
+                None => request.base_dir,
+            };
+            write_ast_project_scaffold(&project_dir, &request.lang)
+        }
         AstNewKind::Rule => {
             let name = request.name.as_deref().expect("validated rule name");
             let rules_dir = request.base_dir.join("rules");

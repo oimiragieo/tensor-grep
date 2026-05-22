@@ -7820,7 +7820,7 @@ def test(
 
 def _validate_ast_new_name(name: str) -> None:
     if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"Invalid item name {name!r}; use a bare rule/test/util identifier.")
+        raise ValueError(f"Invalid item name {name!r}; use a bare scaffold identifier.")
 
 
 def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
@@ -7862,7 +7862,7 @@ def new(
         None,
         help="Scaffold kind for tensor-grep's bounded AST workflow: project, rule, test, or util.",
     ),
-    name: str | None = typer.Argument(None, help="Name for rule/test/util scaffolds."),
+    name: str | None = typer.Argument(None, help="Name for project/rule/test/util scaffolds."),
     lang: str = typer.Option("python", "--lang", "-l", help="Language for generated items."),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Accept default scaffold choices without prompting."
@@ -7882,9 +7882,11 @@ def new(
     scaffold_kind = command or "project"
     try:
         if scaffold_kind == "project":
+            project_dir = base_dir
             if name is not None:
-                raise ValueError("tg new project does not accept a name; use --base-dir DIR.")
-            config_path = _write_ast_project_scaffold(base_dir, lang)
+                _validate_ast_new_name(name)
+                project_dir = base_dir / name
+            config_path = _write_ast_project_scaffold(project_dir, lang)
             typer.echo(f"Initialized new tensor-grep structural search project in {config_path}.")
             return
 
