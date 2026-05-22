@@ -1999,6 +1999,33 @@ def _doctor_path_tg_launcher_warning(
     return None
 
 
+def _doctor_mcp_stdio_launcher_warning(
+    *,
+    native_tg_binary: Path | None,
+    launchers: list[tuple[str, str | None, str | None]],
+) -> str | None:
+    if native_tg_binary is None or native_tg_binary.suffix.lower() != ".exe":
+        return None
+
+    powershell_launchers = [
+        (label, path)
+        for label, kind, path in launchers
+        if path and (kind == "powershell-shim" or Path(path).suffix.lower() == ".ps1")
+    ]
+    if not powershell_launchers:
+        return None
+
+    observed = "; ".join(f"{label} resolves {path}" for label, path in powershell_launchers)
+    script_path = powershell_launchers[0][1]
+    return (
+        "MCP stdio launcher warning: "
+        f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
+        f"tg.exe directly: {native_tg_binary}. If you intentionally use the PowerShell "
+        "script shim, configure the client to launch it explicitly as "
+        f"`pwsh -NoProfile -File {script_path} mcp`."
+    )
+
+
 def _doctor_tg_foreign_warning(
     *,
     label: str,
@@ -2437,6 +2464,22 @@ def _build_doctor_payload(
             fresh_kind=fresh_shell_path_tg_first_launcher_kind,
             fresh_path=fresh_shell_path_tg_first_path,
         ),
+        "mcp_stdio_launcher_warning": _doctor_mcp_stdio_launcher_warning(
+            native_tg_binary=native_tg_binary,
+            launchers=[
+                ("PATH", path_tg_first_launcher_kind, path_tg_first_path),
+                (
+                    "fresh-shell PATH",
+                    fresh_shell_path_tg_first_launcher_kind,
+                    fresh_shell_path_tg_first_path,
+                ),
+                (
+                    "Python subprocess PATH",
+                    python_subprocess_path_tg_first_launcher_kind,
+                    python_subprocess_path_tg_first_path,
+                ),
+            ],
+        ),
         "shell_escaping_guidance": _doctor_shell_escaping_guidance(),
         "gpu": gpu_status,
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
@@ -2530,6 +2573,8 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         )
     if launcher_warning := payload.get("path_tg_launcher_warning"):
         lines.append(f"path_tg_launcher_warning: {launcher_warning}")
+    if mcp_stdio_launcher_warning := payload.get("mcp_stdio_launcher_warning"):
+        lines.append(f"mcp_stdio_launcher_warning: {mcp_stdio_launcher_warning}")
     if python_subprocess_warning := payload.get("python_subprocess_path_tg_foreign_warning"):
         lines.append(f"python_subprocess_path_tg_foreign_warning: {python_subprocess_warning}")
     if python_subprocess_remediation := payload.get(

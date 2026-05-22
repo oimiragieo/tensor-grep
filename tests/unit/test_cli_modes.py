@@ -1540,6 +1540,111 @@ def test_doctor_json_warns_when_current_path_hits_compat_shim_before_fresh_nativ
     assert "restart the shell" in payload["path_tg_launcher_warning"]
 
 
+def test_doctor_json_reports_mcp_stdio_launcher_warning_for_powershell_shim(
+    monkeypatch, tmp_path: Path
+) -> None:
+    shim_tg = tmp_path / "bin" / "tg.ps1"
+    native_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    shim_tg.parent.mkdir(parents=True)
+    native_tg.parent.mkdir(parents=True)
+    shim_tg.write_text("& $PSScriptRoot/tg.exe @args\n", encoding="utf-8")
+    native_tg.write_text("native\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.12.52")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.12.52",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_lsp_provider_statuses", lambda path: [])
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [
+            {"path": str(shim_tg), "version": "tensor-grep 1.12.52"},
+            {"path": str(native_tg), "version": "tg 1.12.52"},
+        ],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [{"path": str(native_tg), "version": "tg 1.12.52"}],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_python_subprocess_path_tg_candidate",
+        lambda path_value=None: {"path": str(shim_tg), "version": "tensor-grep 1.12.52"},
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["path_tg_first_launcher_kind"] == "powershell-shim"
+    assert payload["python_subprocess_path_tg_first_launcher_kind"] == "powershell-shim"
+    warning = payload["mcp_stdio_launcher_warning"]
+    assert "MCP stdio" in warning
+    assert "managed native tg.exe directly" in warning
+    assert str(native_tg) in warning
+    assert "pwsh -NoProfile -File" in warning
+    assert str(shim_tg) in warning
+
+
+def test_doctor_text_reports_mcp_stdio_launcher_warning(monkeypatch, tmp_path: Path) -> None:
+    shim_tg = tmp_path / "bin" / "tg.ps1"
+    native_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    shim_tg.parent.mkdir(parents=True)
+    native_tg.parent.mkdir(parents=True)
+    shim_tg.write_text("& $PSScriptRoot/tg.exe @args\n", encoding="utf-8")
+    native_tg.write_text("native\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.12.52")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.12.52",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_lsp_provider_statuses", lambda path: [])
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [{"path": str(shim_tg), "version": "tensor-grep 1.12.52"}],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [{"path": str(native_tg), "version": "tg 1.12.52"}],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_python_subprocess_path_tg_candidate",
+        lambda path_value=None: None,
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--no-lsp"])
+
+    assert result.exit_code == 0
+    assert "mcp_stdio_launcher_warning:" in result.stdout
+    assert "managed native tg.exe directly" in result.stdout
+    assert "pwsh -NoProfile -File" in result.stdout
+
+
 def test_doctor_json_reports_python_subprocess_foreign_tg_exe(monkeypatch, tmp_path: Path) -> None:
     foreign_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
     managed_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
