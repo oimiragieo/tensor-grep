@@ -149,6 +149,40 @@ def test_dogfood_command_returns_failure_when_readiness_fails(tmp_path: Path) ->
     assert payload["verdict"]["failed_checks"] == ["docs-claim-check"]
 
 
+def test_dogfood_non_repo_root_uses_public_self_check(tmp_path: Path) -> None:
+    output = tmp_path / "dogfood.json"
+    non_repo_root = tmp_path / "user-project"
+    non_repo_root.mkdir()
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "dogfood",
+            "--root",
+            str(non_repo_root),
+            "--output",
+            str(output),
+            "--no-shell-probes",
+            "--no-wsl-probe",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Dogfood verdict: PASS" in result.stdout
+    assert "failed=0" in result.stdout
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["agent_readiness"]["mode"] == "public-self-check"
+    assert payload["agent_readiness"]["summary"]["failed"] == 0
+    skipped = [
+        result for result in payload["agent_readiness"]["results"] if result["status"] == "skipped"
+    ]
+    assert skipped
+    repo_script_result = next(
+        result for result in skipped if result["name"] == "repo-agent-readiness-script"
+    )
+    assert "scripts/agent_readiness.py" in repo_script_result["message"]
+
+
 def test_dogfood_json_progress_always_uses_stderr_only(tmp_path: Path) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
