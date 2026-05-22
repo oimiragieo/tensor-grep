@@ -1061,6 +1061,7 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["lsp"]["providers"][0]["health_status"] == "ready"
     assert payload["lsp"]["providers"][0]["health_check"] == "probe"
     assert payload["lsp"]["providers"][0]["lsp_proof"] is True
+    assert payload["lsp_providers"] == payload["lsp"]["providers"]
     guidance = payload["shell_escaping_guidance"]
     assert guidance["platform"] == "windows"
     assert "PowerShell double quotes expand $NAME" in guidance["powershell"]["summary"]
