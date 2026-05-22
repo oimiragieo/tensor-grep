@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.51 (2026-05-22)
+
+### Bug Fixes
+
+- Harden skill release proof stamping
+  ([`6e6d85b`](https://github.com/oimiragieo/tensor-grep/commit/6e6d85bdb0e3280b1151a199353f646985da7683))
+
+
 ## v1.12.50 (2026-05-22)
 
 ### Bug Fixes
