@@ -539,7 +539,9 @@ def session_context_edit_plan(
     max_symbols: int = 5,
     refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
+    started_at = monotonic()
     payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
+    loaded_at = monotonic()
     context = build_context_edit_plan_from_map(
         payload["repo_map"],
         query,
@@ -548,8 +550,15 @@ def session_context_edit_plan(
         max_tokens=max_tokens,
         max_symbols=max_symbols,
     )
+    built_at = monotonic()
     context["session_id"] = session_id
     context["routing_reason"] = "session-context-edit-plan"
+    context["session_timing"] = {
+        "cache_status": "disk-load",
+        "load_session_seconds": max(0.0, loaded_at - started_at),
+        "build_edit_plan_seconds": max(0.0, built_at - loaded_at),
+        "total_seconds": max(0.0, built_at - started_at),
+    }
     return context
 
 
