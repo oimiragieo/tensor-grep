@@ -1,5 +1,8 @@
 import json
+import os
+import shutil
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
@@ -23,6 +26,48 @@ def test_tg_ast_info_json():
     payload = json.loads(result.stdout)
     assert payload["languages"]
     assert "python" in payload["languages"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows absolute path argv smoke proof")
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("ast-grep", "ast-grep.exe", "sg")),
+    reason="requires ast-grep binary",
+)
+def test_tg_run_js_function_pattern_accepts_windows_absolute_path_argv(tmp_path):
+    """Smoke-prove JavaScript AST run handles literal pattern argv and Windows paths."""
+    target = tmp_path / "handler.js"
+    target.write_text(
+        "function handleRequest(req, res) {\n"
+        "  return res.send(req.url);\n"
+        "}\n"
+        "const untouched = () => 1;\n",
+        encoding="utf-8",
+    )
+    target_path = str(target.resolve())
+
+    assert ":" in target_path
+    assert "\\" in target_path
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "function $F($$$ARGS) { $$$ }",
+            target_path,
+            "--lang",
+            "js",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "AstGrepWrapperBackend"
+    assert payload["query"] == "function $F($$$ARGS) { $$$ }"
+    assert payload["path"] == target_path
+    assert payload["total_matches"] == 1
+    assert len(payload["matches"]) == 1
+    assert "function handleRequest" in payload["matches"][0]["text"]
 
 
 def test_ast_interactive_apply(tmp_path, monkeypatch):
