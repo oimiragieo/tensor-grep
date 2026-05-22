@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.12.60 (2026-05-22)
+
+### Bug Fixes
+
+- Upgrade starlette audit dependency ([#199](https://github.com/oimiragieo/tensor-grep/pull/199),
+  [`75250be`](https://github.com/oimiragieo/tensor-grep/commit/75250be237e22b9e5d5949a6b094e5321cf7ab6b))
+
+
 ## v1.12.59 (2026-05-22)
 
 ### Bug Fixes
