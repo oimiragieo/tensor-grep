@@ -504,6 +504,59 @@ def _path_is_relative_to(path: Path, parent: Path) -> bool:
     return True
 
 
+def _precomputed_validation_files_for_root(
+    root: Path,
+    file_paths: list[str | Path] | None,
+) -> list[Path] | None:
+    if file_paths is None:
+        return None
+    normalized_root = root.expanduser().resolve()
+    selected: list[Path] = []
+    seen: set[str] = set()
+    for raw_path in file_paths:
+        current = Path(str(raw_path)).expanduser()
+        if not current.is_absolute():
+            current = normalized_root / current
+        try:
+            resolved = current.resolve()
+        except OSError:
+            resolved = current.absolute()
+        if not _path_is_relative_to(resolved, normalized_root):
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(resolved)
+    selected.sort(key=lambda path: str(path))
+    return selected
+
+
+def _repo_map_validation_file_paths(
+    repo_map: dict[str, Any],
+    *,
+    validation_root: Path | None = None,
+) -> list[str | Path] | None:
+    if validation_root is not None:
+        try:
+            map_root = Path(str(repo_map.get("path", "."))).expanduser().resolve()
+            resolved_validation_root = validation_root.expanduser().resolve()
+        except (OSError, RuntimeError):
+            return None
+        if map_root.is_file():
+            map_root = map_root.parent
+        if map_root != resolved_validation_root and not _path_is_relative_to(
+            resolved_validation_root,
+            map_root,
+        ):
+            return None
+    raw_paths = list(repo_map.get("related_paths", [])) or [
+        *list(repo_map.get("files", [])),
+        *list(repo_map.get("tests", [])),
+    ]
+    return [Path(str(current)) for current in raw_paths if str(current or "")]
+
+
 def _literal_symbol_candidate(path: Path) -> bool:
     return path.suffix.lower() in _SOURCE_FIRST_SUFFIXES
 
@@ -2488,6 +2541,7 @@ def _discover_validation_tests_for_primary_file(
     primary_symbol_name: str | None,
     query: str,
     limit: int,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> list[str]:
     if not primary_file:
         return []
@@ -2509,7 +2563,16 @@ def _discover_validation_tests_for_primary_file(
     source_stem = source_path.stem.lower()
     source_related_stem = _related_test_stem(source_stem)
     scored_tests: list[tuple[int, str]] = []
-    for current in _iter_repo_files(validation_root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT):
+    candidate_files = _precomputed_validation_files_for_root(
+        validation_root,
+        precomputed_file_paths,
+    )
+    if candidate_files is None:
+        candidate_files = _iter_repo_files(
+            validation_root,
+            max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
+        )
+    for current in candidate_files:
         if not _is_test_file(current):
             continue
         resolved = current.resolve()
@@ -6195,13 +6258,19 @@ def _ts_jest_configured(
     return False
 
 
-def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
+def _detect_validation_runners_from_root(
+    root: Path,
+    *,
+    precomputed_file_paths: list[str | Path] | None = None,
+) -> _ValidationRunnerInfo:
     if not root.exists():
         return _ValidationRunnerInfo(
             False, False, False, "generic", False, (), (), None, None, None
         )
 
-    all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
+    all_files = _precomputed_validation_files_for_root(root, precomputed_file_paths)
+    if all_files is None:
+        all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     has_python = any(current.suffix == ".py" for current in all_files)
     has_python_tests = any(
         current.suffix == ".py" and _is_test_file(current) for current in all_files
@@ -6690,6 +6759,7 @@ def _primary_language_fallback_validation_steps(
     *,
     repo_root: str | Path,
     primary_file: str | Path | None,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> list[dict[str, Any]]:
     if primary_file is None:
         return []
@@ -6706,8 +6776,14 @@ def _primary_language_fallback_validation_steps(
                 "confidence": 0.5,
                 "detection": "detected",
             })
-    elif primary_language == "python" and _has_python_validation_fallback_evidence(root):
-        detected = _detect_validation_runners_from_root(root)
+    elif primary_language == "python" and _has_python_validation_fallback_evidence(
+        root,
+        precomputed_file_paths=precomputed_file_paths,
+    ):
+        detected = _detect_validation_runners_from_root(
+            root,
+            precomputed_file_paths=precomputed_file_paths,
+        )
         if detected.python_detection == "detected":
             steps.append({
                 "command": "uv run pytest -q",
@@ -6719,7 +6795,11 @@ def _primary_language_fallback_validation_steps(
     return steps
 
 
-def _has_python_validation_fallback_evidence(root: Path) -> bool:
+def _has_python_validation_fallback_evidence(
+    root: Path,
+    *,
+    precomputed_file_paths: list[str | Path] | None = None,
+) -> bool:
     if any(
         (root / marker).is_file()
         for marker in (
@@ -6731,10 +6811,10 @@ def _has_python_validation_fallback_evidence(root: Path) -> bool:
         )
     ):
         return True
-    return any(
-        current.suffix == ".py" and _is_test_file(current)
-        for current in _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
-    )
+    candidate_files = _precomputed_validation_files_for_root(root, precomputed_file_paths)
+    if candidate_files is None:
+        candidate_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
+    return any(current.suffix == ".py" and _is_test_file(current) for current in candidate_files)
 
 
 def _without_heuristic_repo_cargo_fallback(
@@ -6757,6 +6837,7 @@ def _ensure_primary_language_validation_fallback(
     *,
     repo_root: str | Path,
     primary_file: str | Path | None,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> list[dict[str, Any]]:
     primary_language = _target_language_for_path(primary_file)
     if primary_language is None:
@@ -6764,6 +6845,7 @@ def _ensure_primary_language_validation_fallback(
     fallback_steps = _primary_language_fallback_validation_steps(
         repo_root=repo_root,
         primary_file=primary_file,
+        precomputed_file_paths=precomputed_file_paths,
     )
     if any(
         _validation_step_matches_primary_language(step, primary_language)
@@ -6821,6 +6903,7 @@ def _validation_commands_for_tests(
     primary_test: str | None = None,
     primary_symbol: dict[str, Any] | None = None,
     query: str | None = None,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> list[str]:
     return [
         str(step["command"])
@@ -6830,6 +6913,7 @@ def _validation_commands_for_tests(
             primary_test=primary_test,
             primary_symbol=primary_symbol,
             query=query,
+            precomputed_file_paths=precomputed_file_paths,
         )
     ]
 
@@ -6841,6 +6925,7 @@ def _raw_validation_plan_for_tests(
     primary_test: str | None = None,
     primary_symbol: dict[str, Any] | None = None,
     query: str | None = None,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> list[dict[str, Any]]:
     explicit_root = Path(repo_root).expanduser().resolve()
     if explicit_root.is_file():
@@ -6851,19 +6936,37 @@ def _raw_validation_plan_for_tests(
     )
     root = explicit_root if tests_under_explicit_root else _validation_repo_root(explicit_root)
     if tests:
-        detected = _detect_validation_runners_from_root(root)
+        detected = _detect_validation_runners_from_root(
+            root,
+            precomputed_file_paths=precomputed_file_paths,
+        )
     else:
-        local_files = _iter_repo_files(explicit_root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
+        local_files = _precomputed_validation_files_for_root(
+            explicit_root,
+            precomputed_file_paths,
+        )
+        if local_files is None:
+            local_files = _iter_repo_files(
+                explicit_root,
+                max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
+            )
         local_has_python = any(current.suffix == ".py" for current in local_files)
         local_has_rust = any(current.suffix in _RUST_SUFFIXES for current in local_files)
         local_has_javascript = any(
             current.suffix.lower() in _JS_TS_SUFFIXES for current in local_files
         )
-        detected = (
-            _detect_validation_runners_from_root(explicit_root)
-            if local_has_python and not local_has_javascript and not local_has_rust
-            else _detect_validation_runners(str(root))
-        )
+        if local_has_python and not local_has_javascript and not local_has_rust:
+            detected = _detect_validation_runners_from_root(
+                explicit_root,
+                precomputed_file_paths=precomputed_file_paths,
+            )
+        elif precomputed_file_paths is not None:
+            detected = _detect_validation_runners_from_root(
+                root,
+                precomputed_file_paths=precomputed_file_paths,
+            )
+        else:
+            detected = _detect_validation_runners(str(root))
     has_javascript_validation = bool(
         detected.js_runners
         or detected.ts_runners
@@ -7196,6 +7299,7 @@ def _validation_plan_and_alignment_for_tests(
     primary_symbol: dict[str, Any] | None = None,
     primary_file: str | Path | None = None,
     query: str | None = None,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     raw_plan = _raw_validation_plan_for_tests(
         tests,
@@ -7203,6 +7307,7 @@ def _validation_plan_and_alignment_for_tests(
         primary_test=primary_test,
         primary_symbol=primary_symbol,
         query=query,
+        precomputed_file_paths=precomputed_file_paths,
     )
     resolved_primary_file = (
         str(primary_symbol.get("file"))
@@ -7213,6 +7318,7 @@ def _validation_plan_and_alignment_for_tests(
         raw_plan,
         repo_root=repo_root,
         primary_file=resolved_primary_file,
+        precomputed_file_paths=precomputed_file_paths,
     )
     return _align_validation_plan_for_primary_language(raw_plan, resolved_primary_file)
 
@@ -7225,6 +7331,7 @@ def _validation_plan_for_tests(
     primary_symbol: dict[str, Any] | None = None,
     primary_file: str | Path | None = None,
     query: str | None = None,
+    precomputed_file_paths: list[str | Path] | None = None,
 ) -> list[dict[str, Any]]:
     plan, _alignment = _validation_plan_and_alignment_for_tests(
         tests,
@@ -7233,6 +7340,7 @@ def _validation_plan_for_tests(
         primary_symbol=primary_symbol,
         primary_file=primary_file,
         query=query,
+        precomputed_file_paths=precomputed_file_paths,
     )
     return plan
 
@@ -8325,6 +8433,15 @@ def _build_edit_plan_seed(
         if isinstance(primary_symbol, dict) and primary_symbol.get("name")
         else None
     )
+    validation_root = (
+        _validation_repo_root(Path(str(primary_file)).expanduser().resolve().parent)
+        if primary_file is not None
+        else None
+    )
+    validation_file_paths = _repo_map_validation_file_paths(
+        repo_map,
+        validation_root=validation_root,
+    )
     if len(validation_tests) < max(1, min(max_files, 3)):
         for current in _discover_validation_tests_for_primary_file(
             payload.get("path", "."),
@@ -8332,6 +8449,7 @@ def _build_edit_plan_seed(
             primary_symbol_name=primary_symbol_name,
             query=query,
             limit=max(1, min(max_files, 3)) - len(validation_tests),
+            precomputed_file_paths=validation_file_paths,
         ):
             if current not in validation_tests:
                 validation_tests.append(current)
@@ -8420,6 +8538,7 @@ def _build_edit_plan_seed(
         primary_symbol=primary_symbol,
         primary_file=str(primary_file) if primary_file is not None else None,
         query=query,
+        precomputed_file_paths=validation_file_paths,
     )
     validation_commands = [str(step["command"]) for step in validation_plan]
     confidence = {
@@ -8673,6 +8792,14 @@ def _attach_lightweight_navigation_metadata(
         primary_symbol=primary_symbol,
         primary_file=primary_file,
         query=query,
+        precomputed_file_paths=_repo_map_validation_file_paths(
+            repo_map,
+            validation_root=(
+                _validation_repo_root(Path(str(primary_file)).expanduser().resolve().parent)
+                if primary_file
+                else None
+            ),
+        ),
     )
     lightweight_seed = {
         "primary_file": primary_file,
