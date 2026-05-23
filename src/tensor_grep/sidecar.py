@@ -263,19 +263,17 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
     results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
     if format_type == "json":
         return (
-            json.dumps(
-                {
-                    "version": JSON_OUTPUT_VERSION,
-                    "schema_version": JSON_OUTPUT_VERSION,
-                    "classification_backend": classification_backend,
-                    "line_budget": line_budget,
-                    "classifications": _enrich_classifications(
-                        results,
-                        budgeted_lines,
-                        source_path=source_path,
-                    ),
-                }
-            )
+            json.dumps({
+                "version": JSON_OUTPUT_VERSION,
+                "schema_version": JSON_OUTPUT_VERSION,
+                "classification_backend": classification_backend,
+                "line_budget": line_budget,
+                "classifications": _enrich_classifications(
+                    results,
+                    budgeted_lines,
+                    source_path=source_path,
+                ),
+            })
             + "\n",
             "",
             0,
