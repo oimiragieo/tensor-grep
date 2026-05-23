@@ -125,15 +125,19 @@ def resolve_gpu_sidecar_python(raw: str | None = None) -> Path | None:
 
     candidates = []
     if os.name == "nt":
-        candidates.extend([
-            ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
-            ROOT_DIR / ".venv" / "Scripts" / "python.exe",
-        ])
+        candidates.extend(
+            [
+                ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
+                ROOT_DIR / ".venv" / "Scripts" / "python.exe",
+            ]
+        )
     else:
-        candidates.extend([
-            ROOT_DIR / ".venv_cuda" / "bin" / "python",
-            ROOT_DIR / ".venv" / "bin" / "python",
-        ])
+        candidates.extend(
+            [
+                ROOT_DIR / ".venv_cuda" / "bin" / "python",
+                ROOT_DIR / ".venv" / "bin" / "python",
+            ]
+        )
 
     for candidate in candidates:
         if candidate.exists():
@@ -528,16 +532,26 @@ def benchmark_search_command(
     env: dict[str, str],
     runs: int,
     warmup: int,
+    allow_no_match: bool = False,
 ) -> dict[str, object]:
+    no_match_exit_accepted = False
     for _ in range(warmup):
         warmup_result = _run_command(command, env=env, capture_output=False)
-        if warmup_result.returncode != 0:
+        if (
+            warmup_result.returncode == 1
+            and allow_no_match
+            and not (warmup_result.stderr or "").strip()
+        ):
+            no_match_exit_accepted = True
+        elif warmup_result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
                 "samples_s": [],
                 "stderr": (warmup_result.stderr or "").strip(),
                 "command": _command_display(command),
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
 
     samples: list[float] = []
@@ -546,13 +560,17 @@ def benchmark_search_command(
         start = time.perf_counter()
         result = _run_command(command, env=env, capture_output=False)
         elapsed = time.perf_counter() - start
-        if result.returncode != 0:
+        if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
+            no_match_exit_accepted = True
+        elif result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
                 "samples_s": [round(sample, 6) for sample in samples],
                 "stderr": (result.stderr or "").strip(),
                 "command": _command_display(command),
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
         samples.append(round(elapsed, 6))
         last_stderr = (result.stderr or "").strip()
@@ -563,6 +581,8 @@ def benchmark_search_command(
         "samples_s": samples,
         "stderr": last_stderr,
         "command": _command_display(command),
+        "allow_no_match": allow_no_match,
+        "no_match_exit_accepted": no_match_exit_accepted,
     }
 
 
@@ -1085,13 +1105,15 @@ def analyze_gpu_auto_recommendation(
                 winning_sizes_by_device.setdefault(str(device_id), set()).add(
                     int(row.get("size_bytes", 0))
                 )
-                winners.append({
-                    "device_id": device_id,
-                    "size_label": row.get("size_label"),
-                    "size_bytes": row.get("size_bytes"),
-                    "speedup_vs_rg_pct": speedup_vs_rg_pct,
-                    "speedup_vs_tg_cpu_pct": speedup_vs_tg_cpu_pct,
-                })
+                winners.append(
+                    {
+                        "device_id": device_id,
+                        "size_label": row.get("size_label"),
+                        "size_bytes": row.get("size_bytes"),
+                        "speedup_vs_rg_pct": speedup_vs_rg_pct,
+                        "speedup_vs_tg_cpu_pct": speedup_vs_tg_cpu_pct,
+                    }
+                )
 
     qualifying_devices = {
         device_id
@@ -1490,18 +1512,27 @@ def run_gpu_scale_benchmarks(
             shard_count=shard_count,
         )
         generated_corpora[size_bytes] = corpus_dir
+        pattern_counts = corpus_info.get("pattern_counts")
+        expected_matches = (
+            int(pattern_counts.get(benchmark_pattern, 0)) > 0
+            if isinstance(pattern_counts, dict)
+            else True
+        )
+        allow_no_match = not expected_matches
 
         rg_result = benchmark_search_command(
             build_rg_search_command(rg_binary, benchmark_pattern, corpus_dir),
             env=command_env,
             runs=runs,
             warmup=warmup,
+            allow_no_match=allow_no_match,
         )
         tg_cpu_result = benchmark_search_command(
             build_tg_cpu_search_command(tg_binary, benchmark_pattern, corpus_dir),
             env=command_env,
             runs=runs,
             warmup=warmup,
+            allow_no_match=allow_no_match,
         )
 
         gpu_results: list[dict[str, object]] = []
@@ -1516,36 +1547,40 @@ def run_gpu_scale_benchmarks(
                 "tg_runtime_sidecar_used": device.get("tg_runtime_sidecar_used"),
             }
             if not device.get("operational", False):
-                entry.update({
-                    "status": "UNSUPPORTED",
-                    "median_s": None,
-                    "samples_s": [],
-                    "stderr": device.get("error", "device probe failed"),
-                    "promotion_evidence": False,
-                    "not_gpu_proof_reason": _not_gpu_proof_reason(
-                        backend=device.get("tg_runtime_backend"),
-                        sidecar_used=device.get("tg_runtime_sidecar_used"),
-                    ),
-                })
+                entry.update(
+                    {
+                        "status": "UNSUPPORTED",
+                        "median_s": None,
+                        "samples_s": [],
+                        "stderr": device.get("error", "device probe failed"),
+                        "promotion_evidence": False,
+                        "not_gpu_proof_reason": _not_gpu_proof_reason(
+                            backend=device.get("tg_runtime_backend"),
+                            sidecar_used=device.get("tg_runtime_sidecar_used"),
+                        ),
+                    }
+                )
             elif not _uses_native_cuda_runtime(device):
                 runtime_probe = runtime_probes.get(int(device["device_id"]), {})
-                entry.update({
-                    "status": "UNSUPPORTED",
-                    "median_s": None,
-                    "samples_s": [],
-                    "stderr": (
-                        "GPU scale benchmark requires a CUDA-enabled native tg binary; "
-                        f"runtime probe routed to "
-                        f"{runtime_probe.get('routing_backend') or 'unknown'} "
-                        f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
-                    ),
-                    "command": runtime_probe.get("command"),
-                    "promotion_evidence": False,
-                    "not_gpu_proof_reason": _not_gpu_proof_reason(
-                        backend=runtime_probe.get("routing_backend"),
-                        sidecar_used=runtime_probe.get("sidecar_used"),
-                    ),
-                })
+                entry.update(
+                    {
+                        "status": "UNSUPPORTED",
+                        "median_s": None,
+                        "samples_s": [],
+                        "stderr": (
+                            "GPU scale benchmark requires a CUDA-enabled native tg binary; "
+                            f"runtime probe routed to "
+                            f"{runtime_probe.get('routing_backend') or 'unknown'} "
+                            f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
+                        ),
+                        "command": runtime_probe.get("command"),
+                        "promotion_evidence": False,
+                        "not_gpu_proof_reason": _not_gpu_proof_reason(
+                            backend=runtime_probe.get("routing_backend"),
+                            sidecar_used=runtime_probe.get("sidecar_used"),
+                        ),
+                    }
+                )
             else:
                 result = benchmark_search_command(
                     build_tg_gpu_search_command(
@@ -1557,6 +1592,7 @@ def run_gpu_scale_benchmarks(
                     env=command_env,
                     runs=runs,
                     warmup=warmup,
+                    allow_no_match=allow_no_match,
                 )
                 result["stderr"] = _clean_selected_gpu_stderr(
                     result.get("stderr"),
@@ -1594,6 +1630,7 @@ def run_gpu_scale_benchmarks(
             "file_count": corpus_info["file_count"],
             "total_lines": corpus_info["total_lines"],
             "pattern_counts": corpus_info["pattern_counts"],
+            "expected_match": expected_matches,
             "rg": rg_result,
             "tg_cpu": tg_cpu_result,
             "gpu": gpu_results,
@@ -1785,22 +1822,24 @@ def main() -> int:
             "winning_rows": [],
         }
         gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks([])
-        payload.update({
-            "errors": [f"tg binary not found: {tg_binary}"],
-            "warnings": [],
-            "rows": [],
-            "correctness_checks": [],
-            "corpus_sizes": [],
-            "devices": [],
-            "gpu_auto_recommendation": recommendation,
-            "gpu_bottleneck_summary": gpu_bottleneck_summary,
-            "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
-            "scale_gate_summary": build_scale_gate_summary(
-                devices=[],
-                correctness_checks=[],
-                gpu_auto_recommendation=recommendation,
-            ),
-        })
+        payload.update(
+            {
+                "errors": [f"tg binary not found: {tg_binary}"],
+                "warnings": [],
+                "rows": [],
+                "correctness_checks": [],
+                "corpus_sizes": [],
+                "devices": [],
+                "gpu_auto_recommendation": recommendation,
+                "gpu_bottleneck_summary": gpu_bottleneck_summary,
+                "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
+                "scale_gate_summary": build_scale_gate_summary(
+                    devices=[],
+                    correctness_checks=[],
+                    gpu_auto_recommendation=recommendation,
+                ),
+            }
+        )
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 

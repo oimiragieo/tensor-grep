@@ -317,7 +317,9 @@ def benchmark_search_command(
     warmup: int,
     timeout_s: int,
     corpus_bytes: int,
+    allow_no_match: bool = False,
 ) -> dict[str, object]:
+    no_match_exit_accepted = False
     for _ in range(warmup):
         warmup_result = _run_command(command, env=env, capture_output=False, timeout_s=timeout_s)
         if isinstance(warmup_result, subprocess.TimeoutExpired):
@@ -328,8 +330,16 @@ def benchmark_search_command(
                 "stderr": f"command timed out after {timeout_s}s",
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
-        if warmup_result.returncode != 0:
+        if (
+            warmup_result.returncode == 1
+            and allow_no_match
+            and not (warmup_result.stderr or "").strip()
+        ):
+            no_match_exit_accepted = True
+        elif warmup_result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
@@ -337,6 +347,8 @@ def benchmark_search_command(
                 "stderr": (warmup_result.stderr or "").strip(),
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
 
     samples: list[float] = []
@@ -353,8 +365,12 @@ def benchmark_search_command(
                 "stderr": f"command timed out after {timeout_s}s",
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
-        if result.returncode != 0:
+        if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
+            no_match_exit_accepted = True
+        elif result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
@@ -362,6 +378,8 @@ def benchmark_search_command(
                 "stderr": (result.stderr or "").strip(),
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
         samples.append(elapsed)
         last_stderr = (result.stderr or "").strip()
@@ -375,6 +393,8 @@ def benchmark_search_command(
         "stderr": last_stderr,
         "command": _command_display(command),
         "throughput_bytes_s": throughput,
+        "allow_no_match": allow_no_match,
+        "no_match_exit_accepted": no_match_exit_accepted,
     }
 
 
@@ -404,11 +424,13 @@ def _extract_tg_match_signatures(payload: dict[str, object]) -> list[tuple[str, 
         line_number = match.get("line_number")
         if not isinstance(line_number, int):
             line_number = 0
-        signatures.append((
-            _normalized_match_path(match.get("file")),
-            line_number,
-            _normalized_match_text(match.get("text")),
-        ))
+        signatures.append(
+            (
+                _normalized_match_path(match.get("file")),
+                line_number,
+                _normalized_match_text(match.get("text")),
+            )
+        )
     return sorted(signatures)
 
 
@@ -430,11 +452,13 @@ def _extract_rg_json_match_signatures(stdout: str) -> list[tuple[str, int, str]]
             line_number = 0
         lines = data.get("lines")
         line_text = lines.get("text") if isinstance(lines, dict) else ""
-        signatures.append((
-            _normalized_match_path(path_text),
-            line_number,
-            _normalized_match_text(line_text),
-        ))
+        signatures.append(
+            (
+                _normalized_match_path(path_text),
+                line_number,
+                _normalized_match_text(line_text),
+            )
+        )
     return sorted(signatures)
 
 
@@ -672,7 +696,9 @@ def benchmark_command_group(
     warmup: int,
     timeout_s: int,
     workload_bytes: int,
+    allow_no_match: bool = False,
 ) -> dict[str, object]:
+    no_match_exit_accepted = False
     for _ in range(warmup):
         for command in commands:
             warmup_result = _run_command(
@@ -686,8 +712,16 @@ def benchmark_command_group(
                     "stderr": f"command timed out after {timeout_s}s",
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
-            if warmup_result.returncode != 0:
+            if (
+                warmup_result.returncode == 1
+                and allow_no_match
+                and not (warmup_result.stderr or "").strip()
+            ):
+                no_match_exit_accepted = True
+            elif warmup_result.returncode != 0:
                 return {
                     "status": "FAIL",
                     "median_s": None,
@@ -695,6 +729,8 @@ def benchmark_command_group(
                     "stderr": (warmup_result.stderr or "").strip(),
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
 
     samples: list[float] = []
@@ -711,8 +747,12 @@ def benchmark_command_group(
                     "stderr": f"command timed out after {timeout_s}s",
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
-            if result.returncode != 0:
+            if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
+                no_match_exit_accepted = True
+            elif result.returncode != 0:
                 return {
                     "status": "FAIL",
                     "median_s": None,
@@ -720,6 +760,8 @@ def benchmark_command_group(
                     "stderr": (result.stderr or "").strip(),
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
             last_stderr = (result.stderr or "").strip()
         elapsed = round(time.perf_counter() - started_at, 6)
@@ -734,6 +776,8 @@ def benchmark_command_group(
         "stderr": last_stderr,
         "command_group": [_command_display(candidate) for candidate in commands],
         "throughput_bytes_s": throughput,
+        "allow_no_match": allow_no_match,
+        "no_match_exit_accepted": no_match_exit_accepted,
     }
 
 
@@ -1075,9 +1119,9 @@ def run_gpu_error_tests(
             else "FAIL"
         )
 
-    nvrtc_env = _build_command_env({
-        "TG_TEST_CUDA_BEHAVIOR": "nvrtc-failure:simulated NVRTC compile error"
-    })
+    nvrtc_env = _build_command_env(
+        {"TG_TEST_CUDA_BEHAVIOR": "nvrtc-failure:simulated NVRTC compile error"}
+    )
     nvrtc_failure = _run_command(
         build_tg_gpu_search_command(tg_binary, pattern, corpus_dir, device_id),
         env=nvrtc_env,
@@ -1098,9 +1142,9 @@ def run_gpu_error_tests(
             else "FAIL"
         )
 
-    timeout_env = _build_command_env({
-        "TG_TEST_CUDA_BEHAVIOR": f"timeout:{timeout_simulation_ms}ms"
-    })
+    timeout_env = _build_command_env(
+        {"TG_TEST_CUDA_BEHAVIOR": f"timeout:{timeout_simulation_ms}ms"}
+    )
     timeout_result = _run_command(
         build_tg_gpu_search_command(tg_binary, pattern, corpus_dir, device_id),
         env=timeout_env,
@@ -1230,10 +1274,12 @@ def analyze_crossover(rows: list[dict[str, object]]) -> dict[str, object]:
         if ratio is None:
             continue
         if ratio < 1.0:
-            winners.append({
-                "size_label": row["size_label"],
-                "gpu_rg_ratio": ratio,
-            })
+            winners.append(
+                {
+                    "size_label": row["size_label"],
+                    "gpu_rg_ratio": ratio,
+                }
+            )
         if best_gap is None or ratio < best_gap["gpu_rg_ratio"]:
             best_gap = {
                 "size_label": row["size_label"],
@@ -1972,6 +2018,13 @@ def run_gpu_native_benchmarks(
             shard_count=shard_count,
         )
         actual_bytes = int(corpus_info["actual_bytes"])
+        pattern_counts = corpus_info.get("pattern_counts")
+        expected_matches = (
+            int(pattern_counts.get(benchmark_pattern, 0)) > 0
+            if isinstance(pattern_counts, dict)
+            else True
+        )
+        allow_no_match = not expected_matches
 
         rg_result = benchmark_search_command(
             build_rg_search_command(rg_binary, benchmark_pattern, corpus_dir),
@@ -1980,6 +2033,7 @@ def run_gpu_native_benchmarks(
             warmup=warmup,
             timeout_s=command_timeout_s,
             corpus_bytes=actual_bytes,
+            allow_no_match=allow_no_match,
         )
         tg_cpu_result = benchmark_search_command(
             build_tg_cpu_search_command(tg_binary, benchmark_pattern, corpus_dir),
@@ -1988,6 +2042,7 @@ def run_gpu_native_benchmarks(
             warmup=warmup,
             timeout_s=command_timeout_s,
             corpus_bytes=actual_bytes,
+            allow_no_match=allow_no_match,
         )
         if runtime_probe.get("status") == "PASS":
             tg_gpu_result = benchmark_search_command(
@@ -1997,6 +2052,7 @@ def run_gpu_native_benchmarks(
                 warmup=warmup,
                 timeout_s=command_timeout_s,
                 corpus_bytes=actual_bytes,
+                allow_no_match=allow_no_match,
             )
             tg_gpu_result["routing_backend"] = runtime_probe.get("routing_backend")
             tg_gpu_result["routing_reason"] = runtime_probe.get("routing_reason")
@@ -2077,6 +2133,7 @@ def run_gpu_native_benchmarks(
             "file_count": corpus_info["file_count"],
             "total_lines": corpus_info["total_lines"],
             "pattern_counts": corpus_info["pattern_counts"],
+            "expected_match": expected_matches,
             "rg": rg_result,
             "tg_cpu": tg_cpu_result,
             "tg_gpu": tg_gpu_result,
@@ -2521,18 +2578,20 @@ def run_advanced_gpu_native_benchmarks(
         else:
             gpu_group["ratio_vs_rg"] = None
             gpu_group["speedup_vs_rg"] = None
-        throughput_rows.append({
-            "size_label": size_label,
-            "size_bytes": size_bytes,
-            "actual_bytes": actual_bytes,
-            "pattern_count": len(throughput_patterns),
-            "file_count": throughput_info["file_count"],
-            "total_lines": throughput_info["total_lines"],
-            "line_bytes": throughput_info["line_bytes"],
-            "rg": rg_group,
-            "tg_gpu": gpu_group,
-            "gpu_stats": gpu_stats,
-        })
+        throughput_rows.append(
+            {
+                "size_label": size_label,
+                "size_bytes": size_bytes,
+                "actual_bytes": actual_bytes,
+                "pattern_count": len(throughput_patterns),
+                "file_count": throughput_info["file_count"],
+                "total_lines": throughput_info["total_lines"],
+                "line_bytes": throughput_info["line_bytes"],
+                "rg": rg_group,
+                "tg_gpu": gpu_group,
+                "gpu_stats": gpu_stats,
+            }
+        )
 
     advanced["throughput_rows"] = throughput_rows
     advanced["throughput_workload"] = {
@@ -2953,31 +3012,33 @@ def main() -> int:
     }
 
     if not tg_binary.exists():
-        payload.update({
-            "errors": [f"tg binary not found: {tg_binary}"],
-            "warnings": [],
-            "rows": [],
-            "correctness_checks": [],
-            "error_tests": {},
-            "corpus_sizes": [],
-            "throughput_target": {
-                "met": False,
-                "winning_rows": [],
-                "best_attempt": None,
-                "summary": "Benchmark did not run because the tg binary was missing.",
-            },
-            "scale_gate_summary": build_native_scale_gate_summary(
-                [],
-                correctness_checks=[],
-            ),
-            "advanced": {"enabled": args.advanced},
-            "crossover": {
-                "exists": False,
-                "first_gpu_faster_than_rg": None,
-                "summary": "Benchmark did not run because the tg binary was missing.",
-                "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
-            },
-        })
+        payload.update(
+            {
+                "errors": [f"tg binary not found: {tg_binary}"],
+                "warnings": [],
+                "rows": [],
+                "correctness_checks": [],
+                "error_tests": {},
+                "corpus_sizes": [],
+                "throughput_target": {
+                    "met": False,
+                    "winning_rows": [],
+                    "best_attempt": None,
+                    "summary": "Benchmark did not run because the tg binary was missing.",
+                },
+                "scale_gate_summary": build_native_scale_gate_summary(
+                    [],
+                    correctness_checks=[],
+                ),
+                "advanced": {"enabled": args.advanced},
+                "crossover": {
+                    "exists": False,
+                    "first_gpu_faster_than_rg": None,
+                    "summary": "Benchmark did not run because the tg binary was missing.",
+                    "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
+                },
+            }
+        )
         public_gate = build_public_managed_gpu_proof_gate(
             tg_binary_metadata=tg_binary_metadata,
             scale_gate_summary=payload["scale_gate_summary"]
