@@ -309,6 +309,53 @@ def test_checkpoint_list_discover_keeps_bounded_recursive_opt_in(tmp_path: Path)
     assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
 
 
+def test_checkpoint_discover_reuses_valid_index_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+    checkpoint = checkpoint_store.create_checkpoint(str(project))
+
+    first = checkpoint_store.discover_checkpoint_scopes(str(workspace))
+    assert first[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
+
+    def fail_bounded_walk(*_args, **_kwargs):
+        raise AssertionError("valid checkpoint discovery cache should avoid tree walk")
+
+    monkeypatch.setattr(checkpoint_store, "_bounded_checkpoint_index_paths", fail_bounded_walk)
+
+    second = checkpoint_store.discover_checkpoint_scopes(str(workspace))
+
+    assert second[0].root == str(project.resolve())
+    assert second[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
+
+
+def test_checkpoint_create_invalidates_parent_discovery_cache(tmp_path: Path) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+    checkpoint_store.create_checkpoint(str(project))
+
+    assert checkpoint_store.discover_checkpoint_scopes(str(workspace))
+    cache_path = checkpoint_store._discovery_cache_path(workspace.resolve())
+    assert cache_path.exists()
+
+    second_project = workspace / "second"
+    second_project.mkdir()
+    (second_project / "sample.py").write_text("print('second')\n", encoding="utf-8")
+    checkpoint_store.create_checkpoint(str(second_project))
+
+    assert not cache_path.exists()
+
+
 def test_checkpoint_list_auto_discovery_does_not_use_unbounded_rglob(
     tmp_path: Path,
     monkeypatch,
