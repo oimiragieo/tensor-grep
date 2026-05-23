@@ -41,10 +41,10 @@ These documents define the operating and governance surface for teams running `t
 
 ## Current Release State
 
-release_docs_current_tag: v1.13.4
+release_docs_current_tag: v1.13.5
 
-Latest tagged GitHub release: [`v1.13.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.4). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
-Latest complete PyPI release: [`v1.13.4`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.4). This is also the latest complete release-asset distribution.
+Latest tagged GitHub release: [`v1.13.5`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.5). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
+Latest complete PyPI release: [`v1.13.5`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.5). This is also the latest complete release-asset distribution.
 Latest verified release proof: `v1.12.34` completed in main CI run `26094452260`; latest CodeQL proof remains run `26064676072`.
 
 Current positioning:
@@ -276,7 +276,7 @@ What `v1.9.8` closed:
 What `v1.9.7` closed:
 
 - Python GPU scale rows are unsupported for native CUDA promotion, and benchmark artifacts now separate them from native CUDA rows where correctness passed but speed/promotion failed
-- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates. Single-pattern cold grep still has no crossover, but post-`v1.13.4` local CUDA-native measurements show 100 fixed-string 1GB probes beating sequential `rg` end-to-end.
+- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates. Single-pattern cold grep still has no crossover, but post-`v1.13.5` local CUDA-native measurements show 100 fixed-string 1GB probes beating sequential `rg` end-to-end.
 - public benchmark and README positioning now say `tg` is an agent-native code intelligence layer with rg-compatible search; `rg` remains the cold exact text baseline
 
 What `v1.9.6` closed:
@@ -339,7 +339,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.13.4` follow-up:
+Active post-`v1.13.5` follow-up:
 
 - harden the `v1.12.33` dogfood edge cases without broadening claims: native/root search accepts the rg config-override sequence `--column --no-column`, readiness now reports a stale repo-local `uv run tg` warmup as an unsynchronized entrypoint with a refresh command, and the ripgrep-binary-resolution natural-language hardcase stays pinned as a capsule regression test
 - harden `v1.12.15` dogfood contract gaps: public native `tg search` must accept editor-facing `--vimgrep` and `--path-separator`, native-regex hot-query gates use absolute jitter for millisecond-scale rows, benchmark scripts refuse stale in-tree native binaries by default unless `--allow-claim-unsafe-launcher` marks the run as exploratory, and optional LSP provider routes must expose `lsp_proof` / fallback status instead of treating provider availability as proof of semantic navigation
@@ -359,7 +359,7 @@ Active post-`v1.13.4` follow-up:
 - keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
 - keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
 - keep GPU experimental until the required 1GB/5GB correctness rows pass and a selected GPU beats both `rg` and `tg_cpu`; current RTX 4070/RTX 5070 smoke proof is correctness/compatibility evidence, not a speed claim
-- post-`v1.13.4` dogfood keeps the near-term performance story on large-file CPU search, not GPU: public managed GPU remains `GpuSidecar` / unsupported, while CPU large-file rows are the strongest current win signal
+- post-`v1.13.5` dogfood keeps the near-term performance story on large-file CPU search, not GPU: public managed GPU remains `GpuSidecar` / unsupported, while CPU large-file rows are the strongest current win signal
 
 Managed native-upgrade dogfood:
 
@@ -465,7 +465,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This checks the current `v1.13.4` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs.
+This checks the current `v1.13.5` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan and workspace-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories, and unbounded searches against a parent containing multiple child project roots, must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -629,7 +629,7 @@ Important constraint:
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation and scoped probing, but selected devices still need benchmark proof before promotion.
 - **It has a validated compatibility set for common ripgrep use.** `tg search` has a benchmarked compatibility contract for the day-to-day flags that matter most in code and log search, with the currently validated rows documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 - **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
-- **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional experimental `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag. `tg doctor --with-lsp` reports provider availability and health separately; `available` only proves the provider binary was found, while navigation JSON reports `lsp_proof=false` and `lsp_evidence_status=fallback_native` when requests time out or return no usable semantic evidence. Rows count as LSP proof only when they include `lsp_provider_response=true` from a completed provider request.
+- **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional experimental `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag. `tg doctor --with-lsp` reports provider availability and health separately; `available` only proves the provider binary was found, while navigation JSON reports `lsp_proof=false` and `lsp_evidence_status=fallback_native` when requests time out or return no usable semantic evidence. Rows count as LSP proof only when they include `lsp_provider_response=true` from a completed provider request. Use `tg lsp --debug-trace python --path .` to capture a one-shot JSON-RPC health trace, timeout budgets, status, and provider stderr tail for startup/probe failures.
 - **Optional log classification.** `tg classify` uses deterministic local heuristics by default and only probes `cyBERT` / Triton when `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` is set. `--format json` includes top-level `classification_backend` provenance plus Hugging Face cache/offline metadata and file/path/line/snippet metadata for each classification row, so agents can tell whether results came from local heuristics, the explicit provider, or a quiet provider fallback. Treat the model-backed path as an experimental helper, not a default agent primitive or hot search path. MCP `tg_classify_logs` follows the same local-first contract.
 - **Unified Harness API.** Tensor-grep JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. `tg search --format rg --json` is the exception: it deliberately streams ripgrep JSON Lines events without a tensor-grep envelope for tools that need rg's event schema. GPU-aware search JSON separates `requested_gpu_device_ids` from `routing_gpu_device_ids`; CPU fallback after a GPU request reports `routing_gpu_device_ids = []`, not a GPU proof. `tg doctor --json` exposes `gpu.search_runtime_probe` so sidecar-contaminated or CPU-fallback routes are visible before benchmark or agent claims. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
 - **NDJSON Streaming Output.** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
@@ -946,7 +946,7 @@ $ cargo build --release --features cuda
 $ cargo test --features cuda
 ```
 
-The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles GPU kernels via NVRTC JIT, and caches PTX by architecture and kernel hash across CLI invocations. The post-`v1.13.4` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`). Single-pattern cold grep still has no crossover; the measured CUDA speed lane is many fixed strings over large corpora. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
+The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles GPU kernels via NVRTC JIT, and caches PTX by architecture and kernel hash across CLI invocations. The post-`v1.13.5` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`). Single-pattern cold grep still has no crossover; the measured CUDA speed lane is many fixed strings over large corpora. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
 
 ## Hardware & Software Requirements
 
