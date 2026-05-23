@@ -8141,6 +8141,24 @@ def lsp(
             "fail before the server starts."
         ),
     ),
+    debug_trace_language: str | None = typer.Option(
+        None,
+        "--debug-trace",
+        help=(
+            "Run a one-shot external-provider health probe for LANGUAGE and emit "
+            "JSON-RPC trace diagnostics instead of starting the tg LSP server."
+        ),
+    ),
+    path: Path = typer.Option(
+        Path("."),
+        "--path",
+        help="Workspace root for --debug-trace probes.",
+    ),
+    probe_timeout_seconds: float | None = typer.Option(
+        None,
+        "--probe-timeout-seconds",
+        help="Override the external-provider request timeout for --debug-trace.",
+    ),
 ) -> None:
     """Start the structural search language server.
 
@@ -8149,6 +8167,7 @@ def lsp(
       tg lsp --provider native
       tg lsp --provider lsp
       tg lsp --provider hybrid
+      tg lsp --debug-trace python --path .
 
     External LSP providers are experimental semantic evidence. Provider
     availability means the binary was found, not that initialization or
@@ -8168,6 +8187,19 @@ def lsp(
             err=True,
         )
         raise typer.Exit(code=2)
+    if debug_trace_language is not None:
+        from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
+
+        payload = ExternalLSPProviderManager().provider_debug_trace(
+            language=debug_trace_language,
+            workspace_root=path,
+            probe_timeout_seconds=probe_timeout_seconds,
+        )
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        status = cast(dict[str, Any], payload.get("status", {}))
+        if status.get("health_status") != "ready":
+            raise typer.Exit(code=1)
+        return
     os.environ["TG_LSP_PROVIDER"] = normalized_provider
     run_lsp()
 
