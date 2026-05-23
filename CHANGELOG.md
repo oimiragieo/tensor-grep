@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.13.3 (2026-05-23)
+
+### Bug Fixes
+
+- Prevent Windows GPU probe launcher recursion
+  ([#208](https://github.com/oimiragieo/tensor-grep/pull/208),
+  [`475759b`](https://github.com/oimiragieo/tensor-grep/commit/475759b167aa8e1ed784aa2f5571bc5764721e17))
+
+
 ## v1.13.2 (2026-05-23)
 
 ### Bug Fixes
