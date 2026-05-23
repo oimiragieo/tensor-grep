@@ -9,6 +9,7 @@ These scripts and artifact paths are the accepted benchmark surface for the curr
 | Surface | Script | Default artifact |
 | --- | --- | --- |
 | End-to-end CLI text search | `benchmarks/run_benchmarks.py` | `artifacts/bench_run_benchmarks.json` |
+| Cold-path startup/control-plane attribution | `benchmarks/run_cold_path_attribution.py` | `artifacts/bench_cold_path_attribution.json` |
 | Native CPU large-file / many-file search | `benchmarks/run_native_cpu_benchmarks.py` | `artifacts/bench_run_native_cpu_benchmarks.json` |
 | Host-local CLI tool comparison | `benchmarks/run_tool_comparison_benchmarks.py` | `artifacts/bench_tool_comparison.json` |
 | Repeated-query / hot-cache search | `benchmarks/run_hot_query_benchmarks.py` | `artifacts/bench_hot_query_benchmarks.json` |
@@ -46,6 +47,8 @@ Environment blocks should at minimum record:
 - `python_version` when Python orchestrates the benchmark
 
 For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` and `tg_launcher_command_kind` so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, `.cmd` shim, `uv`, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also record `tg_binary_kind`, `tg_binary_version`, `tg_binary_expected_version`, and `tg_binary_version_status` so stale in-tree native binaries are visible. A top-level `warnings` array is required when the timed `tg` entrypoint is a shim/interpreter route. A stale in-tree native tg binary blocks claim-quality benchmark scripts by default; pass `--allow-claim-unsafe-launcher` only for exploratory timing.
+
+For `run_cold_path_attribution.py`, every row should record the requested `launcher_mode`, `resolved_launcher_mode`, and `tg_launcher_command_kind`, plus row-local `warnings` when the timed command includes a shim/interpreter route. The top-level `environment.tg_launcher_command_kinds` map should summarize the concrete command kind for each resolved launcher mode, and the top-level `warnings` array should aggregate binary and launcher warnings. Stale in-tree native binaries block claim-quality cold-path attribution by default; pass `--allow-claim-unsafe-launcher` only when the output is explicitly exploratory.
 
 For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:
 
