@@ -634,6 +634,23 @@ def test_no_ignore_search_treats_windows_appdata_as_broad_generated_scan(
     assert generated_dirs == ["AppData"]
 
 
+def test_normal_search_refuses_broad_generated_root_before_rg_passthrough(
+    tmp_path: Path,
+):
+    (tmp_path / "AppData").mkdir()
+    (tmp_path / "AppData" / "hit.txt").write_text("foo\n", encoding="utf-8")
+    (tmp_path / "normal.txt").write_text("foo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-q", "foo", str(tmp_path), "--hidden", "--no-ignore"],
+    )
+
+    assert result.exit_code == 2
+    assert "broad generated-root scan refused" in result.stderr
+    assert "AppData" in result.stderr
+
+
 def test_no_ignore_search_treats_cwd_generated_root_as_broad_generated_scan(
     monkeypatch, tmp_path: Path
 ):
@@ -1701,6 +1718,58 @@ def test_doctor_json_reports_mcp_stdio_launcher_warning_for_powershell_shim(
     assert "managed native tg.exe directly" in warning
     assert str(native_tg) in warning
     assert "pwsh -NoProfile -File" in warning
+    assert str(shim_tg) in warning
+
+
+def test_doctor_json_reports_mcp_stdio_launcher_warning_from_candidate_native(
+    monkeypatch, tmp_path: Path
+) -> None:
+    shim_tg = tmp_path / "bin" / "tg.ps1"
+    native_tg = tmp_path / "bin" / "tg.exe"
+    shim_tg.parent.mkdir(parents=True)
+    shim_tg.write_text("& $PSScriptRoot/tg.exe @args\n", encoding="utf-8")
+    native_tg.write_text("native\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.13.1")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_lsp_provider_statuses", lambda path: [])
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [
+            {"path": str(shim_tg), "version": "tensor-grep 1.13.1"},
+            {"path": str(native_tg), "version": "tg 1.13.1"},
+        ],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates",
+        lambda: [
+            {"path": str(shim_tg), "version": "tensor-grep 1.13.1"},
+            {"path": str(native_tg), "version": "tg 1.13.1"},
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_python_subprocess_path_tg_candidate",
+        lambda path_value=None: {"path": str(shim_tg), "version": "tensor-grep 1.13.1"},
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    warning = payload["mcp_stdio_launcher_warning"]
+    assert "Start-Process" in warning
+    assert str(native_tg) in warning
     assert str(shim_tg) in warning
 
 

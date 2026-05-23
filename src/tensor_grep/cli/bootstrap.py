@@ -81,6 +81,43 @@ _SCAN_FULL_CLI_FLAG_PREFIXES = (
     "--write-suppressions=",
 )
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
+_BROAD_GENERATED_SCAN_DIR_NAMES = {
+    "__pycache__",
+    ".claude",
+    ".cache",
+    ".cargo",
+    ".git",
+    ".gradle",
+    ".mypy_cache",
+    ".npm",
+    ".nuget",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".rustup",
+    ".tox",
+    ".venv",
+    "appdata",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+}
+_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
+_BROAD_WORKSPACE_PROJECT_MARKERS = {
+    ".git",
+    "Cargo.toml",
+    "build.gradle",
+    "composer.json",
+    "deno.json",
+    "go.mod",
+    "package.json",
+    "pom.xml",
+    "pyproject.toml",
+    "settings.gradle",
+}
 _SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
 _SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
 _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
@@ -105,6 +142,7 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "--field-context-separator",
     "--field-match-separator",
     "--file",
+    "-f",
     "--glob",
     "--gpu-device-ids",
     "--hostname-bin",
@@ -114,6 +152,7 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "--max-columns",
     "--max-count",
     "--max-depth",
+    "--maxdepth",
     "--max-filesize",
     "--path-separator",
     "--pre",
@@ -127,10 +166,56 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "--type-add",
     "--type-clear",
     "--type-not",
+    "-d",
     "-r",
     "-t",
     "-T",
 }
+_SEARCH_ATTACHED_VALUE_SHORT_FLAGS = (
+    "-A",
+    "-B",
+    "-C",
+    "-E",
+    "-M",
+    "-d",
+    "-f",
+    "-g",
+    "-j",
+    "-m",
+    "-r",
+    "-t",
+    "-T",
+)
+_SEARCH_GENERATED_SCAN_BOUND_FLAGS = {
+    "-d",
+    "-g",
+    "-t",
+    "-T",
+    "--glob",
+    "--iglob",
+    "--max-depth",
+    "--maxdepth",
+    "--type",
+    "--type-not",
+}
+_SEARCH_GENERATED_SCAN_BOUND_PREFIXES = (
+    "--glob=",
+    "--iglob=",
+    "--max-depth=",
+    "--maxdepth=",
+    "--type=",
+    "--type-not=",
+)
+_SEARCH_NO_IGNORE_FLAGS = {
+    "--no-ignore",
+    "--no-ignore-dot",
+    "--no-ignore-exclude",
+    "--no-ignore-files",
+    "--no-ignore-global",
+    "--no-ignore-parent",
+    "--no-ignore-vcs",
+}
+_SEARCH_HIDDEN_FLAGS = {"-.", "--hidden"}
 
 
 def _prefer_rust_first_search() -> bool:
@@ -277,6 +362,146 @@ def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
     return False
 
 
+def _is_short_flag_with_attached_value(arg: str) -> bool:
+    if not arg.startswith("-") or arg.startswith("--"):
+        return False
+    return any(
+        arg.startswith(flag) and len(arg) > len(flag) for flag in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS
+    )
+
+
+def _search_args_include_generated_scan_bound(search_args: list[str]) -> bool:
+    for arg in search_args:
+        if arg in _SEARCH_GENERATED_SCAN_BOUND_FLAGS:
+            return True
+        if arg.startswith(_SEARCH_GENERATED_SCAN_BOUND_PREFIXES):
+            return True
+        if not arg.startswith("--"):
+            if any(
+                arg.startswith(flag) and len(arg) > len(flag) for flag in ("-d", "-g", "-t", "-T")
+            ):
+                return True
+    return False
+
+
+def _search_args_request_unrestricted_generated_scan(search_args: list[str]) -> bool:
+    files_mode = "--files" in search_args
+    if files_mode and any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args):
+        return True
+    if any(arg in _SEARCH_NO_IGNORE_FLAGS for arg in search_args):
+        return True
+    return any(
+        arg == "--unrestricted" or (arg.startswith("-u") and not arg.startswith("--"))
+        for arg in search_args
+    )
+
+
+def _search_path_args(search_args: list[str]) -> list[str]:
+    paths: list[str] = []
+    bare_pattern_seen = False
+    regexp_pattern_seen = False
+    skip_next = False
+    parse_options = True
+    for index, arg in enumerate(search_args):
+        if skip_next:
+            skip_next = False
+            continue
+        if parse_options and arg == "--":
+            parse_options = False
+            continue
+        if parse_options:
+            if arg in _SEARCH_PATTERN_FLAGS:
+                regexp_pattern_seen = True
+                skip_next = index + 1 < len(search_args)
+                continue
+            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
+                regexp_pattern_seen = True
+                continue
+            if arg in _SEARCH_FLAGS_WITH_VALUES:
+                skip_next = index + 1 < len(search_args)
+                continue
+            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
+                continue
+            if _is_short_flag_with_attached_value(arg):
+                continue
+            if arg.startswith("-"):
+                continue
+        if not regexp_pattern_seen and not bare_pattern_seen:
+            bare_pattern_seen = True
+            continue
+        paths.append(arg)
+    return paths or ["."]
+
+
+def _path_has_project_marker(path: Path) -> bool:
+    for marker in _BROAD_WORKSPACE_PROJECT_MARKERS:
+        try:
+            if (path / marker).exists():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _search_paths_include_generated_root(paths: list[str]) -> bool:
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            if path.name.lower() in _BROAD_GENERATED_SCAN_DIR_NAMES:
+                return True
+            if resolved.name.lower() in _BROAD_GENERATED_SCAN_DIR_NAMES:
+                return True
+            for child in path.iterdir():
+                if child.is_dir() and child.name.lower() in _BROAD_GENERATED_SCAN_DIR_NAMES:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def _search_paths_include_workspace_root(paths: list[str]) -> bool:
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir() or _path_has_project_marker(path):
+                continue
+            project_children = 0
+            for child in path.iterdir():
+                try:
+                    if child.is_dir() and _path_has_project_marker(child):
+                        project_children += 1
+                except OSError:
+                    continue
+                if project_children >= _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
+    if "--allow-broad-generated-scan" in search_args:
+        return False
+    if _search_args_include_generated_scan_bound(search_args):
+        return False
+    paths = _search_path_args(search_args)
+    if _search_paths_include_workspace_root(paths):
+        return True
+    return _search_args_request_unrestricted_generated_scan(
+        search_args
+    ) and _search_paths_include_generated_root(paths)
+
+
 def _regex_patterns_from_search_args(search_args: list[str]) -> list[str]:
     skip_next = False
     bare_pattern: str | None = None
@@ -392,7 +617,9 @@ def main_entry() -> None:
         effective_search_args = _effective_native_tg_search_args(passthrough_search_args)
         native_binary_path = resolve_native_tg_binary()
         native_binary = str(native_binary_path) if native_binary_path else None
-        guarded_broad_root = _search_args_include_guarded_broad_root(passthrough_search_args)
+        guarded_broad_root = _search_args_include_guarded_broad_root(
+            passthrough_search_args
+        ) or _search_args_include_unbounded_broad_scan(passthrough_search_args)
         invalid_regex = _search_args_include_obviously_invalid_regex(passthrough_search_args)
 
         if (

@@ -65,6 +65,68 @@ def test_main_entry_should_passthrough_search_subcommand_to_rg(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["-i", "ERROR", "."]}
 
 
+def test_main_entry_should_not_passthrough_unbounded_generated_root_search(
+    monkeypatch, tmp_path: Path
+) -> None:
+    called = {"full_cli": False}
+    root = tmp_path / "home"
+    root.mkdir()
+    (root / "AppData").mkdir()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "-q", "foo", str(root), "--hidden", "--no-ignore"],
+    )
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native passthrough should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_should_not_passthrough_unbounded_workspace_root_search(
+    monkeypatch, tmp_path: Path
+) -> None:
+    called = {"full_cli": False}
+    root = tmp_path / "projects"
+    for name in ("one", "two", "three"):
+        child = root / name
+        child.mkdir(parents=True)
+        (child / "package.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "foo", str(root)])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native passthrough should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_passthrough_raw_rg_style_invocation(monkeypatch):
     seen: dict[str, object] = {}
 

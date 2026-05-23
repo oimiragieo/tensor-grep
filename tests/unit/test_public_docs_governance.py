@@ -62,6 +62,8 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "broad generated-root scan" in readme
     assert "PowerShell double quotes expand `$NAME`" in readme
     assert "cmd.exe metacharacters" in readme
+    assert "open a session once" in readme
+    assert "daemon-routed edit-plan/context" in readme
 
 
 def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:

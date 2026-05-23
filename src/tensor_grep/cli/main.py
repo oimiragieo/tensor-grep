@@ -2055,7 +2055,19 @@ def _doctor_mcp_stdio_launcher_warning(
     native_tg_binary: Path | None,
     launchers: list[tuple[str, str | None, str | None]],
 ) -> str | None:
-    if native_tg_binary is None or native_tg_binary.suffix.lower() != ".exe":
+    native_stdio_path = native_tg_binary
+    if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
+        native_stdio_path = next(
+            (
+                Path(path)
+                for _label, kind, path in launchers
+                if path
+                and Path(path).suffix.lower() == ".exe"
+                and kind in {"managed-native", "native-exe"}
+            ),
+            None,
+        )
+    if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
         return None
 
     powershell_launchers = [
@@ -2071,7 +2083,7 @@ def _doctor_mcp_stdio_launcher_warning(
     return (
         "MCP stdio launcher warning: "
         f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
-        f"tg.exe directly: {native_tg_binary}. Windows MCP clients that launch `tg` via "
+        f"tg.exe directly: {native_stdio_path}. Windows MCP clients that launch `tg` via "
         "Start-Process can resolve the PowerShell shim instead of the native stdio-safe "
         "front door. If you intentionally use the PowerShell "
         "script shim, configure the client to launch it explicitly as "
@@ -2423,6 +2435,31 @@ def _build_doctor_payload(
         python_subprocess_remediation_candidates.append(python_subprocess_path_tg_first)
     python_subprocess_remediation_candidates.extend(path_tg_candidates)
     python_subprocess_remediation_candidates.extend(fresh_shell_path_tg_candidates)
+    mcp_stdio_launchers = [
+        ("PATH", path_tg_first_launcher_kind, path_tg_first_path),
+        (
+            "fresh-shell PATH",
+            fresh_shell_path_tg_first_launcher_kind,
+            fresh_shell_path_tg_first_path,
+        ),
+        (
+            "Python subprocess PATH",
+            python_subprocess_path_tg_first_launcher_kind,
+            python_subprocess_path_tg_first_path,
+        ),
+    ]
+    for label, candidates in (
+        ("PATH candidate", path_tg_candidates),
+        ("fresh-shell PATH candidate", fresh_shell_path_tg_candidates),
+    ):
+        for index, candidate in enumerate(candidates, start=1):
+            candidate_path = candidate.get("path")
+            candidate_version = candidate.get("version")
+            mcp_stdio_launchers.append((
+                f"{label} {index}",
+                _doctor_tg_launcher_kind(candidate_path, candidate_version),
+                candidate_path,
+            ))
     gpu_status = _doctor_gpu_status()
     gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
     payload: dict[str, Any] = {
@@ -2522,19 +2559,7 @@ def _build_doctor_payload(
         ),
         "mcp_stdio_launcher_warning": _doctor_mcp_stdio_launcher_warning(
             native_tg_binary=native_tg_binary,
-            launchers=[
-                ("PATH", path_tg_first_launcher_kind, path_tg_first_path),
-                (
-                    "fresh-shell PATH",
-                    fresh_shell_path_tg_first_launcher_kind,
-                    fresh_shell_path_tg_first_path,
-                ),
-                (
-                    "Python subprocess PATH",
-                    python_subprocess_path_tg_first_launcher_kind,
-                    python_subprocess_path_tg_first_path,
-                ),
-            ],
+            launchers=mcp_stdio_launchers,
         ),
         "shell_escaping_guidance": _doctor_shell_escaping_guidance(),
         "gpu": gpu_status,

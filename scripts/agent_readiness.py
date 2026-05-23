@@ -801,11 +801,17 @@ def build_check_plan(
                 "--no-sync",
                 "pytest",
                 "tests/unit/test_cli_modes.py",
+                "tests/unit/test_cli_bootstrap.py",
                 "-q",
                 "-k",
-                "broad_generated_root_scan",
+                (
+                    "broad_generated_root_scan or normal_search_refuses_broad_generated_root "
+                    "or unbounded_generated_root_search or unbounded_workspace_root_search"
+                ),
             ],
-            description="Verify broad generated-root file-list scans require bounds or opt-in.",
+            description=(
+                "Verify broad generated-root file-list and normal searches require bounds or opt-in."
+            ),
             timeout_s=120,
         ),
         Check(
