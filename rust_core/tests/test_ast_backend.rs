@@ -176,6 +176,65 @@ fn test_tg_run_accepts_ast_grep_pattern_option_and_files_with_matches() {
 }
 
 #[test]
+fn test_tg_run_matches_javascript_call_pattern_from_default_path() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("app.js"),
+        "function calculateTotal(items) { return items.length; }\nconst total = calculateTotal(items);\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .current_dir(dir.path())
+        .arg("run")
+        .arg("--lang")
+        .arg("js")
+        .arg("calculateTotal($$$)")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("calculateTotal(items)"),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn test_tg_run_no_match_exits_one_and_warns_for_cmd_single_quote_pattern() {
+    let (_dir, file_path) = write_source_file("js", "const total = calculateTotal(items);\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("js")
+        .arg("'calculateTotal($$$)'")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cmd.exe treats single quotes literally"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn test_tg_run_json_metadata_preserves_ast_match_details() {
     let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
 

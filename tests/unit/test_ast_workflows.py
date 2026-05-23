@@ -4,6 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from tensor_grep.backends.ast_wrapper_backend import (
+    AstGrepWrapperBackend as RealAstGrepWrapperBackend,
+)
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.pipeline import ConfigurationError
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -691,6 +694,52 @@ def test_run_command_files_with_matches_outputs_only_paths(tmp_path, monkeypatch
     assert capsys.readouterr().out.splitlines() == [str(first), str(second)]
 
 
+def test_run_command_returns_one_when_read_only_ast_has_no_matches(monkeypatch, capsys):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(matches=[], matched_file_paths=[], total_files=1, total_matches=0)
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("calculateTotal($$$)", path=".", lang="js")
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Executing ast-grep structural matching run..." in captured.out
+
+
+@pytest.mark.skipif(
+    not RealAstGrepWrapperBackend().is_available(),
+    reason="requires ast-grep binary",
+)
+def test_run_command_matches_javascript_call_pattern(tmp_path, capsys):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    source = tmp_path / "app.js"
+    source.write_text(
+        "function calculateTotal(items) {\n"
+        "  return items.length;\n"
+        "}\n"
+        "const total = calculateTotal(items);\n",
+        encoding="utf-8",
+    )
+
+    exit_code = run_command("calculateTotal($$$)", path=str(tmp_path), lang="js")
+
+    assert exit_code == 0
+    assert "calculateTotal(items)" in capsys.readouterr().out
+
+
 def test_run_command_should_force_wrapper_for_ast_grep_semantic_options(monkeypatch):
     from tensor_grep.cli import ast_workflows
     from tensor_grep.cli.ast_workflows import run_command
@@ -721,7 +770,7 @@ def test_run_command_should_force_wrapper_for_ast_grep_semantic_options(monkeypa
         json_mode=True,
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     config = seen["config"]
     assert config.ast_prefer_native is False
     assert config.ast_selector == "call"
@@ -759,7 +808,7 @@ def test_run_command_should_forward_stdin_without_default_path(monkeypatch):
         json_mode=True,
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     config = seen["config"]
     assert seen["file_paths"] == []
     assert config.ast_stdin is True

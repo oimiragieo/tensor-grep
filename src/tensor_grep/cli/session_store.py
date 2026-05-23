@@ -88,7 +88,7 @@ class _SessionServeCache:
         self._refreshes = 0
 
     def _key(self, session_id: str, path: str) -> tuple[str, str]:
-        return (str(_resolve_root(Path(path))), session_id)
+        return (str(_session_root_for_payload(session_id, path)), session_id)
 
     def get(self, session_id: str, path: str) -> dict[str, Any] | None:
         key = self._key(session_id, path)
@@ -182,6 +182,18 @@ def _index_path(root: Path) -> Path:
 
 def _session_payload_path(root: Path, session_id: str) -> Path:
     return _sessions_dir(root) / f"{session_id}.json"
+
+
+def _session_root_for_payload(session_id: str, path: str = ".") -> Path:
+    root = _resolve_root(Path(path))
+    if _session_payload_path(root, session_id).exists():
+        return root
+    for candidate in _nearby_session_roots(path):
+        if candidate == root:
+            continue
+        if _session_payload_path(candidate, session_id).exists():
+            return candidate
+    return root
 
 
 def _nearby_session_roots(path: str = ".") -> list[Path]:
@@ -471,7 +483,7 @@ def list_sessions_with_discovery(path: str = ".") -> tuple[list[SessionRecord], 
 
 
 def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
-    root = _resolve_root(Path(path))
+    root = _session_root_for_payload(session_id, path)
     session_path = _session_payload_path(root, session_id)
     if not session_path.exists():
         raise FileNotFoundError(f"Session not found: {session_id}")

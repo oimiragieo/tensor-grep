@@ -111,6 +111,19 @@ def _daemon_request(
         return cast(dict[str, Any], json.loads(line))
 
 
+def _resolve_daemon_request_path(root: Path, requested_path: object) -> str:
+    raw_path = str(requested_path).strip() if requested_path is not None else ""
+    if not raw_path:
+        return str(root)
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        return str(candidate.resolve())
+    except OSError:
+        return str(candidate)
+
+
 def _probe_daemon(root: Path) -> dict[str, Any] | None:
     metadata = _read_daemon_metadata(root)
     if metadata is None:
@@ -407,9 +420,12 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
         try:
             request = cast(dict[str, Any], json.loads(line))
             session_id = str(request.get("session_id", "")).strip()
-            request_path = str(
-                request.get("path", request.get("root", str(server.root)))
-            ).strip() or str(server.root)
+            request_path = _resolve_daemon_request_path(
+                server.root,
+                request.get("path", request.get("root", str(server.root))),
+            )
+            request = dict(request)
+            request["path"] = request_path
             request_session_id, request_path = _resolve_request_session_target(
                 request, session_id, request_path
             )

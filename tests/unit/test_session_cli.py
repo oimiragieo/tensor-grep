@@ -1047,6 +1047,45 @@ def test_session_edit_plan_can_use_daemon(tmp_path: Path) -> None:
         session_daemon.stop_session_daemon(str(project))
 
 
+def test_session_edit_plan_daemon_accepts_relative_path_from_project_cwd(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    monkeypatch.chdir(project)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            ".",
+            "--query",
+            "create invoice",
+            "--daemon",
+            "--json",
+        ],
+    )
+
+    try:
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["session_id"] == opened["session_id"]
+        assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    finally:
+        session_daemon.stop_session_daemon(".")
+
+
 def test_session_daemon_edit_plan_reuses_identical_response_cache(
     tmp_path: Path,
     monkeypatch,
@@ -1111,6 +1150,58 @@ def test_session_daemon_edit_plan_reuses_identical_response_cache(
     assert second["session_timing"]["response_cache_status"] == "hit"
     assert stats["response_cache_hits"] == 1
     assert stats["response_cache_misses"] == 1
+    assert stats["response_cache_entries"] == 1
+
+
+def test_session_daemon_edit_plan_repeated_core_payload_is_stable(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_edit_plan",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "create invoice",
+            "max_repo_files": 2,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        second = session_daemon._daemon_request(host, port, request)
+        third = session_daemon._daemon_request(host, port, request)
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    def core(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in payload.items()
+            if key not in {"serve_cache", "daemon_response_cache", "session_timing"}
+        }
+
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert second["daemon_response_cache"]["status"] == "hit"
+    assert third["daemon_response_cache"]["status"] == "hit"
+    assert core(second) == core(third)
+    assert "daemon_response_cache" not in core(second)
     assert stats["response_cache_entries"] == 1
 
 

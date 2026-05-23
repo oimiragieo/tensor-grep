@@ -504,6 +504,19 @@ def _safe_stdout_line(text: str) -> None:
             flush()
 
 
+def _warn_windows_single_quote_pattern(pattern: str) -> None:
+    if os.name != "nt":
+        return
+    stripped = pattern.strip()
+    if len(stripped) >= 2 and stripped.startswith("'") and stripped.endswith("'"):
+        print(
+            "No AST matches found. cmd.exe treats single quotes literally; use double quotes "
+            "in cmd.exe or run this pattern from PowerShell/Git Bash where single quotes quote "
+            "literal text.",
+            file=sys.stderr,
+        )
+
+
 def run_command(
     pattern: str,
     path: str | None = None,
@@ -764,6 +777,9 @@ def run_command(
             ],
         }
         _safe_stdout_line(json.dumps(payload))
+        if all_results.total_matches == 0:
+            _warn_windows_single_quote_pattern(pattern)
+            return 1
         return 0
 
     if files_with_matches:
@@ -780,11 +796,17 @@ def run_command(
                     ordered_paths.append(matched_path)
         for matched_path in ordered_paths:
             _safe_stdout_line(matched_path)
+        if not ordered_paths:
+            _warn_windows_single_quote_pattern(pattern)
+            return 1
         return 0
 
     from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
     _safe_stdout_line(RipgrepFormatter().format(all_results))
+    if all_results.total_matches == 0:
+        _warn_windows_single_quote_pattern(pattern)
+        return 1
     return 0
 
 

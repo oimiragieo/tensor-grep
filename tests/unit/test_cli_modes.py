@@ -1104,6 +1104,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["version"] == "9.9.9"
+    assert payload["schema_version"] == 2
+    assert payload["doctor_schema_version"] == 2
     assert payload["root"] == str(tmp_path.resolve())
     assert payload["native_tg_binary_exists"] is True
     assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
@@ -1112,6 +1114,7 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["env"]["TG_RESIDENT_AST"] == "1"
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
+    assert payload["lsp"]["schema_version"] == 2
     assert payload["lsp"]["probe_timeout_seconds"] == pytest.approx(6.5)
     assert payload["lsp"]["providers"][0]["language"] == "python"
     assert payload["lsp"]["providers"][0]["command_source"] == "managed"
@@ -1119,7 +1122,10 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["lsp"]["providers"][0]["health_status"] == "ready"
     assert payload["lsp"]["providers"][0]["health_check"] == "probe"
     assert payload["lsp"]["providers"][0]["lsp_proof"] is True
-    assert payload["lsp_providers"] == payload["lsp"]["providers"]
+    assert payload["lsp_provider_items"] == payload["lsp"]["providers"]
+    assert payload["lsp"]["providers_by_language"]["python"]["health"] == "ready"
+    assert payload["lsp"]["providers_by_language"]["python"]["health_status"] == "ready"
+    assert payload["lsp_providers"]["python"]["health"] == "ready"
     guidance = payload["shell_escaping_guidance"]
     assert guidance["platform"] == "windows"
     assert "PowerShell double quotes expand $NAME" in guidance["powershell"]["summary"]
@@ -1127,6 +1133,28 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert guidance["powershell"]["literal_pattern_example"] == "tg search '$NAME' ."
     assert "|" in guidance["cmd"]["metacharacters"]
     assert "^" in guidance["cmd"]["recommendation"]
+
+
+def test_doctor_json_no_lsp_keeps_empty_schema_compatibility(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == 2
+    assert payload["doctor_schema_version"] == 2
+    assert payload["lsp"]["enabled"] is False
+    assert payload["lsp"]["schema_version"] == 2
+    assert payload["lsp"]["providers"] == []
+    assert payload["lsp"]["providers_by_language"] == {}
+    assert payload["lsp_provider_items"] == []
+    assert payload["lsp_providers"] == {}
 
 
 def test_doctor_json_includes_gpu_search_runtime_probe(monkeypatch, tmp_path: Path) -> None:

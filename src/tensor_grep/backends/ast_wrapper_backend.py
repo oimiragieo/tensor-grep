@@ -11,6 +11,21 @@ from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
+def _is_ast_grep_sg_binary(binary: str) -> bool:
+    try:
+        result = subprocess.run(
+            [binary, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    version_text = f"{result.stdout}\n{result.stderr}".lower()
+    return "ast-grep" in version_text
+
+
 class AstGrepWrapperBackend(ComputeBackend):
     """
     A backend that seamlessly delegates to the native `ast-grep` (sg) binary
@@ -19,13 +34,7 @@ class AstGrepWrapperBackend(ComputeBackend):
     """
 
     def is_available(self) -> bool:
-        import shutil
-
-        return (
-            shutil.which("ast-grep") is not None
-            or shutil.which("ast-grep.exe") is not None
-            or shutil.which("sg") is not None
-        )
+        return self._get_binary_name() != "ast-grep"
 
     def _get_binary_name(self) -> str:
         import shutil
@@ -34,8 +43,12 @@ class AstGrepWrapperBackend(ComputeBackend):
             return ast_grep_path
         if ast_grep_exe_path := shutil.which("ast-grep.exe"):
             return ast_grep_exe_path
+        if sg_exe_path := shutil.which("sg.exe"):
+            if _is_ast_grep_sg_binary(sg_exe_path):
+                return sg_exe_path
         if sg_path := shutil.which("sg"):
-            return sg_path
+            if _is_ast_grep_sg_binary(sg_path):
+                return sg_path
         return "ast-grep"
 
     def _build_command(

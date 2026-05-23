@@ -992,19 +992,28 @@ def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -
 
 
 def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
+    def fake_build_symbol_blast_radius_plan_json(
+        symbol,
+        path,
+        max_depth=3,
+        max_files=3,
+        max_symbols=5,
+        semantic_provider="native",
+        **_,
+    ):
+        return json.dumps({
+            "symbol": symbol,
+            "path": str(path),
+            "max_depth": max_depth,
+            "max_files": max_files,
+            "max_symbols": max_symbols,
+            "semantic_provider": semantic_provider,
+        })
+
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_plan_json",
-        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native", **_: (
-            json.dumps({
-                "symbol": symbol,
-                "path": str(path),
-                "max_depth": max_depth,
-                "max_files": max_files,
-                "max_symbols": max_symbols,
-                "semantic_provider": semantic_provider,
-            })
-        ),
+        fake_build_symbol_blast_radius_plan_json,
     )
 
     result = CliRunner().invoke(
@@ -1026,17 +1035,31 @@ def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypat
 
 
 def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
+    def fake_build_symbol_blast_radius_render_json(
+        symbol,
+        path,
+        max_depth=3,
+        max_files=3,
+        max_sources=5,
+        max_symbols_per_file=6,
+        max_render_chars=None,
+        optimize_context=False,
+        render_profile="full",
+        profile=False,
+        semantic_provider="native",
+        **_,
+    ):
+        return json.dumps({
+            "symbol": symbol,
+            "path": str(path),
+            "max_depth": max_depth,
+            "semantic_provider": semantic_provider,
+        })
+
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_render_json",
-        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, semantic_provider="native", **_: (
-            json.dumps({
-                "symbol": symbol,
-                "path": str(path),
-                "max_depth": max_depth,
-                "semantic_provider": semantic_provider,
-            })
-        ),
+        fake_build_symbol_blast_radius_render_json,
     )
 
     result = CliRunner().invoke(
@@ -1176,10 +1199,20 @@ def test_mcp_blast_radius_plan_accepts_provider_parameter(tmp_path: Path, monkey
 
 
 def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        mcp_server,
-        "build_symbol_blast_radius_render",
-        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, semantic_provider="native": {
+    def fake_build_symbol_blast_radius_render(
+        symbol,
+        path,
+        max_depth=3,
+        max_files=3,
+        max_sources=5,
+        max_symbols_per_file=6,
+        max_render_chars=None,
+        optimize_context=False,
+        render_profile="full",
+        profile=False,
+        semantic_provider="native",
+    ):
+        return {
             "symbol": symbol,
             "path": str(path),
             "max_depth": max_depth,
@@ -1189,7 +1222,12 @@ def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monk
             "callers": [],
             "files": [],
             "tests": [],
-        },
+        }
+
+    monkeypatch.setattr(
+        mcp_server,
+        "build_symbol_blast_radius_render",
+        fake_build_symbol_blast_radius_render,
     )
 
     payload = json.loads(

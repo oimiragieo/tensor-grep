@@ -382,3 +382,11 @@ def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():
 def test_agent_capsule_short_exe_term_does_not_match_execute_noise():
     assert repo_map._score_text_terms("execute_noise_bridge", ["exe"]) == 0
     assert repo_map._score_text_terms("tg.exe bridge", ["exe"]) == 1
+
+
+def test_agent_path_scoring_ignores_checkout_parent_terms():
+    noisy_absolute_path = str(
+        Path("C:/tmp/worktrees/tensor-grep/feat/v1-13-dogfood-hardening/src/module.py")
+    )
+
+    assert repo_map._score_file_path(noisy_absolute_path, ["harden"]) == 0

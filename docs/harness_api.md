@@ -52,6 +52,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Symbol blast radius render JSON | `tg.exe blast-radius-render --symbol <name> --json ...` | [`examples/blast_radius_render.json`](examples/blast_radius_render.json) |
 | Session open JSON | `tg.exe session open ... --json` | [`examples/session_open.json`](examples/session_open.json) |
 | Session context JSON | `tg.exe session context <id> --query ... --json` | [`examples/session_context.json`](examples/session_context.json) |
+| Doctor JSON | `tg.exe doctor --json` | Operational diagnostics schema documented below. |
 | MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
 
 ## Search JSON
@@ -128,6 +129,23 @@ The shape matches Search JSON exactly; only the routing envelope changes.
 | `matches[].file` | `string` | Absolute file path. |
 | `matches[].line` | `integer` | 1-based line number. |
 | `matches[].text` | `string` | Matching line text. |
+
+## Doctor JSON
+
+Emitted by `tg.exe doctor --json` and intended for operational automation.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `schema_version` | `integer` | Doctor JSON schema version. Current value: `2`. |
+| `doctor_schema_version` | `integer` | Alias for the doctor schema version for consumers that avoid generic `schema_version` names. |
+| `lsp` | `object` | LSP diagnostic envelope. Present even when LSP probing is disabled. |
+| `lsp.schema_version` | `integer` | LSP diagnostic sub-schema version. Current value: `2`. |
+| `lsp.providers` | `array<object>` | Provider status rows in deterministic provider order. |
+| `lsp.providers_by_language` | `object` | Keyed compatibility map by language. Entries mirror provider rows and include `health` as an alias for `health_status`. |
+| `lsp_provider_items` | `array<object>` | Top-level alias for `lsp.providers` for array-oriented consumers. |
+| `lsp_providers` | `object` | Top-level keyed compatibility map matching `lsp.providers_by_language`. |
+
+Consumers should prefer the schema-versioned `lsp.providers` array for iteration and the keyed maps only for direct language lookup or backward compatibility with the pre-array doctor shape.
 
 ## Rulesets JSON
 

@@ -54,6 +54,8 @@ _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
 _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 1.0
 _DOCTOR_LSP_WINDOWS_PROBE_TIMEOUT_SECONDS = 3.0
 _DOCTOR_LSP_PROBE_TIMEOUT_ENV = "TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS"
+_DOCTOR_SCHEMA_VERSION = 2
+_DOCTOR_LSP_SCHEMA_VERSION = 2
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "__pycache__",
@@ -1648,6 +1650,21 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
         manager.stop_all()
 
 
+def _doctor_lsp_providers_by_language(
+    providers: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    keyed: dict[str, dict[str, Any]] = {}
+    for provider in providers:
+        language = str(provider.get("language", "")).strip()
+        if not language:
+            continue
+        entry = dict(provider)
+        if "health" not in entry and "health_status" in entry:
+            entry["health"] = entry["health_status"]
+        keyed[language] = entry
+    return keyed
+
+
 def _doctor_rust_core_extension_available() -> bool:
     try:
         from tensor_grep.backends.rust_backend import HAVE_RUST
@@ -2390,6 +2407,8 @@ def _build_doctor_payload(
     gpu_status = _doctor_gpu_status()
     gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
     payload: dict[str, Any] = {
+        "schema_version": _DOCTOR_SCHEMA_VERSION,
+        "doctor_schema_version": _DOCTOR_SCHEMA_VERSION,
         "version": installed_version,
         "platform": sys.platform,
         "python_executable": sys.executable,
@@ -2507,19 +2526,26 @@ def _build_doctor_payload(
     }
     if with_lsp:
         lsp_providers = _doctor_lsp_provider_statuses(str(root))
+        lsp_providers_by_language = _doctor_lsp_providers_by_language(lsp_providers)
         payload["lsp"] = {
+            "schema_version": _DOCTOR_LSP_SCHEMA_VERSION,
             "enabled": True,
             "probe_timeout_seconds": _doctor_lsp_probe_timeout_seconds(),
             "providers": lsp_providers,
+            "providers_by_language": lsp_providers_by_language,
         }
     else:
         lsp_providers = []
+        lsp_providers_by_language = {}
         payload["lsp"] = {
+            "schema_version": _DOCTOR_LSP_SCHEMA_VERSION,
             "enabled": False,
             "probe_timeout_seconds": None,
             "providers": lsp_providers,
+            "providers_by_language": lsp_providers_by_language,
         }
-    payload["lsp_providers"] = lsp_providers
+    payload["lsp_provider_items"] = lsp_providers
+    payload["lsp_providers"] = lsp_providers_by_language
     return payload
 
 
@@ -7322,9 +7348,10 @@ def checkpoint_list(
     from tensor_grep.cli.checkpoint_store import (
         describe_checkpoint_scope,
         discover_checkpoint_scopes,
+        discover_nearby_checkpoint_scopes,
     )
 
-    def _discovered_payloads(*, full: bool = False) -> tuple[list[dict[str, Any]], int]:
+    def _scope_payloads(scopes: list[Any]) -> tuple[list[dict[str, Any]], int]:
         scope_payloads = [
             {
                 "root": scope.root,
@@ -7332,12 +7359,18 @@ def checkpoint_list(
                 "checkpoint_count": scope.checkpoint_count,
                 "checkpoints": [record.__dict__ for record in scope.checkpoints],
             }
-            for scope in discover_checkpoint_scopes(path, full=full)
+            for scope in scopes
         ]
         checkpoint_count = sum(
             int(cast(int, scope_payload["checkpoint_count"])) for scope_payload in scope_payloads
         )
         return scope_payloads, checkpoint_count
+
+    def _discovered_payloads(*, full: bool = False) -> tuple[list[dict[str, Any]], int]:
+        return _scope_payloads(discover_checkpoint_scopes(path, full=full))
+
+    def _nearby_payloads() -> tuple[list[dict[str, Any]], int]:
+        return _scope_payloads(discover_nearby_checkpoint_scopes(path))
 
     def _emit_discovered(
         scope_payloads: list[dict[str, Any]], checkpoint_count: int, *, auto_discovered: bool
@@ -7386,7 +7419,7 @@ def checkpoint_list(
         scope_result = describe_checkpoint_scope(path)
         records = [record.__dict__ for record in scope_result.checkpoints]
         if not records:
-            scope_payloads, checkpoint_count = _discovered_payloads()
+            scope_payloads, checkpoint_count = _nearby_payloads()
             if scope_payloads:
                 _emit_discovered(scope_payloads, checkpoint_count, auto_discovered=True)
                 return
