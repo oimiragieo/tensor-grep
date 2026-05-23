@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.12.64 (2026-05-23)
+
+### Bug Fixes
+
+- Accept named project scaffolds
+  ([`1f1bc54`](https://github.com/oimiragieo/tensor-grep/commit/1f1bc547c0e53efe8d6e40970be9107348aef3d3))
+
+Allow 	g new project NAME to scaffold the named directory instead of rejecting the positional name,
+  and keep the native front door parser aligned with the Python CLI contract.
+
+
 ## v1.12.63 (2026-05-22)
 
 ### Bug Fixes
