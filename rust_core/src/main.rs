@@ -2680,6 +2680,42 @@ mod tests {
     }
 
     #[test]
+    fn run_files_with_matches_rejects_json() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "print($A)",
+            "--files-with-matches",
+            "--json",
+            "fixture.py",
+        ]);
+
+        let error = validate_run_args(&args).unwrap_err().to_string();
+        assert!(error.contains("--files-with-matches is a read-only text output mode"));
+    }
+
+    #[test]
+    fn run_stdin_python_passthrough_omits_default_path() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "print($A)",
+            "--stdin",
+            "--json",
+        ]);
+
+        let passthrough = ast_run_python_passthrough_args(&args).unwrap();
+        assert!(passthrough.contains(&"--stdin".to_string()));
+        assert!(!passthrough.contains(&".".to_string()));
+    }
+
+    #[test]
     fn run_semantic_options_reject_existing_path_without_pattern_option() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().to_string_lossy().to_string();
@@ -5219,6 +5255,9 @@ fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
     }
     if args.stdin_flag && args.files_with_matches {
         anyhow::bail!("tg run --stdin cannot be combined with --files-with-matches");
+    }
+    if args.files_with_matches && args.json {
+        anyhow::bail!("tg run --files-with-matches is a read-only text output mode");
     }
     if ast_run_requires_python_passthrough(args)
         && args.pattern_option.is_none()

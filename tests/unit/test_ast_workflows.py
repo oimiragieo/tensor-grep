@@ -228,14 +228,16 @@ def test_test_command_reports_unsupported_case_language_without_traceback(tmp_pa
     )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "error-test.yml").write_text(
-        "\n".join([
-            "tests:",
-            "  - id: unsupported-language",
-            "    ruleId: error-rule",
-            "    language: Dart",
-            "    valid:",
-            "      - OK",
-        ]),
+        "\n".join(
+            [
+                "tests:",
+                "  - id: unsupported-language",
+                "    ruleId: error-rule",
+                "    language: Dart",
+                "    valid:",
+                "      - OK",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -830,6 +832,20 @@ def test_run_command_should_reject_stdin_files_with_matches(capsys):
     assert "--stdin cannot be combined with --files-with-matches" in capsys.readouterr().err
 
 
+def test_run_command_should_reject_files_with_matches_json(capsys):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    exit_code = run_command(
+        pattern="print($A)",
+        lang="python",
+        files_with_matches=True,
+        json_mode=True,
+    )
+
+    assert exit_code == 1
+    assert "--files-with-matches is a read-only text output mode" in capsys.readouterr().err
+
+
 def test_run_command_should_reject_ast_grep_semantic_options_for_rewrites(capsys):
     from tensor_grep.cli.ast_workflows import run_command
 
@@ -858,15 +874,17 @@ def test_ast_workflow_entry_accepts_ast_grep_pattern_option(monkeypatch):
     monkeypatch.setattr(ast_workflows, "run_command", fake_run_command)
 
     with pytest.raises(SystemExit) as raised:
-        ast_workflows.main_entry([
-            "run",
-            "--pattern",
-            "class $NAME: $$$BODY",
-            "--files-with-matches",
-            "src",
-            "--lang",
-            "python",
-        ])
+        ast_workflows.main_entry(
+            [
+                "run",
+                "--pattern",
+                "class $NAME: $$$BODY",
+                "--files-with-matches",
+                "src",
+                "--lang",
+                "python",
+            ]
+        )
 
     assert raised.value.code == 0
     assert seen["pattern"] == "class $NAME: $$$BODY"
@@ -889,20 +907,22 @@ def test_ast_workflow_entry_accepts_ast_grep_semantic_run_options(monkeypatch):
     monkeypatch.setattr(ast_workflows, "run_command", fake_run_command)
 
     with pytest.raises(SystemExit) as raised:
-        ast_workflows.main_entry([
-            "run",
-            "--pattern",
-            "print($A)",
-            "--selector",
-            "call",
-            "--strictness",
-            "relaxed",
-            "--globs",
-            "*.py",
-            "--stdin",
-            "--lang",
-            "python",
-        ])
+        ast_workflows.main_entry(
+            [
+                "run",
+                "--pattern",
+                "print($A)",
+                "--selector",
+                "call",
+                "--strictness",
+                "relaxed",
+                "--globs",
+                "*.py",
+                "--stdin",
+                "--lang",
+                "python",
+            ]
+        )
 
     assert raised.value.code == 0
     assert seen["pattern"] == "print($A)"
