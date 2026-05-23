@@ -317,7 +317,9 @@ def benchmark_search_command(
     warmup: int,
     timeout_s: int,
     corpus_bytes: int,
+    allow_no_match: bool = False,
 ) -> dict[str, object]:
+    no_match_exit_accepted = False
     for _ in range(warmup):
         warmup_result = _run_command(command, env=env, capture_output=False, timeout_s=timeout_s)
         if isinstance(warmup_result, subprocess.TimeoutExpired):
@@ -328,8 +330,16 @@ def benchmark_search_command(
                 "stderr": f"command timed out after {timeout_s}s",
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
-        if warmup_result.returncode != 0:
+        if (
+            warmup_result.returncode == 1
+            and allow_no_match
+            and not (warmup_result.stderr or "").strip()
+        ):
+            no_match_exit_accepted = True
+        elif warmup_result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
@@ -337,6 +347,8 @@ def benchmark_search_command(
                 "stderr": (warmup_result.stderr or "").strip(),
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
 
     samples: list[float] = []
@@ -353,8 +365,12 @@ def benchmark_search_command(
                 "stderr": f"command timed out after {timeout_s}s",
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
-        if result.returncode != 0:
+        if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
+            no_match_exit_accepted = True
+        elif result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
@@ -362,6 +378,8 @@ def benchmark_search_command(
                 "stderr": (result.stderr or "").strip(),
                 "command": _command_display(command),
                 "throughput_bytes_s": None,
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
         samples.append(elapsed)
         last_stderr = (result.stderr or "").strip()
@@ -375,6 +393,8 @@ def benchmark_search_command(
         "stderr": last_stderr,
         "command": _command_display(command),
         "throughput_bytes_s": throughput,
+        "allow_no_match": allow_no_match,
+        "no_match_exit_accepted": no_match_exit_accepted,
     }
 
 
@@ -672,7 +692,9 @@ def benchmark_command_group(
     warmup: int,
     timeout_s: int,
     workload_bytes: int,
+    allow_no_match: bool = False,
 ) -> dict[str, object]:
+    no_match_exit_accepted = False
     for _ in range(warmup):
         for command in commands:
             warmup_result = _run_command(
@@ -686,8 +708,16 @@ def benchmark_command_group(
                     "stderr": f"command timed out after {timeout_s}s",
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
-            if warmup_result.returncode != 0:
+            if (
+                warmup_result.returncode == 1
+                and allow_no_match
+                and not (warmup_result.stderr or "").strip()
+            ):
+                no_match_exit_accepted = True
+            elif warmup_result.returncode != 0:
                 return {
                     "status": "FAIL",
                     "median_s": None,
@@ -695,6 +725,8 @@ def benchmark_command_group(
                     "stderr": (warmup_result.stderr or "").strip(),
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
 
     samples: list[float] = []
@@ -711,8 +743,12 @@ def benchmark_command_group(
                     "stderr": f"command timed out after {timeout_s}s",
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
-            if result.returncode != 0:
+            if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
+                no_match_exit_accepted = True
+            elif result.returncode != 0:
                 return {
                     "status": "FAIL",
                     "median_s": None,
@@ -720,6 +756,8 @@ def benchmark_command_group(
                     "stderr": (result.stderr or "").strip(),
                     "command_group": [_command_display(candidate) for candidate in commands],
                     "throughput_bytes_s": None,
+                    "allow_no_match": allow_no_match,
+                    "no_match_exit_accepted": no_match_exit_accepted,
                 }
             last_stderr = (result.stderr or "").strip()
         elapsed = round(time.perf_counter() - started_at, 6)
@@ -734,6 +772,8 @@ def benchmark_command_group(
         "stderr": last_stderr,
         "command_group": [_command_display(candidate) for candidate in commands],
         "throughput_bytes_s": throughput,
+        "allow_no_match": allow_no_match,
+        "no_match_exit_accepted": no_match_exit_accepted,
     }
 
 
@@ -1972,6 +2012,13 @@ def run_gpu_native_benchmarks(
             shard_count=shard_count,
         )
         actual_bytes = int(corpus_info["actual_bytes"])
+        pattern_counts = corpus_info.get("pattern_counts")
+        expected_matches = (
+            int(pattern_counts.get(benchmark_pattern, 0)) > 0
+            if isinstance(pattern_counts, dict)
+            else True
+        )
+        allow_no_match = not expected_matches
 
         rg_result = benchmark_search_command(
             build_rg_search_command(rg_binary, benchmark_pattern, corpus_dir),
@@ -1980,6 +2027,7 @@ def run_gpu_native_benchmarks(
             warmup=warmup,
             timeout_s=command_timeout_s,
             corpus_bytes=actual_bytes,
+            allow_no_match=allow_no_match,
         )
         tg_cpu_result = benchmark_search_command(
             build_tg_cpu_search_command(tg_binary, benchmark_pattern, corpus_dir),
@@ -1988,6 +2036,7 @@ def run_gpu_native_benchmarks(
             warmup=warmup,
             timeout_s=command_timeout_s,
             corpus_bytes=actual_bytes,
+            allow_no_match=allow_no_match,
         )
         if runtime_probe.get("status") == "PASS":
             tg_gpu_result = benchmark_search_command(
@@ -1997,6 +2046,7 @@ def run_gpu_native_benchmarks(
                 warmup=warmup,
                 timeout_s=command_timeout_s,
                 corpus_bytes=actual_bytes,
+                allow_no_match=allow_no_match,
             )
             tg_gpu_result["routing_backend"] = runtime_probe.get("routing_backend")
             tg_gpu_result["routing_reason"] = runtime_probe.get("routing_reason")
@@ -2077,6 +2127,7 @@ def run_gpu_native_benchmarks(
             "file_count": corpus_info["file_count"],
             "total_lines": corpus_info["total_lines"],
             "pattern_counts": corpus_info["pattern_counts"],
+            "expected_match": expected_matches,
             "rg": rg_result,
             "tg_cpu": tg_cpu_result,
             "tg_gpu": tg_gpu_result,
