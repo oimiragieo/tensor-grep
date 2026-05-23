@@ -42,8 +42,15 @@ def _looks_like_python_scripts_launcher(candidate: Path) -> bool:
         return True
 
     if sys.platform.startswith("win") and candidate.parent.name.lower() == "scripts":
-        python_root = candidate.parent.parent
-        return (python_root / "python.exe").is_file() or (python_root / "pythonw.exe").is_file()
+        scripts_dir = candidate.parent
+        python_root = scripts_dir.parent
+        return (
+            (scripts_dir / "python.exe").is_file()
+            or (scripts_dir / "pythonw.exe").is_file()
+            or (python_root / "python.exe").is_file()
+            or (python_root / "pythonw.exe").is_file()
+            or (python_root / "pyvenv.cfg").is_file()
+        )
 
     return False
 

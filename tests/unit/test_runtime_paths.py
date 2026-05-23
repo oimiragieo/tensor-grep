@@ -367,6 +367,47 @@ def test_resolve_native_tg_binary_ignores_foreign_python_install_scripts_launche
     assert resolve_native_tg_binary() is None
 
 
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows launcher layout")
+def test_resolve_native_tg_binary_ignores_venv_scripts_launcher_when_python_is_adjacent(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    host_python_dir = tmp_path / "host-python"
+    host_python_dir.mkdir(parents=True, exist_ok=True)
+    host_python = host_python_dir / "python.exe"
+    host_python.write_text("python\n", encoding="utf-8")
+
+    cached_venv_root = tmp_path / "uv-cache" / "archive-v0" / "tool-env"
+    scripts_dir = cached_venv_root / "Scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (cached_venv_root / "pyvenv.cfg").write_text("home = C:/Python312\n", encoding="utf-8")
+    (scripts_dir / "python.exe").write_text("python\n", encoding="utf-8")
+    cached_launcher = scripts_dir / "tg.exe"
+    cached_launcher.write_text("python console entrypoint\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(host_python))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv("PATH", str(scripts_dir))
+    monkeypatch.setattr(runtime_paths, "_in_tree_native_tg_candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.13.2")
+    monkeypatch.setattr(
+        runtime_paths,
+        "_native_candidate_matches_current_package",
+        lambda candidate, *, expected_version: (
+            Path(candidate).resolve() == cached_launcher.resolve()
+        ),
+    )
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() is None
+
+
 def test_resolve_ripgrep_binary_env_override(tmp_path):
     rg_path = tmp_path / ("rg.exe" if sys.platform.startswith("win") else "rg")
     rg_path.touch()
