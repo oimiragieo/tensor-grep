@@ -17,6 +17,64 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TRITON_TIMEOUT_SECONDS = 5.0
 _TRITON_TIMEOUT_ENV_VAR = "TENSOR_GREP_TRITON_TIMEOUT_SECONDS"
+_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+
+
+def _truthy_env_value(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _huggingface_offline_status() -> dict[str, Any]:
+    sources = [name for name in _HF_OFFLINE_ENV_VARS if _truthy_env_value(os.environ.get(name))]
+    return {"enabled": bool(sources), "sources": sources}
+
+
+def _resolve_huggingface_cache_path() -> tuple[str, str]:
+    if os.environ.get("HF_HUB_CACHE"):
+        return os.environ["HF_HUB_CACHE"], "HF_HUB_CACHE"
+    if os.environ.get("HF_HOME"):
+        return os.path.join(os.environ["HF_HOME"], "hub"), "HF_HOME"
+    if os.environ.get("XDG_CACHE_HOME"):
+        return os.path.join(os.environ["XDG_CACHE_HOME"], "huggingface", "hub"), "XDG_CACHE_HOME"
+    return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"), "default"
+
+
+def huggingface_cache_status() -> dict[str, Any]:
+    cache_path, source = _resolve_huggingface_cache_path()
+    offline = _huggingface_offline_status()
+    return {
+        "status": "available" if os.path.isdir(cache_path) else "missing",
+        "path": cache_path,
+        "source": source,
+        "offline": offline,
+        "local_files_only": True,
+    }
+
+
+def _huggingface_tokenizer_kwargs() -> dict[str, Any]:
+    status = huggingface_cache_status()
+    return {
+        "cache_dir": status["path"],
+        "local_files_only": True,
+    }
+
+
+def _basic_tokenize(lines: list[str]) -> dict[str, Any]:
+    rows: list[list[int]] = []
+    for line in lines:
+        row = [max(1, ord(char) % 30522) for char in line[:128]]
+        rows.append(row or [0])
+
+    width = max((len(row) for row in rows), default=1)
+    padded = [row + [0] * (width - len(row)) for row in rows]
+    try:
+        import numpy as np
+
+        return {"input_ids": np.array(padded, dtype="int64")}
+    except ImportError:
+        return {"input_ids": padded}
 
 
 def _get_triton_timeout_seconds() -> float:
@@ -134,15 +192,20 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
     try:
         from transformers import AutoTokenizer
     except ImportError:
-        try:
-            import numpy as np
+        return _basic_tokenize(cleaned_lines)
 
-            return {"input_ids": np.array([[1, 2, 3]])}
-        except ImportError:
-            return {"input_ids": [[1, 2, 3]]}
-
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")  # type: ignore
-    return dict(tokenizer(cleaned_lines, padding=True, truncation=True, return_tensors="np"))
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore
+            "bert-base-uncased",
+            **_huggingface_tokenizer_kwargs(),
+        )
+        return dict(tokenizer(cleaned_lines, padding=True, truncation=True, return_tensors="np"))
+    except Exception as exc:
+        logger.debug(
+            "transformers tokenizer unavailable; using deterministic fallback tokenizer: %s",
+            exc,
+        )
+        return _basic_tokenize(cleaned_lines)
 
 
 class CybertBackend(ComputeBackend):
@@ -216,16 +279,50 @@ class CybertBackend(ComputeBackend):
             routing_reason="nlp_cybert",
         )
 
+    def classify_with_metadata(
+        self, lines: list[str], config: Any = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return self._classify_impl(lines, config=config, raise_on_provider_error=False)
+
     def classify(self, lines: list[str], config: Any = None) -> list[dict[str, Any]]:
+        results, _metadata = self._classify_impl(
+            lines,
+            config=config,
+            raise_on_provider_error=True,
+        )
+        return results
+
+    def _classify_impl(
+        self,
+        lines: list[str],
+        config: Any = None,
+        *,
+        raise_on_provider_error: bool,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         try:
             import numpy as np
             import tritonclient.http as httpclient
         except ImportError:
-            return self._heuristic_classify(lines)
+            return self._heuristic_classify(lines), {
+                "provider_used": "heuristic",
+                "provider_status": "fallback",
+                "fallback_reason": "CyBERT runtime dependencies are not installed",
+            }
 
-        client = _create_triton_http_client(self.url)
+        try:
+            client = _create_triton_http_client(self.url)
+        except Exception as exc:
+            return self._heuristic_classify(lines), {
+                "provider_used": "heuristic",
+                "provider_status": "fallback",
+                "fallback_reason": f"Triton client unavailable: {exc}",
+            }
         if not _triton_model_ready(client, self.model_name):
-            return self._heuristic_classify(lines)
+            return self._heuristic_classify(lines), {
+                "provider_used": "heuristic",
+                "provider_status": "fallback",
+                "fallback_reason": "Triton model is not ready",
+            }
 
         # Simplified simulation of triton prepare and request
         try:
@@ -237,6 +334,12 @@ class CybertBackend(ComputeBackend):
         except ImportError:
             tokens = tokenize(lines)
         except Exception as exc:
+            if not raise_on_provider_error:
+                return self._heuristic_classify(lines), {
+                    "provider_used": "heuristic",
+                    "provider_status": "fallback",
+                    "fallback_reason": f"CyBERT tokenization failed: {exc}",
+                }
             raise RuntimeError(f"CyBERT tokenization failed: {exc}") from exc
 
         inputs = []
@@ -257,6 +360,12 @@ class CybertBackend(ComputeBackend):
                 result = client.infer(model_name=self.model_name, inputs=inputs)
                 probs = result.as_numpy("logits")
             except Exception as exc:
+                if not raise_on_provider_error:
+                    return self._heuristic_classify(lines), {
+                        "provider_used": "heuristic",
+                        "provider_status": "fallback",
+                        "fallback_reason": f"CyBERT inference failed: {exc}",
+                    }
                 raise RuntimeError(f"CyBERT inference failed: {exc}") from exc
 
         threshold = getattr(config, "nlp_threshold", 0.0) if config else 0.0
@@ -275,7 +384,11 @@ class CybertBackend(ComputeBackend):
             if confidence >= threshold:
                 results.append({"label": self.labels[idx], "confidence": confidence})
 
-        return results
+        return results, {
+            "provider_used": "cybert",
+            "provider_status": "provider",
+            "fallback_reason": None,
+        }
 
     def _heuristic_classify(self, lines: list[str]) -> list[dict[str, Any]]:
         """
