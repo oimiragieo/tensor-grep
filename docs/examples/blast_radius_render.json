@@ -315,7 +315,7 @@
         "capabilities": {},
         "last_error": null,
         "opened_documents": 0,
-        "request_timeout_seconds": 3.0,
+        "request_timeout_seconds": 15.0,
         "initialize_timeout_seconds": 15.0,
         "cooldown_remaining_s": 0.0
       }

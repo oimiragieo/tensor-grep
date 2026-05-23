@@ -55,6 +55,7 @@ def test_provider_status_reports_cached_client_state(
         status["initialize_timeout_seconds"]
         == provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS
     )
+    assert provider_module._DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS == 15.0
 
 
 def test_provider_status_cached_initialized_client_is_not_lsp_proof_without_provider_response(

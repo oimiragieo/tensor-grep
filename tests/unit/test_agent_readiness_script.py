@@ -122,7 +122,11 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "pytest",
         "tests/unit/test_cli_modes.py",
     ]
-    assert "broad_generated_root_scan" in broad_scan_check.command
+    assert "tests/unit/test_cli_bootstrap.py" in broad_scan_check.command
+    assert (
+        "broad_generated_root_scan or normal_search_refuses_broad_generated_root "
+        "or unbounded_generated_root_search or unbounded_workspace_root_search"
+    ) in broad_scan_check.command
 
     ast_run_check = next(check for check in checks if check.name == "ast-run-smoke")
     assert ast_run_check.command == [

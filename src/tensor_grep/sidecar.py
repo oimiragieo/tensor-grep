@@ -11,6 +11,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.formatters.json_fmt import JSON_OUTPUT_VERSION
+
 _CLASSIFY_PROVIDER_ENV = "TENSOR_GREP_CLASSIFY_PROVIDER"
 _CYBERT_CLASSIFY_PROVIDERS = {"cybert", "triton"}
 DEFAULT_CLASSIFY_MAX_LINES = 500
@@ -214,6 +216,8 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
     if format_type == "json":
         return (
             json.dumps({
+                "version": JSON_OUTPUT_VERSION,
+                "schema_version": JSON_OUTPUT_VERSION,
                 "classification_backend": classification_backend,
                 "line_budget": line_budget,
                 "classifications": _enrich_classifications(
