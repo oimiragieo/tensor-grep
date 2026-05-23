@@ -125,19 +125,15 @@ def resolve_gpu_sidecar_python(raw: str | None = None) -> Path | None:
 
     candidates = []
     if os.name == "nt":
-        candidates.extend(
-            [
-                ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
-                ROOT_DIR / ".venv" / "Scripts" / "python.exe",
-            ]
-        )
+        candidates.extend([
+            ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
+            ROOT_DIR / ".venv" / "Scripts" / "python.exe",
+        ])
     else:
-        candidates.extend(
-            [
-                ROOT_DIR / ".venv_cuda" / "bin" / "python",
-                ROOT_DIR / ".venv" / "bin" / "python",
-            ]
-        )
+        candidates.extend([
+            ROOT_DIR / ".venv_cuda" / "bin" / "python",
+            ROOT_DIR / ".venv" / "bin" / "python",
+        ])
 
     for candidate in candidates:
         if candidate.exists():
@@ -1105,15 +1101,13 @@ def analyze_gpu_auto_recommendation(
                 winning_sizes_by_device.setdefault(str(device_id), set()).add(
                     int(row.get("size_bytes", 0))
                 )
-                winners.append(
-                    {
-                        "device_id": device_id,
-                        "size_label": row.get("size_label"),
-                        "size_bytes": row.get("size_bytes"),
-                        "speedup_vs_rg_pct": speedup_vs_rg_pct,
-                        "speedup_vs_tg_cpu_pct": speedup_vs_tg_cpu_pct,
-                    }
-                )
+                winners.append({
+                    "device_id": device_id,
+                    "size_label": row.get("size_label"),
+                    "size_bytes": row.get("size_bytes"),
+                    "speedup_vs_rg_pct": speedup_vs_rg_pct,
+                    "speedup_vs_tg_cpu_pct": speedup_vs_tg_cpu_pct,
+                })
 
     qualifying_devices = {
         device_id
@@ -1547,40 +1541,36 @@ def run_gpu_scale_benchmarks(
                 "tg_runtime_sidecar_used": device.get("tg_runtime_sidecar_used"),
             }
             if not device.get("operational", False):
-                entry.update(
-                    {
-                        "status": "UNSUPPORTED",
-                        "median_s": None,
-                        "samples_s": [],
-                        "stderr": device.get("error", "device probe failed"),
-                        "promotion_evidence": False,
-                        "not_gpu_proof_reason": _not_gpu_proof_reason(
-                            backend=device.get("tg_runtime_backend"),
-                            sidecar_used=device.get("tg_runtime_sidecar_used"),
-                        ),
-                    }
-                )
+                entry.update({
+                    "status": "UNSUPPORTED",
+                    "median_s": None,
+                    "samples_s": [],
+                    "stderr": device.get("error", "device probe failed"),
+                    "promotion_evidence": False,
+                    "not_gpu_proof_reason": _not_gpu_proof_reason(
+                        backend=device.get("tg_runtime_backend"),
+                        sidecar_used=device.get("tg_runtime_sidecar_used"),
+                    ),
+                })
             elif not _uses_native_cuda_runtime(device):
                 runtime_probe = runtime_probes.get(int(device["device_id"]), {})
-                entry.update(
-                    {
-                        "status": "UNSUPPORTED",
-                        "median_s": None,
-                        "samples_s": [],
-                        "stderr": (
-                            "GPU scale benchmark requires a CUDA-enabled native tg binary; "
-                            f"runtime probe routed to "
-                            f"{runtime_probe.get('routing_backend') or 'unknown'} "
-                            f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
-                        ),
-                        "command": runtime_probe.get("command"),
-                        "promotion_evidence": False,
-                        "not_gpu_proof_reason": _not_gpu_proof_reason(
-                            backend=runtime_probe.get("routing_backend"),
-                            sidecar_used=runtime_probe.get("sidecar_used"),
-                        ),
-                    }
-                )
+                entry.update({
+                    "status": "UNSUPPORTED",
+                    "median_s": None,
+                    "samples_s": [],
+                    "stderr": (
+                        "GPU scale benchmark requires a CUDA-enabled native tg binary; "
+                        f"runtime probe routed to "
+                        f"{runtime_probe.get('routing_backend') or 'unknown'} "
+                        f"(sidecar_used={bool(runtime_probe.get('sidecar_used'))})."
+                    ),
+                    "command": runtime_probe.get("command"),
+                    "promotion_evidence": False,
+                    "not_gpu_proof_reason": _not_gpu_proof_reason(
+                        backend=runtime_probe.get("routing_backend"),
+                        sidecar_used=runtime_probe.get("sidecar_used"),
+                    ),
+                })
             else:
                 result = benchmark_search_command(
                     build_tg_gpu_search_command(
@@ -1822,24 +1812,22 @@ def main() -> int:
             "winning_rows": [],
         }
         gpu_bottleneck_summary = summarize_gpu_pipeline_bottlenecks([])
-        payload.update(
-            {
-                "errors": [f"tg binary not found: {tg_binary}"],
-                "warnings": [],
-                "rows": [],
-                "correctness_checks": [],
-                "corpus_sizes": [],
-                "devices": [],
-                "gpu_auto_recommendation": recommendation,
-                "gpu_bottleneck_summary": gpu_bottleneck_summary,
-                "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
-                "scale_gate_summary": build_scale_gate_summary(
-                    devices=[],
-                    correctness_checks=[],
-                    gpu_auto_recommendation=recommendation,
-                ),
-            }
-        )
+        payload.update({
+            "errors": [f"tg binary not found: {tg_binary}"],
+            "warnings": [],
+            "rows": [],
+            "correctness_checks": [],
+            "corpus_sizes": [],
+            "devices": [],
+            "gpu_auto_recommendation": recommendation,
+            "gpu_bottleneck_summary": gpu_bottleneck_summary,
+            "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
+            "scale_gate_summary": build_scale_gate_summary(
+                devices=[],
+                correctness_checks=[],
+                gpu_auto_recommendation=recommendation,
+            ),
+        })
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 

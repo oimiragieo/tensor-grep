@@ -424,13 +424,11 @@ def _extract_tg_match_signatures(payload: dict[str, object]) -> list[tuple[str, 
         line_number = match.get("line_number")
         if not isinstance(line_number, int):
             line_number = 0
-        signatures.append(
-            (
-                _normalized_match_path(match.get("file")),
-                line_number,
-                _normalized_match_text(match.get("text")),
-            )
-        )
+        signatures.append((
+            _normalized_match_path(match.get("file")),
+            line_number,
+            _normalized_match_text(match.get("text")),
+        ))
     return sorted(signatures)
 
 
@@ -452,13 +450,11 @@ def _extract_rg_json_match_signatures(stdout: str) -> list[tuple[str, int, str]]
             line_number = 0
         lines = data.get("lines")
         line_text = lines.get("text") if isinstance(lines, dict) else ""
-        signatures.append(
-            (
-                _normalized_match_path(path_text),
-                line_number,
-                _normalized_match_text(line_text),
-            )
-        )
+        signatures.append((
+            _normalized_match_path(path_text),
+            line_number,
+            _normalized_match_text(line_text),
+        ))
     return sorted(signatures)
 
 
@@ -1119,9 +1115,9 @@ def run_gpu_error_tests(
             else "FAIL"
         )
 
-    nvrtc_env = _build_command_env(
-        {"TG_TEST_CUDA_BEHAVIOR": "nvrtc-failure:simulated NVRTC compile error"}
-    )
+    nvrtc_env = _build_command_env({
+        "TG_TEST_CUDA_BEHAVIOR": "nvrtc-failure:simulated NVRTC compile error"
+    })
     nvrtc_failure = _run_command(
         build_tg_gpu_search_command(tg_binary, pattern, corpus_dir, device_id),
         env=nvrtc_env,
@@ -1142,9 +1138,9 @@ def run_gpu_error_tests(
             else "FAIL"
         )
 
-    timeout_env = _build_command_env(
-        {"TG_TEST_CUDA_BEHAVIOR": f"timeout:{timeout_simulation_ms}ms"}
-    )
+    timeout_env = _build_command_env({
+        "TG_TEST_CUDA_BEHAVIOR": f"timeout:{timeout_simulation_ms}ms"
+    })
     timeout_result = _run_command(
         build_tg_gpu_search_command(tg_binary, pattern, corpus_dir, device_id),
         env=timeout_env,
@@ -1274,12 +1270,10 @@ def analyze_crossover(rows: list[dict[str, object]]) -> dict[str, object]:
         if ratio is None:
             continue
         if ratio < 1.0:
-            winners.append(
-                {
-                    "size_label": row["size_label"],
-                    "gpu_rg_ratio": ratio,
-                }
-            )
+            winners.append({
+                "size_label": row["size_label"],
+                "gpu_rg_ratio": ratio,
+            })
         if best_gap is None or ratio < best_gap["gpu_rg_ratio"]:
             best_gap = {
                 "size_label": row["size_label"],
@@ -2578,20 +2572,18 @@ def run_advanced_gpu_native_benchmarks(
         else:
             gpu_group["ratio_vs_rg"] = None
             gpu_group["speedup_vs_rg"] = None
-        throughput_rows.append(
-            {
-                "size_label": size_label,
-                "size_bytes": size_bytes,
-                "actual_bytes": actual_bytes,
-                "pattern_count": len(throughput_patterns),
-                "file_count": throughput_info["file_count"],
-                "total_lines": throughput_info["total_lines"],
-                "line_bytes": throughput_info["line_bytes"],
-                "rg": rg_group,
-                "tg_gpu": gpu_group,
-                "gpu_stats": gpu_stats,
-            }
-        )
+        throughput_rows.append({
+            "size_label": size_label,
+            "size_bytes": size_bytes,
+            "actual_bytes": actual_bytes,
+            "pattern_count": len(throughput_patterns),
+            "file_count": throughput_info["file_count"],
+            "total_lines": throughput_info["total_lines"],
+            "line_bytes": throughput_info["line_bytes"],
+            "rg": rg_group,
+            "tg_gpu": gpu_group,
+            "gpu_stats": gpu_stats,
+        })
 
     advanced["throughput_rows"] = throughput_rows
     advanced["throughput_workload"] = {
@@ -3012,33 +3004,31 @@ def main() -> int:
     }
 
     if not tg_binary.exists():
-        payload.update(
-            {
-                "errors": [f"tg binary not found: {tg_binary}"],
-                "warnings": [],
-                "rows": [],
-                "correctness_checks": [],
-                "error_tests": {},
-                "corpus_sizes": [],
-                "throughput_target": {
-                    "met": False,
-                    "winning_rows": [],
-                    "best_attempt": None,
-                    "summary": "Benchmark did not run because the tg binary was missing.",
-                },
-                "scale_gate_summary": build_native_scale_gate_summary(
-                    [],
-                    correctness_checks=[],
-                ),
-                "advanced": {"enabled": args.advanced},
-                "crossover": {
-                    "exists": False,
-                    "first_gpu_faster_than_rg": None,
-                    "summary": "Benchmark did not run because the tg binary was missing.",
-                    "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
-                },
-            }
-        )
+        payload.update({
+            "errors": [f"tg binary not found: {tg_binary}"],
+            "warnings": [],
+            "rows": [],
+            "correctness_checks": [],
+            "error_tests": {},
+            "corpus_sizes": [],
+            "throughput_target": {
+                "met": False,
+                "winning_rows": [],
+                "best_attempt": None,
+                "summary": "Benchmark did not run because the tg binary was missing.",
+            },
+            "scale_gate_summary": build_native_scale_gate_summary(
+                [],
+                correctness_checks=[],
+            ),
+            "advanced": {"enabled": args.advanced},
+            "crossover": {
+                "exists": False,
+                "first_gpu_faster_than_rg": None,
+                "summary": "Benchmark did not run because the tg binary was missing.",
+                "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
+            },
+        })
         public_gate = build_public_managed_gpu_proof_gate(
             tg_binary_metadata=tg_binary_metadata,
             scale_gate_summary=payload["scale_gate_summary"]

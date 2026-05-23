@@ -1987,20 +1987,18 @@ def test_gpu_bottleneck_advisory_should_not_change_promotion_summary():
         }
         for size_label in ("1GB", "5GB")
     ]
-    advisory_summary = module.summarize_gpu_pipeline_bottlenecks(
-        [
-            module.extract_gpu_pipeline_breakdown(
-                {
-                    "pipeline": {
-                        "host_file_read_time_ms": 1000.0,
-                        "kernel_time_ms": 1.0,
-                        "wall_time_ms": 1001.0,
-                    }
-                },
-                source="scale_native_stats",
-            )
-        ]
-    )
+    advisory_summary = module.summarize_gpu_pipeline_bottlenecks([
+        module.extract_gpu_pipeline_breakdown(
+            {
+                "pipeline": {
+                    "host_file_read_time_ms": 1000.0,
+                    "kernel_time_ms": 1.0,
+                    "wall_time_ms": 1001.0,
+                }
+            },
+            source="scale_native_stats",
+        )
+    ])
 
     recommendation = module.analyze_gpu_auto_recommendation(
         rows,
