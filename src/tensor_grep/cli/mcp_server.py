@@ -2112,30 +2112,45 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
 @mcp.tool()  # type: ignore
 def tg_classify_logs(file_path: str) -> str:
     """
-    Analyze a system log file using the CyBERT NLP model to automatically
-    detect warnings, errors, and malicious payloads contextually.
+    Analyze a system log file with local heuristics by default, or the opt-in
+    CyBERT/Triton provider when TENSOR_GREP_CLASSIFY_PROVIDER=cybert is set.
 
     Args:
         file_path: The absolute path to the log file to classify.
     """
     try:
-        from tensor_grep.backends.cybert_backend import CybertBackend
         from tensor_grep.io.reader_fallback import FallbackReader
+        from tensor_grep.sidecar import (
+            DEFAULT_CLASSIFY_MAX_LINES,
+            _apply_classify_line_budget,
+            _classify_lines_with_metadata,
+        )
 
         reader = FallbackReader()
         lines = list(reader.read_lines(file_path))
         if not lines:
             return f"Error: File {file_path} is empty or unreadable."
 
-        backend = CybertBackend()
-        results = backend.classify(lines)
+        budgeted_lines, line_budget = _apply_classify_line_budget(
+            lines,
+            DEFAULT_CLASSIFY_MAX_LINES,
+        )
+        results, backend_metadata = _classify_lines_with_metadata(budgeted_lines)
+        provider_used = backend_metadata.get("provider_used", "heuristic")
+        provider_status = backend_metadata.get("provider_status", "local")
 
-        output = [f"Semantic Classification for {file_path} (Sample of {len(lines)} lines):"]
+        output = [
+            (
+                f"Log Classification for {file_path} "
+                f"(provider={provider_used}, status={provider_status}, "
+                f"sample={line_budget['emitted_lines']}/{line_budget['total_lines']} lines):"
+            )
+        ]
 
         warnings_or_errors = []
         for i, r in enumerate(results):
             if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
-                warnings_or_errors.append((lines[i].strip(), r["label"], r["confidence"]))
+                warnings_or_errors.append((budgeted_lines[i].strip(), r["label"], r["confidence"]))
 
         if not warnings_or_errors:
             return f"No severe anomalies detected in {file_path}. All logs appear nominal."
