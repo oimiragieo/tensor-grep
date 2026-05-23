@@ -56,13 +56,49 @@ def _classify_backend_metadata(
     provider_used: str,
     provider_status: str,
     fallback_reason: str | None = None,
+    cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "provider_requested": provider_requested,
         "provider_used": provider_used,
         "provider_status": provider_status,
         "fallback_reason": fallback_reason,
-        "cache": {"status": "not_applicable"},
+        "cache": cache or _classify_cache_metadata(provider_requested=provider_requested),
+    }
+
+
+def _classify_cache_metadata(*, provider_requested: str) -> dict[str, Any]:
+    offline_sources = [
+        name
+        for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+        if os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+    ]
+    offline = {"enabled": bool(offline_sources), "sources": offline_sources}
+    if provider_requested not in _CYBERT_CLASSIFY_PROVIDERS:
+        return {
+            "status": "not_applicable",
+            "offline": offline,
+        }
+
+    if os.environ.get("HF_HUB_CACHE"):
+        cache_path = os.environ["HF_HUB_CACHE"]
+        source = "HF_HUB_CACHE"
+    elif os.environ.get("HF_HOME"):
+        cache_path = str(Path(os.environ["HF_HOME"]) / "hub")
+        source = "HF_HOME"
+    elif os.environ.get("XDG_CACHE_HOME"):
+        cache_path = str(Path(os.environ["XDG_CACHE_HOME"]) / "huggingface" / "hub")
+        source = "XDG_CACHE_HOME"
+    else:
+        cache_path = str(Path.home() / ".cache" / "huggingface" / "hub")
+        source = "default"
+
+    return {
+        "status": "available" if Path(cache_path).is_dir() else "missing",
+        "path": cache_path,
+        "source": source,
+        "offline": offline,
+        "local_files_only": True,
     }
 
 
@@ -85,13 +121,25 @@ def _classify_lines_with_metadata(
         )
 
     try:
-        from tensor_grep.backends.cybert_backend import CybertBackend
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            from tensor_grep.backends.cybert_backend import CybertBackend
 
-        backend = CybertBackend()
-        return backend.classify(lines), _classify_backend_metadata(
+            backend = CybertBackend()
+            if hasattr(backend, "classify_with_metadata"):
+                results, provider_metadata = backend.classify_with_metadata(lines)
+            else:
+                results = backend.classify(lines)
+                provider_metadata = {
+                    "provider_used": "cybert",
+                    "provider_status": "provider",
+                    "fallback_reason": None,
+                }
+        return results, _classify_backend_metadata(
             provider_requested=provider,
-            provider_used="cybert",
-            provider_status="provider",
+            provider_used=str(provider_metadata.get("provider_used", "cybert")),
+            provider_status=str(provider_metadata.get("provider_status", "provider")),
+            fallback_reason=provider_metadata.get("fallback_reason"),
+            cache=_classify_cache_metadata(provider_requested=provider),
         )
     except Exception as exc:
         return _heuristic_classify_lines(lines), _classify_backend_metadata(
@@ -215,17 +263,19 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
     results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
     if format_type == "json":
         return (
-            json.dumps({
-                "version": JSON_OUTPUT_VERSION,
-                "schema_version": JSON_OUTPUT_VERSION,
-                "classification_backend": classification_backend,
-                "line_budget": line_budget,
-                "classifications": _enrich_classifications(
-                    results,
-                    budgeted_lines,
-                    source_path=source_path,
-                ),
-            })
+            json.dumps(
+                {
+                    "version": JSON_OUTPUT_VERSION,
+                    "schema_version": JSON_OUTPUT_VERSION,
+                    "classification_backend": classification_backend,
+                    "line_budget": line_budget,
+                    "classifications": _enrich_classifications(
+                        results,
+                        budgeted_lines,
+                        source_path=source_path,
+                    ),
+                }
+            )
             + "\n",
             "",
             0,

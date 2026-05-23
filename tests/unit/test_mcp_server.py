@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import sys
+import types
 from io import StringIO
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -522,6 +524,30 @@ def test_tg_devices_text_mode_returns_human_inventory_lines():
     assert "Detected 2 routable GPU(s):" in out
     assert "- gpu:7 vram_mb=12288" in out
     assert "- gpu:3 vram_mb=24576" in out
+
+
+def test_tg_classify_logs_defaults_to_local_heuristics(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    class _ExplodingBackend:
+        def __init__(self) -> None:
+            raise AssertionError("MCP classify should not probe CyBERT by default")
+
+    log_path = tmp_path / "app.log"
+    log_path.write_text("INFO startup ok\nERROR database failed\n", encoding="utf-8")
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "tensor_grep.backends.cybert_backend",
+        types.SimpleNamespace(CybertBackend=_ExplodingBackend),
+    )
+
+    out = mcp_server.tg_classify_logs(str(log_path))
+
+    assert "provider=heuristic" in out
+    assert "status=local" in out
+    assert "[ERROR]" in out
+    assert "database failed" in out
 
 
 def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Path):
@@ -1336,13 +1362,15 @@ def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
 
     policy_path = tmp_path / "apply-policy.json"
     policy_path.write_text(
-        json.dumps({
-            "version": 1,
-            "lint_cmd": None,
-            "test_cmd": None,
-            "ruleset_scan": None,
-            "on_failure": "warn",
-        }),
+        json.dumps(
+            {
+                "version": 1,
+                "lint_cmd": None,
+                "test_cmd": None,
+                "ruleset_scan": None,
+                "on_failure": "warn",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -1384,12 +1412,14 @@ def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
 
     policy_path = tmp_path / "apply-policy.json"
     policy_path.write_text(
-        json.dumps({
-            "version": 1,
-            "lint_cmd": None,
-            "test_cmd": None,
-            "ruleset_scan": None,
-        }),
+        json.dumps(
+            {
+                "version": 1,
+                "lint_cmd": None,
+                "test_cmd": None,
+                "ruleset_scan": None,
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -2238,14 +2268,18 @@ def test_session_serve_render_commands_include_enriched_edit_plan_seed(tmp_path)
 
     session_id = session_store.open_session(str(project)).session_id
     stdin = StringIO(
-        "\n".join([
-            json.dumps({"command": "context_render", "query": "create invoice"}),
-            json.dumps({
-                "command": "blast_radius_render",
-                "symbol": "create_invoice",
-                "max_depth": 1,
-            }),
-        ])
+        "\n".join(
+            [
+                json.dumps({"command": "context_render", "query": "create invoice"}),
+                json.dumps(
+                    {
+                        "command": "blast_radius_render",
+                        "symbol": "create_invoice",
+                        "max_depth": 1,
+                    }
+                ),
+            ]
+        )
         + "\n"
     )
     stdout = StringIO()
@@ -2978,10 +3012,12 @@ def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-        }),
+        json.dumps(
+            {
+                "name": "vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"

@@ -87,6 +87,8 @@ def test_sidecar_classify_json_reports_local_provider_metadata(monkeypatch):
     from tensor_grep.sidecar import _classify_payload
 
     monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
 
     stdout, stderr, exit_code = _classify_payload(
         ["--format=json"],
@@ -101,7 +103,10 @@ def test_sidecar_classify_json_reports_local_provider_metadata(monkeypatch):
         "provider_used": "heuristic",
         "provider_status": "local",
         "fallback_reason": None,
-        "cache": {"status": "not_applicable"},
+        "cache": {
+            "status": "not_applicable",
+            "offline": {"enabled": False, "sources": []},
+        },
     }
 
 
@@ -186,7 +191,7 @@ def test_sidecar_classify_accepts_explicit_max_lines(monkeypatch):
     }
 
 
-def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch):
+def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch, tmp_path):
     from tensor_grep.sidecar import _classify_payload
 
     class _CybertBackend:
@@ -194,6 +199,9 @@ def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch
             return [{"label": "warn", "confidence": 0.77} for _line in lines]
 
     monkeypatch.setenv("TENSOR_GREP_CLASSIFY_PROVIDER", "cybert")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "missing-hf-cache"))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     monkeypatch.setitem(
         sys.modules,
         "tensor_grep.backends.cybert_backend",
@@ -223,11 +231,17 @@ def test_sidecar_classify_uses_cybert_only_when_provider_is_explicit(monkeypatch
         "provider_used": "cybert",
         "provider_status": "provider",
         "fallback_reason": None,
-        "cache": {"status": "not_applicable"},
+        "cache": {
+            "status": "missing",
+            "path": str(tmp_path / "missing-hf-cache"),
+            "source": "HF_HUB_CACHE",
+            "offline": {"enabled": False, "sources": []},
+            "local_files_only": True,
+        },
     }
 
 
-def test_sidecar_classify_reports_quiet_cybert_fallback_metadata(monkeypatch):
+def test_sidecar_classify_reports_quiet_cybert_fallback_metadata(monkeypatch, tmp_path):
     from tensor_grep.sidecar import _classify_payload
 
     class _ExplodingCybertBackend:
@@ -235,6 +249,9 @@ def test_sidecar_classify_reports_quiet_cybert_fallback_metadata(monkeypatch):
             raise RuntimeError("triton offline")
 
     monkeypatch.setenv("TENSOR_GREP_CLASSIFY_PROVIDER", "cybert")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "missing-hf-cache"))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     monkeypatch.setitem(
         sys.modules,
         "tensor_grep.backends.cybert_backend",
@@ -254,4 +271,73 @@ def test_sidecar_classify_reports_quiet_cybert_fallback_metadata(monkeypatch):
     assert payload["classification_backend"]["provider_used"] == "heuristic"
     assert payload["classification_backend"]["provider_status"] == "fallback"
     assert "RuntimeError: triton offline" in payload["classification_backend"]["fallback_reason"]
-    assert payload["classification_backend"]["cache"] == {"status": "not_applicable"}
+    assert payload["classification_backend"]["cache"]["status"] == "missing"
+    assert payload["classification_backend"]["cache"]["offline"] == {
+        "enabled": False,
+        "sources": [],
+    }
+
+
+def test_sidecar_classify_suppresses_provider_stdout_stderr_noise(monkeypatch, tmp_path):
+    from tensor_grep.sidecar import _classify_payload
+
+    class _NoisyCybertBackend:
+        def classify(self, lines):
+            print("provider stdout noise")
+            print("provider stderr noise", file=sys.stderr)
+            return [{"label": "warn", "confidence": 0.77} for _line in lines]
+
+    monkeypatch.setenv("TENSOR_GREP_CLASSIFY_PROVIDER", "cybert")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "missing-hf-cache"))
+    monkeypatch.setitem(
+        sys.modules,
+        "tensor_grep.backends.cybert_backend",
+        types.SimpleNamespace(CybertBackend=_NoisyCybertBackend),
+    )
+
+    stdout, stderr, exit_code = _classify_payload(
+        ["--format=json"],
+        {"content": "WARNING latency is high\n"},
+    )
+
+    assert stderr == ""
+    assert exit_code == 0
+    assert "provider stdout noise" not in stdout
+    assert "provider stderr noise" not in stdout
+    payload = json.loads(stdout)
+    assert payload["classifications"][0]["label"] == "warn"
+
+
+def test_sidecar_classify_reports_hf_cache_and_offline_status(monkeypatch, tmp_path):
+    from tensor_grep.sidecar import _classify_payload
+
+    class _CybertBackend:
+        def classify(self, lines):
+            return [{"label": "warn", "confidence": 0.77} for _line in lines]
+
+    cache_dir = tmp_path / "hf-cache"
+    cache_dir.mkdir()
+    monkeypatch.setenv("TENSOR_GREP_CLASSIFY_PROVIDER", "cybert")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("HF_HUB_CACHE", str(cache_dir))
+    monkeypatch.setitem(
+        sys.modules,
+        "tensor_grep.backends.cybert_backend",
+        types.SimpleNamespace(CybertBackend=_CybertBackend),
+    )
+
+    stdout, stderr, exit_code = _classify_payload(
+        ["--format=json"],
+        {"content": "WARNING latency is high\n"},
+    )
+
+    assert stderr == ""
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert payload["classification_backend"]["cache"] == {
+        "status": "available",
+        "path": str(cache_dir),
+        "source": "HF_HUB_CACHE",
+        "offline": {"enabled": True, "sources": ["HF_HUB_OFFLINE"]},
+        "local_files_only": True,
+    }

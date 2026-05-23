@@ -176,6 +176,30 @@ class TestCybertBackend:
         tokens = tokenize(["test line"])
         assert "input_ids" in tokens
 
+    @patch.dict("sys.modules", {"transformers": MagicMock()})
+    def test_tokenize_should_honor_huggingface_offline_cache_env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf-cache"))
+
+        import transformers
+
+        mock_tokenizer = MagicMock()
+        mock_instance = MagicMock()
+        mock_instance.return_value = {"input_ids": [[1, 2, 3]]}
+        mock_tokenizer.from_pretrained.return_value = mock_instance
+        transformers.AutoTokenizer = mock_tokenizer
+
+        from tensor_grep.backends.cybert_backend import tokenize
+
+        tokens = tokenize(["test line"])
+
+        assert "input_ids" in tokens
+        mock_tokenizer.from_pretrained.assert_called_once_with(
+            "bert-base-uncased",
+            cache_dir=str(tmp_path / "hf-cache"),
+            local_files_only=True,
+        )
+
     @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
     def test_should_classify_with_model_output(self):
         import tritonclient.http as httpclient
@@ -218,10 +242,12 @@ class TestCybertBackend:
 
         mock_result = MagicMock()
 
-        mock_result.as_numpy.return_value = np.array([
-            [0.1, 0.9, 0.0],  # High confidence
-            [0.4, 0.4, 0.2],  # Low confidence
-        ])
+        mock_result.as_numpy.return_value = np.array(
+            [
+                [0.1, 0.9, 0.0],  # High confidence
+                [0.4, 0.4, 0.2],  # Low confidence
+            ]
+        )
         mock_client.infer.return_value = mock_result
 
         from tensor_grep.backends.cybert_backend import CybertBackend
@@ -280,6 +306,31 @@ class TestCybertBackend:
             results = CybertBackend().classify(["ERROR database failed"])
 
         assert results == [{"label": "error", "confidence": 0.95}]
+
+    @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
+    def test_classify_with_metadata_reports_provider_fallback_before_tokenization(self):
+        import tritonclient.http as httpclient
+
+        mock_client = MagicMock()
+        mock_client.is_server_live.return_value = False
+        httpclient.InferenceServerClient.return_value = mock_client
+
+        from tensor_grep.backends import cybert_backend
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        with patch.object(
+            cybert_backend,
+            "tokenize",
+            side_effect=AssertionError("tokenizer should not run when Triton is unavailable"),
+        ):
+            results, metadata = CybertBackend().classify_with_metadata(["ERROR database failed"])
+
+        assert results == [{"label": "error", "confidence": 0.95}]
+        assert metadata == {
+            "provider_used": "heuristic",
+            "provider_status": "fallback",
+            "fallback_reason": "Triton model is not ready",
+        }
 
     def test_should_use_heuristic_fallback_when_triton_missing(self):
         from tensor_grep.backends.cybert_backend import CybertBackend
