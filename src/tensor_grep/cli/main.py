@@ -6953,6 +6953,12 @@ def session_edit_plan_cmd(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum cached repo files to score before ranking warm edit-plan targets.",
+    ),
     refresh_on_stale: bool = typer.Option(
         False,
         "--refresh-on-stale",
@@ -6982,6 +6988,7 @@ def session_edit_plan_cmd(
                     "max_sources": max_sources,
                     "max_tokens": max_tokens,
                     "max_symbols": max_symbols,
+                    "max_repo_files": max_repo_files,
                     "refresh_on_stale": refresh_on_stale,
                 },
             )
@@ -6994,6 +7001,7 @@ def session_edit_plan_cmd(
                 max_sources=max_sources,
                 max_tokens=max_tokens,
                 max_symbols=max_symbols,
+                max_repo_files=max_repo_files,
                 refresh_on_stale=refresh_on_stale,
             )
     except Exception as exc:

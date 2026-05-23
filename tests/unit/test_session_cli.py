@@ -210,6 +210,141 @@ def test_session_edit_plan_does_not_walk_repo_for_validation_discovery(
     assert timing["total_seconds"] >= 0
 
 
+def test_session_edit_plan_applies_repo_map_cap_before_building_plan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(6):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def target_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    assert opened["file_count"] == 6
+
+    captured_repo_maps: list[dict] = []
+
+    def fake_build_context_edit_plan_from_map(
+        repo_map: dict,
+        query: str,
+        **_kwargs,
+    ) -> dict:
+        captured_repo_maps.append(repo_map)
+        return {
+            "query": query,
+            "files": list(repo_map.get("files", [])),
+            "tests": list(repo_map.get("tests", [])),
+            "symbols": list(repo_map.get("symbols", [])),
+            "output_limit": dict(repo_map.get("output_limit", {})),
+        }
+
+    monkeypatch.setattr(
+        session_store,
+        "build_context_edit_plan_from_map",
+        fake_build_context_edit_plan_from_map,
+    )
+
+    edit_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "target",
+            "--max-repo-files",
+            "2",
+            "--json",
+        ],
+    )
+
+    assert edit_plan.exit_code == 0, edit_plan.output
+    payload = json.loads(edit_plan.stdout)
+    assert payload["routing_reason"] == "session-context-edit-plan"
+    assert len(payload["files"]) == 2
+    assert payload["output_limit"]["max_files"] == 2
+    assert payload["output_limit"]["original_files"] == 6
+    assert payload["output_limit"]["possibly_truncated"] is True
+    assert len(captured_repo_maps) == 1
+    assert len(captured_repo_maps[0]["files"]) == 2
+
+    show_result = runner.invoke(
+        app, ["session", "show", opened["session_id"], str(project), "--json"]
+    )
+    assert show_result.exit_code == 0, show_result.output
+    shown = json.loads(show_result.stdout)
+    assert len(shown["repo_map"]["files"]) == 6
+
+
+def test_session_serve_edit_plan_applies_repo_map_cap_before_building_plan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(5):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def target_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    session_payload = json.loads(
+        runner.invoke(app, ["session", "show", opened["session_id"], str(project), "--json"]).stdout
+    )
+
+    captured_repo_maps: list[dict] = []
+
+    def fake_build_context_edit_plan_from_map(
+        repo_map: dict,
+        query: str,
+        **_kwargs,
+    ) -> dict:
+        captured_repo_maps.append(repo_map)
+        return {
+            "query": query,
+            "files": list(repo_map.get("files", [])),
+            "tests": list(repo_map.get("tests", [])),
+            "symbols": list(repo_map.get("symbols", [])),
+            "output_limit": dict(repo_map.get("output_limit", {})),
+        }
+
+    monkeypatch.setattr(
+        session_store,
+        "build_context_edit_plan_from_map",
+        fake_build_context_edit_plan_from_map,
+    )
+
+    payload = session_store.serve_session_request(
+        opened["session_id"],
+        {
+            "command": "context_edit_plan",
+            "query": "target",
+            "max_repo_files": 2,
+        },
+        str(project),
+        payload=session_payload,
+    )
+
+    assert payload["routing_reason"] == "session-context-edit-plan"
+    assert len(payload["files"]) == 2
+    assert payload["output_limit"]["original_files"] == 5
+    assert len(captured_repo_maps) == 1
+    assert len(captured_repo_maps[0]["files"]) == 2
+
+
 def test_session_edit_plan_uses_cached_validation_evidence_after_open(
     tmp_path: Path,
     monkeypatch,
