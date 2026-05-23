@@ -38,6 +38,7 @@ class TestFormatters:
         output = fmt.format(self.result)
         parsed = json.loads(output)
         assert parsed["version"] == 1
+        assert parsed["schema_version"] == 1
         assert parsed["total_matches"] == 1
         assert parsed["matched_file_paths"] == ["test.log"]
         assert parsed["match_counts_by_file"] == {"test.log": 1}
@@ -60,6 +61,7 @@ class TestFormatters:
 
         assert len(rows) == 1
         assert rows[0]["version"] == 1
+        assert rows[0]["schema_version"] == 1
         assert rows[0]["file"] == "test.log"
         assert rows[0]["line_number"] == 2
         assert rows[0]["text"] == "ERROR test"

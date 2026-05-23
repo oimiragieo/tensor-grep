@@ -713,22 +713,22 @@ class ExternalLSPProviderManager:
             _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
         )
         if verify_health:
-            timeout = (
+            probe_request_timeout = (
                 max(float(probe_timeout_seconds), 0.0)
                 if probe_timeout_seconds is not None
-                else min(request_timeout_seconds, initialize_timeout_seconds)
+                else request_timeout_seconds
             )
             client = ExternalLSPClient(
                 language=language,
                 workspace_root=workspace_root,
-                request_timeout_seconds=timeout,
-                initialize_timeout_seconds=timeout,
+                request_timeout_seconds=request_timeout_seconds,
+                initialize_timeout_seconds=initialize_timeout_seconds,
             )
             return self._verified_provider_status(
                 client=client,
                 language=language,
                 workspace_root=workspace_root,
-                probe_timeout_seconds=timeout,
+                probe_timeout_seconds=probe_request_timeout,
                 stop_after_probe=True,
             )
         return _attach_lsp_proof_fields({
@@ -771,7 +771,6 @@ class ExternalLSPProviderManager:
         probe_succeeded = False
         probe_error: Exception | None = None
         client.request_timeout_seconds = timeout
-        client.initialize_timeout_seconds = timeout
         try:
             client.start()
             phase = "did_open"

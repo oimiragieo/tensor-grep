@@ -701,6 +701,32 @@ def test_should_require_audit_workflow_isolated_pip_audit_tool_run():
     assert "--progress-spinner off" in joined_errors
 
 
+def test_should_require_audit_workflow_checkout_to_use_pr_head_ref():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "      - uses: actions/checkout@v6\n"
+        "        with:\n"
+        "          repository: ${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name || github.repository }}\n"
+        "          ref: ${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.sha || github.sha }}\n",
+        "      - uses: actions/checkout@v6\n",
+        1,
+    )
+
+    errors = module.validate_audit_workflow_content(workflow_content=workflow)
+    joined_errors = "\n".join(errors)
+    assert "pull request head repository/ref" in joined_errors
+
+
 def test_should_require_audit_workflow_locked_requirements_export_before_pip_audit():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

@@ -616,6 +616,24 @@ def test_no_ignore_search_triggers_broad_generated_root_guard(
     assert generated_dirs == ["node_modules"]
 
 
+def test_no_ignore_search_treats_windows_appdata_as_broad_generated_scan(
+    tmp_path: Path,
+):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "AppData").mkdir()
+
+    refused, generated_dirs = _should_refuse_unbounded_generated_scan(
+        [str(tmp_path)],
+        SearchConfig(no_ignore=True, hidden=True),
+        allow_broad_generated_scan=False,
+        files_mode=False,
+    )
+
+    assert refused is True
+    assert generated_dirs == ["AppData"]
+
+
 def test_no_ignore_search_treats_cwd_generated_root_as_broad_generated_scan(
     monkeypatch, tmp_path: Path
 ):
@@ -1679,6 +1697,7 @@ def test_doctor_json_reports_mcp_stdio_launcher_warning_for_powershell_shim(
     assert payload["python_subprocess_path_tg_first_launcher_kind"] == "powershell-shim"
     warning = payload["mcp_stdio_launcher_warning"]
     assert "MCP stdio" in warning
+    assert "Start-Process" in warning
     assert "managed native tg.exe directly" in warning
     assert str(native_tg) in warning
     assert "pwsh -NoProfile -File" in warning
@@ -1728,6 +1747,7 @@ def test_doctor_text_reports_mcp_stdio_launcher_warning(monkeypatch, tmp_path: P
 
     assert result.exit_code == 0
     assert "mcp_stdio_launcher_warning:" in result.stdout
+    assert "Start-Process" in result.stdout
     assert "managed native tg.exe directly" in result.stdout
     assert "pwsh -NoProfile -File" in result.stdout
 
@@ -9969,6 +9989,7 @@ def test_rulesets_json_lists_builtin_rule_packs():
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload["schema_version"] == payload["version"]
     rulesets = {ruleset["name"]: ruleset for ruleset in payload["rulesets"]}
     assert set(rulesets) == {
         "auth-safe",
@@ -10033,6 +10054,7 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload["schema_version"] == payload["version"]
     assert payload["routing_reason"] == "builtin-ruleset-scan"
     assert payload["ruleset"] == "crypto-safe"
     assert payload["rule_count"] == 2
@@ -10738,7 +10760,10 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
     assert (
         "[scan] rule=python-hardcoded-provider-token lang=python matches=0 files=0" in result.output
     )
-    assert "Scan completed. rules=5 matched_rules=1 total_matches=1" in result.output
+    assert (
+        "[scan] rule=python-hardcoded-named-api-key lang=python matches=0 files=0" in result.output
+    )
+    assert "Scan completed. rules=6 matched_rules=1 total_matches=1" in result.output
 
 
 def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
@@ -10807,6 +10832,31 @@ def test_scan_executes_secrets_ruleset_generic_provider_token_regex(monkeypatch)
     assert (
         "[scan] rule=python-hardcoded-provider-token lang=python matches=2 files=2" in result.output
     )
+
+
+def test_scan_executes_secrets_ruleset_prefixed_api_key_regex(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text(
+            'OPENAI_API_KEY = "fake_test_key_123456"\nHEADER_NAME = "not-a-secret-value"\n',
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert (
+        "[scan] rule=python-hardcoded-named-api-key lang=python matches=1 files=1" in result.output
+    )
+    assert "HEADER_NAME" not in result.output
 
 
 def test_scan_executes_tls_ruleset(monkeypatch):

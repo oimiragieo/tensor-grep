@@ -17,6 +17,7 @@ from time import monotonic
 from typing import Any, cast
 
 from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
     _SESSION_VERSION,
     _ensure_session_not_stale,
@@ -349,6 +350,34 @@ def _context_edit_plan_response_cache_key(
     )
 
 
+def _context_render_response_cache_key(
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[str, ...]:
+    return (
+        _path_cache_key(path),
+        session_id,
+        *_session_payload_fingerprint(payload),
+        str(request.get("query", "")).strip(),
+        _request_cache_value(request, "max_files", 3),
+        _request_cache_value(request, "max_sources", 5),
+        _request_cache_value(request, "max_symbols_per_file", 6),
+        _request_cache_value(request, "max_render_chars"),
+        _request_cache_value(request, "max_tokens"),
+        _request_cache_value(request, "model"),
+        _request_cache_value(request, "optimize_context", False),
+        _request_cache_value(request, "render_profile", "full"),
+        _request_cache_value(request, "profile", False),
+        _request_cache_value(
+            request,
+            "max_repo_files",
+            _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
+        ),
+    )
+
+
 class _SessionResponseCache:
     def __init__(self, max_entries: int = _DAEMON_RESPONSE_CACHE_MAX_ENTRIES) -> None:
         self._max_entries = max(1, max_entries)
@@ -484,16 +513,26 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         request_path,
                     )
                     loaded_at = monotonic()
-                    if command == "context_edit_plan" and not bool(
-                        request.get("refresh_on_stale", False)
-                    ):
+                    cacheable_response_command = command in {
+                        "context_edit_plan",
+                        "context_render",
+                    } and not bool(request.get("refresh_on_stale", False))
+                    if cacheable_response_command:
                         _ensure_session_not_stale(payload, detect_added_files=False)
-                        response_cache_key = _context_edit_plan_response_cache_key(
-                            request_session_id,
-                            request_path,
-                            request,
-                            payload,
-                        )
+                        if command == "context_render":
+                            response_cache_key = _context_render_response_cache_key(
+                                request_session_id,
+                                request_path,
+                                request,
+                                payload,
+                            )
+                        else:
+                            response_cache_key = _context_edit_plan_response_cache_key(
+                                request_session_id,
+                                request_path,
+                                request,
+                                payload,
+                            )
                         with server._response_cache_lock:
                             cached_response = server.response_cache.get(response_cache_key)
                         if cached_response is not None:
@@ -546,18 +585,23 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_count": server.payload_cache.session_count,
                     "root_count": server.payload_cache.root_count,
                 }
-                if command == "context_edit_plan":
+                if command in {"context_edit_plan", "context_render"}:
                     response["daemon_response_cache"] = {
                         "status": response_cache_status,
                         "entries": server.response_cache.entry_count,
                         "hits": server.response_cache.hits,
                         "misses": server.response_cache.misses,
                     }
+                    build_metric = (
+                        "build_context_render_seconds"
+                        if command == "context_render"
+                        else "build_edit_plan_seconds"
+                    )
                     response["session_timing"] = {
                         "cache_status": cache_status,
                         "response_cache_status": response_cache_status,
                         "load_session_seconds": max(0.0, loaded_at - load_started_at),
-                        "build_edit_plan_seconds": max(0.0, served_at - loaded_at),
+                        build_metric: max(0.0, served_at - loaded_at),
                         "total_seconds": max(0.0, served_at - overall_started_at),
                     }
         except Exception as exc:

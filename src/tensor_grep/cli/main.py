@@ -60,12 +60,19 @@ _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "__pycache__",
     ".claude",
+    ".cache",
+    ".cargo",
     ".git",
+    ".gradle",
     ".mypy_cache",
+    ".npm",
+    ".nuget",
     ".pytest_cache",
     ".ruff_cache",
+    ".rustup",
     ".tox",
     ".venv",
+    "AppData",
     "artifacts",
     "build",
     "coverage",
@@ -1506,6 +1513,16 @@ def _json_output_version() -> int:
     return int(match.group(1)) if match else 1
 
 
+def _with_schema_version(payload: dict[str, Any], *, version: int | None = None) -> dict[str, Any]:
+    stamped = dict(payload)
+    resolved_version = stamped.get(
+        "version", version if version is not None else _json_output_version()
+    )
+    stamped.setdefault("version", resolved_version)
+    stamped.setdefault("schema_version", resolved_version)
+    return stamped
+
+
 _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "regexp",
     "file_patterns",
@@ -2054,7 +2071,9 @@ def _doctor_mcp_stdio_launcher_warning(
     return (
         "MCP stdio launcher warning: "
         f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
-        f"tg.exe directly: {native_tg_binary}. If you intentionally use the PowerShell "
+        f"tg.exe directly: {native_tg_binary}. Windows MCP clients that launch `tg` via "
+        "Start-Process can resolve the PowerShell shim instead of the native stdio-safe "
+        "front door. If you intentionally use the PowerShell "
         "script shim, configure the client to launch it explicitly as "
         f"`pwsh -NoProfile -File {script_path} mcp`."
     )
@@ -2912,6 +2931,7 @@ def _search_error_payload(error: str, detail: str) -> dict[str, object]:
 
     return {
         "version": JSON_OUTPUT_VERSION,
+        "schema_version": JSON_OUTPUT_VERSION,
         "ok": False,
         "error": error,
         "detail": detail,
@@ -3622,6 +3642,7 @@ def _build_rulesets_payload() -> dict[str, object]:
 
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AstBackend",
         "routing_reason": "builtin-rulesets",
         "sidecar_used": False,
@@ -3893,6 +3914,7 @@ def _apply_ruleset_baseline(
         write_path = Path(write_baseline_path).expanduser().resolve()
         baseline_payload = {
             "version": _json_output_version(),
+            "schema_version": _json_output_version(),
             "kind": "ruleset-scan-baseline",
             "ruleset": payload.get("ruleset"),
             "language": payload.get("language"),
@@ -4019,6 +4041,7 @@ def _apply_ruleset_baseline(
         write_path = Path(write_suppressions_path).expanduser().resolve()
         suppressions_payload = {
             "version": _json_output_version(),
+            "schema_version": _json_output_version(),
             "kind": "ruleset-scan-suppressions",
             "ruleset": payload.get("ruleset"),
             "language": payload.get("language"),
@@ -4337,6 +4360,7 @@ def _run_ast_scan_payload(
 
     payload = {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AstBackend",
         "routing_reason": routing_reason,
         "sidecar_used": False,
@@ -5762,7 +5786,7 @@ def devices(
     payload = inventory.to_dict()
 
     if normalized_format == "json":
-        print(json.dumps(payload))
+        print(json.dumps(_with_schema_version(payload)))
         return
 
     if not inventory.devices:
@@ -6490,10 +6514,10 @@ def blast_radius_render(
         "--optimize-context",
         help="Strip blank lines and comment-only lines from rendered source blocks.",
     ),
-    render_profile: str = typer.Option(
-        "full",
+    render_profile: str | None = typer.Option(
+        None,
         "--render-profile",
-        help="Render profile: full, compact, or llm.",
+        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
     ),
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
@@ -6507,6 +6531,8 @@ def blast_radius_render(
     )
 
     try:
+        resolved_render_profile = render_profile or ("llm" if json_output else "full")
+        resolved_optimize_context = optimize_context or (json_output and render_profile is None)
         if json_output:
             typer.echo(
                 build_symbol_blast_radius_render_json(
@@ -6517,8 +6543,8 @@ def blast_radius_render(
                     max_sources=max_sources,
                     max_symbols_per_file=max_symbols_per_file,
                     max_render_chars=max_render_chars,
-                    optimize_context=optimize_context,
-                    render_profile=render_profile,
+                    optimize_context=resolved_optimize_context,
+                    render_profile=resolved_render_profile,
                     profile=profile,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
@@ -6534,8 +6560,8 @@ def blast_radius_render(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
-            optimize_context=optimize_context,
-            render_profile=render_profile,
+            optimize_context=resolved_optimize_context,
+            render_profile=resolved_render_profile,
             profile=profile,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
@@ -6617,25 +6643,38 @@ def blast_radius_plan(
 @session_app.command("open")
 def session_open(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    max_repo_files: int | None = typer.Option(
+        None,
+        "--max-repo-files",
+        min=1,
+        help=(
+            "Opt-in cap for files scanned into the initial session repo map. "
+            "Default keeps the complete session map."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Create a cached repo-map session for repeated edit loops."""
     from tensor_grep.cli.session_store import open_session
 
     try:
-        payload = open_session(path)
+        payload = open_session(path, max_repo_files=max_repo_files)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload.__dict__, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
         return
 
     typer.echo(
         f"Opened session {payload.session_id} "
         f"(files={payload.file_count}, symbols={payload.symbol_count})"
     )
+    if payload.scan_limit:
+        typer.echo(
+            "Session repo map is capped; refresh without --max-repo-files for full coverage."
+        )
 
 
 @session_daemon_app.command("start")
@@ -6653,7 +6692,7 @@ def session_daemon_start(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(
@@ -6676,7 +6715,7 @@ def session_daemon_status(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     if payload.get("running"):
@@ -6702,7 +6741,7 @@ def session_daemon_stop(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo("Session daemon stopped" if payload.get("stopped") else "Session daemon not running")
@@ -6728,6 +6767,7 @@ def session_list(
             json.dumps(
                 {
                     "version": 1,
+                    "schema_version": 1,
                     "root": scope_root,
                     "discovered": discovered,
                     "sessions": records,
@@ -6767,7 +6807,7 @@ def session_show(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(f"Session {payload['session_id']} for {payload['root']}")
@@ -6792,7 +6832,7 @@ def session_refresh(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload.__dict__, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
         return
 
     typer.echo(
@@ -6843,7 +6883,7 @@ def session_context_cmd(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(f"Session context for {payload['session_id']}")
@@ -6860,6 +6900,12 @@ def session_context_render_cmd(
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum cached repo files to score before rendering warm session context.",
     ),
     max_sources: int = typer.Option(
         5, "--max-sources", min=1, help="Maximum exact source blocks to include."
@@ -6881,10 +6927,10 @@ def session_context_render_cmd(
         "--optimize-context",
         help="Strip blank lines and comment-only lines from rendered source blocks.",
     ),
-    render_profile: str = typer.Option(
-        "full",
+    render_profile: str | None = typer.Option(
+        None,
         "--render-profile",
-        help="Render profile: full, compact, or llm.",
+        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
     ),
     refresh_on_stale: bool = typer.Option(
         False,
@@ -6903,6 +6949,8 @@ def session_context_render_cmd(
     from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
     try:
+        resolved_render_profile = render_profile or ("llm" if json_output else "full")
+        resolved_optimize_context = optimize_context or (json_output and render_profile is None)
         if daemon:
             payload = request_session_daemon(
                 path,
@@ -6912,13 +6960,14 @@ def session_context_render_cmd(
                     "path": path,
                     "query": query,
                     "max_files": max_files,
+                    "max_repo_files": max_repo_files,
                     "max_sources": max_sources,
                     "max_symbols_per_file": max_symbols_per_file,
                     "max_render_chars": max_render_chars,
                     "max_tokens": max_tokens,
                     "model": model,
-                    "optimize_context": optimize_context,
-                    "render_profile": render_profile,
+                    "optimize_context": resolved_optimize_context,
+                    "render_profile": resolved_render_profile,
                     "refresh_on_stale": refresh_on_stale,
                 },
             )
@@ -6928,18 +6977,20 @@ def session_context_render_cmd(
                 query,
                 path,
                 max_files=max_files,
+                max_repo_files=max_repo_files,
                 max_sources=max_sources,
                 max_symbols_per_file=max_symbols_per_file,
                 max_render_chars=max_render_chars,
                 max_tokens=max_tokens,
                 model=model,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
+                optimize_context=resolved_optimize_context,
+                render_profile=resolved_render_profile,
                 refresh_on_stale=refresh_on_stale,
             )
     except SessionStaleError as exc:
         error_payload = {
             "version": 1,
+            "schema_version": 1,
             "session_id": session_id,
             "error": {"code": "invalid_input", "message": str(exc)},
         }
@@ -6950,7 +7001,7 @@ def session_context_render_cmd(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(payload["rendered_context"])
@@ -7035,7 +7086,7 @@ def session_edit_plan_cmd(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(f"Session edit plan for {payload['session_id']}")
@@ -7098,7 +7149,7 @@ def session_blast_radius_cmd(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(payload["rendered_caller_tree"])
@@ -7191,7 +7242,7 @@ def session_blast_radius_render_cmd(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(payload["rendered_context"])
@@ -7260,7 +7311,7 @@ def session_blast_radius_plan_cmd(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         return
 
     typer.echo(f"Session blast radius plan for {payload['session_id']}")
@@ -7314,7 +7365,7 @@ def checkpoint_create(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload.__dict__, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
         return
 
     typer.echo(
@@ -7378,6 +7429,7 @@ def checkpoint_list(
         if json_output:
             payload = {
                 "version": 1,
+                "schema_version": 1,
                 "path": str(Path(path).expanduser().resolve()),
                 "checkpoint_count": checkpoint_count,
                 "discovered_scopes": scope_payloads,
@@ -7432,6 +7484,7 @@ def checkpoint_list(
             json.dumps(
                 {
                     "version": 1,
+                    "schema_version": 1,
                     "root": scope_result.root,
                     "mode": scope_result.mode,
                     "checkpoint_count": scope_result.checkpoint_count,
@@ -7496,7 +7549,7 @@ def checkpoint_undo(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(payload.__dict__, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
         return
 
     typer.echo(
@@ -7535,6 +7588,8 @@ def classify(
 
     if format_type == "json":
         data = {
+            "version": _json_output_version(),
+            "schema_version": _json_output_version(),
             "classification_backend": classification_backend,
             "line_budget": line_budget,
             "classifications": _enrich_classifications(
@@ -8118,7 +8173,7 @@ def lsp_setup(
     )
     has_install_errors = bool(payload.get("install_errors"))
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
         if has_install_errors:
             raise typer.Exit(code=1)
         return
@@ -8173,7 +8228,7 @@ def repair_launcher(
     """Repair Windows Python subprocess tg resolution when explicitly allowed."""
     payload = _repair_windows_python_subprocess_launcher(allow_foreign_rename=allow_foreign_rename)
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
     else:
         typer.echo(payload["message"])
         if payload.get("backup_path"):
@@ -8857,6 +8912,7 @@ def upgrade() -> None:
 def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-diff",
         "sidecar_used": False,
@@ -8867,6 +8923,7 @@ def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
 def _audit_history_error_payload(message: str, *, code: str) -> dict[str, object]:
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-history",
         "sidecar_used": False,
@@ -8879,6 +8936,7 @@ def _review_bundle_error_payload(
 ) -> dict[str, object]:
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": routing_reason,
         "sidecar_used": False,

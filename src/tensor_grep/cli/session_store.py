@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import json
+import os
 import sys
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
@@ -33,7 +35,9 @@ _TG_DIRNAME = ".tensor-grep"
 _SESSIONS_SUBDIR = "sessions"
 _INDEX_FILE = "index.json"
 _SESSION_SERVE_CACHE_MAX_ENTRIES = 32
+_SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES = 32
 _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = 512
+_DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = 512
 
 
 @dataclass
@@ -55,6 +59,8 @@ class SessionOpenResult:
     symbol_count: int
     refresh_type: str
     changeset: dict[str, list[str]]
+    scan_limit: dict[str, Any] | None = None
+    build_seconds: float | None = None
 
 
 @dataclass
@@ -167,6 +173,47 @@ class _SessionServeCache:
         ]
 
 
+class _SessionServeResponseCache:
+    def __init__(self, max_entries: int = _SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES) -> None:
+        self._max_entries = max(1, max_entries)
+        self._entries: OrderedDict[tuple[str, ...], dict[str, Any]] = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._puts = 0
+
+    def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
+        cached = self._entries.pop(key, None)
+        if cached is None:
+            self._misses += 1
+            return None
+        self._hits += 1
+        self._entries[key] = cached
+        return copy.deepcopy(cached)
+
+    def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
+        self._entries.pop(key, None)
+        self._entries[key] = copy.deepcopy(response)
+        self._puts += 1
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+
+    @property
+    def hits(self) -> int:
+        return self._hits
+
+    @property
+    def misses(self) -> int:
+        return self._misses
+
+    @property
+    def puts(self) -> int:
+        return self._puts
+
+    @property
+    def entry_count(self) -> int:
+        return len(self._entries)
+
+
 def _resolve_root(path: Path) -> Path:
     resolved = path.expanduser().resolve()
     return resolved if resolved.is_dir() else resolved.parent
@@ -252,6 +299,13 @@ def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
     return snapshot
 
 
+def _snapshot_path_key(raw_path: object) -> str:
+    path = Path(str(raw_path)).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str(path.resolve())
+
+
 def _empty_changeset() -> dict[str, list[str]]:
     return {"added": [], "modified": [], "removed": []}
 
@@ -280,9 +334,7 @@ def _stale_changeset(
         return None
 
     root = _resolve_root(Path(str(payload.get("root", payload.get("path", ".")))))
-    snapshot_by_path = {
-        str(Path(str(entry["path"])).expanduser().resolve()): entry for entry in snapshot
-    }
+    snapshot_by_path = {_snapshot_path_key(entry["path"]): entry for entry in snapshot}
 
     added: list[str] = []
     current_paths: dict[str, Path] = {}
@@ -299,9 +351,8 @@ def _stale_changeset(
     removed: list[str] = []
     modified: list[str] = []
     for current_path, snapshot_entry in snapshot_by_path.items():
-        path_obj = current_paths.get(current_path) or Path(current_path)
         try:
-            stat = path_obj.stat()
+            stat = os.stat(current_paths.get(current_path) or current_path)
         except OSError:
             removed.append(current_path)
             continue
@@ -337,12 +388,15 @@ def _new_session_id(root: Path) -> str:
     return f"session-{timestamp}-{root.name}-{uuid4().hex[:8]}"
 
 
-def open_session(path: str = ".") -> SessionOpenResult:
+def open_session(path: str = ".", *, max_repo_files: int | None = None) -> SessionOpenResult:
     root = _resolve_root(Path(path))
-    repo_map = build_repo_map(root)
+    started_at = monotonic()
+    repo_map = build_repo_map(root, max_repo_files=max_repo_files)
+    built_at = monotonic()
     created_at = datetime.now(UTC).isoformat()
     session_id = _new_session_id(root)
     changeset = _empty_changeset()
+    scan_limit = cast(dict[str, Any] | None, repo_map.get("scan_limit"))
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
@@ -352,6 +406,8 @@ def open_session(path: str = ".") -> SessionOpenResult:
         "snapshot": _capture_snapshot(repo_map["related_paths"]),
         "refresh_type": "full",
         "changeset": changeset,
+        "scan_limit": scan_limit,
+        "build_seconds": max(0.0, built_at - started_at),
     }
     session_path = _session_payload_path(root, session_id)
     session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -376,6 +432,8 @@ def open_session(path: str = ".") -> SessionOpenResult:
         symbol_count=record.symbol_count,
         refresh_type="full",
         changeset=changeset,
+        scan_limit=scan_limit,
+        build_seconds=max(0.0, built_at - started_at),
     )
 
 
@@ -557,7 +615,7 @@ def session_context_edit_plan(
     started_at = monotonic()
     payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     loaded_at = monotonic()
-    repo_map = _session_edit_plan_repo_map(
+    repo_map = _limited_session_repo_map(
         cast(dict[str, Any], payload["repo_map"]),
         max_repo_files=max_repo_files,
     )
@@ -581,7 +639,7 @@ def session_context_edit_plan(
     return context
 
 
-def _session_edit_plan_repo_map(
+def _limited_session_repo_map(
     repo_map: dict[str, Any],
     *,
     max_repo_files: int | None,
@@ -589,6 +647,59 @@ def _session_edit_plan_repo_map(
     if max_repo_files is None:
         return repo_map
     return apply_repo_map_output_limits(repo_map, max_files=max(1, int(max_repo_files)))
+
+
+def _serve_request_cache_value(request: dict[str, Any], name: str, default: Any = "") -> str:
+    value = request.get(name, default)
+    if value in (None, ""):
+        return ""
+    return str(value)
+
+
+def _serve_payload_fingerprint(payload: dict[str, Any]) -> tuple[str, ...]:
+    repo_map = cast(dict[str, Any], payload.get("repo_map") or {})
+    return (
+        str(payload.get("root", "")),
+        str(payload.get("created_at", "")),
+        str(payload.get("refreshed_at", "")),
+        str(len(cast(list[Any], repo_map.get("files", [])))),
+        str(len(cast(list[Any], repo_map.get("symbols", [])))),
+    )
+
+
+def _serve_response_cache_key(
+    *,
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[str, ...]:
+    command = str(request.get("command", "")).strip().lower()
+    common = (
+        str(_session_root_for_payload(session_id, path)),
+        session_id,
+        *_serve_payload_fingerprint(payload),
+        command,
+        str(request.get("query", "")).strip(),
+        _serve_request_cache_value(request, "max_files", 3),
+        _serve_request_cache_value(request, "max_sources"),
+        _serve_request_cache_value(request, "max_tokens"),
+        _serve_request_cache_value(request, "max_repo_files"),
+    )
+    if command == "context_render":
+        return (
+            *common,
+            _serve_request_cache_value(request, "max_symbols_per_file", 6),
+            _serve_request_cache_value(request, "max_render_chars"),
+            _serve_request_cache_value(request, "model"),
+            _serve_request_cache_value(request, "optimize_context", False),
+            _serve_request_cache_value(request, "render_profile", "full"),
+            _serve_request_cache_value(request, "profile", False),
+        )
+    return (
+        *common,
+        _serve_request_cache_value(request, "max_symbols", 5),
+    )
 
 
 def session_context_render(
@@ -605,11 +716,18 @@ def session_context_render(
     optimize_context: bool = False,
     render_profile: str = "full",
     profile: bool = False,
+    max_repo_files: int | None = _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
+    started_at = monotonic()
     payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
+    loaded_at = monotonic()
+    repo_map = _limited_session_repo_map(
+        cast(dict[str, Any], payload["repo_map"]),
+        max_repo_files=max_repo_files,
+    )
     context = build_context_render_from_map(
-        payload["repo_map"],
+        repo_map,
         query,
         max_files=max_files,
         max_sources=max_sources,
@@ -621,8 +739,15 @@ def session_context_render(
         render_profile=render_profile,
         profile=profile,
     )
+    built_at = monotonic()
     context["session_id"] = session_id
     context["routing_reason"] = "session-context-render"
+    context["session_timing"] = {
+        "cache_status": "disk-load",
+        "load_session_seconds": max(0.0, loaded_at - started_at),
+        "build_context_render_seconds": max(0.0, built_at - loaded_at),
+        "total_seconds": max(0.0, built_at - started_at),
+    }
     return context
 
 
@@ -739,8 +864,17 @@ def _serve_session_request_from_payload(
         query = str(request.get("query", "")).strip()
         if not query:
             raise ValueError("context_render requests require a non-empty query")
+        max_repo_files = request.get(
+            "max_repo_files",
+            _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
+        )
         response = build_context_render_from_map(
-            repo_map,
+            _limited_session_repo_map(
+                repo_map,
+                max_repo_files=(
+                    None if max_repo_files in (None, "") else int(cast(int | str, max_repo_files))
+                ),
+            ),
             query,
             max_files=int(request.get("max_files", 3)),
             max_sources=int(request.get("max_sources", 5)),
@@ -767,7 +901,7 @@ def _serve_session_request_from_payload(
         if not query:
             raise ValueError("context_edit_plan requests require a non-empty query")
         max_repo_files = request.get("max_repo_files", _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT)
-        scoped_repo_map = _session_edit_plan_repo_map(
+        scoped_repo_map = _limited_session_repo_map(
             repo_map,
             max_repo_files=(
                 None if max_repo_files in (None, "") else int(cast(int | str, max_repo_files))
@@ -907,6 +1041,7 @@ def serve_session_stream(
     request_count = 0
     started_at = monotonic()
     payload_cache = _SessionServeCache()
+    response_cache = _SessionServeResponseCache()
 
     for raw_line in request_stream:
         line = raw_line.strip()
@@ -936,6 +1071,10 @@ def serve_session_stream(
                     "session_count": payload_cache.session_count,
                     "sessions": payload_cache.sessions,
                     "cache_size_bytes": payload_cache.size_bytes,
+                    "response_cache_hits": response_cache.hits,
+                    "response_cache_misses": response_cache.misses,
+                    "response_cache_puts": response_cache.puts,
+                    "response_cache_entries": response_cache.entry_count,
                     "uptime_seconds": max(0.0, monotonic() - started_at),
                     "request_count": request_count,
                 }
@@ -953,17 +1092,51 @@ def serve_session_stream(
                 payload, cache_status = payload_cache.load_with_status(
                     request_session_id, request_path
                 )
-                response = serve_session_request(
-                    request_session_id,
-                    request,
-                    request_path,
-                    payload=payload,
-                )
+                response_cache_status = "bypass"
+                cacheable_response_command = command in {
+                    "context_edit_plan",
+                    "context_render",
+                } and not bool(request.get("refresh_on_stale", False))
+                if cacheable_response_command:
+                    _ensure_session_not_stale(payload, detect_added_files=False)
+                    response_cache_key = _serve_response_cache_key(
+                        session_id=request_session_id,
+                        path=request_path,
+                        request=request,
+                        payload=payload,
+                    )
+                    cached_response = response_cache.get(response_cache_key)
+                    if cached_response is not None:
+                        response = cached_response
+                        response_cache_status = "hit"
+                    else:
+                        response = serve_session_request(
+                            request_session_id,
+                            request,
+                            request_path,
+                            payload=payload,
+                        )
+                        response_cache.put(response_cache_key, response)
+                        response_cache_status = "miss"
+                else:
+                    response = serve_session_request(
+                        request_session_id,
+                        request,
+                        request_path,
+                        payload=payload,
+                    )
                 response["serve_cache"] = {
                     "status": cache_status,
                     "session_count": payload_cache.session_count,
                     "root_count": payload_cache.root_count,
                 }
+                if cacheable_response_command:
+                    response["serve_response_cache"] = {
+                        "status": response_cache_status,
+                        "entries": response_cache.entry_count,
+                        "hits": response_cache.hits,
+                        "misses": response_cache.misses,
+                    }
         except SessionStaleError as exc:
             if refresh_on_stale:
                 refresh_session(request_session_id, request_path, payload_cache=payload_cache)

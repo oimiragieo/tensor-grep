@@ -129,6 +129,50 @@ def test_repo_map_lsp_fallback_reports_not_lsp_proof(
     assert "native fallback" in payload["not_lsp_proof_reason"].lower()
 
 
+def test_repo_map_hybrid_defs_fallback_reports_native_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="hybrid")
+
+    assert payload["definitions"][0]["file"] == str(service_path.resolve())
+    assert payload["provider_agreement"]["agreement_status"] == "fallback-native"
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+
+
+def test_repo_map_hybrid_refs_fallback_reports_native_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    consumer_path = tmp_path / "consumer.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n",
+        encoding="utf-8",
+    )
+    consumer_path.write_text(
+        "from service import create_invoice\n\nresult = create_invoice(3)\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
+
+    payload = repo_map.build_symbol_refs("create_invoice", tmp_path, semantic_provider="hybrid")
+
+    assert any(current["file"] == str(consumer_path.resolve()) for current in payload["references"])
+    assert payload["provider_agreement"]["agreement_status"] == "fallback-native"
+    assert payload["lsp_evidence_status"] == "fallback_native"
+    assert payload["lsp_proof"] is False
+
+
 def test_external_lsp_workspace_symbol_queries_are_operation_budgeted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

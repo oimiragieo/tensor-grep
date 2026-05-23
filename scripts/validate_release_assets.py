@@ -1573,6 +1573,31 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
             for step in audit_steps:
                 if not isinstance(step, dict):
                     continue
+                uses = step.get("uses")
+                if uses == "actions/checkout@v6":
+                    with_block = step.get("with")
+                    if not isinstance(with_block, dict):
+                        errors.append(
+                            "Audit workflow checkout step must explicitly set pull request head "
+                            "repository/ref to avoid unauthenticated synthetic merge-ref fetches"
+                        )
+                    else:
+                        if (
+                            with_block.get("repository")
+                            != "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}"
+                        ):
+                            errors.append(
+                                "Audit workflow checkout step must set `repository` to the pull "
+                                "request head repository on PR events"
+                            )
+                        if (
+                            with_block.get("ref")
+                            != "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+                        ):
+                            errors.append(
+                                "Audit workflow checkout step must set `ref` to the pull request "
+                                "head SHA on PR events"
+                            )
                 name = step.get("name")
                 if not isinstance(name, str):
                     continue

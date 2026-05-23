@@ -13,6 +13,21 @@ def test_audit_workflow_requires_repo_owned_cargo_deny_policy() -> None:
     assert (repo_root / "rust_core" / "deny.toml").exists()
 
 
+def test_audit_workflow_checks_out_pull_request_head_ref() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+
+    assert "uses: actions/checkout@v6" in workflow
+    assert (
+        "repository: ${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name || github.repository }}"
+    ) in workflow
+    assert (
+        "ref: ${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.sha || github.sha }}"
+    ) in workflow
+
+
 def test_audit_workflow_audits_exported_locked_requirements_with_isolated_tool() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")

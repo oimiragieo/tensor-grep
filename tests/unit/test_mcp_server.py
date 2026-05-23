@@ -64,6 +64,7 @@ def _write_audit_manifest(
 def _write_scan_results(path: Path) -> dict[str, object]:
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "builtin-ruleset-scan",
         "sidecar_used": False,
@@ -217,6 +218,7 @@ def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
     cleaned = dict(payload)
     cleaned.pop("_profiling", None)
     cleaned.pop("profile", None)
+    cleaned.pop("session_timing", None)
     return cleaned
 
 
@@ -620,6 +622,28 @@ def test_tg_session_lifecycle_errors_return_uniform_error_detail(tmp_path: Path)
             assert "detail" in payload["error"]
 
 
+def test_tg_session_open_accepts_initial_repo_map_cap(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(4):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def function_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    payload = json.loads(mcp_server.tg_session_open(str(project), max_repo_files=2))
+
+    assert payload["schema_version"] == payload["version"]
+    assert payload["file_count"] == 2
+    assert payload["symbol_count"] == 2
+    assert payload["scan_limit"]["max_repo_files"] == 2
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    assert payload["build_seconds"] >= 0
+
+
 def test_tg_rulesets_returns_builtin_ruleset_metadata():
     from tensor_grep.cli import mcp_server
 
@@ -849,6 +873,7 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1184,6 +1209,7 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1233,6 +1259,7 @@ def test_tg_rewrite_apply_supports_optional_validation_commands():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1321,6 +1348,7 @@ def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1384,6 +1412,7 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1441,6 +1470,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1504,6 +1534,7 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
     manifest_payload = _write_audit_manifest(manifest_path, project_root=project)
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1558,6 +1589,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "AstBackend",
         "routing_reason": "ast-native",
         "sidecar_used": False,
@@ -1934,7 +1966,7 @@ def test_tg_session_context_render_profile_includes_profiling_without_changing_o
 
     assert "_profiling" not in baseline
     assert profiled["_profiling"]["phases"]
-    assert _without_profiling(profiled) == baseline
+    assert _without_profiling(profiled) == _without_profiling(baseline)
 
 
 def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path):
@@ -2384,6 +2416,7 @@ def test_tg_index_search_returns_native_index_search_json_shape():
 
     payload = {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "TrigramIndex",
         "routing_reason": "index-accelerated",
         "sidecar_used": False,
