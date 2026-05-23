@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.66 (2026-05-23)
+
+### Bug Fixes
+
+- Cache daemon edit-plan responses
+  ([`2ae059e`](https://github.com/oimiragieo/tensor-grep/commit/2ae059ea13121b779aa13699dee156a40dea9d20))
+
+Add a conservative daemon-local response cache for repeated session edit-plan requests. The cache is
+  keyed by the session payload fingerprint and request budget, records hit/miss telemetry, and still
+  checks cached sessions for stale files before returning a hit.
+
+
 ## v1.12.65 (2026-05-23)
 
 ### Bug Fixes
