@@ -499,8 +499,8 @@ def validate_ast_info(stdout: str, _repo_root: Path, _expected_version: str) -> 
 def validate_ast_run(stdout: str, _repo_root: Path, _expected_version: str) -> None:
     payload = _json_from_stdout(stdout)
     text = json.dumps(payload, sort_keys=True)
-    if "class" not in text and "name" not in text:
-        raise ReadinessError("AST run smoke did not emit a class match payload")
+    if "calculateTotal" not in text:
+        raise ReadinessError("AST run smoke did not emit the expected JavaScript call match")
 
 
 def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -> None:
@@ -824,10 +824,10 @@ def build_check_plan(
                 "tg",
                 "run",
                 "--pattern",
-                "class $NAME: $$$BODY",
-                "tests/unit/test_trust_planning.py",
+                "calculateTotal($$$)",
+                "tests/fixtures/ast_smoke",
                 "--lang",
-                "python",
+                "js",
                 "--json",
             ],
             description="Verify AST run smoke through the repo CLI.",

@@ -6318,6 +6318,18 @@ fn emit_validation_status(summary: &ValidationSummary) {
     }
 }
 
+fn warn_windows_single_quote_ast_pattern(pattern: &str) {
+    if !cfg!(windows) {
+        return;
+    }
+    let trimmed = pattern.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        eprintln!(
+            "No AST matches found. cmd.exe treats single quotes literally; use double quotes in cmd.exe or run this pattern from PowerShell/Git Bash where single quotes quote literal text."
+        );
+    }
+}
+
 fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
     if args.update_all {
         if args.rewrite.is_none() {
@@ -6353,8 +6365,9 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
 
     if args.json {
         let matches = backend.search(pattern, &args.lang, path)?;
+        let match_count = matches.len();
         let mut source_contexts = BTreeMap::new();
-        return emit_json_search_results(
+        emit_json_search_results(
             RoutingDecision::ast(),
             pattern,
             path,
@@ -6363,10 +6376,19 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|matched| ast_match_to_search_json(matched, &mut source_contexts))
                 .collect::<anyhow::Result<Vec<_>>>()?,
-        );
+        )?;
+        if match_count == 0 {
+            warn_windows_single_quote_ast_pattern(pattern);
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     let matches = backend.search_for_cli(pattern, &args.lang, path)?;
+    let match_count: usize = matches
+        .iter()
+        .map(|file_matches| file_matches.matches.len())
+        .sum();
 
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::ast());
@@ -6379,6 +6401,10 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
             if !file_matches.matches.is_empty() {
                 writeln!(stdout, "{}", file_matches.file.display())?;
             }
+        }
+        if match_count == 0 {
+            warn_windows_single_quote_ast_pattern(pattern);
+            std::process::exit(1);
         }
         return Ok(());
     }
@@ -6393,6 +6419,11 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
                 matched.matched_text
             )?;
         }
+    }
+
+    if match_count == 0 {
+        warn_windows_single_quote_ast_pattern(pattern);
+        std::process::exit(1);
     }
 
     Ok(())

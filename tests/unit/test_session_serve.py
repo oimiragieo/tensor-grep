@@ -316,6 +316,43 @@ def test_session_daemon_retries_initial_missing_session_payload(
         server.server_close()
 
 
+def test_session_daemon_resolves_relative_request_path_against_daemon_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = _build_project(tmp_path / "project", "payments", "create_invoice")
+    other_cwd = tmp_path / "other"
+    other_cwd.mkdir()
+    opened = session_store.open_session(str(project))
+    server = _ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    monkeypatch.chdir(other_cwd)
+
+    try:
+        handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
+        handler.server = server
+        handler.rfile = BytesIO(
+            (
+                json.dumps({
+                    "command": "context",
+                    "session_id": opened.session_id,
+                    "path": ".",
+                    "query": "invoice",
+                })
+                + "\n"
+            ).encode("utf-8")
+        )
+        handler.wfile = BytesIO()
+
+        _SessionDaemonHandler.handle(handler)
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8").strip())
+        assert payload["session_id"] == opened.session_id
+        assert payload["routing_reason"] == "session-context"
+        assert payload["files"] == [str((project / "src" / "payments.py").resolve())]
+    finally:
+        server.server_close()
+
+
 def test_daemon_request_separates_connect_and_response_timeouts(monkeypatch) -> None:
     seen_timeouts: list[float | None] = []
 

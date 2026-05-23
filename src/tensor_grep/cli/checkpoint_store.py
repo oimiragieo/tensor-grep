@@ -364,6 +364,35 @@ def _bounded_checkpoint_index_paths(
     return index_paths
 
 
+def _nearby_checkpoint_index_paths(search_root: Path) -> set[Path]:
+    candidates: list[Path] = [search_root]
+    candidates.extend(parent for parent in search_root.parents if parent != search_root)
+    try:
+        candidates.extend(
+            child
+            for child in sorted(search_root.iterdir(), key=lambda candidate: candidate.name)
+            if child.is_dir() and not _is_generated_discovery_dir(child)
+        )
+    except OSError:
+        pass
+
+    index_paths: set[Path] = set()
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = str(resolved).lower() if os.name == "nt" else str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        index_path = _index_path(resolved)
+        if index_path.exists():
+            index_paths.add(index_path)
+    return index_paths
+
+
 def _full_checkpoint_index_paths(search_root: Path) -> set[Path]:
     index_paths: set[Path] = set()
     own_index = _index_path(search_root)
@@ -381,19 +410,7 @@ def _full_checkpoint_index_paths(search_root: Path) -> set[Path]:
     return index_paths
 
 
-def discover_checkpoint_scopes(
-    path: str = ".",
-    *,
-    full: bool = False,
-) -> list[CheckpointScopeResult]:
-    resolved = Path(path).expanduser().resolve()
-    search_root = resolved if resolved.is_dir() else resolved.parent
-    index_paths = (
-        _full_checkpoint_index_paths(search_root)
-        if full
-        else _bounded_checkpoint_index_paths(search_root, include_generated=False)
-    )
-
+def _scopes_from_index_paths(index_paths: set[Path]) -> list[CheckpointScopeResult]:
     scopes: list[CheckpointScopeResult] = []
     seen_roots: set[Path] = set()
     for index_path in sorted(index_paths):
@@ -414,6 +431,27 @@ def discover_checkpoint_scopes(
     return scopes
 
 
+def discover_checkpoint_scopes(
+    path: str = ".",
+    *,
+    full: bool = False,
+) -> list[CheckpointScopeResult]:
+    resolved = Path(path).expanduser().resolve()
+    search_root = resolved if resolved.is_dir() else resolved.parent
+    index_paths = (
+        _full_checkpoint_index_paths(search_root)
+        if full
+        else _bounded_checkpoint_index_paths(search_root, include_generated=False)
+    )
+    return _scopes_from_index_paths(index_paths)
+
+
+def discover_nearby_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
+    resolved = Path(path).expanduser().resolve()
+    search_root = resolved if resolved.is_dir() else resolved.parent
+    return _scopes_from_index_paths(_nearby_checkpoint_index_paths(search_root))
+
+
 def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
     scope = describe_checkpoint_scope(path)
     if scope.checkpoints:
@@ -425,7 +463,9 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
         )
 
     discovered = [
-        child_scope for child_scope in discover_checkpoint_scopes(path) if child_scope.checkpoints
+        child_scope
+        for child_scope in discover_nearby_checkpoint_scopes(path)
+        if child_scope.checkpoints
     ]
     if not discovered:
         resolved = Path(path).expanduser().resolve()

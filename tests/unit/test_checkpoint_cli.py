@@ -263,6 +263,52 @@ def test_checkpoint_list_auto_discovers_child_scope_when_direct_scope_is_empty(
     assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
 
 
+def test_checkpoint_list_auto_discovery_checks_nearby_only(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    nested_project = workspace / "group" / "deep_project"
+    project.mkdir(parents=True)
+    nested_project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('nearby')\n", encoding="utf-8")
+    (nested_project / "sample.py").write_text("print('nested')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+    nested_result = runner.invoke(app, ["checkpoint", "create", str(nested_project), "--json"])
+    assert nested_result.exit_code == 0
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["checkpoint_count"] == 1
+    assert payload["auto_discovered"] is True
+    assert [scope["root"] for scope in payload["discovered_scopes"]] == [str(project.resolve())]
+    assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
+def test_checkpoint_list_discover_keeps_bounded_recursive_opt_in(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    nested_project = workspace / "group" / "deep_project"
+    nested_project.mkdir(parents=True)
+    (nested_project / "sample.py").write_text("print('nested')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(nested_project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--discover", "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["checkpoint_count"] == 1
+    assert payload["discovered_scopes"][0]["root"] == str(nested_project.resolve())
+    assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
 def test_checkpoint_list_auto_discovery_does_not_use_unbounded_rglob(
     tmp_path: Path,
     monkeypatch,
@@ -281,6 +327,36 @@ def test_checkpoint_list_auto_discovery_does_not_use_unbounded_rglob(
         raise AssertionError(f"unbounded rglob should not run for {self} pattern={pattern}")
 
     monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["auto_discovered"] is True
+    assert payload["discovered_scopes"][0]["root"] == str(project.resolve())
+    assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
+def test_checkpoint_list_auto_discovery_does_not_use_bounded_recursive_walk(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+
+    def fail_bounded_walk(*_args, **_kwargs):
+        raise AssertionError("default checkpoint list should not use bounded recursive discovery")
+
+    monkeypatch.setattr(checkpoint_store, "_bounded_checkpoint_index_paths", fail_bounded_walk)
 
     list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--json"])
 

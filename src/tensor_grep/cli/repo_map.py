@@ -4376,7 +4376,30 @@ def _symbol_name_terms_cover_query(symbol_name: str, terms: list[str]) -> bool:
 
 
 def _score_file_path(path: str, terms: list[str]) -> int:
-    return _score_text_terms(Path(path).name, terms) + _score_text_terms(path, terms)
+    path_obj = Path(path)
+    path_parts = [
+        part
+        for part in path_obj.parts
+        if part and part not in {path_obj.anchor, path_obj.drive, os.sep, "/"}
+    ]
+    score_root_markers = {
+        "src",
+        "tests",
+        "test",
+        "rust_core",
+        "crates",
+        "packages",
+        "apps",
+        "docs",
+        "scripts",
+        "benchmarks",
+    }
+    start_index = next(
+        (index for index, part in enumerate(path_parts) if part.lower() in score_root_markers),
+        max(0, len(path_parts) - 4),
+    )
+    repo_like_tail = " ".join(path_parts[start_index:])
+    return _score_text_terms(path_obj.name, terms) + _score_text_terms(repo_like_tail, terms)
 
 
 def _score_symbol(symbol: dict[str, Any], terms: list[str]) -> int:
