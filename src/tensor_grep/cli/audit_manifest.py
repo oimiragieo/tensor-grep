@@ -37,6 +37,7 @@ def _json_output_version() -> int:
 def _envelope(*, routing_reason: str = "audit-manifest-verify") -> dict[str, Any]:
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": routing_reason,
         "sidecar_used": False,
@@ -452,6 +453,7 @@ def _write_history_index(root: Path, entries: list[dict[str, Any]]) -> None:
     index_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": _AUDIT_INDEX_VERSION,
+        "schema_version": _AUDIT_INDEX_VERSION,
         "manifests": sorted(entries, key=_history_sort_key, reverse=True),
         "updated_at": _utc_now_iso(),
     }

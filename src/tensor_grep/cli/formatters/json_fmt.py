@@ -29,6 +29,7 @@ def _match_payload(match: MatchLine) -> dict[str, object]:
 def _routing_envelope(result: SearchResult) -> dict[str, object]:
     envelope: dict[str, object] = {
         "version": JSON_OUTPUT_VERSION,
+        "schema_version": JSON_OUTPUT_VERSION,
         "sidecar_used": result.sidecar_used,
         "routing_backend": result.routing_backend,
         "routing_reason": result.routing_reason,
@@ -94,7 +95,11 @@ class JsonFormatter(OutputFormatter):
         ):
             if key in envelope:
                 data[key] = envelope[key]
-        data = {"version": envelope["version"], **data}
+        data = {
+            "version": envelope["version"],
+            "schema_version": envelope["schema_version"],
+            **data,
+        }
         return json.dumps(data)
 
 

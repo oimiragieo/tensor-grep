@@ -149,6 +149,17 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         mcp_check.command
     )
 
+    mcp_stdio_check = next(check for check in checks if check.name == "mcp-stdio-protocol-smoke")
+    assert mcp_stdio_check.command == [
+        "uv",
+        "run",
+        "--no-sync",
+        "pytest",
+        "tests/integration/test_mcp_stdio_protocol.py",
+        "-q",
+    ]
+    assert mcp_stdio_check.timeout_s <= 120
+
     capsule_check = next(check for check in checks if check.name == "agent-capsule")
     assert capsule_check.timeout_s <= 120
     assert capsule_check.command[:6] == [

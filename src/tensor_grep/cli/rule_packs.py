@@ -372,6 +372,17 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "high",
                     "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
                 },
+                {
+                    "id": "python-hardcoded-named-api-key",
+                    "pattern": (
+                        r"\b[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN)\s*=\s*"
+                        r"['\"][^'\"\s]{8,}['\"]"
+                    ),
+                    "engine": "regex",
+                    "language": "python",
+                    "severity": "high",
+                    "message": "Avoid hardcoding named API key or access token literals.",
+                },
             ],
             "javascript": [
                 {
@@ -402,6 +413,17 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "javascript",
                     "severity": "high",
                     "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
+                },
+                {
+                    "id": "javascript-hardcoded-named-api-key",
+                    "pattern": (
+                        r"\b(?:const|let|var)\s+[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN)\s*=\s*"
+                        r"['\"][^'\"\s]{8,}['\"]"
+                    ),
+                    "engine": "regex",
+                    "language": "javascript",
+                    "severity": "high",
+                    "message": "Avoid hardcoding named API key or access token literals.",
                 },
             ],
             "typescript": [
@@ -434,6 +456,17 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "high",
                     "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
                 },
+                {
+                    "id": "typescript-hardcoded-named-api-key",
+                    "pattern": (
+                        r"\b(?:const|let|var)\s+[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN)\s*=\s*"
+                        r"['\"][^'\"\s]{8,}['\"]"
+                    ),
+                    "engine": "regex",
+                    "language": "typescript",
+                    "severity": "high",
+                    "message": "Avoid hardcoding named API key or access token literals.",
+                },
             ],
             "rust": [
                 {
@@ -464,6 +497,17 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "rust",
                     "severity": "high",
                     "message": "Avoid hardcoding provider tokens such as sk_live/sk_test literals.",
+                },
+                {
+                    "id": "rust-hardcoded-named-api-key",
+                    "pattern": (
+                        r"\blet\s+[A-Za-z_][A-Za-z0-9_]*(?:api_key|access_token)\s*=\s*"
+                        r"['\"][^'\"\s]{8,}['\"]"
+                    ),
+                    "engine": "regex",
+                    "language": "rust",
+                    "severity": "high",
+                    "message": "Avoid hardcoding named API key or access token literals.",
                 },
             ],
         },

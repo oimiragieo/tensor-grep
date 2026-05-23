@@ -189,7 +189,7 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
         probe_timeout_seconds=0.25,
     )
 
-    assert seen_timeouts == [(0.25, 0.25)]
+    assert seen_timeouts == [(0.25, provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS)]
     assert opened_documents
     assert requests == ["textDocument/documentSymbol"]
     assert status["available"] is True
@@ -199,6 +199,45 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
     assert status["lsp_provider_response"] is True
     assert status["lsp_proof"] is True
     assert "not_lsp_proof_reason" not in status
+
+
+def test_provider_status_verify_health_keeps_initialize_timeout_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    seen_timeouts: list[tuple[float, float]] = []
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
+        self.capabilities = {"documentSymbolProvider": True}
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
+    monkeypatch.setattr(
+        ExternalLSPClient,
+        "request",
+        lambda self, method, params: [{"name": "tg_lsp_health_probe", "kind": 12}],
+    )
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.25,
+    )
+
+    assert seen_timeouts == [(0.25, provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS)]
+    assert status["probe_timeout_seconds"] == 0.25
+    assert (
+        status["initialize_timeout_seconds"]
+        == provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS
+    )
 
 
 def test_provider_status_verify_health_persists_semantic_provider_response(
@@ -287,7 +326,7 @@ def test_provider_status_verify_health_bounds_cached_probe_timeout(
         probe_timeout_seconds=0.2,
     )
 
-    assert seen_timeouts == [(0.2, 0.2), (0.2, 0.2)]
+    assert seen_timeouts == [(0.2, 15.0), (0.2, 15.0)]
     assert status["lsp_proof"] is True
     assert status["probe_timeout_seconds"] == 0.2
     assert client.request_timeout_seconds == 3.0

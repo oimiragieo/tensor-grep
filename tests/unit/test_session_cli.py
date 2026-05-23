@@ -29,12 +29,14 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert open_result.exit_code == 0
     opened = json.loads(open_result.stdout)
     session_id = opened["session_id"]
+    assert opened["schema_version"] == opened["version"]
     assert opened["file_count"] == 1
     assert opened["symbol_count"] == 1
 
     show_result = runner.invoke(app, ["session", "show", session_id, str(project), "--json"])
     assert show_result.exit_code == 0
     shown = json.loads(show_result.stdout)
+    assert shown["schema_version"] == shown["version"]
     assert shown["session_id"] == session_id
     assert shown["repo_map"]["files"] == [str(module_path.resolve())]
 
@@ -44,6 +46,7 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     )
     assert context_result.exit_code == 0
     context = json.loads(context_result.stdout)
+    assert context["schema_version"] == context["version"]
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
     assert context["coverage"]["language_scope"] == "python-js-ts-rust"
@@ -51,6 +54,44 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"][0] == str(module_path.resolve())
     assert context["tests"][0] == str(test_path.resolve())
+
+
+def test_session_open_can_cap_initial_repo_map(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(5):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def function_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    runner = CliRunner()
+    open_result = runner.invoke(
+        app,
+        ["session", "open", str(project), "--max-repo-files", "2", "--json"],
+    )
+
+    assert open_result.exit_code == 0, open_result.output
+    opened = json.loads(open_result.stdout)
+    assert opened["file_count"] == 2
+    assert opened["symbol_count"] == 2
+    assert opened["scan_limit"] == {
+        "max_repo_files": 2,
+        "scanned_files": 2,
+        "possibly_truncated": True,
+    }
+    assert opened["build_seconds"] >= 0
+
+    show_result = runner.invoke(
+        app,
+        ["session", "show", opened["session_id"], str(project), "--json"],
+    )
+
+    assert show_result.exit_code == 0, show_result.output
+    shown = json.loads(show_result.stdout)
+    assert len(shown["repo_map"]["files"]) == 2
+    assert shown["scan_limit"] == opened["scan_limit"]
 
 
 def test_session_edit_plan_and_blast_radius_plan_reuse_cached_repo_map(tmp_path: Path) -> None:
@@ -801,6 +842,92 @@ def test_session_context_render_omits_validation_commands_without_runner_evidenc
     assert payload["navigation_pack"]["validation_commands"] == []
 
 
+def test_session_context_render_json_defaults_to_llm_profile(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context-render",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "invoice",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["render_profile"] == "llm"
+    assert payload["optimize_context"] is True
+    assert payload["context_payload_profile"] == "llm-compact"
+
+
+def test_session_context_render_applies_max_repo_files_to_cached_map(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(3):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def create_invoice_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+    session_id = session_store.open_session(str(project)).session_id
+    seen: dict[str, int] = {}
+
+    def fake_build_context_render_from_map(
+        repo_map: dict[str, object],
+        query: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        files = list(repo_map["files"])  # type: ignore[index]
+        seen["file_count"] = len(files)
+        return {
+            "version": 1,
+            "schema_version": 1,
+            "routing_reason": "context-render-test",
+            "query": query,
+            "path": str(project.resolve()),
+            "files": files,
+            "tests": [],
+            "rendered_context": "",
+            "render_profile": kwargs["render_profile"],
+            "optimize_context": kwargs["optimize_context"],
+        }
+
+    monkeypatch.setattr(
+        session_store,
+        "build_context_render_from_map",
+        fake_build_context_render_from_map,
+    )
+
+    payload = session_store.session_context_render(
+        session_id,
+        "invoice",
+        str(project),
+        max_repo_files=1,
+        render_profile="llm",
+        optimize_context=True,
+    )
+
+    assert seen["file_count"] == 1
+    assert len(payload["files"]) == 1
+
+
 def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
     from tensor_grep.cli import session_store
 
@@ -835,6 +962,74 @@ def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
     assert stats["request_count"] == 3
     assert stats["cache_hits"] >= 1
     assert stats["cache_misses"] >= 1
+
+
+def test_session_serve_context_render_reuses_identical_response_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n",
+        encoding="utf-8",
+    )
+    opened = json.loads(CliRunner().invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    build_calls = {"count": 0}
+
+    def fake_build_context_render_from_map(
+        repo_map: dict[str, object],
+        query: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        build_calls["count"] += 1
+        return {
+            "version": 1,
+            "schema_version": 1,
+            "routing_reason": "context-render-test",
+            "query": query,
+            "path": str(project.resolve()),
+            "files": list(repo_map.get("files", [])),
+            "tests": [],
+            "rendered_context": "",
+            "render_profile": kwargs.get("render_profile", "llm"),
+            "optimize_context": kwargs.get("optimize_context", True),
+        }
+
+    monkeypatch.setattr(
+        session_store,
+        "build_context_render_from_map",
+        fake_build_context_render_from_map,
+    )
+
+    request = {
+        "command": "context_render",
+        "query": "invoice",
+        "render_profile": "llm",
+        "optimize_context": True,
+    }
+    stdin = StringIO(
+        "\n".join([json.dumps(request), json.dumps(request), json.dumps({"command": "stats"})])
+        + "\n"
+    )
+    stdout = StringIO()
+
+    session_store.serve_session_stream(
+        opened["session_id"],
+        str(project),
+        input_stream=stdin,
+        output_stream=stdout,
+    )
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    assert build_calls["count"] == 1
+    assert responses[0]["serve_response_cache"]["status"] == "miss"
+    assert responses[1]["serve_response_cache"]["status"] == "hit"
+    assert responses[2]["response_cache_hits"] == 1
+    assert responses[2]["response_cache_puts"] == 1
 
 
 def test_session_serve_reports_health_without_failing_on_stale_cache(tmp_path: Path) -> None:
@@ -1203,6 +1398,75 @@ def test_session_daemon_edit_plan_repeated_core_payload_is_stable(
     assert core(second) == core(third)
     assert "daemon_response_cache" not in core(second)
     assert stats["response_cache_entries"] == 1
+
+
+def test_session_daemon_context_render_reuses_identical_response_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    calls = 0
+
+    def fake_serve_session_request(
+        session_id: str,
+        request: dict[str, object],
+        path: str,
+        *,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "session_id": session_id,
+            "routing_reason": "session-context-render",
+            "rendered_context": "rendered",
+            "files": [str(module_path.resolve())],
+            "call_count": calls,
+        }
+
+    monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_render",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "create invoice",
+            "render_profile": "llm",
+            "optimize_context": True,
+            "max_repo_files": 2,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        second = session_daemon._daemon_request(host, port, request)
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    assert calls == 1
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert second["daemon_response_cache"]["status"] == "hit"
+    assert second["call_count"] == 1
+    assert second["session_timing"]["response_cache_status"] == "hit"
+    assert stats["response_cache_hits"] == 1
+    assert stats["response_cache_misses"] == 1
 
 
 def test_session_daemon_edit_plan_cache_checks_stale_files_before_hit(

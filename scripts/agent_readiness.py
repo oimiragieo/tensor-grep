@@ -850,6 +850,19 @@ def build_check_plan(
             timeout_s=120,
         ),
         Check(
+            name="mcp-stdio-protocol-smoke",
+            command=[
+                "uv",
+                "run",
+                "--no-sync",
+                "pytest",
+                "tests/integration/test_mcp_stdio_protocol.py",
+                "-q",
+            ],
+            description="Verify tg mcp stdio initialize, tools/list, and tools/call roundtrip.",
+            timeout_s=120,
+        ),
+        Check(
             name="agent-capsule",
             command=[
                 "uv",

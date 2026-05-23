@@ -267,6 +267,7 @@ def _attach_profiling(
 def _envelope(path: Path) -> dict[str, Any]:
     return {
         "version": JSON_OUTPUT_VERSION,
+        "schema_version": JSON_OUTPUT_VERSION,
         "routing_backend": ROUTING_BACKEND,
         "routing_reason": ROUTING_REASON,
         "sidecar_used": False,
@@ -490,8 +491,6 @@ def _is_repo_context_file(path: Path, root: Path) -> bool:
     if suffix in _NON_CODE_HIDDEN_SUFFIXES:
         return False
     if _is_hidden_non_code_file(path, root):
-        return False
-    if _looks_like_binary_file(path):
         return False
     return True
 
@@ -10228,6 +10227,8 @@ def build_symbol_defs_from_map(
     payload["graph_completeness"] = "strong"
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(external_definitions)
+    if normalized_provider != "native" and lsp_proof_count == 0 and native_definitions:
+        fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
         native_count=len(native_definitions),
@@ -10738,6 +10739,8 @@ def build_symbol_refs_from_map(
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(external_refs)
+    if normalized_provider != "native" and lsp_proof_count == 0 and references:
+        fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
         native_count=len([current for current in references if not _is_lsp_proof_row(current)]),
@@ -11076,7 +11079,7 @@ def build_symbol_callers_from_map(
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(external_calls)
-    if normalized_provider != "native" and external_calls and lsp_proof_count == 0:
+    if normalized_provider != "native" and lsp_proof_count == 0 and calls:
         fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,

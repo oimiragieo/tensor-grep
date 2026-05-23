@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map
@@ -181,6 +182,8 @@ def test_cli_json_planning_surfaces_include_trust_metadata(tmp_path: Path) -> No
     render_payload = json.loads(render_result.output)
     edit_plan_payload = json.loads(edit_plan_result.output)
 
+    assert render_payload["schema_version"] == render_payload["version"]
+    assert edit_plan_payload["schema_version"] == edit_plan_payload["version"]
     assert _planning_trust_view(render_payload) == _planning_trust_view(expected_render)
     assert _planning_trust_view(edit_plan_payload) == _planning_trust_view(expected_edit_plan)
 
@@ -424,6 +427,26 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
     assert artifact_probe.resolve() not in files
     assert (project / "run.log").resolve() not in files
     assert (project / "blob.bin").resolve() not in files
+
+
+def test_repo_map_does_not_open_every_context_file_for_binary_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    source_path = src_dir / "payments.py"
+    source_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    def fail_binary_probe(path: Path) -> bool:
+        raise AssertionError(f"unexpected binary probe for {path}")
+
+    monkeypatch.setattr(repo_map, "_looks_like_binary_file", fail_binary_probe)
+
+    payload = repo_map.build_repo_map(project)
+
+    assert str(source_path.resolve()) in payload["files"]
 
 
 def test_edit_plan_excludes_temp_probe_context_and_caps_related_metadata(

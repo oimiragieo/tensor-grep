@@ -1328,9 +1328,11 @@ def build_agent_capsule(
 
     return {
         "version": 1,
+        "schema_version": 1,
         "routing_backend": "RepoMap",
         "routing_reason": "agent-context-capsule",
         "capsule_version": 1,
+        "capsule_schema_version": 1,
         "capsule_kind": "actionable_context",
         "query": query,
         "path": resolved_path,

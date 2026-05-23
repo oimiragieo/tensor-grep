@@ -143,6 +143,8 @@ def test_agent_capsule_hardcase_prefers_python_source_over_polyglot_noise(tmp_pa
 
     payload = _agent_payload(paths["project"], "python invoice tax calculation")
 
+    assert payload["schema_version"] == payload["version"]
+    assert payload["capsule_schema_version"] == payload["capsule_version"]
     assert payload["primary_target"]["file"] == str(paths["python"].resolve())
     assert payload["primary_target"]["symbol"] == "create_invoice"
     assert payload["context_consistency"]["query_language_hints"] == ["python"]

@@ -216,6 +216,7 @@ def test_scan_builtin_ruleset_json_without_new_flags_keeps_existing_contract(
     payload = json.loads(result.output)
     assert set(payload) == {
         "version",
+        "schema_version",
         "routing_backend",
         "routing_reason",
         "sidecar_used",

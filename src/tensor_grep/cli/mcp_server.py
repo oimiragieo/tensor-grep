@@ -157,6 +157,7 @@ def _json_output_version() -> int:
 def _rewrite_envelope() -> dict[str, Any]:
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": _REWRITE_ROUTING_BACKEND,
         "routing_reason": _REWRITE_ROUTING_REASON,
         "sidecar_used": False,
@@ -208,6 +209,7 @@ def _resolve_native_tg_binary_for_mcp() -> tuple[Path | None, str | None]:
 def _audit_manifest_error(message: str, *, code: str) -> str:
     payload = {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-verify",
         "sidecar_used": False,
@@ -219,6 +221,7 @@ def _audit_manifest_error(message: str, *, code: str) -> str:
 def _audit_history_error(message: str, *, code: str) -> str:
     payload = {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-history",
         "sidecar_used": False,
@@ -230,6 +233,7 @@ def _audit_history_error(message: str, *, code: str) -> str:
 def _audit_diff_error(message: str, *, code: str) -> str:
     payload = {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-diff",
         "sidecar_used": False,
@@ -360,6 +364,7 @@ def _mcp_capabilities_payload() -> dict[str, Any]:
         native_tg_payload["error"] = native_error
     return {
         "version": _json_output_version(),
+        "schema_version": _json_output_version(),
         "routing_backend": "MCPRuntime",
         "routing_reason": "mcp-capabilities",
         "sidecar_used": False,
@@ -1310,6 +1315,7 @@ def tg_session_context_render(
     query: str,
     path: str = ".",
     max_files: int = 3,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
@@ -1329,6 +1335,7 @@ def tg_session_context_render(
         query: Query text used to rank and render repo context.
         path: File or directory rooted at the session scope.
         max_files: Maximum files to include in the render bundle.
+        max_repo_files: Maximum cached repo files to score before rendering.
         max_sources: Maximum exact source blocks to include.
         max_symbols_per_file: Maximum summary symbols to include per file.
         max_render_chars: Maximum characters to emit in rendered_context.
@@ -1345,6 +1352,7 @@ def tg_session_context_render(
                 query,
                 path,
                 max_files=max_files,
+                max_repo_files=max_repo_files,
                 max_sources=max_sources,
                 max_symbols_per_file=max_symbols_per_file,
                 max_render_chars=max_render_chars,
@@ -2469,7 +2477,14 @@ def tg_checkpoint_create(path: str = ".") -> str:
             indent=2,
         )
 
-    return json.dumps(payload.__dict__, indent=2)
+    return json.dumps(
+        {
+            "version": _json_output_version(),
+            "schema_version": _json_output_version(),
+            **payload.__dict__,
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()  # type: ignore
@@ -2521,25 +2536,40 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
             indent=2,
         )
 
-    return json.dumps(payload.__dict__, indent=2)
+    return json.dumps(
+        {
+            "version": _json_output_version(),
+            "schema_version": _json_output_version(),
+            **payload.__dict__,
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()  # type: ignore
-def tg_session_open(path: str = ".") -> str:
+def tg_session_open(path: str = ".", max_repo_files: int | None = None) -> str:
     """
     Create a cached repository-map session for repeated edit loops.
 
     Args:
         path: File or directory rooted at the session scope.
+        max_repo_files: Optional cap for files scanned into the initial session repo map.
     """
     from tensor_grep.cli.session_store import open_session
 
     try:
-        payload = open_session(path)
+        payload = open_session(path, max_repo_files=max_repo_files)
     except Exception as exc:
         return _session_exception_payload(path=path, message=str(exc), detail={})
 
-    return json.dumps(payload.__dict__, indent=2)
+    return json.dumps(
+        {
+            "version": _json_output_version(),
+            "schema_version": _json_output_version(),
+            **payload.__dict__,
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()  # type: ignore

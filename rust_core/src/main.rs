@@ -52,6 +52,30 @@ const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent -
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
+const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
+    "__pycache__",
+    ".claude",
+    ".cache",
+    ".cargo",
+    ".git",
+    ".gradle",
+    ".mypy_cache",
+    ".npm",
+    ".nuget",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".rustup",
+    ".tox",
+    ".venv",
+    "AppData",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+];
 const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--count-matches",
     "--format",
@@ -65,6 +89,8 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-filename",
     "-q",
     "--quiet",
+    "-n",
+    "--line-number",
     "--engine",
     "-s",
     "--case-sensitive",
@@ -91,6 +117,7 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-glob-case-insensitive",
     "--no-ignore-file-case-insensitive",
     "--ignore",
+    "--no-ignore",
     "--ignore-dot",
     "--ignore-exclude",
     "--ignore-files",
@@ -98,8 +125,15 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--ignore-messages",
     "--ignore-parent",
     "--ignore-vcs",
+    "--no-ignore-vcs",
     "--messages",
     "--require-git",
+    "-C",
+    "--context",
+    "-A",
+    "--after-context",
+    "-B",
+    "--before-context",
     "--no-hidden",
     "--no-one-file-system",
     "--no-block-buffered",
@@ -1496,6 +1530,84 @@ fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
     !args.word_regexp && !args.fixed_strings
 }
 
+fn ripgrep_args_need_broad_generated_guard(args: &RipgrepSearchArgs) -> bool {
+    let has_scan_bound =
+        args.max_depth.is_some() || !args.globs.is_empty() || !args.file_types.is_empty();
+    !has_scan_bound && (args.no_ignore || args.no_ignore_files || args.no_ignore_vcs)
+}
+
+fn search_args_have_generated_scan_bound(args: &SearchArgs) -> bool {
+    args.max_depth.is_some() || !args.globs.is_empty() || !args.file_type.is_empty()
+}
+
+fn search_args_need_broad_generated_guard(args: &SearchArgs) -> bool {
+    !search_args_have_generated_scan_bound(args)
+        && (args.no_ignore || args.no_ignore_files || args.no_ignore_vcs)
+}
+
+fn is_broad_generated_scan_dir_name(name: &str) -> bool {
+    BROAD_GENERATED_SCAN_DIR_NAMES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+}
+
+fn generated_scan_dir_names(paths: &[String]) -> Vec<String> {
+    let mut found = BTreeSet::new();
+    for raw_path in paths {
+        if raw_path.is_empty() || raw_path == "-" || raw_path.starts_with('-') {
+            continue;
+        }
+        let path = Path::new(raw_path);
+        if !path.is_dir() {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            if is_broad_generated_scan_dir_name(name) {
+                found.insert(name.to_string());
+            }
+        }
+        let entries = match std::fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let is_dir = entry
+                .file_type()
+                .map(|file_type| file_type.is_dir())
+                .unwrap_or(false);
+            if !is_dir {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_broad_generated_scan_dir_name(&name) {
+                found.insert(name);
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
+fn format_broad_generated_scan_error(generated_dirs: &[String]) -> String {
+    let mut visible_dirs = generated_dirs
+        .iter()
+        .take(8)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if generated_dirs.len() > 8 {
+        visible_dirs.push_str(", ...");
+    }
+    format!(
+        "Error: broad generated-root scan refused: path contains generated, cache, \
+or dependency directories ({visible_dirs}). Scope the path, add --glob, --type, \
+or --max-depth, or pass --allow-broad-generated-scan to opt in.\n\
+For bounded output:\n\
+tg search --files <path> --hidden --max-depth <N>\n\
+For intentional broad scans:\n\
+--allow-broad-generated-scan"
+    )
+}
+
 fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let mut args = RipgrepSearchArgs {
         files: false,
@@ -1832,6 +1944,9 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
     if args.json && !explicit_rg_format {
         return None;
     }
+    if ripgrep_args_need_broad_generated_guard(&args) {
+        return None;
+    }
     (explicit_rg_format || should_use_early_ripgrep_fast_path(&args)).then_some(args)
 }
 
@@ -2110,6 +2225,16 @@ mod tests {
         assert!(args.fixed_strings);
         assert!(!args.line_number);
         assert!(args.no_line_number);
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn top_level_search_frontdoor_accepts_context_flags_option_first() {
+        let args = parse_default_frontdoor_args(&["tg", "-n", "-C", "2", "ERROR", "bench_data"]);
+
+        assert!(args.line_number);
+        assert_eq!(args.context, Some(2));
         assert_eq!(args.patterns, vec!["ERROR".to_string()]);
         assert_eq!(args.paths, vec!["bench_data".to_string()]);
     }
@@ -4221,6 +4346,14 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
     let structured_output = args.json || args.ndjson;
     let auto_gpu_ids: [i32; 0] = [];
+
+    if search_args_need_broad_generated_guard(&args) {
+        let generated_dirs = generated_scan_dir_names(&request.paths);
+        if !generated_dirs.is_empty() {
+            eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
+            std::process::exit(2);
+        }
+    }
 
     if search_prefers_ripgrep_passthrough(&args, &request, rg_available) {
         if args.verbose {

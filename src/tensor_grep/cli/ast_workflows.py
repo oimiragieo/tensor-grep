@@ -761,6 +761,7 @@ def run_command(
 
         payload = {
             "version": 1,
+            "schema_version": 1,
             "routing_backend": backend_name,
             "routing_reason": "ast",
             "sidecar_used": False,
@@ -1221,6 +1222,7 @@ def scan_command(
     if json_mode:
         payload: dict[str, Any] = {
             "version": 1,
+            "schema_version": 1,
             "routing_backend": next(iter(backend_names_used))
             if backend_names_used
             else "AstGrepWrapperBackend",

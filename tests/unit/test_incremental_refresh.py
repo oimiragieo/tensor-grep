@@ -74,6 +74,32 @@ def test_stale_changeset_returns_empty_lists_for_fresh_session(tmp_path: Path) -
     assert _changeset_for_session(paths["project"], session_id) == _empty_changeset()
 
 
+def test_stale_changeset_does_not_resolve_each_absolute_snapshot_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    payload = _session_payload(paths["project"], session_id)
+    snapshot_paths = {
+        str(entry["path"])
+        for entry in payload["snapshot"]
+        if isinstance(entry, dict) and Path(str(entry.get("path", ""))).is_absolute()
+    }
+    original_resolve = Path.resolve
+
+    monkeypatch.setattr(session_store, "_resolve_root", lambda _path: paths["project"])
+
+    def fail_snapshot_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if str(self) in snapshot_paths:
+            raise AssertionError("absolute snapshot paths should not be resolved per warm request")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_snapshot_resolve)
+
+    assert session_store._stale_changeset(payload, detect_added_files=False) == _empty_changeset()
+
+
 def test_stale_changeset_detects_modified_file(tmp_path: Path) -> None:
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
