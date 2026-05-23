@@ -5890,15 +5890,16 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
     )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    monkeypatch.setattr(
-        module.repo_map,
-        "build_symbol_blast_radius_render",
-        lambda symbol,
+
+    def fake_build_symbol_blast_radius_render(
+        symbol,
         path,
         max_files=6,
         max_sources=6,
         max_symbols_per_file=6,
-        semantic_provider="native": {
+        semantic_provider="native",
+    ):
+        return {
             "semantic_provider": semantic_provider,
             "rendered_context": "def create_invoice(total):\n    return total + 1\n",
             "token_estimate": 42,
@@ -5929,7 +5930,12 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
                 "edit_ordering": ["src/payments.py", "src/service.py"],
                 "rollback_risk": "medium",
             },
-        },
+        }
+
+    monkeypatch.setattr(
+        module.repo_map,
+        "build_symbol_blast_radius_render",
+        fake_build_symbol_blast_radius_render,
     )
     scenarios = [
         {
@@ -9393,25 +9399,29 @@ def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, 
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        module.repo_map,
-        "build_symbol_blast_radius_render",
-        lambda symbol,
+
+    def fake_build_symbol_blast_radius_render(
+        symbol,
         path,
         max_depth=3,
         max_files=6,
         max_sources=6,
         profile=True,
-        semantic_provider="native": (
-            captured.update({"provider": semantic_provider})
-            or {
-                "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
-                "files": [],
-                "tests": [],
-                "token_estimate": 0,
-                "truncated": False,
-            }
-        ),
+        semantic_provider="native",
+    ):
+        captured.update({"provider": semantic_provider})
+        return {
+            "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
+            "files": [],
+            "tests": [],
+            "token_estimate": 0,
+            "truncated": False,
+        }
+
+    monkeypatch.setattr(
+        module.repo_map,
+        "build_symbol_blast_radius_render",
+        fake_build_symbol_blast_radius_render,
     )
 
     row = module.benchmark_blast_radius_fixture(
