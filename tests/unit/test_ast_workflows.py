@@ -1,10 +1,12 @@
 import io
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
+from tensor_grep.backends.ast_wrapper_backend import (
+    AstGrepWrapperBackend as RealAstGrepWrapperBackend,
+)
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.pipeline import ConfigurationError
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -717,7 +719,7 @@ def test_run_command_returns_one_when_read_only_ast_has_no_matches(monkeypatch, 
 
 
 @pytest.mark.skipif(
-    not any(shutil.which(name) for name in ("ast-grep", "ast-grep.exe", "sg")),
+    not RealAstGrepWrapperBackend().is_available(),
     reason="requires ast-grep binary",
 )
 def test_run_command_matches_javascript_call_pattern(tmp_path, capsys):

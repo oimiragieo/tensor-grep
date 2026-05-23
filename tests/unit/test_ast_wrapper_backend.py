@@ -19,6 +19,48 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
         assert backend._get_binary_name() == r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD"
 
 
+def test_ast_wrapper_backend_should_ignore_linux_group_sg_binary():
+    backend = AstGrepWrapperBackend()
+    mock_result = MagicMock()
+    mock_result.stdout = "sg from util-linux 2.39\n"
+    mock_result.stderr = ""
+
+    with (
+        patch("shutil.which") as which,
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        which.side_effect = lambda name: {
+            "ast-grep": None,
+            "ast-grep.exe": None,
+            "sg.exe": None,
+            "sg": "/usr/bin/sg",
+        }.get(name)
+
+        assert backend.is_available() is False
+        assert backend._get_binary_name() == "ast-grep"
+
+
+def test_ast_wrapper_backend_should_accept_verified_sg_alias():
+    backend = AstGrepWrapperBackend()
+    mock_result = MagicMock()
+    mock_result.stdout = "ast-grep 0.39.5\n"
+    mock_result.stderr = ""
+
+    with (
+        patch("shutil.which") as which,
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        which.side_effect = lambda name: {
+            "ast-grep": None,
+            "ast-grep.exe": None,
+            "sg.exe": None,
+            "sg": "/opt/bin/sg",
+        }.get(name)
+
+        assert backend.is_available() is True
+        assert backend._get_binary_name() == "/opt/bin/sg"
+
+
 def test_ast_wrapper_backend_should_emit_runtime_routing_metadata():
     backend = AstGrepWrapperBackend()
 
