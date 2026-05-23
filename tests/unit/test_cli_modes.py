@@ -3155,6 +3155,67 @@ def test_defs_json_returns_exact_symbol_definitions(tmp_path):
     assert [symbol["name"] for symbol in payload["symbols"]] == ["create_invoice"]
 
 
+def test_symbol_commands_accept_path_symbol_positional_alias(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    expected_file = str(module_path.resolve())
+
+    def _has_expected_file(value):
+        if isinstance(value, str):
+            return expected_file in value
+        if isinstance(value, dict):
+            return any(_has_expected_file(item) for item in value.values())
+        if isinstance(value, list):
+            return any(_has_expected_file(item) for item in value)
+        return False
+
+    commands = {
+        "defs": "symbol-defs",
+        "source": "symbol-source",
+        "impact": "symbol-impact",
+        "refs": "symbol-refs",
+        "callers": "symbol-callers",
+        "blast-radius": "symbol-blast-radius",
+        "blast-radius-render": "symbol-blast-radius-render",
+        "blast-radius-plan": "symbol-blast-radius-plan",
+    }
+
+    for command, routing_reason in commands.items():
+        result = runner.invoke(app, [command, str(project), "create_invoice", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["routing_reason"] == routing_reason
+        assert payload["symbol"] == "create_invoice"
+        assert _has_expected_file(payload)
+
+
+def test_symbol_commands_reject_positional_and_flag_symbol(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["defs", str(project), "create_invoice", "--symbol", "other", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either positional SYMBOL or --symbol" in result.output
+
+
 def test_defs_text_lists_definition_locations(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -3792,6 +3853,63 @@ def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
         primary_file=module_path,
         primary_symbol_name="create_invoice",
     )
+
+
+def test_agent_context_commands_accept_path_query_positional_alias(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n",
+        encoding="utf-8",
+    )
+    expected_file = str(module_path.resolve())
+
+    def _has_expected_file(value):
+        if isinstance(value, str):
+            return expected_file in value
+        if isinstance(value, dict):
+            return any(_has_expected_file(item) for item in value.values())
+        if isinstance(value, list):
+            return any(_has_expected_file(item) for item in value)
+        return False
+
+    commands = {
+        "context": "context-pack",
+        "context-render": "context-render",
+        "agent": "agent-context-capsule",
+        "edit-plan": "context-edit-plan",
+    }
+
+    for command, routing_reason in commands.items():
+        result = runner.invoke(app, [command, str(project), "create invoice", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["routing_reason"] == routing_reason
+        assert payload["query"] == "create invoice"
+        assert _has_expected_file(payload)
+
+
+def test_agent_context_commands_reject_positional_and_flag_query(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = CliRunner().invoke(
+        app,
+        ["edit-plan", str(project), "create invoice", "--query", "other", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either positional QUERY or --query" in result.output
 
 
 def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
