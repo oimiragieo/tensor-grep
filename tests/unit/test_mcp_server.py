@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import sys
+import types
 from io import StringIO
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -522,6 +524,30 @@ def test_tg_devices_text_mode_returns_human_inventory_lines():
     assert "Detected 2 routable GPU(s):" in out
     assert "- gpu:7 vram_mb=12288" in out
     assert "- gpu:3 vram_mb=24576" in out
+
+
+def test_tg_classify_logs_defaults_to_local_heuristics(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    class _ExplodingBackend:
+        def __init__(self) -> None:
+            raise AssertionError("MCP classify should not probe CyBERT by default")
+
+    log_path = tmp_path / "app.log"
+    log_path.write_text("INFO startup ok\nERROR database failed\n", encoding="utf-8")
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "tensor_grep.backends.cybert_backend",
+        types.SimpleNamespace(CybertBackend=_ExplodingBackend),
+    )
+
+    out = mcp_server.tg_classify_logs(str(log_path))
+
+    assert "provider=heuristic" in out
+    assert "status=local" in out
+    assert "[ERROR]" in out
+    assert "database failed" in out
 
 
 def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Path):

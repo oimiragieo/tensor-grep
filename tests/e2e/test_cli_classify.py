@@ -23,8 +23,13 @@ class TestCLIClassify:
             text=True,
         )
         assert result.returncode == 0
+        assert result.stderr == ""
         data = json.loads(result.stdout)
         assert "classifications" in data
+        assert data["classification_backend"]["provider_used"] == "heuristic"
+        assert data["classification_backend"]["provider_status"] == "local"
+        assert "status" in data["classification_backend"]["cache"]
+        assert "offline" in data["classification_backend"]["cache"]
         assert any(
             c["label"] in ["error", "info", "warn", "warning"] for c in data["classifications"]
         )
