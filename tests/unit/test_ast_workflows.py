@@ -228,16 +228,14 @@ def test_test_command_reports_unsupported_case_language_without_traceback(tmp_pa
     )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "error-test.yml").write_text(
-        "\n".join(
-            [
-                "tests:",
-                "  - id: unsupported-language",
-                "    ruleId: error-rule",
-                "    language: Dart",
-                "    valid:",
-                "      - OK",
-            ]
-        ),
+        "\n".join([
+            "tests:",
+            "  - id: unsupported-language",
+            "    ruleId: error-rule",
+            "    language: Dart",
+            "    valid:",
+            "      - OK",
+        ]),
         encoding="utf-8",
     )
 
@@ -874,17 +872,15 @@ def test_ast_workflow_entry_accepts_ast_grep_pattern_option(monkeypatch):
     monkeypatch.setattr(ast_workflows, "run_command", fake_run_command)
 
     with pytest.raises(SystemExit) as raised:
-        ast_workflows.main_entry(
-            [
-                "run",
-                "--pattern",
-                "class $NAME: $$$BODY",
-                "--files-with-matches",
-                "src",
-                "--lang",
-                "python",
-            ]
-        )
+        ast_workflows.main_entry([
+            "run",
+            "--pattern",
+            "class $NAME: $$$BODY",
+            "--files-with-matches",
+            "src",
+            "--lang",
+            "python",
+        ])
 
     assert raised.value.code == 0
     assert seen["pattern"] == "class $NAME: $$$BODY"
@@ -907,22 +903,20 @@ def test_ast_workflow_entry_accepts_ast_grep_semantic_run_options(monkeypatch):
     monkeypatch.setattr(ast_workflows, "run_command", fake_run_command)
 
     with pytest.raises(SystemExit) as raised:
-        ast_workflows.main_entry(
-            [
-                "run",
-                "--pattern",
-                "print($A)",
-                "--selector",
-                "call",
-                "--strictness",
-                "relaxed",
-                "--globs",
-                "*.py",
-                "--stdin",
-                "--lang",
-                "python",
-            ]
-        )
+        ast_workflows.main_entry([
+            "run",
+            "--pattern",
+            "print($A)",
+            "--selector",
+            "call",
+            "--strictness",
+            "relaxed",
+            "--globs",
+            "*.py",
+            "--stdin",
+            "--lang",
+            "python",
+        ])
 
     assert raised.value.code == 0
     assert seen["pattern"] == "print($A)"
