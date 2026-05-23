@@ -61,6 +61,22 @@ def _huggingface_tokenizer_kwargs() -> dict[str, Any]:
     }
 
 
+def _basic_tokenize(lines: list[str]) -> dict[str, Any]:
+    rows: list[list[int]] = []
+    for line in lines:
+        row = [max(1, ord(char) % 30522) for char in line[:128]]
+        rows.append(row or [0])
+
+    width = max((len(row) for row in rows), default=1)
+    padded = [row + [0] * (width - len(row)) for row in rows]
+    try:
+        import numpy as np
+
+        return {"input_ids": np.array(padded, dtype="int64")}
+    except ImportError:
+        return {"input_ids": padded}
+
+
 def _get_triton_timeout_seconds() -> float:
     raw_timeout = os.environ.get(_TRITON_TIMEOUT_ENV_VAR)
     if raw_timeout is None:
@@ -176,18 +192,20 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
     try:
         from transformers import AutoTokenizer
     except ImportError:
-        try:
-            import numpy as np
+        return _basic_tokenize(cleaned_lines)
 
-            return {"input_ids": np.array([[1, 2, 3]])}
-        except ImportError:
-            return {"input_ids": [[1, 2, 3]]}
-
-    tokenizer = AutoTokenizer.from_pretrained(  # type: ignore
-        "bert-base-uncased",
-        **_huggingface_tokenizer_kwargs(),
-    )
-    return dict(tokenizer(cleaned_lines, padding=True, truncation=True, return_tensors="np"))
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore
+            "bert-base-uncased",
+            **_huggingface_tokenizer_kwargs(),
+        )
+        return dict(tokenizer(cleaned_lines, padding=True, truncation=True, return_tensors="np"))
+    except Exception as exc:
+        logger.debug(
+            "transformers tokenizer unavailable; using deterministic fallback tokenizer: %s",
+            exc,
+        )
+        return _basic_tokenize(cleaned_lines)
 
 
 class CybertBackend(ComputeBackend):

@@ -200,6 +200,29 @@ class TestCybertBackend:
             local_files_only=True,
         )
 
+    @patch.dict("sys.modules", {"transformers": MagicMock()})
+    def test_tokenize_should_fallback_when_offline_cache_is_missing(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf-cache"))
+
+        import transformers
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.from_pretrained.side_effect = OSError("cache miss")
+        transformers.AutoTokenizer = mock_tokenizer
+
+        from tensor_grep.backends.cybert_backend import tokenize
+
+        tokens = tokenize(["0"])
+
+        assert "input_ids" in tokens
+        assert len(tokens["input_ids"]) == 1
+        mock_tokenizer.from_pretrained.assert_called_once_with(
+            "bert-base-uncased",
+            cache_dir=str(tmp_path / "hf-cache"),
+            local_files_only=True,
+        )
+
     @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
     def test_should_classify_with_model_output(self):
         import tritonclient.http as httpclient
