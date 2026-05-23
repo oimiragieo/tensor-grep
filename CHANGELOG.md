@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.13.0 (2026-05-23)
+
+### Features
+
+- Harden v1.13 dogfood contracts
+  ([`215ff56`](https://github.com/oimiragieo/tensor-grep/commit/215ff5603cba2c0f16b95e782994e475410132c3))
+
+Harden v1.13 dogfood contracts for daemon/session paths, checkpoint discovery, doctor LSP schema
+  compatibility, AST no-match semantics, ast-grep resolver safety, and agent ranking.\n\nValidated
+  with local lint/tests plus full PR CI.
+
+
 ## v1.12.66 (2026-05-23)
 
 ### Bug Fixes
