@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.13.4 (2026-05-23)
+
+### Bug Fixes
+
+- Accept opt-in GPU no-match timing rows
+  ([`f44e07f`](https://github.com/oimiragieo/tensor-grep/commit/f44e07fdd89c45526f9428bc77c8399b14b9804f))
+
+- Harden cold path attribution evidence
+  ([`5e5b8de`](https://github.com/oimiragieo/tensor-grep/commit/5e5b8deac98f908e3099d875e1fecc10ca2659f7))
+
+
 ## v1.13.3 (2026-05-23)
 
 ### Bug Fixes
