@@ -10005,6 +10005,19 @@ def test_run_cold_path_attribution_should_write_output(monkeypatch, tmp_path):
         "resolve_tg_binary_with_source",
         lambda binary=None: (tmp_path / "tg.exe", "explicit_arg"),
     )
+
+    def fake_build_tg_cmd(tg_args, *, binary=None, return_mode=False, launcher_mode="auto"):
+        if launcher_mode == "python_module_launcher":
+            return [
+                str(tmp_path / "python.exe"),
+                "-m",
+                "tensor_grep",
+                "search",
+                *tg_args,
+            ], "python_module_launcher"
+        return [str(binary or tmp_path / "tg.exe"), "search", *tg_args], launcher_mode
+
+    monkeypatch.setattr(module, "build_tg_benchmark_cmd_with_mode", fake_build_tg_cmd)
     timing_cmds: list[list[str]] = []
     monkeypatch.setattr(
         module,
@@ -10032,8 +10045,17 @@ def test_run_cold_path_attribution_should_write_output(monkeypatch, tmp_path):
     assert exit_code == 0
     assert payload["artifact"] == "bench_cold_path_attribution"
     assert payload["suite"] == "cold_path_attribution"
+    assert payload["warnings"]
+    assert "python_module" in payload["warnings"][0]
+    assert payload["environment"]["tg_launcher_command_kinds"] == {
+        "explicit_binary": "native_exe",
+        "discovered_cli_binary": "native_exe",
+        "python_module_launcher": "python_module",
+    }
     assert {row["launcher_mode"] for row in payload["rows"]} == set(module.DEFAULT_LAUNCHER_MODES)
     assert payload["rows"][0]["name"] == "1. Simple String Match [explicit_binary]"
+    assert payload["rows"][0]["tg_launcher_command_kind"] == "native_exe"
+    assert payload["rows"][0]["warnings"] == []
     assert payload["rows"][0]["phase_trace"] == {"phase": "startup", "marker": "trace-file"}
     assert all(str(bench_dir) in cmd for cmd in timing_cmds)
     assert generated == [(str(bench_dir), 2, 2_000_000)]
@@ -10125,6 +10147,86 @@ def test_run_cold_path_attribution_should_drop_stale_trace_files(monkeypatch, tm
     assert payload["rows"][0]["phase_trace"] is None
 
 
+def test_run_cold_path_attribution_should_warn_for_non_native_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_cold_path_attribution_launcher_warning_script",
+        "benchmarks/run_cold_path_attribution.py",
+    )
+
+    bench_dir = tmp_path / "bench_data_root"
+    python_launcher = tmp_path / "python.exe"
+    python_launcher.write_text("python\n", encoding="utf-8")
+    monkeypatch.setattr(module.sys, "executable", str(python_launcher))
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: bench_dir)
+    monkeypatch.setattr(module, "generate_test_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda binary=None: (tmp_path / "tg.exe", "explicit_arg"),
+    )
+    monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1]))
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, ""))
+
+    output_path = tmp_path / "cold-path.json"
+    exit_code = module.main([
+        "--output",
+        str(output_path),
+        "--launcher-mode",
+        "python_module_launcher",
+    ])
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["environment"]["tg_launcher_command_kinds"] == {
+        "python_module_launcher": "python_module"
+    }
+    assert payload["warnings"]
+    assert "python_module" in payload["warnings"][0]
+    assert payload["rows"][0]["tg_launcher_command_kind"] == "python_module"
+    assert payload["rows"][0]["warnings"] == payload["warnings"]
+
+
+def test_run_cold_path_attribution_should_refuse_stale_binary_by_default(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_script_module(
+        "run_cold_path_attribution_stale_binary_script",
+        "benchmarks/run_cold_path_attribution.py",
+    )
+    tg_binary = tmp_path / "repo" / "rust_core" / "target" / "release" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True, exist_ok=True)
+    tg_binary.write_text("stale\n", encoding="utf-8")
+    output_path = tmp_path / "cold-path.json"
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda binary=None: (tg_binary, "default_binary_path"),
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_binary_warnings",
+        lambda _binary: ["tensor-grep benchmark warning: stale in-tree native tg binary"],
+    )
+
+    exit_code = module.main(["--output", str(output_path)])
+
+    assert exit_code == 2
+    assert not output_path.exists()
+    assert "refusing claim-quality benchmark" in capsys.readouterr().err
+
+
 def test_run_benchmarks_should_record_host_provenance(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_benchmarks_script_host_provenance",
@@ -10186,18 +10288,24 @@ def test_run_cold_path_attribution_should_record_host_provenance(monkeypatch, tm
     monkeypatch.setattr(
         module,
         "_scenario_commands",
-        lambda **kwargs: [
-            {
-                "scenario": "1. Simple String Match",
-                "launcher_mode": "explicit_binary",
-                "resolved_launcher_mode": "explicit_binary",
-                "rg_time_s": 0.1,
-                "rg_samples_s": [0.1, 0.1, 0.1],
-                "tg_time_s": 0.1,
-                "tg_samples_s": [0.1, 0.1, 0.1],
-                "phase_trace": None,
-            }
-        ],
+        lambda **kwargs: (
+            [
+                {
+                    "scenario": "1. Simple String Match",
+                    "launcher_mode": "explicit_binary",
+                    "resolved_launcher_mode": "explicit_binary",
+                    "tg_launcher_command_kind": "native_exe",
+                    "rg_time_s": 0.1,
+                    "rg_samples_s": [0.1, 0.1, 0.1],
+                    "tg_time_s": 0.1,
+                    "tg_samples_s": [0.1, 0.1, 0.1],
+                    "phase_trace": None,
+                    "warnings": [],
+                }
+            ],
+            {"explicit_binary": "native_exe"},
+            [],
+        ),
     )
 
     output_path = tmp_path / "bench_cold.json"
@@ -10208,3 +10316,6 @@ def test_run_cold_path_attribution_should_record_host_provenance(monkeypatch, tm
     assert payload["benchmark_host_key"] == module.benchmark_host_key(payload["environment"])
     assert payload["host_provenance"]["benchmark_host_key"] == payload["benchmark_host_key"]
     assert payload["host_provenance"]["tg_binary_source"] == "explicit_arg"
+    assert payload["host_provenance"]["tg_launcher_command_kinds"] == {
+        "explicit_binary": "native_exe"
+    }

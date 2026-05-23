@@ -19,8 +19,13 @@ if str(BENCHMARKS_DIR) not in sys.path:
 
 from run_benchmarks import (  # noqa: E402
     SCENARIOS,
+    benchmark_binary_warnings,
+    benchmark_claim_blockers,
+    benchmark_launcher_warnings,
     build_tg_benchmark_cmd_with_mode,
+    classify_tg_launcher_command,
     collect_timing_samples,
+    emit_benchmark_claim_blockers,
     generate_test_data,
     resolve_rg_binary,
     resolve_tg_binary_with_source,
@@ -47,8 +52,10 @@ def _scenario_commands(
     bench_dir: Path,
     tg_binary: Path,
     launcher_modes: list[str],
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], dict[str, str], list[str]]:
     rows: list[dict[str, object]] = []
+    launcher_command_kinds: dict[str, str] = {}
+    warnings: list[str] = []
     rg_binary = resolve_rg_binary()
 
     for scenario in SCENARIOS:
@@ -69,6 +76,15 @@ def _scenario_commands(
                 return_mode=True,
                 launcher_mode=launcher_mode,
             )
+            command_kind = classify_tg_launcher_command(tg_cmd)
+            launcher_command_kinds[resolved_mode] = command_kind
+            row_warnings = benchmark_launcher_warnings(
+                command_kind=command_kind,
+                launcher_mode=resolved_mode,
+            )
+            for warning in row_warnings:
+                if warning not in warnings:
+                    warnings.append(warning)
             tg_time_s, tg_samples_s = collect_timing_samples(tg_cmd)
             trace_path = (
                 bench_dir / f"{scenario['name'].replace(' ', '_').lower()}-{launcher_mode}.json"
@@ -87,14 +103,16 @@ def _scenario_commands(
                 "scenario": scenario["name"],
                 "launcher_mode": launcher_mode,
                 "resolved_launcher_mode": resolved_mode,
+                "tg_launcher_command_kind": command_kind,
                 "rg_time_s": rg_time_s,
                 "rg_samples_s": rg_samples_s,
                 "tg_time_s": tg_time_s,
                 "tg_samples_s": tg_samples_s,
                 "phase_trace": phase_trace,
+                "warnings": row_warnings,
             })
 
-    return rows
+    return rows, launcher_command_kinds, warnings
 
 
 def _parse_phase_trace(stdout: str, trace_path: Path | None = None) -> object | None:
@@ -144,19 +162,39 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Launcher mode to compare. May be repeated. Defaults to the full cold-path set.",
     )
+    parser.add_argument(
+        "--allow-claim-unsafe-launcher",
+        action="store_true",
+        help=(
+            "Allow exploratory attribution runs even when launcher provenance is unsafe "
+            "for benchmark claims, such as a stale in-tree native tg binary."
+        ),
+    )
     args = parser.parse_args(argv)
 
     tg_binary, tg_binary_source = resolve_tg_binary_with_source(args.binary)
+    warnings = benchmark_binary_warnings(tg_binary)
+    for warning in warnings:
+        print(f"[warning] {warning}", file=sys.stderr)
+    blockers = benchmark_claim_blockers(warnings)
+    if blockers and not args.allow_claim_unsafe_launcher:
+        emit_benchmark_claim_blockers(blockers)
+        return 2
+
     bench_dir = resolve_bench_data_dir()
     bench_dir.mkdir(parents=True, exist_ok=True)
     generate_test_data(str(bench_dir), num_files=2, lines_per_file=2_000_000)
 
     launcher_modes = _unique_launcher_modes(args.launcher_mode)
-    rows = _scenario_commands(
+    rows, launcher_command_kinds, launcher_warnings = _scenario_commands(
         bench_dir=bench_dir,
         tg_binary=tg_binary,
         launcher_modes=launcher_modes,
     )
+    for warning in launcher_warnings:
+        if warning not in warnings:
+            warnings.append(warning)
+            print(f"[warning] {warning}", file=sys.stderr)
 
     payload = {
         "artifact": "bench_cold_path_attribution",
@@ -172,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),
             "tg_binary_source": tg_binary_source,
+            "tg_launcher_command_kinds": launcher_command_kinds,
         },
         "host_provenance": {
             "benchmark_host_key": benchmark_host_key({
@@ -183,8 +222,10 @@ def main(argv: list[str] | None = None) -> int:
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),
             "tg_binary_source": tg_binary_source,
+            "tg_launcher_command_kinds": launcher_command_kinds,
         },
         "launcher_modes": launcher_modes,
+        "warnings": warnings,
         "rows": rows,
     }
 
