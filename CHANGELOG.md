@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.13.2 (2026-05-23)
+
+### Bug Fixes
+
+- Harden v1.13.1 dogfood followups
+  ([`e245707`](https://github.com/oimiragieo/tensor-grep/commit/e245707ab2f3a80c6c5a912f79339cd8ed37309c))
+
+Fix v1.13.1 dogfood follow-ups: harden broad generated-root search guardrails before bootstrap
+  passthrough, align LSP request timeout with initialize timeout, surface native MCP launcher
+  guidance, stamp sidecar classify JSON, and document the daemon warm-path workflow.
+
+
 ## v1.13.1 (2026-05-23)
 
 ### Bug Fixes
