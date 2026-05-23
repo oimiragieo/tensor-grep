@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import socket
@@ -9,13 +10,16 @@ import subprocess
 import sys
 import threading
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
 from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
     _SESSION_VERSION,
+    _ensure_session_not_stale,
     _resolve_request_session_target,
     _resolve_root,
     _session_health_payload,
@@ -31,6 +35,7 @@ _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
+_DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -282,6 +287,96 @@ def _load_payload_with_status_retry(
             time.sleep(0.05)
 
 
+def _path_cache_key(path: str) -> str:
+    resolved = str(_resolve_root(Path(path)))
+    return resolved.lower() if sys.platform.startswith("win") else resolved
+
+
+def _request_cache_value(
+    request: dict[str, Any],
+    name: str,
+    default: Any = "",
+) -> str:
+    value = request.get(name, default)
+    if value in (None, ""):
+        return ""
+    return str(value)
+
+
+def _session_payload_fingerprint(payload: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        str(payload.get("root", "")),
+        str(payload.get("created_at", "")),
+        str(payload.get("refreshed_at", "")),
+        str(payload.get("file_count", "")),
+        str(payload.get("symbol_count", "")),
+    )
+
+
+def _context_edit_plan_response_cache_key(
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[str, ...]:
+    return (
+        _path_cache_key(path),
+        session_id,
+        *_session_payload_fingerprint(payload),
+        str(request.get("query", "")).strip(),
+        _request_cache_value(request, "max_files", 3),
+        _request_cache_value(request, "max_sources"),
+        _request_cache_value(request, "max_tokens"),
+        _request_cache_value(request, "max_symbols", 5),
+        _request_cache_value(
+            request,
+            "max_repo_files",
+            _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
+        ),
+    )
+
+
+class _SessionResponseCache:
+    def __init__(self, max_entries: int = _DAEMON_RESPONSE_CACHE_MAX_ENTRIES) -> None:
+        self._max_entries = max(1, max_entries)
+        self._entries: OrderedDict[tuple[str, ...], dict[str, Any]] = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._puts = 0
+
+    def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
+        cached = self._entries.pop(key, None)
+        if cached is None:
+            self._misses += 1
+            return None
+        self._hits += 1
+        self._entries[key] = cached
+        return copy.deepcopy(cached)
+
+    def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
+        self._entries.pop(key, None)
+        self._entries[key] = copy.deepcopy(response)
+        self._puts += 1
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+
+    @property
+    def hits(self) -> int:
+        return self._hits
+
+    @property
+    def misses(self) -> int:
+        return self._misses
+
+    @property
+    def puts(self) -> int:
+        return self._puts
+
+    @property
+    def entry_count(self) -> int:
+        return len(self._entries)
+
+
 class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -290,9 +385,11 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
         super().__init__(server_address, _SessionDaemonHandler)
         self.root = root
         self.payload_cache = _SessionServeCache()
+        self.response_cache = _SessionResponseCache()
         self.started_at = monotonic()
         self.request_count = 0
         self._request_lock = threading.Lock()
+        self._response_cache_lock = threading.Lock()
 
 
 class _SessionDaemonHandler(socketserver.StreamRequestHandler):
@@ -341,6 +438,10 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_count": server.payload_cache.session_count,
                     "sessions": server.payload_cache.sessions,
                     "cache_size_bytes": server.payload_cache.size_bytes,
+                    "response_cache_hits": server.response_cache.hits,
+                    "response_cache_misses": server.response_cache.misses,
+                    "response_cache_puts": server.response_cache.puts,
+                    "response_cache_entries": server.response_cache.entry_count,
                     "uptime_seconds": max(0.0, monotonic() - server.started_at),
                     "request_count": server.request_count,
                 }
@@ -358,6 +459,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 }
             else:
                 overall_started_at = monotonic()
+                response_cache_status = "bypass"
                 try:
                     load_started_at = monotonic()
                     payload, cache_status = _load_payload_with_status_retry(
@@ -366,12 +468,38 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         request_path,
                     )
                     loaded_at = monotonic()
-                    response = serve_session_request(
-                        request_session_id,
-                        request,
-                        request_path,
-                        payload=payload,
-                    )
+                    if command == "context_edit_plan" and not bool(
+                        request.get("refresh_on_stale", False)
+                    ):
+                        _ensure_session_not_stale(payload, detect_added_files=False)
+                        response_cache_key = _context_edit_plan_response_cache_key(
+                            request_session_id,
+                            request_path,
+                            request,
+                            payload,
+                        )
+                        with server._response_cache_lock:
+                            cached_response = server.response_cache.get(response_cache_key)
+                        if cached_response is not None:
+                            response = cached_response
+                            response_cache_status = "hit"
+                        else:
+                            response = serve_session_request(
+                                request_session_id,
+                                request,
+                                request_path,
+                                payload=payload,
+                            )
+                            response_cache_status = "miss"
+                            with server._response_cache_lock:
+                                server.response_cache.put(response_cache_key, response)
+                    else:
+                        response = serve_session_request(
+                            request_session_id,
+                            request,
+                            request_path,
+                            payload=payload,
+                        )
                     served_at = monotonic()
                 except Exception:
                     refresh_on_stale = bool(request.get("refresh_on_stale", False))
@@ -403,8 +531,15 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "root_count": server.payload_cache.root_count,
                 }
                 if command == "context_edit_plan":
+                    response["daemon_response_cache"] = {
+                        "status": response_cache_status,
+                        "entries": server.response_cache.entry_count,
+                        "hits": server.response_cache.hits,
+                        "misses": server.response_cache.misses,
+                    }
                     response["session_timing"] = {
                         "cache_status": cache_status,
+                        "response_cache_status": response_cache_status,
                         "load_session_seconds": max(0.0, loaded_at - load_started_at),
                         "build_edit_plan_seconds": max(0.0, served_at - loaded_at),
                         "total_seconds": max(0.0, served_at - overall_started_at),

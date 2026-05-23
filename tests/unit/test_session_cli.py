@@ -1,4 +1,5 @@
 import json
+import threading
 from io import StringIO
 from pathlib import Path
 
@@ -1044,6 +1045,136 @@ def test_session_edit_plan_can_use_daemon(tmp_path: Path) -> None:
         assert payload["session_timing"]["total_seconds"] >= 0
     finally:
         session_daemon.stop_session_daemon(str(project))
+
+
+def test_session_daemon_edit_plan_reuses_identical_response_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    calls = 0
+
+    def fake_serve_session_request(
+        session_id: str,
+        request: dict[str, object],
+        path: str,
+        *,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "session_id": session_id,
+            "routing_reason": "session-context-edit-plan",
+            "files": [str(module_path.resolve())],
+            "call_count": calls,
+        }
+
+    monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_edit_plan",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "create invoice",
+            "max_repo_files": 2,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        second = session_daemon._daemon_request(host, port, request)
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    assert calls == 1
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert second["daemon_response_cache"]["status"] == "hit"
+    assert second["call_count"] == 1
+    assert second["session_timing"]["response_cache_status"] == "hit"
+    assert stats["response_cache_hits"] == 1
+    assert stats["response_cache_misses"] == 1
+    assert stats["response_cache_entries"] == 1
+
+
+def test_session_daemon_edit_plan_cache_checks_stale_files_before_hit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    calls = 0
+
+    def fake_serve_session_request(
+        session_id: str,
+        request: dict[str, object],
+        path: str,
+        *,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "session_id": session_id,
+            "routing_reason": "session-context-edit-plan",
+            "files": [str(module_path.resolve())],
+            "call_count": calls,
+        }
+
+    monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_edit_plan",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "create invoice",
+            "max_repo_files": 2,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        module_path.write_text("def create_invoice():\n    return 100\n", encoding="utf-8")
+        second = session_daemon._daemon_request(host, port, request)
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    assert calls == 1
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert second["error"]["code"] == "invalid_request"
+    assert "cached session files changed" in second["error"]["message"]
 
 
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
