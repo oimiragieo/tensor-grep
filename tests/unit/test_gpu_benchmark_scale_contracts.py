@@ -1542,6 +1542,142 @@ def test_run_gpu_native_correctness_should_compare_direct_rg_identity(monkeypatc
     assert result["gpu_total_matches"] == 1
 
 
+def test_run_gpu_native_correctness_should_accept_direct_rg_no_match_identity(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_rg_identity_no_match_correctness",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    corpus_dir = tmp_path / "corpus"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir.mkdir()
+
+    def _fake_run_command(command, **_kwargs):
+        command_text = " ".join(str(part) for part in command)
+        if "--json" in command_text and "--cpu" in command_text:
+            stdout = (
+                '{"routing_backend":"NativeCpuBackend","sidecar_used":false,'
+                '"total_matches":0,"total_files":0,"matches":[]}'
+            )
+            return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if "--json" in command_text and "--gpu-device-ids" in command_text:
+            stdout = (
+                '{"routing_backend":"NativeGpuBackend","sidecar_used":false,'
+                '"total_matches":0,"total_files":0,"matches":[]}'
+            )
+            return module.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        return module.subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    result = module.run_correctness_check(
+        tg_binary=tg_binary,
+        rg_binary="rg",
+        corpus_dir=corpus_dir,
+        pattern="NO_MATCH_SENTINEL",
+        device_id=0,
+        env={},
+        timeout_s=5,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["matches_equal"] is True
+    assert result["files_equal"] is True
+    assert result["rg_matches_equal"] is True
+    assert result["rg_files_equal"] is True
+    assert result["rg_match_identity_equal"] is True
+    assert result["rg_total_matches"] == 0
+    assert result["gpu_total_matches"] == 0
+
+
+def test_run_gpu_native_benchmark_search_command_accepts_opt_in_no_match(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_no_match_timing",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    def _fake_run_command(command, **_kwargs):
+        return module.subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    strict = module.benchmark_search_command(
+        ["rg", "NO_MATCH", str(tmp_path)],
+        env={},
+        runs=1,
+        warmup=0,
+        timeout_s=5,
+        corpus_bytes=100,
+    )
+    allowed = module.benchmark_search_command(
+        ["rg", "NO_MATCH", str(tmp_path)],
+        env={},
+        runs=1,
+        warmup=1,
+        timeout_s=5,
+        corpus_bytes=100,
+        allow_no_match=True,
+    )
+
+    assert strict["status"] == "FAIL"
+    assert strict["allow_no_match"] is False
+    assert allowed["status"] == "PASS"
+    assert allowed["allow_no_match"] is True
+    assert allowed["no_match_exit_accepted"] is True
+
+
+def test_run_gpu_native_benchmark_command_group_accepts_opt_in_no_match(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_no_match_group_timing",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+
+    def _fake_run_command(command, **_kwargs):
+        return module.subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    result = module.benchmark_command_group(
+        [["rg", "NO_MATCH", str(tmp_path)]],
+        env={},
+        runs=1,
+        warmup=1,
+        timeout_s=5,
+        workload_bytes=100,
+        allow_no_match=True,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["allow_no_match"] is True
+    assert result["no_match_exit_accepted"] is True
+
+
+def test_python_gpu_benchmark_search_command_accepts_opt_in_no_match(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_benchmarks_no_match_timing",
+        "benchmarks/run_gpu_benchmarks.py",
+    )
+
+    def _fake_run_command(command, **_kwargs):
+        return module.subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", _fake_run_command)
+
+    result = module.benchmark_search_command(
+        ["rg", "NO_MATCH", str(tmp_path)],
+        env={},
+        runs=1,
+        warmup=1,
+        allow_no_match=True,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["allow_no_match"] is True
+    assert result["no_match_exit_accepted"] is True
+
+
 def test_run_gpu_native_benchmarks_should_not_time_sidecar_routed_gpu_rows(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_gpu_native_benchmarks_sidecar_rows",
