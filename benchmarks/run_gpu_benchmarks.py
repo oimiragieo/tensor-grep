@@ -528,16 +528,26 @@ def benchmark_search_command(
     env: dict[str, str],
     runs: int,
     warmup: int,
+    allow_no_match: bool = False,
 ) -> dict[str, object]:
+    no_match_exit_accepted = False
     for _ in range(warmup):
         warmup_result = _run_command(command, env=env, capture_output=False)
-        if warmup_result.returncode != 0:
+        if (
+            warmup_result.returncode == 1
+            and allow_no_match
+            and not (warmup_result.stderr or "").strip()
+        ):
+            no_match_exit_accepted = True
+        elif warmup_result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
                 "samples_s": [],
                 "stderr": (warmup_result.stderr or "").strip(),
                 "command": _command_display(command),
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
 
     samples: list[float] = []
@@ -546,13 +556,17 @@ def benchmark_search_command(
         start = time.perf_counter()
         result = _run_command(command, env=env, capture_output=False)
         elapsed = time.perf_counter() - start
-        if result.returncode != 0:
+        if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
+            no_match_exit_accepted = True
+        elif result.returncode != 0:
             return {
                 "status": "FAIL",
                 "median_s": None,
                 "samples_s": [round(sample, 6) for sample in samples],
                 "stderr": (result.stderr or "").strip(),
                 "command": _command_display(command),
+                "allow_no_match": allow_no_match,
+                "no_match_exit_accepted": no_match_exit_accepted,
             }
         samples.append(round(elapsed, 6))
         last_stderr = (result.stderr or "").strip()
@@ -563,6 +577,8 @@ def benchmark_search_command(
         "samples_s": samples,
         "stderr": last_stderr,
         "command": _command_display(command),
+        "allow_no_match": allow_no_match,
+        "no_match_exit_accepted": no_match_exit_accepted,
     }
 
 
@@ -1490,18 +1506,27 @@ def run_gpu_scale_benchmarks(
             shard_count=shard_count,
         )
         generated_corpora[size_bytes] = corpus_dir
+        pattern_counts = corpus_info.get("pattern_counts")
+        expected_matches = (
+            int(pattern_counts.get(benchmark_pattern, 0)) > 0
+            if isinstance(pattern_counts, dict)
+            else True
+        )
+        allow_no_match = not expected_matches
 
         rg_result = benchmark_search_command(
             build_rg_search_command(rg_binary, benchmark_pattern, corpus_dir),
             env=command_env,
             runs=runs,
             warmup=warmup,
+            allow_no_match=allow_no_match,
         )
         tg_cpu_result = benchmark_search_command(
             build_tg_cpu_search_command(tg_binary, benchmark_pattern, corpus_dir),
             env=command_env,
             runs=runs,
             warmup=warmup,
+            allow_no_match=allow_no_match,
         )
 
         gpu_results: list[dict[str, object]] = []
@@ -1557,6 +1582,7 @@ def run_gpu_scale_benchmarks(
                     env=command_env,
                     runs=runs,
                     warmup=warmup,
+                    allow_no_match=allow_no_match,
                 )
                 result["stderr"] = _clean_selected_gpu_stderr(
                     result.get("stderr"),
@@ -1594,6 +1620,7 @@ def run_gpu_scale_benchmarks(
             "file_count": corpus_info["file_count"],
             "total_lines": corpus_info["total_lines"],
             "pattern_counts": corpus_info["pattern_counts"],
+            "expected_match": expected_matches,
             "rg": rg_result,
             "tg_cpu": tg_cpu_result,
             "gpu": gpu_results,
