@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.65 (2026-05-23)
+
+### Bug Fixes
+
+- Bound session edit-plan repo map
+  ([`558f8e5`](https://github.com/oimiragieo/tensor-grep/commit/558f8e59d54c009b71f5f15728d01bc23e96a761))
+
+Apply the default agent repo-map budget to session edit-plan direct and daemon paths so warm
+  sessions do not score every cached file by default, while preserving the full persisted session
+  map.
+
+
 ## v1.12.64 (2026-05-23)
 
 ### Bug Fixes
