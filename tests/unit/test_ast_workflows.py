@@ -1,5 +1,6 @@
 import io
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -715,6 +716,10 @@ def test_run_command_returns_one_when_read_only_ast_has_no_matches(monkeypatch, 
     assert "Executing ast-grep structural matching run..." in captured.out
 
 
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("ast-grep", "ast-grep.exe", "sg")),
+    reason="requires ast-grep binary",
+)
 def test_run_command_matches_javascript_call_pattern(tmp_path, capsys):
     from tensor_grep.cli.ast_workflows import run_command
 
