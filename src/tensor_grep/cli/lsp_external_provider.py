@@ -275,6 +275,11 @@ class ExternalLSPClient:
         self._opened_documents: set[str] = set()
         self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._stderr_tail: list[str] = []
+        self._debug_trace_enabled = False
+        self._debug_trace_started_monotonic = time.monotonic()
+        self._debug_trace: list[dict[str, Any]] = []
         self.request_timeout_seconds = (
             _configured_timeout_seconds(
                 _LSP_REQUEST_TIMEOUT_ENV_VAR, _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS
@@ -296,6 +301,42 @@ class ExternalLSPClient:
         self.initialized = False
         self.lsp_provider_response = False
 
+    def enable_debug_trace(self) -> None:
+        self._debug_trace_enabled = True
+        self._debug_trace_started_monotonic = time.monotonic()
+        self._debug_trace = []
+
+    def debug_trace(self) -> list[dict[str, Any]]:
+        return list(self._debug_trace)
+
+    def stderr_tail(self) -> list[str]:
+        return list(self._stderr_tail)
+
+    def _record_debug_trace(
+        self,
+        *,
+        event: str,
+        method: str | None = None,
+        request_id: object | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        if not self._debug_trace_enabled:
+            return
+        entry: dict[str, Any] = {
+            "event": event,
+            "elapsed_ms": round(
+                (time.monotonic() - self._debug_trace_started_monotonic) * 1000.0,
+                3,
+            ),
+        }
+        if method is not None:
+            entry["method"] = method
+        if request_id is not None:
+            entry["id"] = request_id
+        if detail:
+            entry.update(detail)
+        self._debug_trace.append(entry)
+
     def start(self) -> None:
         if self.process is not None and self.process.poll() is None:
             return
@@ -314,9 +355,16 @@ class ExternalLSPClient:
             errors="replace",
             env=managed_provider_env(self.command, managed_root=_managed_provider_root()),
         )
+        self._record_debug_trace(
+            event="process_start",
+            detail={"command": list(self.command), "cwd": str(self.workspace_root)},
+        )
         self._message_queue = queue.Queue()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
+        self._stderr_tail = []
+        self._stderr_thread = threading.Thread(target=self._stderr_loop, daemon=True)
+        self._stderr_thread.start()
         try:
             result = self.request(
                 "initialize",
@@ -359,6 +407,7 @@ class ExternalLSPClient:
         if process is None:
             return
         reader_thread = self._reader_thread
+        stderr_thread = self._stderr_thread
         stop_timeout_seconds = min(
             max(float(self.request_timeout_seconds), 0.0),
             _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
@@ -398,6 +447,8 @@ class ExternalLSPClient:
                     pass
         if reader_thread is not None and reader_thread.is_alive():
             reader_thread.join(timeout=stop_timeout_seconds)
+        if stderr_thread is not None and stderr_thread.is_alive():
+            stderr_thread.join(timeout=stop_timeout_seconds)
         with self._lock:
             if self.process is process:
                 self.process = None
@@ -407,6 +458,8 @@ class ExternalLSPClient:
             self.lsp_provider_response = False
             if self._reader_thread is reader_thread:
                 self._reader_thread = None
+            if self._stderr_thread is stderr_thread:
+                self._stderr_thread = None
             self._message_queue = queue.Queue()
 
     def _request_shutdown_for_stop(self) -> None:
@@ -467,9 +520,20 @@ class ExternalLSPClient:
                 message = self._message_queue.get(timeout=remaining)
             except queue.Empty as exc:
                 self.last_error = f"timeout waiting for LSP response: {method}"
+                self._record_debug_trace(
+                    event="request_timeout",
+                    method=method,
+                    request_id=request_id,
+                    detail={"timeout_seconds": timeout_seconds},
+                )
                 raise LSPTransportError(self.last_error) from exc
             if message is None:
                 self.last_error = f"LSP process closed during request: {method}"
+                self._record_debug_trace(
+                    event="request_closed",
+                    method=method,
+                    request_id=request_id,
+                )
                 raise LSPTransportError(f"LSP process closed during request: {method}")
             if "id" not in message:
                 continue
@@ -477,8 +541,20 @@ class ExternalLSPClient:
                 continue
             if "error" in message:
                 self.last_error = str(message["error"])
+                self._record_debug_trace(
+                    event="receive_error",
+                    method=method,
+                    request_id=request_id,
+                    detail={"error": message["error"]},
+                )
                 raise LSPTransportError(self.last_error)
             self.last_error = None
+            self._record_debug_trace(
+                event="receive_response",
+                method=method,
+                request_id=request_id,
+                detail={"result_type": type(message.get("result")).__name__},
+            )
             return message.get("result")
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
@@ -533,6 +609,7 @@ class ExternalLSPClient:
             "lsp_provider_response": self.lsp_provider_response,
             "last_error": self.last_error,
             "opened_documents": len(self._opened_documents),
+            "stderr_tail": self.stderr_tail(),
             "request_timeout_seconds": self.request_timeout_seconds,
             "initialize_timeout_seconds": self.initialize_timeout_seconds,
             "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
@@ -544,6 +621,12 @@ class ExternalLSPClient:
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
         if params is not None:
             payload["params"] = params
+        self._record_debug_trace(
+            event="send_request",
+            method=method,
+            request_id=request_id,
+            detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
+        )
         _write_message(self.process.stdin, payload)
 
     def _write_notification(self, method: str, params: dict[str, Any] | None) -> None:
@@ -552,6 +635,11 @@ class ExternalLSPClient:
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
+        self._record_debug_trace(
+            event="send_notification",
+            method=method,
+            detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
+        )
         _write_message(
             self.process.stdin,
             payload,
@@ -561,6 +649,11 @@ class ExternalLSPClient:
         if self.process is None or self.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
         payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
+        self._record_debug_trace(
+            event="send_response",
+            request_id=request_id,
+            detail={"result_type": type(result).__name__},
+        )
         _write_message(self.process.stdin, payload)
 
     def _write_error_response(self, request_id: object, *, code: int, message: str) -> None:
@@ -571,6 +664,11 @@ class ExternalLSPClient:
             "id": request_id,
             "error": {"code": code, "message": message},
         }
+        self._record_debug_trace(
+            event="send_error_response",
+            request_id=request_id,
+            detail={"code": code, "message": message},
+        )
         _write_message(self.process.stdin, payload)
 
     def _configuration_response(self, params: object) -> list[Any]:
@@ -632,14 +730,41 @@ class ExternalLSPClient:
             while True:
                 message = _read_message(process.stdout)
                 if message is None:
+                    self._record_debug_trace(event="process_stdout_closed")
                     self._message_queue.put(None)
                     return
                 if self._handle_server_request(message):
                     continue
+                self._record_debug_trace(
+                    event="receive_message",
+                    method=str(message.get("method")) if "method" in message else None,
+                    request_id=message.get("id"),
+                    detail={
+                        "has_result": "result" in message,
+                        "has_error": "error" in message,
+                    },
+                )
                 self._message_queue.put(message)
         except Exception as exc:
             self.last_error = str(exc)
+            self._record_debug_trace(event="reader_error", detail={"message": str(exc)})
             self._message_queue.put(None)
+
+    def _stderr_loop(self) -> None:
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        try:
+            for line in process.stderr:
+                text = line.rstrip("\r\n")
+                if not text:
+                    continue
+                self._stderr_tail.append(text)
+                if len(self._stderr_tail) > 50:
+                    del self._stderr_tail[:-50]
+                self._record_debug_trace(event="stderr", detail={"message": text})
+        except Exception as exc:
+            self._record_debug_trace(event="stderr_error", detail={"message": str(exc)})
 
 
 class ExternalLSPProviderManager:
@@ -749,6 +874,52 @@ class ExternalLSPProviderManager:
             "initialize_timeout_seconds": initialize_timeout_seconds,
             "cooldown_remaining_s": 0.0,
         })
+
+    def provider_debug_trace(
+        self,
+        *,
+        language: str,
+        workspace_root: Path,
+        probe_timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        request_timeout_seconds = _configured_timeout_seconds(
+            _LSP_REQUEST_TIMEOUT_ENV_VAR,
+            _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS,
+        )
+        initialize_timeout_seconds = _configured_timeout_seconds(
+            _LSP_INITIALIZE_TIMEOUT_ENV_VAR,
+            _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
+        )
+        timeout = (
+            max(float(probe_timeout_seconds), 0.0)
+            if probe_timeout_seconds is not None
+            else request_timeout_seconds
+        )
+        client = ExternalLSPClient(
+            language=language,
+            workspace_root=workspace_root,
+            request_timeout_seconds=request_timeout_seconds,
+            initialize_timeout_seconds=initialize_timeout_seconds,
+        )
+        client.enable_debug_trace()
+        status = self._verified_provider_status(
+            client=client,
+            language=language,
+            workspace_root=workspace_root,
+            probe_timeout_seconds=timeout,
+            stop_after_probe=True,
+        )
+        return {
+            "schema_version": 1,
+            "language": canonical_language(language),
+            "workspace_root": str(workspace_root.resolve()),
+            "probe_timeout_seconds": timeout,
+            "initialize_timeout_seconds": initialize_timeout_seconds,
+            "request_timeout_seconds": request_timeout_seconds,
+            "status": status,
+            "trace": client.debug_trace(),
+            "stderr_tail": client.stderr_tail(),
+        }
 
     def _verified_provider_status(
         self,
