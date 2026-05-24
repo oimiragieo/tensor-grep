@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import time
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,73 @@ def test_provider_status_reports_cached_client_state(
         == provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS
     )
     assert provider_module._DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS == 15.0
+
+
+def test_external_lsp_client_drains_stderr_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    class _FakeProcess:
+        stderr = StringIO("starting provider\nindexed workspace\n")
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.process = _FakeProcess()  # type: ignore[assignment]
+    client.enable_debug_trace()
+
+    client._stderr_loop()
+
+    assert client.stderr_tail() == ["starting provider", "indexed workspace"]
+    assert [event["event"] for event in client.debug_trace()] == ["stderr", "stderr"]
+
+
+def test_provider_debug_trace_reports_probe_status_and_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        self._record_debug_trace(event="process_start", detail={"command": self.command})
+        self._record_debug_trace(event="send_request", method="initialize", request_id=1)
+        self._record_debug_trace(event="receive_response", method="initialize", request_id=1)
+        self.capabilities = {"documentSymbolProvider": True}
+
+    def _fake_ensure_document(self: ExternalLSPClient, **_kwargs: object) -> None:
+        self._record_debug_trace(event="send_notification", method="textDocument/didOpen")
+
+    def _fake_request(self: ExternalLSPClient, method: str, _params: dict[str, Any]) -> object:
+        self._record_debug_trace(event="send_request", method=method, request_id=2)
+        self._record_debug_trace(event="receive_response", method=method, request_id=2)
+        return [{"name": "tg_lsp_health_probe", "kind": 12}]
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", _fake_ensure_document)
+    monkeypatch.setattr(ExternalLSPClient, "request", _fake_request)
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    payload = ExternalLSPProviderManager().provider_debug_trace(
+        language="python",
+        workspace_root=tmp_path,
+        probe_timeout_seconds=0.5,
+    )
+
+    assert payload["schema_version"] == 1
+    assert payload["probe_timeout_seconds"] == 0.5
+    assert payload["status"]["health_status"] == "ready"
+    assert payload["status"]["lsp_proof"] is True
+    trace_methods = [event.get("method") for event in payload["trace"]]
+    assert "initialize" in trace_methods
+    assert "textDocument/documentSymbol" in trace_methods
 
 
 def test_provider_status_cached_initialized_client_is_not_lsp_proof_without_provider_response(

@@ -4267,7 +4267,7 @@ wheels = [
 
 [[package]]
 name = "tensor-grep"
-version = "1.13.4"
+version = "1.13.5"
 source = { editable = "." }
 dependencies = [
     { name = "importlib-metadata", version = "8.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
