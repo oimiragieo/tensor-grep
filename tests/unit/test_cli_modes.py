@@ -1114,14 +1114,14 @@ def test_doctor_lsp_probe_timeout_defaults_to_windows_budget(monkeypatch) -> Non
     monkeypatch.delenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setattr(cli_main.sys, "platform", "win32")
 
-    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(3.0)
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(15.0)
 
 
-def test_doctor_lsp_probe_timeout_keeps_short_posix_default(monkeypatch) -> None:
+def test_doctor_lsp_probe_timeout_defaults_to_provider_budget_on_posix(monkeypatch) -> None:
     monkeypatch.delenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setattr(cli_main.sys, "platform", "linux")
 
-    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(1.0)
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(15.0)
 
 
 def test_doctor_lsp_probe_timeout_allows_env_override(monkeypatch) -> None:
@@ -1135,7 +1135,7 @@ def test_doctor_lsp_probe_timeout_ignores_invalid_env(monkeypatch) -> None:
     monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "slow")
     monkeypatch.setattr(cli_main.sys, "platform", "win32")
 
-    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(3.0)
+    assert cli_main._doctor_lsp_probe_timeout_seconds() == pytest.approx(15.0)
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
