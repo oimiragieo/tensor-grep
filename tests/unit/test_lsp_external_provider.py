@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import time
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,25 @@ def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
     assert status["capabilities"] == {}
     assert status["lsp_provider_response"] is False
     assert status["last_error"]
+
+
+def test_lsp_message_framing_uses_binary_content_length() -> None:
+    stream = BytesIO()
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"probe": "tg_lsp_health_probe_é"},
+    }
+
+    provider_module._write_message(stream, payload)
+
+    raw = stream.getvalue()
+    assert b"\r\n\r\n" in raw
+    assert b"\r\r\n" not in raw
+
+    stream.seek(0)
+    assert provider_module._read_message(stream) == payload
 
 
 def test_provider_status_reports_cached_client_state(
@@ -258,7 +277,7 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
         probe_timeout_seconds=0.25,
     )
 
-    assert seen_timeouts == [(0.25, provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS)]
+    assert seen_timeouts == [(0.25, 0.25)]
     assert opened_documents
     assert requests == ["textDocument/documentSymbol"]
     assert status["available"] is True
@@ -270,7 +289,7 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
     assert "not_lsp_proof_reason" not in status
 
 
-def test_provider_status_verify_health_keeps_initialize_timeout_budget(
+def test_provider_status_verify_health_applies_probe_budget_to_initialize(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -301,7 +320,7 @@ def test_provider_status_verify_health_keeps_initialize_timeout_budget(
         probe_timeout_seconds=0.25,
     )
 
-    assert seen_timeouts == [(0.25, provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS)]
+    assert seen_timeouts == [(0.25, 0.25)]
     assert status["probe_timeout_seconds"] == 0.25
     assert (
         status["initialize_timeout_seconds"]
@@ -395,7 +414,7 @@ def test_provider_status_verify_health_bounds_cached_probe_timeout(
         probe_timeout_seconds=0.2,
     )
 
-    assert seen_timeouts == [(0.2, 15.0), (0.2, 15.0)]
+    assert seen_timeouts == [(0.2, 0.2), (0.2, 0.2)]
     assert status["lsp_proof"] is True
     assert status["probe_timeout_seconds"] == 0.2
     assert client.request_timeout_seconds == 3.0

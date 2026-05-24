@@ -60,10 +60,12 @@ def _read_message(stream: Any) -> dict[str, Any] | None:
     headers: dict[str, str] = {}
     while True:
         line = stream.readline()
-        if line == "":
+        if line in ("", b""):
             return None
-        if line in ("\r\n", "\n"):
+        if line in ("\r\n", "\n", b"\r\n", b"\n"):
             break
+        if isinstance(line, bytes):
+            line = line.decode("ascii", errors="replace")
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
@@ -74,6 +76,8 @@ def _read_message(stream: Any) -> dict[str, Any] | None:
     body = stream.read(content_length)
     if not body:
         return None
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
         return None
@@ -83,8 +87,11 @@ def _read_message(stream: Any) -> dict[str, Any] | None:
 def _write_message(stream: Any, payload: dict[str, Any]) -> None:
     body = json.dumps(payload, separators=(",", ":"))
     encoded = body.encode("utf-8")
-    stream.write(f"Content-Length: {len(encoded)}\r\n\r\n")
-    stream.write(body)
+    framed = f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii") + encoded
+    try:
+        stream.write(framed)
+    except TypeError:
+        stream.write(framed.decode("utf-8"))
     stream.flush()
 
 
@@ -269,7 +276,7 @@ class ExternalLSPClient:
         self.language = language
         self.workspace_root = workspace_root.resolve()
         self.command = _provider_command(language)
-        self.process: subprocess.Popen[str] | None = None
+        self.process: subprocess.Popen[Any] | None = None
         self._request_id = 0
         self._lock = threading.Lock()
         self._opened_documents: set[str] = set()
@@ -350,9 +357,6 @@ class ExternalLSPClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             env=managed_provider_env(self.command, managed_root=_managed_provider_root()),
         )
         self._record_debug_trace(
@@ -756,6 +760,8 @@ class ExternalLSPClient:
             return
         try:
             for line in process.stderr:
+                if isinstance(line, bytes):
+                    line = line.decode("utf-8", errors="replace")
                 text = line.rstrip("\r\n")
                 if not text:
                     continue
@@ -942,6 +948,7 @@ class ExternalLSPProviderManager:
         probe_succeeded = False
         probe_error: Exception | None = None
         client.request_timeout_seconds = timeout
+        client.initialize_timeout_seconds = timeout
         try:
             client.start()
             phase = "did_open"
