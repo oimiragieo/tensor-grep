@@ -830,6 +830,20 @@ def test_run_command_should_reject_stdin_files_with_matches(capsys):
     assert "--stdin cannot be combined with --files-with-matches" in capsys.readouterr().err
 
 
+def test_run_command_should_reject_files_with_matches_json(capsys):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    exit_code = run_command(
+        pattern="print($A)",
+        lang="python",
+        files_with_matches=True,
+        json_mode=True,
+    )
+
+    assert exit_code == 1
+    assert "--files-with-matches is a read-only text output mode" in capsys.readouterr().err
+
+
 def test_run_command_should_reject_ast_grep_semantic_options_for_rewrites(capsys):
     from tensor_grep.cli.ast_workflows import run_command
 

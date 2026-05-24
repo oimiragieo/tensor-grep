@@ -114,7 +114,7 @@ What `v1.12.11` closed:
 - Latest merged feature commit before this release line: `a518cc6 feat: add agent success harness`
 - main CI run `25946534528` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25946534395` and `25946912110` passed
 - GitHub release assets for `v1.12.11` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.12.11 tg --version` reports `tensor-grep 1.12.11`
-- AST CLI hygiene is explicitly scoped: safe ast-grep-compatible aliases route or execute (`run --pattern`, `run --update-all`, `scan --rule`, `scan --filter`, positional scan paths, and `new --config`) while unsupported semantic matcher flags fail with deliberate diagnostics instead of implying full ast-grep compatibility.
+- AST CLI hygiene is explicitly scoped: safe ast-grep-compatible aliases route or execute (`run --pattern`, read-only `run --selector` / `--strictness` / `--stdin` / `--globs`, `run --update-all`, `scan --rule`, `scan --filter`, positional scan paths, and `new --config`) while unsupported mutating or output-mode combinations fail with deliberate diagnostics instead of implying full ast-grep compatibility.
 - The release preserves post-release-safe docs governance, current tag labels, and conservative positioning: `tg run` remains a validated AST slice, not a blanket ast-grep replacement.
 
 What `v1.12.10` closed:
