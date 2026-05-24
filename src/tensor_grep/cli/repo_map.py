@@ -2778,6 +2778,16 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
     return imports, _dedupe_symbol_records(symbols)
 
 
+def _js_ts_symbol_name_node(node: Any) -> Any | None:
+    name_node = node.child_by_field_name("name")
+    if name_node is not None:
+        return name_node
+    for child in node.children:
+        if child.type in {"identifier", "property_identifier", "private_property_identifier"}:
+            return child
+    return None
+
+
 def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
     if path.suffix not in _JS_TS_SUFFIXES:
         return []
@@ -2801,16 +2811,22 @@ def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
     def _node_text(node: Any) -> str:
         return _tree_sitter_node_text(source_bytes, node)
 
+    kind_by_node_type = {
+        "function_declaration": "function",
+        "class_declaration": "class",
+        "method_definition": "method",
+    }
+
     def _walk(node: Any) -> None:
-        if node.type in {"function_declaration", "class_declaration"}:
-            name_node = node.child_by_field_name("name")
+        if node.type in kind_by_node_type:
+            name_node = _js_ts_symbol_name_node(node)
             if name_node is not None:
                 name = _node_text(name_node)
                 if _is_clean_symbol_name(name):
                     symbols.append(
                         _symbol_record(
                             name=name,
-                            kind="class" if node.type == "class_declaration" else "function",
+                            kind=kind_by_node_type[node.type],
                             file=path,
                             start_line=node.start_point[0] + 1,
                             end_line=node.end_point[0] + 1,
@@ -3773,16 +3789,22 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
     def _node_text(node: Any) -> str:
         return _tree_sitter_node_text(source_bytes, node)
 
+    kind_by_node_type = {
+        "function_declaration": "function",
+        "class_declaration": "class",
+        "method_definition": "method",
+    }
+
     def _walk(node: Any) -> None:
-        if node.type in {"function_declaration", "class_declaration"}:
-            name_node = node.child_by_field_name("name")
+        if node.type in kind_by_node_type:
+            name_node = _js_ts_symbol_name_node(node)
             if name_node is not None and _node_text(name_node) == symbol:
                 block = _node_text(node)
                 if block and not block.endswith("\n"):
                     block = f"{block}\n"
                 sources.append({
                     "name": symbol,
-                    "kind": "class" if node.type == "class_declaration" else "function",
+                    "kind": kind_by_node_type[node.type],
                     "file": str(path),
                     "start_line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,

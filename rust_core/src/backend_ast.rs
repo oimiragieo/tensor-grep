@@ -904,8 +904,14 @@ fn build_match<'tree>(
 }
 
 fn compile_ast_pattern(pattern: &str, language: SupportLang) -> Result<CompiledAstPattern> {
-    let compiled_pattern = Pattern::try_new(pattern, language)
-        .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
+    let compiled_pattern = match Pattern::try_new(pattern, language) {
+        Ok(compiled_pattern) if !compiled_pattern.has_error() => compiled_pattern,
+        Ok(compiled_pattern) => {
+            build_js_ts_method_contextual_pattern(pattern, language).unwrap_or(compiled_pattern)
+        }
+        Err(err) => build_js_ts_method_contextual_pattern(pattern, language)
+            .ok_or_else(|| anyhow::anyhow!("Invalid pattern: {err}"))?,
+    };
     let fallback = build_rust_function_signature_fallback(pattern, language);
     if compiled_pattern.has_error() && fallback.is_none() {
         anyhow::bail!("Invalid pattern: parse error");
@@ -914,6 +920,29 @@ fn compile_ast_pattern(pattern: &str, language: SupportLang) -> Result<CompiledA
         pattern: compiled_pattern,
         rust_function_signature_fallback: fallback,
     })
+}
+
+fn build_js_ts_method_contextual_pattern(pattern: &str, language: SupportLang) -> Option<Pattern> {
+    if !matches!(language, SupportLang::JavaScript | SupportLang::TypeScript) {
+        return None;
+    }
+
+    let trimmed = pattern.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("class ")
+        || trimmed.starts_with("function ")
+        || !trimmed.contains('(')
+        || !trimmed.contains('{')
+        || !trimmed.contains('}')
+    {
+        return None;
+    }
+
+    let contextual_source = format!("class __TgContext {{\n  {trimmed}\n}}");
+    match Pattern::contextual(&contextual_source, "method_definition", language) {
+        Ok(contextual_pattern) if !contextual_pattern.has_error() => Some(contextual_pattern),
+        _ => None,
+    }
 }
 
 fn build_rust_function_signature_fallback(
