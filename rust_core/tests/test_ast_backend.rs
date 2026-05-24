@@ -208,6 +208,73 @@ fn test_tg_run_matches_javascript_call_pattern_from_default_path() {
 }
 
 #[test]
+fn test_tg_run_matches_javascript_class_method_pattern_without_class_wrapper() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("utils.js");
+    fs::write(
+        &file_path,
+        "class Calculator {\n  static multiply(a, b) {\n    return a * b;\n  }\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("javascript")
+        .arg("--json")
+        .arg("static multiply($$$ARGS) { $$$BODY }")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["total_matches"], 1);
+    assert_eq!(payload["matches"][0]["line"], 2);
+    assert!(payload["matches"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("static multiply"));
+}
+
+#[test]
+fn test_tg_run_rejects_malformed_javascript_method_pattern_after_contextual_fallback() {
+    let (_dir, file_path) = write_source_file(
+        "js",
+        "class Calculator {\n  static multiply(a, b) {\n    return a * b;\n  }\n}\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("javascript")
+        .arg("static multiply($$$ARGS) {")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(
+        stderr.contains("invalid pattern") || stderr.contains("parse"),
+        "stderr={stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "stderr={stderr}");
+}
+
+#[test]
 fn test_tg_run_no_match_exits_one_and_warns_for_cmd_single_quote_pattern() {
     let (_dir, file_path) = write_source_file("js", "const total = calculateTotal(items);\n");
 

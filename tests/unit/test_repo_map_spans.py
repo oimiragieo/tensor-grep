@@ -282,6 +282,52 @@ def test_build_repo_map_includes_javascript_class_spans(tmp_path: Path) -> None:
     assert symbol["end_line"] == 5
 
 
+def test_build_repo_map_includes_javascript_class_method_spans(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "utils.js"
+    module_path.write_text(
+        "export class Calculator {\n  static multiply(a, b) {\n    return a * b;\n  }\n}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_repo_map(project)
+    symbol = _symbol(payload, "multiply", module_path)
+
+    assert symbol["kind"] == "method"
+    assert symbol["start_line"] == 2
+    assert symbol["end_line"] == 4
+
+    source_payload = repo_map.build_symbol_source("multiply", project)
+    source = _source(source_payload, "multiply", module_path)
+    assert source["kind"] == "method"
+    assert source["source"] == "static multiply(a, b) {\n    return a * b;\n  }\n"
+
+
+def test_context_edit_plan_maps_javascript_method_query_to_primary_span(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "utils.js"
+    module_path.write_text(
+        "export class Calculator {\n  static multiply(a, b) {\n    return a * b;\n  }\n}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_edit_plan(
+        "throw error in multiply if b is 0",
+        project,
+    )
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "multiply"
+    assert payload["edit_plan_seed"]["primary_symbol"]["kind"] == "method"
+    assert payload["edit_plan_seed"]["primary_span"] == {"start_line": 2, "end_line": 4}
+
+
 def test_build_repo_map_includes_typescript_function_spans(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
