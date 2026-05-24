@@ -261,16 +261,76 @@ def _write_cached_checkpoint_index_paths(
     cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _invalidate_discovery_caches_for_root(root: Path) -> None:
-    candidates = [root, *root.parents[: _DISCOVERY_MAX_DEPTH + 1]]
-    for candidate in candidates:
-        cache_path = _discovery_cache_path(candidate)
+def _valid_cached_checkpoint_index_paths_from_entry(entry: Any) -> set[Path]:
+    if not isinstance(entry, dict):
+        return set()
+    fingerprints = entry.get("index_paths")
+    if not isinstance(fingerprints, list):
+        return set()
+
+    index_paths: set[Path] = set()
+    for fingerprint in fingerprints:
+        if not isinstance(fingerprint, dict):
+            continue
+        raw_path = fingerprint.get("path")
+        if not isinstance(raw_path, str):
+            continue
+        index_path = Path(raw_path)
+        if _fingerprint_index_path(index_path) is not None:
+            index_paths.add(index_path)
+    return index_paths
+
+
+def _bounded_discovery_cache_roots_for_checkpoint(root: Path) -> list[Path]:
+    cache_roots = [root]
+    for candidate in root.parents:
+        if candidate.parent == candidate:
+            break
         try:
-            cache_path.unlink()
-        except FileNotFoundError:
+            distance = len(root.relative_to(candidate).parts)
+        except ValueError:
             continue
-        except OSError:
-            continue
+        if distance > _DISCOVERY_MAX_DEPTH:
+            break
+        cache_roots.append(candidate)
+    return cache_roots
+
+
+def _prime_bounded_discovery_caches_for_root(root: Path) -> None:
+    index_path = _index_path(root)
+    if not index_path.exists():
+        return
+    key = _discovery_cache_key(full=False, max_depth=_DISCOVERY_MAX_DEPTH)
+    for search_root in _bounded_discovery_cache_roots_for_checkpoint(root):
+        cache_path = _discovery_cache_path(search_root)
+        payload: dict[str, Any] = {"version": _DISCOVERY_CACHE_VERSION, "entries": {}}
+        try:
+            existing = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict) and existing.get("version") == _DISCOVERY_CACHE_VERSION:
+                payload = existing
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            pass
+
+        entries = payload.get("entries")
+        if not isinstance(entries, dict):
+            entries = {}
+            payload["entries"] = entries
+
+        index_paths = _valid_cached_checkpoint_index_paths_from_entry(entries.get(key))
+        index_paths.add(index_path)
+        entries[key] = {
+            "created_at_epoch_s": time.time(),
+            "index_paths": [
+                fingerprint
+                for cached_index_path in sorted(index_paths)
+                if (fingerprint := _fingerprint_index_path(cached_index_path)) is not None
+            ],
+        }
+        for entry_key in list(entries):
+            if isinstance(entry_key, str) and entry_key.startswith("full:"):
+                del entries[entry_key]
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _load_index(root: Path) -> list[CheckpointRecord]:
@@ -426,7 +486,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         ),
     )
     _write_index(root, records)
-    _invalidate_discovery_caches_for_root(root)
+    _prime_bounded_discovery_caches_for_root(root)
     return result
 
 
@@ -583,6 +643,19 @@ def discover_nearby_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeRe
     return _scopes_from_index_paths(_nearby_checkpoint_index_paths(search_root))
 
 
+def discover_cached_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
+    resolved = Path(path).expanduser().resolve()
+    search_root = resolved if resolved.is_dir() else resolved.parent
+    index_paths = _read_cached_checkpoint_index_paths(
+        search_root,
+        full=False,
+        max_depth=_DISCOVERY_MAX_DEPTH,
+    )
+    if index_paths is None:
+        return []
+    return _scopes_from_index_paths(index_paths)
+
+
 def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
     scope = describe_checkpoint_scope(path)
     if scope.checkpoints:
@@ -595,9 +668,21 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
 
     discovered = [
         child_scope
-        for child_scope in discover_nearby_checkpoint_scopes(path)
+        for child_scope in [
+            *discover_nearby_checkpoint_scopes(path),
+            *discover_cached_checkpoint_scopes(path),
+        ]
         if child_scope.checkpoints
     ]
+    deduped: list[CheckpointScopeResult] = []
+    seen_roots: set[str] = set()
+    for child_scope in discovered:
+        key = child_scope.root.lower() if os.name == "nt" else child_scope.root
+        if key in seen_roots:
+            continue
+        seen_roots.add(key)
+        deduped.append(child_scope)
+    discovered = deduped
     if not discovered:
         resolved = Path(path).expanduser().resolve()
         raise FileNotFoundError(f"No checkpoints found under {resolved}.")
@@ -684,7 +769,6 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
             if not any(directory.iterdir()):
                 directory.rmdir()
 
-    _invalidate_discovery_caches_for_root(root)
     return CheckpointUndoResult(
         checkpoint_id=checkpoint_id,
         mode=mode,
