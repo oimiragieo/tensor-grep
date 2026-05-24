@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.8 (2026-05-24)
+
+### Bug Fixes
+
+- Repair lsp stdio health probes ([#216](https://github.com/oimiragieo/tensor-grep/pull/216),
+  [`d211e5a`](https://github.com/oimiragieo/tensor-grep/commit/d211e5a6906cdecd733815b1acb1222812452ad6))
+
+
 ## v1.13.7 (2026-05-24)
 
 ### Bug Fixes
