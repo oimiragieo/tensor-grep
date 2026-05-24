@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,7 @@ async def _stdio_protocol_roundtrip() -> None:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "tensor-grep"
+            assert initialized.serverInfo.version == version("tensor-grep")
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
@@ -60,3 +62,63 @@ async def _stdio_protocol_roundtrip() -> None:
 
 def test_tg_mcp_stdio_initialize_tools_list_and_call_roundtrip() -> None:
     asyncio.run(_stdio_protocol_roundtrip())
+
+
+async def _read_jsonrpc_line(process: asyncio.subprocess.Process) -> dict[str, object]:
+    assert process.stdout is not None
+    raw = await asyncio.wait_for(process.stdout.readline(), timeout=10.0)
+    assert raw, "MCP server did not emit a JSON-RPC response"
+    return json.loads(raw.decode("utf-8"))
+
+
+async def _stdio_content_length_initialize_roundtrip() -> None:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "tensor_grep",
+        "mcp",
+        cwd=REPO_ROOT,
+        env=_mcp_env(),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    try:
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "raw-framed-test", "version": "1.0.0"},
+            },
+        }
+        body = json.dumps(initialize, separators=(",", ":"))
+        frame = f"Content-Length: {len(body.encode('utf-8'))}\r\n\r\n{body}"
+        process.stdin.write(frame.encode("utf-8"))
+        await process.stdin.drain()
+
+        response = await _read_jsonrpc_line(process)
+
+        assert response["id"] == 1
+        result = response["result"]
+        assert isinstance(result, dict)
+        server_info = result["serverInfo"]
+        assert isinstance(server_info, dict)
+        assert server_info["name"] == "tensor-grep"
+        assert server_info["version"] == version("tensor-grep")
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+            await process.stdin.wait_closed()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except TimeoutError:
+            process.terminate()
+            await process.wait()
+
+
+def test_tg_mcp_stdio_accepts_content_length_initialize_frame() -> None:
+    asyncio.run(_stdio_content_length_initialize_roundtrip())

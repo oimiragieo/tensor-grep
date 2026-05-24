@@ -2,11 +2,20 @@ import json
 import os
 import re
 import subprocess
+import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 
+import anyio
+from mcp import types
 from mcp.server.fastmcp import FastMCP
+from mcp.shared.message import SessionMessage
 
 from tensor_grep.cli.main import _build_rulesets_payload, _run_ast_scan_payload
 from tensor_grep.cli.repo_map import (
@@ -29,8 +38,21 @@ from tensor_grep.core.pipeline import Pipeline
 from tensor_grep.core.result import SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
+
+def _mcp_server_version() -> str:
+    try:
+        return package_version("tensor-grep")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+def _apply_mcp_server_metadata(server: FastMCP) -> None:
+    server._mcp_server.version = _mcp_server_version()
+
+
 # Initialize the FastMCP server
 mcp = FastMCP("tensor-grep")
+_apply_mcp_server_metadata(mcp)
 
 _REWRITE_ROUTING_BACKEND = "AstBackend"
 _REWRITE_ROUTING_REASON = "ast-native"
@@ -2745,6 +2767,88 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     return _execute_rewrite_diff_command(command)
 
 
+async def _read_stdio_message_payload(stdin: anyio.AsyncFile[str]) -> str | None:
+    line = await stdin.readline()
+    if line == "":
+        return None
+    if not line.strip():
+        return ""
+    if not line.lower().startswith("content-length:"):
+        return line
+
+    try:
+        content_length = int(line.split(":", 1)[1].strip())
+    except (IndexError, ValueError):
+        return line
+    while True:
+        header = await stdin.readline()
+        if header == "":
+            return None
+        if not header.strip():
+            break
+    return await stdin.read(content_length)
+
+
+@asynccontextmanager
+async def _stdio_server_accepting_content_length(
+    stdin: anyio.AsyncFile[str] | None = None,
+    stdout: anyio.AsyncFile[str] | None = None,
+) -> AsyncIterator[tuple[Any, Any]]:
+    if not stdin:
+        stdin = anyio.wrap_file(TextIOWrapper(sys.stdin.buffer, encoding="utf-8"))
+    if not stdout:
+        stdout = anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
+
+    read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
+    write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
+
+    async def stdin_reader() -> None:
+        try:
+            async with read_stream_writer:
+                while True:
+                    payload = await _read_stdio_message_payload(stdin)
+                    if payload is None:
+                        break
+                    if not payload.strip():
+                        continue
+                    try:
+                        message = types.JSONRPCMessage.model_validate_json(payload)
+                    except Exception as exc:  # pragma: no cover
+                        await read_stream_writer.send(exc)
+                        continue
+                    await read_stream_writer.send(SessionMessage(message))
+        except anyio.ClosedResourceError:  # pragma: no cover
+            await anyio.lowlevel.checkpoint()
+
+    async def stdout_writer() -> None:
+        try:
+            async with write_stream_reader:
+                async for session_message in write_stream_reader:
+                    payload = session_message.message.model_dump_json(
+                        by_alias=True,
+                        exclude_none=True,
+                    )
+                    await stdout.write(payload + "\n")
+                    await stdout.flush()
+        except anyio.ClosedResourceError:  # pragma: no cover
+            await anyio.lowlevel.checkpoint()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(stdin_reader)
+        task_group.start_soon(stdout_writer)
+        yield read_stream, write_stream
+
+
+async def _run_mcp_stdio_async() -> None:
+    _apply_mcp_server_metadata(mcp)
+    async with _stdio_server_accepting_content_length() as (read_stream, write_stream):
+        await mcp._mcp_server.run(
+            read_stream,
+            write_stream,
+            mcp._mcp_server.create_initialization_options(),
+        )
+
+
 def run_mcp_server() -> None:
     """Entry point for the MCP server."""
-    mcp.run()
+    anyio.run(_run_mcp_stdio_async)
