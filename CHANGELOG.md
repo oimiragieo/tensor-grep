@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.13.11 (2026-05-24)
+
+### Bug Fixes
+
+- Align mcp server version and framing ([#220](https://github.com/oimiragieo/tensor-grep/pull/220),
+  [`6c8d9cc`](https://github.com/oimiragieo/tensor-grep/commit/6c8d9cc4c244cc5c6f6dc078771c7f6b77f385cc))
+
+- Prime checkpoint discovery caches ([#219](https://github.com/oimiragieo/tensor-grep/pull/219),
+  [`c56d718`](https://github.com/oimiragieo/tensor-grep/commit/c56d718a1a8da4df04e5d52bf547bfb9922d59d5))
+
+
 ## v1.13.10 (2026-05-24)
 
 ### Bug Fixes
