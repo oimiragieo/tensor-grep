@@ -117,7 +117,7 @@ def _agent_payload(project: Path, query: str, *, max_files: int | None = None) -
         args.extend(["--max-files", str(max_files)])
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
-    return json.loads(result.output)
+    return json.loads(result.stdout)
 
 
 def _referenced_files(payload: dict[str, object]) -> list[str]:

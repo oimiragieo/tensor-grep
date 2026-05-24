@@ -47,8 +47,14 @@ def _mcp_server_version() -> str:
         return "0+unknown"
 
 
+# Stable contract version for the tg MCP server surface.
+# Bump only on intentional breaking changes to the MCP tool/resource shape.
+# CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.0.0"
+
+
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
-    server._mcp_server.version = _mcp_server_version()
+    server._mcp_server.version = _TG_MCP_SERVER_CONTRACT_VERSION
 
 
 # Initialize the FastMCP server

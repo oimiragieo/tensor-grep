@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -9,6 +10,10 @@ from typing import Any
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 from tensor_grep.core.retrieval_lexical import split_terms
+
+_CAPSULE_LSP_CONFIDENCE_BOOST_ENV = "TG_CAPSULE_LSP_CONFIDENCE_BOOST"
+_CAPSULE_LSP_CONFIDENCE_CAP = 0.85
+_CAPSULE_LSP_CONFIDENCE_LANGUAGES = {"javascript", "php", "python", "rust", "typescript"}
 
 
 def _as_dict(value: object) -> dict[str, Any]:
@@ -38,6 +43,24 @@ def _numeric_confidence(value: object, fallback: float = 0.9) -> float:
 
 def _cap_primary_target_confidence(target: dict[str, Any], cap: float) -> None:
     target["confidence"] = round(min(_numeric_confidence(target.get("confidence")), cap), 3)
+
+
+def _capsule_lsp_confidence_boost_enabled() -> bool:
+    raw = os.environ.get(_CAPSULE_LSP_CONFIDENCE_BOOST_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _target_has_lsp_confidence_proof(target: dict[str, Any]) -> bool:
+    return target.get("lsp_proof") is True and target.get("lsp_provider_response") is True
+
+
+def _target_lsp_boost_language(target: dict[str, Any]) -> str | None:
+    file_path = str(target.get("file") or "")
+    return repo_map._target_language_for_path(file_path) or repo_map._provider_language_for_path(
+        file_path,
+    )
 
 
 def _cap_alternative_target_confidences(
@@ -407,7 +430,7 @@ def _alternative_targets(
         match = file_matches.get(file_path, {})
         score = max(int(symbol.get("score", 0) or 0), int(match.get("score", 0) or 0))
         line = symbol.get("line") or symbol.get("start_line") or 1
-        alternatives.append({
+        alternative: dict[str, Any] = {
             "file": file_path,
             "symbol": symbol_name or None,
             "kind": symbol.get("kind") or "unknown",
@@ -416,7 +439,25 @@ def _alternative_targets(
             "confidence": repo_map._confidence_from_score(score),
             "reasons": list(match.get("reasons") or []),
             "evidence": list(match.get("provenance") or ["heuristic"]),
-        })
+        }
+        for proof_field in (
+            "semantic_provider",
+            "provenance",
+            "lsp_provider_response",
+            "lsp_proof",
+            "lsp_operation",
+            "lsp_resolution_basis",
+        ):
+            if proof_field in symbol:
+                alternative[proof_field] = symbol[proof_field]
+        if alternative.get("lsp_proof") is True:
+            evidence_value = alternative.get("evidence")
+            evidence_items = evidence_value if isinstance(evidence_value, list) else []
+            alternative["evidence"] = _dedupe([
+                "lsp-confirmed",
+                *[str(item) for item in evidence_items if item is not None and str(item)],
+            ])
+        alternatives.append(alternative)
 
     for file_path in _as_list_of_strings(candidate_targets.get("files")):
         if file_path == primary_file:
@@ -1127,6 +1168,12 @@ def build_agent_capsule(
     gpu_timeout_s: float = 5.0,
 ) -> dict[str, Any]:
     resolved_path = str(Path(path).resolve())
+    requested_semantic_provider = semantic_provider
+    effective_semantic_provider = (
+        "hybrid"
+        if semantic_provider == "native" and _capsule_lsp_confidence_boost_enabled()
+        else semantic_provider
+    )
     payload = repo_map.build_context_render(
         query,
         path,
@@ -1137,7 +1184,7 @@ def build_agent_capsule(
         model=model,
         optimize_context=True,
         render_profile="full",
-        semantic_provider=semantic_provider,
+        semantic_provider=effective_semantic_provider,
     )
     target = _primary_target(payload)
     alternatives = _alternative_targets(payload, target)
@@ -1187,6 +1234,7 @@ def build_agent_capsule(
     consistency["primary_target_language"] = trust["primary_target_language"]
     consistency["validation_alignment"] = validation_alignment
     consistency["validation_filtered_count"] = trust["validation_filtered_count"]
+    consistency["confidence_cap"] = trust["confidence_cap"]
     if trust["downgrade_reasons"]:
         consistency["confidence_downgraded"] = True
         consistency["downgrade_reasons"] = _dedupe([
@@ -1197,6 +1245,26 @@ def build_agent_capsule(
     downgrade_reasons: list[str] = list(trust["downgrade_reasons"])
     confidence = _confidence(payload, snippets, downgrade_reasons, consistency)
     confidence_cap = float(trust["confidence_cap"])
+    lsp_confidence_boost_enabled = _capsule_lsp_confidence_boost_enabled()
+    primary_target_lsp_proof = _target_has_lsp_confidence_proof(target)
+    lsp_boost_language = _target_lsp_boost_language(target)
+    lsp_confidence_boost_eligible = (
+        lsp_confidence_boost_enabled
+        and primary_target_lsp_proof
+        and lsp_boost_language in _CAPSULE_LSP_CONFIDENCE_LANGUAGES
+    )
+    consistency["lsp_confidence_boost_enabled"] = lsp_confidence_boost_enabled
+    consistency["lsp_confidence_boost_eligible"] = lsp_confidence_boost_eligible
+    consistency["lsp_confidence_boost_language"] = lsp_boost_language
+    if primary_target_lsp_proof:
+        consistency["primary_target_lsp_proof"] = True
+    if lsp_confidence_boost_eligible:
+        consistency["lsp_confidence_cap"] = _CAPSULE_LSP_CONFIDENCE_CAP
+        confidence["overall"] = round(
+            min(float(confidence["overall"]), _CAPSULE_LSP_CONFIDENCE_CAP),
+            3,
+        )
+        _cap_primary_target_confidence(target, _CAPSULE_LSP_CONFIDENCE_CAP)
     if confidence_cap < 1.0:
         confidence["overall"] = round(min(float(confidence["overall"]), confidence_cap), 3)
         _cap_primary_target_confidence(target, confidence_cap)
@@ -1222,14 +1290,27 @@ def build_agent_capsule(
             or (validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0)
         )
     )
+    tie_resolved_by_lsp = (
+        bool(tied_alternatives)
+        and not marker_helper_tie
+        and lsp_confidence_boost_eligible
+        and not any(
+            _target_has_lsp_confidence_proof(alternative) for alternative in tied_alternatives
+        )
+    )
     if marker_helper_tie:
         consistency["confidence_downgraded"] = True
         consistency["downgrade_reasons"] = _dedupe([
             *list(consistency.get("downgrade_reasons") or []),
             "primary target is an unrequested marker helper with equal-confidence alternatives",
         ])
-    if tied_alternatives and tie_resolved_by_validation:
-        consistency["alternative_confidence_tie_resolved_by"] = "validation"
+    tie_resolved_by: str | None = None
+    if tied_alternatives and tie_resolved_by_lsp:
+        tie_resolved_by = "lsp"
+    elif tied_alternatives and tie_resolved_by_validation:
+        tie_resolved_by = "validation"
+    if tied_alternatives and tie_resolved_by is not None:
+        consistency["alternative_confidence_tie_resolved_by"] = tie_resolved_by
         tied_alternatives = []
     if tied_alternatives:
         confidence["overall"] = round(min(float(confidence["overall"]), 0.74), 3)
@@ -1264,10 +1345,10 @@ def build_agent_capsule(
             "tie_count": len(tied_alternatives),
             "tied_alternative_targets": tied_alternatives,
         }
-    elif tie_candidates and tie_resolved_by_validation:
+    elif tie_candidates and tie_resolved_by is not None:
         ambiguity = {
             "status": "tie_resolved",
-            "resolved_by": "validation",
+            "resolved_by": tie_resolved_by,
             "requires_confirmation": False,
             "tie_count": len(tie_candidates),
             "tied_alternative_targets": tie_candidates,
@@ -1299,7 +1380,11 @@ def build_agent_capsule(
         max_tokens=max_tokens,
         max_repo_files=max_repo_files,
         model=model,
-        semantic_provider=str(payload.get("semantic_provider") or semantic_provider),
+        semantic_provider=str(
+            payload.get("semantic_provider")
+            or effective_semantic_provider
+            or requested_semantic_provider
+        ),
     )
     related_call_sites, call_site_evidence = _collect_capsule_call_site_evidence(
         query,
@@ -1364,7 +1449,11 @@ def build_agent_capsule(
         "capsule_kind": "actionable_context",
         "query": query,
         "path": resolved_path,
-        "semantic_provider": str(payload.get("semantic_provider") or semantic_provider),
+        "semantic_provider": str(
+            payload.get("semantic_provider")
+            or effective_semantic_provider
+            or requested_semantic_provider
+        ),
         "ambiguity": ambiguity,
         "primary_target": target,
         "alternative_targets": alternatives,

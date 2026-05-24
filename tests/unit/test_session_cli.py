@@ -215,6 +215,7 @@ def test_session_commands_accept_positional_query_and_symbol_aliases(tmp_path: P
             ],
         )
         assert result.exit_code == 0, result.output
+        assert result.stderr == ""
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
         assert payload["query"] == "create invoice"
@@ -240,10 +241,74 @@ def test_session_commands_accept_positional_query_and_symbol_aliases(tmp_path: P
             ],
         )
         assert result.exit_code == 0, result.output
+        assert result.stderr == ""
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
         assert payload["symbol"] == "create_invoice"
         assert _has_string(payload, expected_service_file)
+
+
+def test_session_commands_warn_for_legacy_query_and_symbol_options(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_service.py").write_text(
+        "from src.service import build_invoice\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    expected_module_file = str(module_path.resolve())
+    expected_service_file = str(service_path.resolve())
+
+    for command in ("context", "context-render", "edit-plan"):
+        result = runner.invoke(
+            app,
+            [
+                "session",
+                command,
+                opened["session_id"],
+                str(project),
+                "--query",
+                "create invoice",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert f"Warning: --query is deprecated for tg session {command}" in result.stderr
+        assert expected_module_file in result.stdout.replace("\\\\", "\\")
+
+    for command in ("blast-radius", "blast-radius-render", "blast-radius-plan"):
+        result = runner.invoke(
+            app,
+            [
+                "session",
+                command,
+                opened["session_id"],
+                str(project),
+                "--symbol",
+                "create_invoice",
+                "--max-depth",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert f"Warning: --symbol is deprecated for tg session {command}" in result.stderr
+        assert expected_service_file in result.stdout.replace("\\\\", "\\")
 
 
 def test_session_edit_plan_rejects_positional_and_flag_query(tmp_path: Path) -> None:

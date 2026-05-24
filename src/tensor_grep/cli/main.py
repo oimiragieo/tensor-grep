@@ -1958,6 +1958,10 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
             extensions = [".com", ".exe", ".bat", ".cmd"]
         names = [f"tg{ext}" for ext in extensions]
         names.append("tg")
+        # PowerShell can resolve script commands even when .PS1 is not in PATHEXT.
+        # Include it as a non-primary candidate so doctor can flag MCP/stdio traps.
+        if ".ps1" not in extensions:
+            names.append("tg.ps1")
     else:
         names = ["tg"]
 
@@ -2054,6 +2058,7 @@ def _doctor_mcp_stdio_launcher_warning(
     *,
     native_tg_binary: Path | None,
     launchers: list[tuple[str, str | None, str | None]],
+    path_tg_candidates: list[dict[str, str | None]] | None = None,
 ) -> str | None:
     native_stdio_path = native_tg_binary
     if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
@@ -2075,6 +2080,16 @@ def _doctor_mcp_stdio_launcher_warning(
         for label, kind, path in launchers
         if path and (kind == "powershell-shim" or Path(path).suffix.lower() == ".ps1")
     ]
+    # Also flag .ps1 anywhere in PATH candidates: PowerShell's `Get-Command tg`
+    # resolves .ps1 ahead of .exe regardless of enumeration order, so a .ps1
+    # sibling next to a working .exe still traps MCP clients using Start-Process.
+    if path_tg_candidates:
+        seen_paths = {path for _, path in powershell_launchers if path}
+        for candidate in path_tg_candidates:
+            cpath = candidate.get("path")
+            if cpath and cpath not in seen_paths and Path(cpath).suffix.lower() == ".ps1":
+                powershell_launchers.append(("PATH .ps1 sibling", cpath))
+                seen_paths.add(cpath)
     if not powershell_launchers:
         return None
 
@@ -2563,6 +2578,7 @@ def _build_doctor_payload(
         "mcp_stdio_launcher_warning": _doctor_mcp_stdio_launcher_warning(
             native_tg_binary=native_tg_binary,
             launchers=mcp_stdio_launchers,
+            path_tg_candidates=path_tg_candidates,
         ),
         "shell_escaping_guidance": _doctor_shell_escaping_guidance(),
         "gpu": gpu_status,
@@ -5891,6 +5907,7 @@ def context(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="context",
         )
         if json_output:
             typer.echo(
@@ -5980,6 +5997,7 @@ def context_render(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="context-render",
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
@@ -6079,6 +6097,7 @@ def agent(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="agent",
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
         if json_output:
@@ -6177,6 +6196,7 @@ def edit_plan(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="edit-plan",
         )
         if json_output:
             typer.echo(
@@ -6264,10 +6284,18 @@ def _resolve_path_and_symbol(
     path: str,
     symbol_arg: str | None,
     symbol_option: str | None,
+    command_name: str,
 ) -> tuple[str, str]:
     if symbol_arg is not None and symbol_option is not None:
         raise ValueError("Use either positional SYMBOL or --symbol, not both.")
     if symbol_option is not None:
+        typer.echo(
+            "Warning: --symbol is deprecated for "
+            f"tg {command_name}; use a positional SYMBOL form instead. "
+            "The --symbol form remains accepted during the 1.13.x deprecation cycle "
+            "and will not be removed before 1.14.0.",
+            err=True,
+        )
         return path, symbol_option
     if symbol_arg is not None:
         return path, symbol_arg
@@ -6281,10 +6309,18 @@ def _resolve_path_and_query(
     path: str,
     query_arg: str | None,
     query_option: str | None,
+    command_name: str,
 ) -> tuple[str, str]:
     if query_arg is not None and query_option is not None:
         raise ValueError("Use either positional QUERY or --query, not both.")
     if query_option is not None:
+        typer.echo(
+            "Warning: --query is deprecated for "
+            f"tg {command_name}; use a positional QUERY form instead. "
+            "The --query form remains accepted during the 1.13.x deprecation cycle "
+            "and will not be removed before 1.14.0.",
+            err=True,
+        )
         return path, query_option
     if query_arg is not None:
         return path, query_arg
@@ -6317,6 +6353,7 @@ def defs(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="defs",
         )
         if json_output:
             typer.echo(
@@ -6368,6 +6405,7 @@ def source(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="source",
         )
         if json_output:
             typer.echo(
@@ -6418,6 +6456,7 @@ def impact(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="impact",
         )
         if json_output:
             typer.echo(
@@ -6469,6 +6508,7 @@ def refs(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="refs",
         )
         if json_output:
             typer.echo(
@@ -6520,6 +6560,7 @@ def callers(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="callers",
         )
         if json_output:
             typer.echo(
@@ -6592,6 +6633,7 @@ def blast_radius(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="blast-radius",
         )
         if json_output:
             typer.echo(
@@ -6685,6 +6727,7 @@ def blast_radius_render(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="blast-radius-render",
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
@@ -6767,6 +6810,7 @@ def blast_radius_plan(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="blast-radius-plan",
         )
         if json_output:
             typer.echo(
@@ -7033,6 +7077,7 @@ def session_context_cmd(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="session context",
         )
         if daemon:
             payload = request_session_daemon(
@@ -7130,6 +7175,7 @@ def session_context_render_cmd(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="session context-render",
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
@@ -7240,6 +7286,7 @@ def session_edit_plan_cmd(
             path=path,
             query_arg=query_arg,
             query_option=query,
+            command_name="session edit-plan",
         )
         if daemon:
             payload = request_session_daemon(
@@ -7317,6 +7364,7 @@ def session_blast_radius_cmd(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="session blast-radius",
         )
         if daemon:
             payload = request_session_daemon(
@@ -7404,6 +7452,7 @@ def session_blast_radius_render_cmd(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="session blast-radius-render",
         )
         if daemon:
             payload = request_session_daemon(
@@ -7487,6 +7536,7 @@ def session_blast_radius_plan_cmd(
             path=path,
             symbol_arg=symbol_arg,
             symbol_option=symbol,
+            command_name="session blast-radius-plan",
         )
         if daemon:
             payload = request_session_daemon(
@@ -7604,7 +7654,7 @@ def checkpoint_list(
     """List available checkpoints."""
     from tensor_grep.cli.checkpoint_store import (
         describe_checkpoint_scope,
-        discover_checkpoint_scopes,
+        discover_checkpoint_scopes_result,
         discover_nearby_checkpoint_scopes,
     )
 
@@ -7623,14 +7673,20 @@ def checkpoint_list(
         )
         return scope_payloads, checkpoint_count
 
-    def _discovered_payloads(*, full: bool = False) -> tuple[list[dict[str, Any]], int]:
-        return _scope_payloads(discover_checkpoint_scopes(path, full=full))
+    def _discovered_payloads(*, full: bool = False) -> tuple[list[dict[str, Any]], int, bool]:
+        result = discover_checkpoint_scopes_result(path, full=full)
+        scope_payloads, checkpoint_count = _scope_payloads(result.scopes)
+        return scope_payloads, checkpoint_count, result.truncated
 
     def _nearby_payloads() -> tuple[list[dict[str, Any]], int]:
         return _scope_payloads(discover_nearby_checkpoint_scopes(path))
 
     def _emit_discovered(
-        scope_payloads: list[dict[str, Any]], checkpoint_count: int, *, auto_discovered: bool
+        scope_payloads: list[dict[str, Any]],
+        checkpoint_count: int,
+        *,
+        auto_discovered: bool,
+        truncated: bool = False,
     ) -> None:
         if json_output:
             payload = {
@@ -7642,9 +7698,14 @@ def checkpoint_list(
             }
             if auto_discovered:
                 payload["auto_discovered"] = True
+            if truncated:
+                payload["truncated"] = True
+                payload["warning"] = "walk truncated; use --discover-full to override"
             typer.echo(json.dumps(payload, indent=2))
             return
 
+        if truncated:
+            typer.echo("walk truncated; use --discover-full to override", err=True)
         if not scope_payloads:
             typer.echo(f"No checkpoint scopes found under {Path(path).expanduser().resolve()}.")
             return
@@ -7670,8 +7731,13 @@ def checkpoint_list(
             typer.echo("Use either --discover or --discover-full, not both.", err=True)
             raise typer.Exit(1)
         if discover or discover_full:
-            scope_payloads, checkpoint_count = _discovered_payloads(full=discover_full)
-            _emit_discovered(scope_payloads, checkpoint_count, auto_discovered=False)
+            scope_payloads, checkpoint_count, truncated = _discovered_payloads(full=discover_full)
+            _emit_discovered(
+                scope_payloads,
+                checkpoint_count,
+                auto_discovered=False,
+                truncated=truncated,
+            )
             return
 
         scope_result = describe_checkpoint_scope(path)

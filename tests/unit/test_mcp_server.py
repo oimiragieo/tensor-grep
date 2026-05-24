@@ -994,14 +994,16 @@ def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeyp
     assert tools["tg_index_search"]["mode"] == "native-required"
 
 
-def test_mcp_server_initialization_version_tracks_tensor_grep_package() -> None:
+def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
     from tensor_grep.cli import mcp_server
 
     mcp_server._apply_mcp_server_metadata(mcp_server.mcp)
     options = mcp_server.mcp._mcp_server.create_initialization_options()
 
     assert options.server_name == "tensor-grep"
-    assert options.server_version == version("tensor-grep")
+    assert options.server_version == "1.0.0"
+    assert options.server_version == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    assert mcp_server._mcp_server_version() == version("tensor-grep")
 
 
 def test_tg_mcp_capabilities_registry_covers_public_tools(monkeypatch):

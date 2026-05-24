@@ -898,6 +898,37 @@ def test_repo_map_hybrid_defs_deduplicates_same_line_even_when_lsp_span_is_narro
     assert payload["definitions"][0]["lsp_proof"] is True
 
 
+def test_repo_map_hybrid_defs_deduplicates_lsp_file_uri_with_encoded_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_dir = tmp_path / "module dir"
+    module_dir.mkdir()
+    module_path = module_dir / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    resolved = str(module_path.resolve())
+    monkeypatch.setattr(
+        repo_map,
+        "_external_workspace_symbols",
+        lambda root, symbol, **kwargs: [
+            {
+                "name": symbol,
+                "kind": "function",
+                "file": module_path.resolve().as_uri(),
+                "line": 1,
+                "end_line": 1,
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="hybrid")
+
+    assert [(row["file"], row["line"]) for row in payload["definitions"]] == [(resolved, 1)]
+    assert payload["definitions"][0]["lsp_proof"] is True
+
+
 @pytest.mark.parametrize(
     ("command", "collection_key"),
     [

@@ -1386,13 +1386,14 @@ These examples reuse the existing public contracts above; they are not separate 
 
 The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
 
-`serverInfo.name` is `tensor-grep` and `serverInfo.version` tracks the installed
-`tensor-grep` package/server implementation version, not the bundled MCP SDK or
-protocol version. The initialize response top-level `protocolVersion` is the
-authoritative negotiated MCP protocol for that session. `tg_mcp_capabilities()`
-also exposes `mcp_protocol_version`, `mcp_supported_protocol_versions`, and
-`cli_version` so agents do not infer protocol compatibility from
-`serverInfo.version`. Stdio MCP messages are newline-delimited JSON-RPC per the
+`serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
+server contract version (`1.0.0`), not the installed CLI/package version and not
+the bundled MCP SDK protocol version. The initialize response top-level
+`protocolVersion` is the authoritative negotiated MCP protocol for that session.
+`tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
+`mcp_supported_protocol_versions`, and `cli_version` so agents do not infer
+package or protocol compatibility from `serverInfo.version`. Stdio MCP messages
+are newline-delimited JSON-RPC per the
 MCP transport spec. The server also accepts legacy `Content-Length` JSON-RPC
 frames defensively and still writes newline-delimited JSON-RPC responses to stdout.
 
@@ -1459,7 +1460,7 @@ Capability modes:
 | `sidecar_used` | `boolean` | `false`. |
 | `mcp_protocol_version` | `string` | Latest MCP protocol version exposed by the server runtime; initialize `protocolVersion` remains authoritative for the active session. |
 | `mcp_supported_protocol_versions` | `array<string>` | MCP protocol versions accepted by the server runtime. |
-| `cli_version` | `string` | Installed `tensor-grep` package/server implementation version; matches `serverInfo.version`. |
+| `cli_version` | `string` | Installed `tensor-grep` package/server implementation version. |
 | `native_tg.available` | `boolean` | True when a standalone native `tg` binary was resolved. |
 | `native_tg.path` | `string \| null` | Resolved native binary path when available. |
 | `embedded_rewrite.available` | `boolean` | True when packaged rewrite plan/apply fallback is importable. |
