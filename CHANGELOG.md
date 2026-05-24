@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.13.12 (2026-05-24)
+
+### Bug Fixes
+
+- Harden v1.13.11 dogfood regressions
+  ([`d2ce861`](https://github.com/oimiragieo/tensor-grep/commit/d2ce8617067d0bfe4a663c607bcf777298204aba))
+
+Close v1.13.11 dogfood regressions: hybrid LSP/native dedupe, Windows checkpoint-create
+  home-boundary failure, MCP protocol/CLI version separation, MCP stdio native-exe guidance,
+  successful LSP stderr suppression, audit help routing, and secrets-basic lowercase API key
+  coverage.
+
+
 ## v1.13.11 (2026-05-24)
 
 ### Bug Fixes
