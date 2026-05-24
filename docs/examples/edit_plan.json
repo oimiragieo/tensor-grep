@@ -3,6 +3,7 @@
   "routing_backend": "RepoMap",
   "routing_reason": "context-edit-plan",
   "sidecar_used": false,
+  "semantic_provider": "native",
   "coverage": {
     "language_scope": "python-js-ts-rust",
     "symbol_navigation": "python-ast+parser-js-ts-rust",

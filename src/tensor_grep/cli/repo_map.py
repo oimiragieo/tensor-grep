@@ -7696,6 +7696,16 @@ def _navigation_pack(
         "reasons": list(seed.get("reasons", [])),
         "confidence": dict(seed.get("confidence", {})),
     }
+    for key in (
+        "semantic_provider",
+        "provenance",
+        "lsp_provider_response",
+        "lsp_proof",
+        "lsp_operation",
+        "lsp_resolution_basis",
+    ):
+        if key in primary_symbol:
+            primary_target[key] = primary_symbol[key]
 
     follow_up_reads: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int, int]] = set()
@@ -8279,6 +8289,72 @@ def _should_build_edit_plan_blast_radius(
     return symbol_score >= 8 and bool(reasons & {"definition", "source", "import"})
 
 
+def _with_lsp_primary_symbol_evidence(
+    repo_map: dict[str, Any],
+    primary_symbol: dict[str, Any] | None,
+    *,
+    semantic_provider: str,
+) -> dict[str, Any] | None:
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    if normalized_provider == "native" or primary_symbol is None:
+        return primary_symbol
+    symbol_name = str(primary_symbol.get("name", "") or "")
+    if not symbol_name:
+        return primary_symbol
+    try:
+        defs_payload = build_symbol_defs_from_map(
+            repo_map,
+            symbol_name,
+            semantic_provider=normalized_provider,
+        )
+    except (FileNotFoundError, OSError, UnicodeDecodeError, LSPTransportError, ValueError):
+        return primary_symbol
+    proof_definitions = [
+        dict(current)
+        for current in defs_payload.get("definitions", [])
+        if isinstance(current, dict) and _is_lsp_proof_row(current)
+    ]
+    if not proof_definitions:
+        return primary_symbol
+    primary_file = str(primary_symbol.get("file", "") or "")
+    selected_definition = next(
+        (
+            current
+            for current in proof_definitions
+            if primary_file and str(current.get("file", "")) == primary_file
+        ),
+        proof_definitions[0],
+    )
+    enriched = dict(primary_symbol)
+    for key in (
+        "file",
+        "kind",
+        "line",
+        "start_line",
+        "end_line",
+        "provenance",
+        "lsp_provider_response",
+        "lsp_operation",
+        "lsp_resolution_basis",
+    ):
+        if key in selected_definition:
+            enriched[key] = selected_definition[key]
+    if "start_line" not in enriched and "line" in enriched:
+        enriched["start_line"] = enriched["line"]
+    if "end_line" not in enriched:
+        enriched["end_line"] = enriched.get("start_line", enriched.get("line", 1))
+    enriched["lsp_proof"] = True
+    enriched["semantic_provider"] = normalized_provider
+    try:
+        enriched["score"] = max(
+            int(enriched.get("score", 0) or 0),
+            int(selected_definition.get("score", 0) or 0),
+        )
+    except (TypeError, ValueError):
+        pass
+    return enriched
+
+
 def _scoped_repo_map_for_edit_plan_blast_radius(
     repo_map: dict[str, Any],
     payload: dict[str, Any],
@@ -8389,6 +8465,7 @@ def _build_edit_plan_seed(
     max_files: int,
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
+    semantic_provider: str = "native",
 ) -> dict[str, Any]:
     primary_file = next(iter(payload.get("files", [])), None)
     primary_symbol = next(
@@ -8439,6 +8516,23 @@ def _build_edit_plan_seed(
     )
     if promoted_symbol is not None and promoted_symbol is not primary_symbol:
         primary_symbol = promoted_symbol
+        if primary_symbol.get("file"):
+            primary_file = str(primary_symbol["file"])
+            primary_file_match = next(
+                (
+                    match
+                    for match in payload.get("file_matches", [])
+                    if str(match.get("path")) == str(primary_file)
+                ),
+                payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+            )
+    lsp_enriched_symbol = _with_lsp_primary_symbol_evidence(
+        repo_map,
+        primary_symbol,
+        semantic_provider=semantic_provider,
+    )
+    if lsp_enriched_symbol is not None:
+        primary_symbol = lsp_enriched_symbol
         if primary_symbol.get("file"):
             primary_file = str(primary_symbol["file"])
             primary_file_match = next(
@@ -8625,6 +8719,7 @@ def _attach_edit_plan_metadata(
     max_symbols: int,
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "edit_plan_assembly"):
@@ -8697,6 +8792,7 @@ def _attach_edit_plan_metadata(
                 max_files=max_files,
                 max_depth=max_depth,
                 blast_radius_payload=resolved_blast_radius_payload,
+                semantic_provider=semantic_provider,
             )
         payload["graph_trust_summary"] = (
             dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
@@ -8899,6 +8995,7 @@ def build_context_edit_plan(
     max_symbols: int = 5,
     max_sources: int | None = None,
     max_tokens: int | None = None,
+    semantic_provider: str = "native",
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
@@ -8915,6 +9012,7 @@ def build_context_edit_plan(
         max_symbols=max_symbols,
         max_sources=max_sources,
         max_tokens=max_tokens,
+        semantic_provider=semantic_provider,
         profile=profile,
         _profiling_collector=collector,
     )
@@ -8928,6 +9026,7 @@ def build_context_edit_plan_from_map(
     max_symbols: int = 5,
     max_sources: int | None = None,
     max_tokens: int | None = None,
+    semantic_provider: str = "native",
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
@@ -8979,12 +9078,14 @@ def build_context_edit_plan_from_map(
     payload["max_symbols"] = normalized_max_symbols
     payload["max_sources"] = normalized_max_sources
     payload["max_tokens"] = normalized_max_tokens
+    payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload = _attach_edit_plan_metadata(
         repo_map,
         payload,
         query=query,
         max_files=normalized_max_files,
         max_symbols=min(normalized_max_symbols, normalized_max_sources),
+        semantic_provider=semantic_provider,
         _profiling_collector=collector,
     )
     payload["validation_commands"] = _top_level_validation_commands(payload)
@@ -9000,6 +9101,7 @@ def build_context_edit_plan_json(
     max_symbols: int = 5,
     max_sources: int | None = None,
     max_tokens: int | None = None,
+    semantic_provider: str = "native",
     profile: bool = False,
 ) -> str:
     return json.dumps(
@@ -9011,6 +9113,7 @@ def build_context_edit_plan_json(
             max_symbols=max_symbols,
             max_sources=max_sources,
             max_tokens=max_tokens,
+            semantic_provider=semantic_provider,
             profile=profile,
         ),
         indent=2,
@@ -9031,6 +9134,7 @@ def build_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    semantic_provider: str = "native",
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
@@ -9048,6 +9152,7 @@ def build_context_render(
         model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
+        semantic_provider=semantic_provider,
         profile=profile,
         _profiling_collector=collector,
     )
@@ -9433,6 +9538,7 @@ def build_context_render_from_map(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    semantic_provider: str = "native",
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
@@ -9554,6 +9660,7 @@ def build_context_render_from_map(
     payload["model"] = model
     payload["optimize_context"] = optimize_context
     payload["render_profile"] = normalized_profile
+    payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     if source_budget is not None:
         payload["source_budget"] = source_budget
     if include_edit_plan_seed:
@@ -9564,6 +9671,7 @@ def build_context_render_from_map(
             max_files=max_files,
             max_symbols=max_sources,
             max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
+            semantic_provider=semantic_provider,
             _profiling_collector=collector,
         )
     else:
@@ -9614,6 +9722,7 @@ def build_context_render_json(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    semantic_provider: str = "native",
     profile: bool = False,
 ) -> str:
     payload = build_context_render(
@@ -9628,6 +9737,7 @@ def build_context_render_json(
         model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
+        semantic_provider=semantic_provider,
         profile=profile,
     )
     if payload.get("render_profile") == "llm":
@@ -10018,6 +10128,153 @@ def _external_workspace_symbols(
     return deduped
 
 
+def _iter_lsp_definition_locations(result: object) -> list[tuple[str, dict[str, Any]]]:
+    raw_items: list[object]
+    if isinstance(result, list):
+        raw_items = result
+    elif isinstance(result, dict):
+        raw_items = [result]
+    else:
+        return []
+
+    locations: list[tuple[str, dict[str, Any]]] = []
+    for current in raw_items:
+        if not isinstance(current, dict):
+            continue
+        if isinstance(current.get("targetUri"), str):
+            uri = str(current["targetUri"])
+            payload_range = current.get("targetSelectionRange") or current.get("targetRange")
+        else:
+            uri = str(current.get("uri", ""))
+            payload_range = current.get("range")
+        if not uri or not isinstance(payload_range, dict):
+            continue
+        start = payload_range.get("start")
+        end = payload_range.get("end")
+        if not isinstance(start, dict) or not isinstance(end, dict):
+            continue
+        locations.append((uri, payload_range))
+    return locations
+
+
+def _dedupe_lsp_definition_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int, str]] = set()
+    for current in rows:
+        key = (
+            str(current["file"]),
+            int(current["line"]),
+            int(current.get("end_line", current["line"])),
+            str(current.get("kind", "symbol")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(current)
+    return deduped
+
+
+def _external_definitions(
+    repo_root: Path,
+    symbol: str,
+    native_definitions: list[dict[str, Any]],
+    *,
+    repo_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    workspace_matches = _external_workspace_symbols(repo_root, symbol, repo_map=repo_map)
+    if workspace_matches or not native_definitions:
+        return workspace_matches
+
+    definitions: list[dict[str, Any]] = []
+    deadline_monotonic = _lsp_operation_deadline()
+    for native_definition in native_definitions:
+        if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
+            break
+        current_path = Path(str(native_definition.get("file", ""))).expanduser().resolve()
+        if not current_path.exists():
+            continue
+        language = _provider_language_for_path(current_path) or _language_for_path(current_path)
+        try:
+            client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(
+                language=language, workspace_root=repo_root
+            )
+            document_uri = current_path.as_uri()
+            document_text = current_path.read_text(encoding="utf-8")
+            definition_line = int(
+                native_definition.get(
+                    "line",
+                    native_definition.get("start_line", 1),
+                )
+                or 1
+            )
+            definition_character = _symbol_character_in_file(
+                current_path,
+                definition_line,
+                symbol,
+            )
+
+            def _ensure_document(
+                *,
+                current_client: Any = client,
+                uri: str = document_uri,
+                text: str = document_text,
+                language_id: str = language,
+            ) -> None:
+                current_client.ensure_document(uri=uri, text=text, language_id=language_id)
+
+            _run_lsp_with_operation_budget(client, deadline_monotonic, _ensure_document)
+
+            def _request_definition(
+                *,
+                current_client: Any = client,
+                uri: str = document_uri,
+                line: int = definition_line,
+                character: int = definition_character,
+            ) -> Any:
+                return current_client.request(
+                    "textDocument/definition",
+                    {
+                        "textDocument": {"uri": uri},
+                        "position": {
+                            "line": line - 1,
+                            "character": character,
+                        },
+                    },
+                )
+
+            result = _run_lsp_with_operation_budget(
+                client,
+                deadline_monotonic,
+                _request_definition,
+            )
+        except (FileNotFoundError, OSError, UnicodeDecodeError, LSPTransportError, ValueError):
+            continue
+
+        for uri, payload_range in _iter_lsp_definition_locations(result):
+            resolved_path = _path_from_lsp_file_uri(uri)
+            if resolved_path is None:
+                continue
+            start = dict(payload_range.get("start", {}))
+            end = dict(payload_range.get("end", {}))
+            line = int(start.get("line") or 0) + 1
+            definitions.append({
+                "name": symbol,
+                "kind": str(native_definition.get("kind", "symbol")),
+                "file": str(resolved_path),
+                "line": line,
+                "start_line": line,
+                "end_line": int(end.get("line") or start.get("line") or 0) + 1,
+                "provenance": f"lsp-{language}",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+                "lsp_operation": "textDocument/definition",
+                "lsp_resolution_basis": "native-definition-anchor",
+            })
+
+    return _dedupe_lsp_definition_rows(definitions) or workspace_matches
+
+
 def _external_references(
     repo_root: Path, symbol: str, definitions: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -10167,9 +10424,10 @@ def build_symbol_defs_from_map(
     external_definitions: list[dict[str, Any]] = []
     fallback_used = False
     if normalized_provider != "native":
-        external_definitions = _external_workspace_symbols(
+        external_definitions = _external_definitions(
             Path(str(repo_map["path"])).resolve(),
             symbol,
+            native_definitions,
             repo_map=repo_map,
         )
         if normalized_provider == "lsp":

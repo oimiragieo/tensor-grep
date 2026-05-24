@@ -10,6 +10,15 @@ from tensor_grep.cli import mcp_server, repo_map
 from tensor_grep.cli.main import app
 
 
+def _disable_external_definition_proof(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    monkeypatch.setattr(
+        repo_map,
+        "_external_definitions",
+        lambda root, symbol, native_definitions, **kwargs: [],
+    )
+
+
 def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
     module_path = tmp_path / "module.py"
     module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
@@ -41,6 +50,64 @@ def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None
     assert payload["lsp_proof"] is True
 
 
+def test_repo_map_defs_can_confirm_native_anchor_with_lsp_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    requests: list[str] = []
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            assert kwargs["uri"] == module_path.resolve().as_uri()
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            requests.append(method)
+            if method == "workspace/symbol":
+                return []
+            assert method == "textDocument/definition"
+            return [
+                {
+                    "uri": module_path.resolve().as_uri(),
+                    "range": {
+                        "start": {"line": 0, "character": 4},
+                        "end": {"line": 0, "character": 18},
+                    },
+                }
+            ]
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert requests == ["workspace/symbol", "textDocument/definition"]
+    assert payload["lsp_proof"] is True
+    assert payload["lsp_evidence_status"] == "lsp_proof"
+    assert payload["definitions"][0]["provenance"] == "lsp-python"
+    assert payload["definitions"][0]["lsp_provider_response"] is True
+    assert payload["definitions"][0]["lsp_operation"] == "textDocument/definition"
+    assert payload["definitions"][0]["lsp_resolution_basis"] == "native-definition-anchor"
+
+
 def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
     module_path = tmp_path / "module.py"
     module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
@@ -69,6 +136,290 @@ def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> No
     assert payload["provider_status"]["mode"] == "lsp"
 
 
+def test_repo_map_source_carries_lsp_definition_anchor_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            assert kwargs["uri"] == module_path.resolve().as_uri()
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            if method == "workspace/symbol":
+                return []
+            assert method == "textDocument/definition"
+            return [
+                {
+                    "uri": module_path.resolve().as_uri(),
+                    "range": {
+                        "start": {"line": 0, "character": 4},
+                        "end": {"line": 1, "character": 15},
+                    },
+                }
+            ]
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = repo_map.build_symbol_source("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["lsp_proof"] is True
+    assert payload["definitions"][0]["lsp_operation"] == "textDocument/definition"
+    assert payload["sources"][0]["name"] == "create_invoice"
+
+
+def test_context_render_lsp_provider_marks_primary_target_with_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            assert kwargs["uri"] == module_path.resolve().as_uri()
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            if method == "workspace/symbol":
+                return []
+            assert method == "textDocument/definition"
+            return [
+                {
+                    "uri": module_path.resolve().as_uri(),
+                    "range": {
+                        "start": {"line": 0, "character": 4},
+                        "end": {"line": 1, "character": 15},
+                    },
+                }
+            ]
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = repo_map.build_context_render(
+        "change create_invoice behavior",
+        tmp_path,
+        semantic_provider="lsp",
+        max_tokens=None,
+    )
+
+    assert payload["semantic_provider"] == "lsp"
+    assert payload["edit_plan_seed"]["primary_symbol"]["lsp_proof"] is True
+    assert payload["edit_plan_seed"]["primary_span"] == {"start_line": 1, "end_line": 2}
+    primary_target = payload["navigation_pack"]["primary_target"]
+    assert primary_target["lsp_proof"] is True
+    assert primary_target["lsp_operation"] == "textDocument/definition"
+
+
+def test_agent_capsule_lsp_provider_carries_primary_target_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import agent_capsule
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            assert kwargs["uri"] == module_path.resolve().as_uri()
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            if method == "workspace/symbol":
+                return []
+            assert method == "textDocument/definition"
+            return [
+                {
+                    "uri": module_path.resolve().as_uri(),
+                    "range": {
+                        "start": {"line": 0, "character": 4},
+                        "end": {"line": 1, "character": 15},
+                    },
+                }
+            ]
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert language == "python"
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = agent_capsule.build_agent_capsule(
+        "change create_invoice behavior",
+        tmp_path,
+        semantic_provider="lsp",
+        max_tokens=None,
+    )
+
+    assert payload["semantic_provider"] == "lsp"
+    assert payload["primary_target"]["lsp_proof"] is True
+    assert payload["primary_target"]["lsp_operation"] == "textDocument/definition"
+    assert "lsp-confirmed" in payload["primary_target"]["evidence"]
+    assert "--provider" in payload["raw_context_ref"]["argv"]
+    assert "lsp" in payload["raw_context_ref"]["argv"]
+
+
+def test_agent_context_native_provider_does_not_probe_lsp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import agent_capsule
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    def fail_lsp_probe(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        _ = args
+        _ = kwargs
+        raise AssertionError("native provider must not query external LSP providers")
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", fail_lsp_probe)
+    monkeypatch.setattr(repo_map, "_external_definitions", fail_lsp_probe)
+
+    context_payload = repo_map.build_context_render(
+        "change create_invoice behavior",
+        tmp_path,
+        semantic_provider="native",
+        max_tokens=None,
+    )
+    capsule_payload = agent_capsule.build_agent_capsule(
+        "change create_invoice behavior",
+        tmp_path,
+        semantic_provider="native",
+        max_tokens=None,
+    )
+
+    assert context_payload["semantic_provider"] == "native"
+    assert context_payload["navigation_pack"]["primary_target"].get("lsp_proof") is None
+    assert capsule_payload["semantic_provider"] == "native"
+    assert capsule_payload["primary_target"].get("lsp_proof") is None
+    assert "--provider" not in capsule_payload["raw_context_ref"]["argv"]
+
+
+def test_cli_context_render_accepts_provider_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render_json",
+        lambda query, path, semantic_provider="native", **_: json.dumps({
+            "query": query,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+        }),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "context-render",
+            str(tmp_path),
+            "--query",
+            "create invoice",
+            "--provider",
+            "lsp",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["semantic_provider"] == "lsp"
+
+
+def test_cli_edit_plan_accepts_provider_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_edit_plan_json",
+        lambda query, path, semantic_provider="native", **_: json.dumps({
+            "query": query,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+        }),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["edit-plan", str(tmp_path), "--query", "create invoice", "--provider", "hybrid", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["semantic_provider"] == "hybrid"
+
+
+def test_cli_agent_accepts_provider_option(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import agent_capsule
+
+    monkeypatch.setattr(
+        agent_capsule,
+        "build_agent_capsule_json",
+        lambda query, path, semantic_provider="native", **_: json.dumps({
+            "query": query,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+        }),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["agent", str(tmp_path), "--query", "create invoice", "--provider", "lsp", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["semantic_provider"] == "lsp"
+
+
 def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeypatch) -> None:
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
@@ -80,7 +431,7 @@ def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeyp
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(
         repo_map,
         "_external_references",
@@ -118,7 +469,7 @@ def test_repo_map_lsp_fallback_reports_not_lsp_proof(
         "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
 
     payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="lsp")
 
@@ -138,7 +489,7 @@ def test_repo_map_hybrid_defs_fallback_reports_native_fallback(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
 
     payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="hybrid")
 
@@ -162,7 +513,7 @@ def test_repo_map_hybrid_refs_fallback_reports_native_fallback(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
 
     payload = repo_map.build_symbol_refs("create_invoice", tmp_path, semantic_provider="hybrid")
@@ -570,7 +921,7 @@ def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> N
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(
         repo_map,
         "_external_references",
@@ -610,7 +961,7 @@ def test_repo_map_callers_hybrid_can_expand_python_alias_wrapper_calls(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(
         repo_map,
         "_external_references",
@@ -654,7 +1005,7 @@ def test_repo_map_blast_radius_hybrid_can_include_alias_wrapper_callers(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(
         repo_map,
         "_external_references",
@@ -705,7 +1056,7 @@ def test_repo_map_callers_hybrid_can_expand_js_ts_import_alias_wrappers(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
 
     native_payload = repo_map.build_symbol_callers(
@@ -745,7 +1096,7 @@ def test_repo_map_callers_lsp_fallback_alias_rows_are_not_lsp_proof(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
 
     payload = repo_map.build_symbol_callers(
@@ -780,7 +1131,7 @@ def test_repo_map_blast_radius_hybrid_can_include_js_ts_alias_wrapper_callers(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
 
     native_payload = repo_map.build_symbol_blast_radius(
@@ -819,7 +1170,7 @@ def test_repo_map_callers_hybrid_can_expand_rust_use_alias_wrappers(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
 
     native_payload = repo_map.build_symbol_callers(
@@ -861,7 +1212,7 @@ def test_repo_map_blast_radius_hybrid_can_include_rust_alias_wrapper_callers(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
+    _disable_external_definition_proof(monkeypatch)
     monkeypatch.setattr(repo_map, "_external_references", lambda root, symbol, definitions: [])
 
     native_payload = repo_map.build_symbol_blast_radius(

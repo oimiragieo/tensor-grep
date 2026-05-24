@@ -229,7 +229,7 @@ def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
         }
     line = target.get("line") or target.get("start_line") or primary_span.get("start_line") or 1
     confidence = _as_dict(edit_plan_seed.get("confidence")).get("overall", 0.9)
-    return {
+    target_payload = {
         "file": str(target.get("file") or edit_plan_seed.get("primary_file") or ""),
         "symbol": target.get("symbol") or primary_symbol.get("name"),
         "kind": target.get("kind") or primary_symbol.get("kind") or "unknown",
@@ -237,6 +237,28 @@ def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
         "confidence": confidence,
         "evidence": ["parser-backed", "heuristic"],
     }
+    for key in (
+        "semantic_provider",
+        "provenance",
+        "lsp_provider_response",
+        "lsp_proof",
+        "lsp_operation",
+        "lsp_resolution_basis",
+    ):
+        if key in target:
+            target_payload[key] = target[key]
+        elif key in primary_symbol:
+            target_payload[key] = primary_symbol[key]
+    if target_payload.get("lsp_proof") is True:
+        target_payload["evidence"] = _dedupe([
+            "lsp-confirmed",
+            *[
+                str(item)
+                for item in target_payload.get("evidence", [])
+                if item is not None and str(item)
+            ],
+        ])
+    return target_payload
 
 
 def _target_symbol_was_explicitly_requested(query: str, target: dict[str, Any]) -> bool:
@@ -897,6 +919,7 @@ def _raw_context_ref(
     max_tokens: int | None,
     max_repo_files: int | None,
     model: str | None,
+    semantic_provider: str,
 ) -> dict[str, Any]:
     argv: list[object] = [
         "tg",
@@ -916,6 +939,8 @@ def _raw_context_ref(
         argv.extend(["--max-repo-files", max_repo_files])
     if model:
         argv.extend(["--model", model])
+    if semantic_provider != "native":
+        argv.extend(["--provider", semantic_provider])
     return _command_ref(argv)
 
 
@@ -1097,6 +1122,7 @@ def build_agent_capsule(
     max_repo_files: int | None = None,
     model: str | None = None,
     include_blast_radius: bool = True,
+    semantic_provider: str = "native",
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
 ) -> dict[str, Any]:
@@ -1111,6 +1137,7 @@ def build_agent_capsule(
         model=model,
         optimize_context=True,
         render_profile="full",
+        semantic_provider=semantic_provider,
     )
     target = _primary_target(payload)
     alternatives = _alternative_targets(payload, target)
@@ -1272,6 +1299,7 @@ def build_agent_capsule(
         max_tokens=max_tokens,
         max_repo_files=max_repo_files,
         model=model,
+        semantic_provider=str(payload.get("semantic_provider") or semantic_provider),
     )
     related_call_sites, call_site_evidence = _collect_capsule_call_site_evidence(
         query,
@@ -1336,6 +1364,7 @@ def build_agent_capsule(
         "capsule_kind": "actionable_context",
         "query": query,
         "path": resolved_path,
+        "semantic_provider": str(payload.get("semantic_provider") or semantic_provider),
         "ambiguity": ambiguity,
         "primary_target": target,
         "alternative_targets": alternatives,
@@ -1381,6 +1410,7 @@ def build_agent_capsule_json(
     max_repo_files: int | None = None,
     model: str | None = None,
     include_blast_radius: bool = True,
+    semantic_provider: str = "native",
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
 ) -> str:
@@ -1394,6 +1424,7 @@ def build_agent_capsule_json(
             max_repo_files=max_repo_files,
             model=model,
             include_blast_radius=include_blast_radius,
+            semantic_provider=semantic_provider,
             gpu_device_ids=gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
         ),

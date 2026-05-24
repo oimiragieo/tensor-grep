@@ -1083,6 +1083,7 @@ def tg_edit_plan(
     max_sources: int = 5,
     max_tokens: int | None = None,
     max_symbols: int = 5,
+    provider: str = "native",
 ) -> str:
     """
     Return a machine-readable edit-planning bundle without rendered source text.
@@ -1095,6 +1096,7 @@ def tg_edit_plan(
         max_sources: Maximum related source/span records to retain.
         max_tokens: Accepted for command-surface parity; no rendered source text is emitted.
         max_symbols: Maximum ranked symbols to retain.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
     from tensor_grep.cli.repo_map import build_context_edit_plan
 
@@ -1108,6 +1110,7 @@ def tg_edit_plan(
                 max_sources=max_sources,
                 max_tokens=max_tokens,
                 max_symbols=max_symbols,
+                semantic_provider=provider,
             ),
             indent=2,
         )
@@ -1139,6 +1142,7 @@ def tg_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    provider: str = "native",
     profile: bool = False,
 ) -> str:
     """
@@ -1147,6 +1151,7 @@ def tg_context_render(
     Args:
         query: Query text used to rank and render repo context.
         path: File or directory to inventory.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
     try:
         return json.dumps(
@@ -1161,6 +1166,7 @@ def tg_context_render(
                 model=model,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+                semantic_provider=provider,
                 profile=profile,
             ),
             indent=2,
@@ -1190,6 +1196,7 @@ def tg_agent_capsule(
     max_tokens: int | None = 1200,
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     model: str | None = None,
+    provider: str = "native",
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
 ) -> str:
@@ -1204,6 +1211,7 @@ def tg_agent_capsule(
         max_tokens: Token budget for bounded capsule output.
         max_repo_files: Maximum repository files to scan.
         model: Optional model name used for token estimation.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         gpu_device_ids: Optional selected GPU IDs for native route evidence.
         gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command.
     """
@@ -1227,6 +1235,7 @@ def tg_agent_capsule(
                 max_tokens=max_tokens,
                 max_repo_files=max_repo_files,
                 model=model,
+                semantic_provider=provider,
                 gpu_device_ids=gpu_device_ids,
                 gpu_timeout_s=gpu_timeout_s,
             ),
