@@ -842,6 +842,12 @@ pub enum Commands {
     /// Verify a rewrite audit manifest digest, chain, and optional signature
     #[command(name = "audit-verify")]
     AuditVerify(AuditVerifyArgs),
+    /// Show audit command entry points
+    #[command(name = "audit", disable_help_flag = true)]
+    Audit {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
@@ -3093,6 +3099,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::AuditVerify(args) => handle_audit_verify_command(args),
+        Commands::Audit { args } => handle_python_passthrough("audit", args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify(args) => handle_sidecar_command(
             "classify",

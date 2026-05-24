@@ -971,6 +971,9 @@ def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeyp
     assert payload["routing_backend"] == "MCPRuntime"
     assert payload["routing_reason"] == "mcp-capabilities"
     assert payload["sidecar_used"] is False
+    assert payload["mcp_protocol_version"] == mcp_server.types.LATEST_PROTOCOL_VERSION
+    assert mcp_server.types.LATEST_PROTOCOL_VERSION in payload["mcp_supported_protocol_versions"]
+    assert payload["cli_version"] == mcp_server._mcp_server_version()
     assert payload["native_tg"] == {"available": False, "path": None}
     assert payload["embedded_rewrite"] == {"available": True}
 

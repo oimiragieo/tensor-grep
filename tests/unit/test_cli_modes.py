@@ -1754,6 +1754,7 @@ def test_doctor_json_reports_mcp_stdio_launcher_warning_for_powershell_shim(
     assert "MCP stdio" in warning
     assert "Start-Process" in warning
     assert "managed native tg.exe directly" in warning
+    assert "not `tg.ps1`" in warning
     assert str(native_tg) in warning
     assert "pwsh -NoProfile -File" in warning
     assert str(shim_tg) in warning
@@ -1807,6 +1808,7 @@ def test_doctor_json_reports_mcp_stdio_launcher_warning_from_candidate_native(
     payload = json.loads(result.stdout)
     warning = payload["mcp_stdio_launcher_warning"]
     assert "Start-Process" in warning
+    assert "not `tg.ps1`" in warning
     assert str(native_tg) in warning
     assert str(shim_tg) in warning
 
@@ -1856,6 +1858,7 @@ def test_doctor_text_reports_mcp_stdio_launcher_warning(monkeypatch, tmp_path: P
     assert "mcp_stdio_launcher_warning:" in result.stdout
     assert "Start-Process" in result.stdout
     assert "managed native tg.exe directly" in result.stdout
+    assert "not `tg.ps1`" in result.stdout
     assert "pwsh -NoProfile -File" in result.stdout
 
 
@@ -11082,6 +11085,27 @@ def test_scan_executes_secrets_ruleset_prefixed_api_key_regex(monkeypatch):
         "[scan] rule=python-hardcoded-named-api-key lang=python matches=1 files=1" in result.output
     )
     assert "HEADER_NAME" not in result.output
+
+
+def test_scan_executes_secrets_ruleset_fake_api_key_snake_case(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text('fake_api_key = "fake_test_key_123456"\n', encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert (
+        "[scan] rule=python-hardcoded-named-api-key lang=python matches=1 files=1" in result.output
+    )
 
 
 def test_scan_executes_tls_ruleset(monkeypatch):

@@ -375,7 +375,8 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 {
                     "id": "python-hardcoded-named-api-key",
                     "pattern": (
-                        r"\b[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN)\s*=\s*"
+                        r"\b[A-Za-z_][A-Za-z0-9_]*"
+                        r"(?:api_key|API_KEY|access_token|ACCESS_TOKEN)\s*=\s*"
                         r"['\"][^'\"\s]{8,}['\"]"
                     ),
                     "engine": "regex",
@@ -417,7 +418,8 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 {
                     "id": "javascript-hardcoded-named-api-key",
                     "pattern": (
-                        r"\b(?:const|let|var)\s+[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN)\s*=\s*"
+                        r"\b(?:const|let|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+                        r"(?:apiKey|api_key|API_KEY|accessToken|access_token|ACCESS_TOKEN)\s*=\s*"
                         r"['\"][^'\"\s]{8,}['\"]"
                     ),
                     "engine": "regex",
@@ -459,7 +461,8 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 {
                     "id": "typescript-hardcoded-named-api-key",
                     "pattern": (
-                        r"\b(?:const|let|var)\s+[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN)\s*=\s*"
+                        r"\b(?:const|let|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+                        r"(?:apiKey|api_key|API_KEY|accessToken|access_token|ACCESS_TOKEN)\s*=\s*"
                         r"['\"][^'\"\s]{8,}['\"]"
                     ),
                     "engine": "regex",

@@ -1956,7 +1956,7 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
 
 #[test]
 fn test_routing_external_editor_plane_commands_are_forwarded() {
-    let scenarios = vec!["map", "session", "doctor", "dogfood"];
+    let scenarios = vec!["map", "session", "doctor", "dogfood", "audit"];
     let dir = tempdir().unwrap();
     let python_wrapper = write_python_wrapper(dir.path());
 

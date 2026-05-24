@@ -2083,9 +2083,10 @@ def _doctor_mcp_stdio_launcher_warning(
     return (
         "MCP stdio launcher warning: "
         f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
-        f"tg.exe directly: {native_stdio_path}. Windows MCP clients that launch `tg` via "
-        "Start-Process can resolve the PowerShell shim instead of the native stdio-safe "
-        "front door. If you intentionally use the PowerShell "
+        f"tg.exe directly: {native_stdio_path}. Windows MCP/stdio clients that launch "
+        "`tg` via PowerShell Start-Process must target native tg.exe directly, not "
+        "`tg.ps1`, because Start-Process can resolve the PowerShell shim instead of "
+        "the native stdio-safe front door. If you intentionally use the PowerShell "
         "script shim, configure the client to launch it explicitly as "
         f"`pwsh -NoProfile -File {script_path} mcp`."
     )
@@ -2315,7 +2316,9 @@ def _doctor_shell_escaping_guidance() -> dict[str, Any]:
             "metacharacters": ["|", "&", "<", ">", "^", "(", ")"],
             "recommendation": (
                 "Quote arguments or caret-escape cmd.exe metacharacters such as ^| and ^&; "
-                "prefer normal PowerShell `tg` or `tg.ps1` over direct `tg.cmd` from PowerShell."
+                "prefer normal interactive PowerShell `tg` over direct `tg.cmd` from "
+                "PowerShell. MCP/stdio clients using Start-Process should target native "
+                "`tg.exe` directly, not `tg.ps1`."
             ),
             "literal_pattern_example": 'cmd /c tg search "foo^|bar" .',
         },
@@ -7828,6 +7831,17 @@ def rulesets(
             f"languages={','.join(cast(list[str], ruleset['languages']))} "
             f"rules={ruleset['rule_count']}]"
         )
+
+
+@app.command(name="audit")
+def audit_help() -> None:
+    """Audit command entry points: audit-verify, audit-history, audit-diff, review-bundle."""
+    typer.echo("Audit commands:")
+    typer.echo("  tg audit-verify MANIFEST [--json]")
+    typer.echo("  tg audit-history [PATH] [--json]")
+    typer.echo("  tg audit-diff PREVIOUS CURRENT [--json]")
+    typer.echo("  tg review-bundle create --manifest MANIFEST [--json]")
+    typer.echo("  tg review-bundle verify BUNDLE [--json]")
 
 
 @app.command()

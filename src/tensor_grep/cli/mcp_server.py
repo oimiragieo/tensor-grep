@@ -16,6 +16,7 @@ import anyio
 from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
+from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 
 from tensor_grep.cli.main import _build_rulesets_payload, _run_ast_scan_payload
 from tensor_grep.cli.repo_map import (
@@ -390,6 +391,9 @@ def _mcp_capabilities_payload() -> dict[str, Any]:
         "routing_backend": "MCPRuntime",
         "routing_reason": "mcp-capabilities",
         "sidecar_used": False,
+        "mcp_protocol_version": types.LATEST_PROTOCOL_VERSION,
+        "mcp_supported_protocol_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+        "cli_version": _mcp_server_version(),
         "native_tg": native_tg_payload,
         "embedded_rewrite": {
             "available": _embedded_rewrite_available(),

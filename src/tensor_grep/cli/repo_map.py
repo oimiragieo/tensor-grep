@@ -10180,20 +10180,53 @@ def _iter_lsp_definition_locations(result: object) -> list[tuple[str, dict[str, 
 
 
 def _dedupe_lsp_definition_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
+    return _dedupe_definition_rows(rows)
+
+
+def _definition_dedupe_key(row: dict[str, Any]) -> tuple[str, int, str]:
+    file_key = str(row.get("file", ""))
+    if os.name == "nt":
+        file_key = file_key.lower()
+    return (
+        file_key,
+        int(row.get("line", row.get("start_line", 0)) or 0),
+        str(row.get("name", "")),
+    )
+
+
+def _merge_definition_duplicate(
+    existing: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    existing_is_lsp = _is_lsp_proof_row(existing)
+    candidate_is_lsp = _is_lsp_proof_row(candidate)
+    if candidate_is_lsp and not existing_is_lsp:
+        merged = dict(existing)
+        merged.update(candidate)
+        for key in ("text", "source", "source_line"):
+            if key in existing and key not in merged:
+                merged[key] = existing[key]
+        return merged
+    if existing_is_lsp and not candidate_is_lsp:
+        merged = dict(candidate)
+        merged.update(existing)
+        for key in ("text", "source", "source_line"):
+            if key in candidate and key not in merged:
+                merged[key] = candidate[key]
+        return merged
+    return dict(existing)
+
+
+def _dedupe_definition_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, int, int, str]] = set()
+    seen: dict[tuple[str, int, str], dict[str, Any]] = {}
     for current in rows:
-        key = (
-            str(current["file"]),
-            int(current["line"]),
-            int(current.get("end_line", current["line"])),
-            str(current.get("kind", "symbol")),
-        )
+        key = _definition_dedupe_key(current)
         if key in seen:
+            seen[key] = _merge_definition_duplicate(seen[key], current)
             continue
-        seen.add(key)
-        deduped.append(current)
+        seen[key] = dict(current)
+    deduped = list(seen.values())
+    deduped.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
     return deduped
 
 
@@ -10459,24 +10492,7 @@ def build_symbol_defs_from_map(
             fallback_used = not bool(proof_definitions)
             definitions = proof_definitions or definitions
         else:
-            merged: dict[tuple[str, int, int, str], dict[str, Any]] = {}
-            for current in [*external_definitions, *definitions]:
-                key = (
-                    str(current["file"]),
-                    int(current["line"]),
-                    int(current.get("end_line", current["line"])),
-                    str(current.get("kind", "symbol")),
-                )
-                merged[key] = dict(current)
-            definitions = list(merged.values())
-            definitions.sort(
-                key=lambda item: (
-                    str(item["file"]),
-                    int(item["line"]),
-                    str(item["kind"]),
-                    str(item["name"]),
-                )
-            )
+            definitions = _dedupe_definition_rows([*external_definitions, *definitions])
 
     definition_files = [str(current["file"]) for current in definitions]
     related_paths = []
@@ -11308,6 +11324,7 @@ def build_symbol_callers_from_map(
             calls.sort(
                 key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
             )
+            calls = _dedupe_symbol_references(calls)
 
     definition_locations = {
         (

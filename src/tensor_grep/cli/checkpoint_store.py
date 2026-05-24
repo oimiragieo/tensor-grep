@@ -281,10 +281,30 @@ def _valid_cached_checkpoint_index_paths_from_entry(entry: Any) -> set[Path]:
     return index_paths
 
 
+def _checkpoint_discovery_home_boundary() -> Path | None:
+    try:
+        return Path.home().expanduser().resolve()
+    except OSError:
+        return None
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
 def _bounded_discovery_cache_roots_for_checkpoint(root: Path) -> list[Path]:
+    root = root.expanduser().resolve()
     cache_roots = [root]
+    home_boundary = _checkpoint_discovery_home_boundary()
+    root_is_under_home = home_boundary is not None and _path_is_relative_to(root, home_boundary)
     for candidate in root.parents:
         if candidate.parent == candidate:
+            break
+        if root_is_under_home and home_boundary is not None and candidate == home_boundary.parent:
             break
         try:
             distance = len(root.relative_to(candidate).parts)
@@ -329,8 +349,11 @@ def _prime_bounded_discovery_caches_for_root(root: Path) -> None:
         for entry_key in list(entries):
             if isinstance(entry_key, str) and entry_key.startswith("full:"):
                 del entries[entry_key]
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            continue
 
 
 def _load_index(root: Path) -> list[CheckpointRecord]:

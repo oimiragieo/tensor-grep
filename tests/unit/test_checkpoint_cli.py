@@ -375,6 +375,53 @@ def test_checkpoint_discovery_cache_roots_never_include_filesystem_anchor(
     assert all(candidate.parent != candidate for candidate in cache_roots)
 
 
+def test_checkpoint_discovery_cache_roots_stop_at_user_home(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    home = tmp_path / "Users" / "oimir"
+    project = home / "fixture" / "project"
+    project.mkdir(parents=True)
+    monkeypatch.setattr(
+        checkpoint_store,
+        "_checkpoint_discovery_home_boundary",
+        lambda: home.resolve(),
+    )
+
+    cache_roots = checkpoint_store._bounded_discovery_cache_roots_for_checkpoint(project)
+
+    assert home.resolve() in cache_roots
+    assert home.resolve().parent not in cache_roots
+
+
+def test_checkpoint_create_does_not_fail_when_parent_cache_is_unwritable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    project = tmp_path / "Users" / "oimir" / "fixture" / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+    blocked_root = project.resolve().parent
+    blocked_file = tmp_path / "blocked-cache-parent"
+    blocked_file.write_text("not a directory\n", encoding="utf-8")
+    original_discovery_cache_path = checkpoint_store._discovery_cache_path
+
+    def guarded_discovery_cache_path(search_root: Path) -> Path:
+        if search_root == blocked_root:
+            return blocked_file / "child" / "checkpoint-discovery-cache.json"
+        return original_discovery_cache_path(search_root)
+
+    monkeypatch.setattr(
+        checkpoint_store,
+        "_discovery_cache_path",
+        guarded_discovery_cache_path,
+    )
+
+    checkpoint = checkpoint_store.create_checkpoint(str(project))
+
+    assert checkpoint.checkpoint_id.startswith("ckpt-")
+
+
 def test_checkpoint_create_merges_parent_discovery_cache(tmp_path: Path) -> None:
     from tensor_grep.cli import checkpoint_store
 
