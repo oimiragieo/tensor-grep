@@ -4,6 +4,7 @@ import hmac
 import json
 import sys
 import types
+from importlib.metadata import version
 from io import StringIO
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -988,6 +989,16 @@ def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeyp
     ]
     assert tools["tg_rewrite_diff"]["mode"] == "native-required"
     assert tools["tg_index_search"]["mode"] == "native-required"
+
+
+def test_mcp_server_initialization_version_tracks_tensor_grep_package() -> None:
+    from tensor_grep.cli import mcp_server
+
+    mcp_server._apply_mcp_server_metadata(mcp_server.mcp)
+    options = mcp_server.mcp._mcp_server.create_initialization_options()
+
+    assert options.server_name == "tensor-grep"
+    assert options.server_version == version("tensor-grep")
 
 
 def test_tg_mcp_capabilities_registry_covers_public_tools(monkeypatch):
