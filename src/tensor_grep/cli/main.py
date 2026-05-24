@@ -5959,6 +5959,11 @@ def context_render(
         "--render-profile",
         help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
     ),
+    provider: str = typer.Option(
+        "native",
+        "--provider",
+        help="Semantic provider for primary target proof: native, lsp, or hybrid.",
+    ),
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
     ),
@@ -5989,6 +5994,7 @@ def context_render(
                     model=model,
                     optimize_context=resolved_optimize_context,
                     render_profile=resolved_render_profile,
+                    semantic_provider=provider,
                     profile=profile,
                 )
             )
@@ -6006,6 +6012,7 @@ def context_render(
             model=model,
             optimize_context=resolved_optimize_context,
             render_profile=resolved_render_profile,
+            semantic_provider=provider,
             profile=profile,
         )
     except (FileNotFoundError, ValueError) as exc:
@@ -6039,6 +6046,11 @@ def agent(
     ),
     model: str | None = typer.Option(
         None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
+    ),
+    provider: str = typer.Option(
+        "native",
+        "--provider",
+        help="Semantic provider for primary target proof: native, lsp, or hybrid.",
     ),
     gpu_device_ids: str | None = typer.Option(
         None,
@@ -6076,6 +6088,7 @@ def agent(
                     max_tokens=max_tokens,
                     max_repo_files=max_repo_files,
                     model=model,
+                    semantic_provider=provider,
                     gpu_device_ids=parsed_gpu_device_ids,
                     gpu_timeout_s=gpu_timeout_s,
                 )
@@ -6090,6 +6103,7 @@ def agent(
             max_tokens=max_tokens,
             max_repo_files=max_repo_files,
             model=model,
+            semantic_provider=provider,
             gpu_device_ids=parsed_gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
         )
@@ -6142,6 +6156,11 @@ def edit_plan(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    provider: str = typer.Option(
+        "native",
+        "--provider",
+        help="Semantic provider for primary target proof: native, lsp, or hybrid.",
+    ),
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
     ),
@@ -6166,6 +6185,7 @@ def edit_plan(
                     max_sources=max_sources,
                     max_tokens=max_tokens,
                     max_symbols=max_symbols,
+                    semantic_provider=provider,
                     profile=profile,
                 )
             )
@@ -6179,6 +6199,7 @@ def edit_plan(
             max_sources=max_sources,
             max_tokens=max_tokens,
             max_symbols=max_symbols,
+            semantic_provider=provider,
             profile=profile,
         )
     except (FileNotFoundError, ValueError) as exc:

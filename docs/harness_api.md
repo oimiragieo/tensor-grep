@@ -357,6 +357,7 @@ It reuses the Context Pack JSON shape and adds:
 | `max_sources` | `integer` | Maximum related source/span records retained in `edit_plan_seed` and candidate edit spans. |
 | `max_tokens` | `integer|null` | Accepted for agent command-surface parity with `context-render` and `agent`; edit-plan emits no rendered source text. |
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
+| `semantic_provider` | `string` | Effective semantic provider used for primary-target proof. Defaults to `native`; explicit `lsp` / `hybrid` modes may add row-level LSP proof fields only when a completed provider request contributed evidence. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, suggested edits, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
 | `navigation_pack` | `object` | Compact AI-facing navigation bundle with the primary target, mention-ready follow-up reads, related tests, and validation commands. |
@@ -418,6 +419,10 @@ Each `navigation_pack.primary_target` or `navigation_pack.follow_up_reads[]` obj
 | `symbol` | `string` | Symbol or enclosing region to inspect next. |
 | `start_line` | `integer` | Suggested start line for the next read. |
 | `end_line` | `integer` | Suggested end line for the next read. |
+| `lsp_provider_response` | `boolean` | Optional; `true` only when the target was confirmed by a completed LSP request. |
+| `lsp_proof` | `boolean` | Optional; `true` only for marker-backed LSP evidence, never for provider availability alone. |
+| `lsp_operation` | `string` | Optional LSP request that produced the evidence, such as `textDocument/definition`. |
+| `lsp_resolution_basis` | `string` | Optional explanation for anchored LSP proof, such as `native-definition-anchor`. |
 | `mention_ref` | `string` | Mention-ready source ref such as `path#L10-L18`. |
 | `role` | `string` | Present on `follow_up_reads[]`; one of `primary`, `related`, or `test`. |
 | `rationale` | `string` | Deterministic one-line explanation for why the range is worth reading next. |
@@ -461,6 +466,7 @@ The `llm` profile is compact, not summary-only. Selected source blocks include e
 | `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
 | `optimize_context` | `boolean` | Whether comment-only and blank lines were stripped from rendered source blocks. |
 | `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, or `llm`. |
+| `semantic_provider` | `string` | Effective semantic provider used for primary-target proof. Defaults to `native`; explicit `lsp` / `hybrid` modes may add row-level LSP proof fields only when a completed provider request contributed evidence. |
 | `context_payload_profile` | `string` | Present for compact profiles, such as `llm-compact`. |
 | `payload_compaction` | `object` | Present for compact profiles; records omitted keys and the applied source/file limits. |
 | `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
@@ -518,6 +524,7 @@ Use this shape when an agent needs the smallest actionable work packet before ed
 | `capsule_kind` | `string` | `actionable_context`. |
 | `query` | `string` | Natural-language task or symbol query used for ranking. |
 | `path` | `string` | Absolute root path inventoried. |
+| `semantic_provider` | `string` | Effective semantic provider used for the underlying context-render/edit-plan evidence. Defaults to `native`; explicit `lsp` / `hybrid` modes may mark `primary_target` with LSP proof fields when provider evidence exists. |
 | `ambiguity` | `object` | Equal-confidence routing state with `status`, `requires_confirmation`, `tie_count`, and `tied_alternative_targets`; resolved ties also include `resolved_by`. |
 | `primary_target` | `object` | Selected edit target with `file`, `symbol`, `kind`, `line`, `confidence`, and evidence labels. |
 | `alternative_targets` | `array<object>` | Plausible non-primary targets surfaced when routing is ambiguous; entries include file/symbol/language evidence and do not raise primary confidence. |
