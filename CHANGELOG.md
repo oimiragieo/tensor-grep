@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.13.7 (2026-05-24)
+
+### Bug Fixes
+
+- Accept positional agent targets
+  ([`346d222`](https://github.com/oimiragieo/tensor-grep/commit/346d22261af670274b256dcdcc1a287249706413))
+
+- Cache checkpoint discovery scopes
+  ([`c33378c`](https://github.com/oimiragieo/tensor-grep/commit/c33378cf2115e1a217b2be637b27ad6ab4bfaa95))
+
+- Lock ast run compatibility edges
+  ([`5911de5`](https://github.com/oimiragieo/tensor-grep/commit/5911de5792324a7259fd4d14416bb152bc7d2bef))
+
+
 ## v1.13.6 (2026-05-24)
 
 ### Bug Fixes
