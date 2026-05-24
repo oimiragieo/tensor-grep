@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.9 (2026-05-24)
+
+### Bug Fixes
+
+- Wire lsp proof into agent targets ([#217](https://github.com/oimiragieo/tensor-grep/pull/217),
+  [`a53a0b4`](https://github.com/oimiragieo/tensor-grep/commit/a53a0b45e6ce01f558d473b96d849fe0ac4f0bbf))
+
+
 ## v1.13.8 (2026-05-24)
 
 ### Bug Fixes
