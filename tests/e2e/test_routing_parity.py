@@ -21,6 +21,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "upgrade",
     "update",
     "repair-launcher",
+    "audit",
     "audit-verify",
     "mcp",
     "classify",

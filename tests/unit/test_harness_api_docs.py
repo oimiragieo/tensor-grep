@@ -141,6 +141,11 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_rulesets" in doc
     assert "tg_ruleset_scan" in doc
     assert "tg_mcp_capabilities" in doc
+    assert "protocolVersion" in doc
+    assert "serverInfo.version" in doc
+    assert "mcp_protocol_version" in doc
+    assert "mcp_supported_protocol_versions" in doc
+    assert "cli_version" in doc
     assert "MCPRuntime" in doc
     assert "python-local" in doc
     assert "embedded-safe" in doc

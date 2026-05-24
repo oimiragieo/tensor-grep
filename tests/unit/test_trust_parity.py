@@ -161,8 +161,20 @@ def test_tg_help_lists_new_trust_commands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "audit" in result.stdout
     assert "audit-history" in result.stdout
     assert "audit-diff" in result.stdout
+    assert "review-bundle" in result.stdout
+
+
+def test_audit_help_does_not_fall_through_to_search() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["audit", "--help"])
+
+    assert result.exit_code == 0
+    assert "Audit command entry points" in result.stdout
+    assert "audit-verify" in result.stdout
     assert "review-bundle" in result.stdout
 
 
@@ -180,6 +192,7 @@ def test_main_entry_does_not_rewrite_new_trust_commands(monkeypatch) -> None:
         ["tg", "audit-history", "."],
         ["tg", "audit-diff", "left.json", "right.json"],
         ["tg", "audit-verify", "manifest.json"],
+        ["tg", "audit", "--help"],
         ["tg", "review-bundle", "verify", "bundle.json"],
     ):
         monkeypatch.setattr(sys, "argv", argv)

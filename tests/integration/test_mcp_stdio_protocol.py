@@ -52,6 +52,8 @@ async def _stdio_protocol_roundtrip() -> None:
             capabilities_payload = json.loads(capabilities.content[0].text)
             assert capabilities_payload["schema_version"] == capabilities_payload["version"]
             assert capabilities_payload["routing_reason"] == "mcp-capabilities"
+            assert capabilities_payload["cli_version"] == initialized.serverInfo.version
+            assert capabilities_payload["mcp_protocol_version"]
 
             rulesets = await session.call_tool("tg_rulesets", {})
             assert rulesets.isError is False
@@ -105,6 +107,7 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         assert response["id"] == 1
         result = response["result"]
         assert isinstance(result, dict)
+        assert result["protocolVersion"] == "2025-06-18"
         server_info = result["serverInfo"]
         assert isinstance(server_info, dict)
         assert server_info["name"] == "tensor-grep"

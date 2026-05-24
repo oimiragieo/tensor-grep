@@ -832,6 +832,72 @@ def test_lsp_proof_requires_boolean_provider_response_marker(
     assert "native fallback" in payload["not_lsp_proof_reason"].lower()
 
 
+def test_repo_map_hybrid_defs_deduplicates_native_and_lsp_same_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    resolved = str(module_path.resolve())
+    monkeypatch.setattr(
+        repo_map,
+        "_external_workspace_symbols",
+        lambda root, symbol, **kwargs: [
+            {
+                "name": symbol,
+                "kind": "function",
+                "file": resolved,
+                "line": 1,
+                "end_line": 1,
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="hybrid")
+
+    assert len(payload["definitions"]) == 1
+    assert payload["definitions"][0]["file"] == resolved
+    assert payload["definitions"][0]["line"] == 1
+    assert payload["definitions"][0]["lsp_proof"] is True
+    assert payload["definitions"][0]["lsp_provider_response"] is True
+
+
+def test_repo_map_hybrid_defs_deduplicates_same_line_even_when_lsp_span_is_narrower(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text(
+        "class AgentRegistryGenerator:\n    def build(self) -> None:\n        pass\n",
+        encoding="utf-8",
+    )
+    resolved = str(module_path.resolve())
+    monkeypatch.setattr(
+        repo_map,
+        "_external_workspace_symbols",
+        lambda root, symbol, **kwargs: [
+            {
+                "name": symbol,
+                "kind": "class",
+                "file": resolved,
+                "line": 1,
+                "end_line": 1,
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_defs(
+        "AgentRegistryGenerator", tmp_path, semantic_provider="hybrid"
+    )
+
+    assert [(row["file"], row["line"]) for row in payload["definitions"]] == [(resolved, 1)]
+    assert payload["definitions"][0]["lsp_proof"] is True
+
+
 @pytest.mark.parametrize(
     ("command", "collection_key"),
     [
@@ -1111,6 +1177,42 @@ def test_repo_map_callers_lsp_fallback_alias_rows_are_not_lsp_proof(
     assert payload["lsp_evidence_status"] == "fallback_native"
     assert payload["lsp_proof"] is False
     assert "native fallback" in payload["not_lsp_proof_reason"].lower()
+
+
+def test_repo_map_callers_hybrid_deduplicates_external_and_native_same_call_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    consumer_path = tmp_path / "consumer.py"
+    service_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    consumer_path.write_text(
+        "from service import create_invoice\n\ncreate_invoice()\n",
+        encoding="utf-8",
+    )
+    resolved_consumer = str(consumer_path.resolve())
+    monkeypatch.setattr(
+        repo_map,
+        "_external_references",
+        lambda root, symbol, definitions: [
+            {
+                "name": symbol,
+                "kind": "reference",
+                "file": resolved_consumer,
+                "line": 3,
+                "end_line": 3,
+                "text": "create_invoice()",
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "textDocument/references",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_callers("create_invoice", tmp_path, semantic_provider="hybrid")
+
+    assert [(row["file"], row["line"], row["text"]) for row in payload["callers"]] == [
+        (resolved_consumer, 3, "create_invoice()")
+    ]
 
 
 def test_repo_map_blast_radius_hybrid_can_include_js_ts_alias_wrapper_callers(

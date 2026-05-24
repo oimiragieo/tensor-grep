@@ -1043,6 +1043,9 @@ def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
     status["lsp_proof"] = lsp_proof
     if lsp_proof:
         status.pop("not_lsp_proof_reason", None)
+        if status.get("stderr_tail"):
+            status["stderr_tail"] = []
+            status["stderr_tail_suppressed"] = True
         return status
     if not status.get("available"):
         reason = "Provider binary is unavailable."
