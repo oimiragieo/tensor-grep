@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +18,10 @@ _CHECKPOINTS_SUBDIR = "checkpoints"
 _INDEX_FILE = "index.json"
 _SNAPSHOT_SUBDIR = "snapshot"
 _METADATA_FILE = "metadata.json"
+_DISCOVERY_CACHE_FILE = "checkpoint-discovery-cache.json"
+_DISCOVERY_CACHE_VERSION = 1
 _DISCOVERY_MAX_DEPTH = 4
+_DISCOVERY_CACHE_TTL_SECONDS = 300.0
 _NON_GIT_IGNORED_DIRS = {
     ".git",
     ".hg",
@@ -154,6 +158,119 @@ def _undo_argv(scope: _CheckpointScope, checkpoint_id: str) -> list[str]:
 
 def _index_path(root: Path) -> Path:
     return _checkpoint_storage_dir(root) / _INDEX_FILE
+
+
+def _discovery_cache_path(search_root: Path) -> Path:
+    return search_root / _CHECKPOINT_DIRNAME / _DISCOVERY_CACHE_FILE
+
+
+def _discovery_cache_key(*, full: bool, max_depth: int) -> str:
+    return f"{'full' if full else 'bounded'}:{max_depth}"
+
+
+def _fingerprint_index_path(index_path: Path) -> dict[str, Any] | None:
+    try:
+        stat = index_path.stat()
+    except OSError:
+        return None
+    return {
+        "path": str(index_path),
+        "mtime_ns": stat.st_mtime_ns,
+        "size": stat.st_size,
+    }
+
+
+def _read_cached_checkpoint_index_paths(
+    search_root: Path,
+    *,
+    full: bool,
+    max_depth: int,
+) -> set[Path] | None:
+    cache_path = _discovery_cache_path(search_root)
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != _DISCOVERY_CACHE_VERSION:
+        return None
+    entries_by_key = payload.get("entries")
+    if not isinstance(entries_by_key, dict):
+        return None
+    entry = entries_by_key.get(_discovery_cache_key(full=full, max_depth=max_depth))
+    if not isinstance(entry, dict):
+        return None
+    created_at = entry.get("created_at_epoch_s")
+    if not isinstance(created_at, (int, float)):
+        return None
+    if time.time() - float(created_at) > _DISCOVERY_CACHE_TTL_SECONDS:
+        return None
+    fingerprints = entry.get("index_paths")
+    if not isinstance(fingerprints, list):
+        return None
+
+    index_paths: set[Path] = set()
+    for fingerprint in fingerprints:
+        if not isinstance(fingerprint, dict):
+            return None
+        raw_path = fingerprint.get("path")
+        if not isinstance(raw_path, str):
+            return None
+        index_path = Path(raw_path)
+        current = _fingerprint_index_path(index_path)
+        if current is None:
+            return None
+        if current.get("mtime_ns") != fingerprint.get("mtime_ns") or current.get(
+            "size"
+        ) != fingerprint.get("size"):
+            return None
+        index_paths.add(index_path)
+    return index_paths
+
+
+def _write_cached_checkpoint_index_paths(
+    search_root: Path,
+    index_paths: set[Path],
+    *,
+    full: bool,
+    max_depth: int,
+) -> None:
+    if not index_paths:
+        return
+    cache_path = _discovery_cache_path(search_root)
+    payload: dict[str, Any] = {"version": _DISCOVERY_CACHE_VERSION, "entries": {}}
+    try:
+        existing = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict) and existing.get("version") == _DISCOVERY_CACHE_VERSION:
+            payload = existing
+            payload.setdefault("entries", {})
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        pass
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+        payload["entries"] = entries
+    entries[_discovery_cache_key(full=full, max_depth=max_depth)] = {
+        "created_at_epoch_s": time.time(),
+        "index_paths": [
+            fingerprint
+            for index_path in sorted(index_paths)
+            if (fingerprint := _fingerprint_index_path(index_path)) is not None
+        ],
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _invalidate_discovery_caches_for_root(root: Path) -> None:
+    candidates = [root, *root.parents[: _DISCOVERY_MAX_DEPTH + 1]]
+    for candidate in candidates:
+        cache_path = _discovery_cache_path(candidate)
+        try:
+            cache_path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
 
 
 def _load_index(root: Path) -> list[CheckpointRecord]:
@@ -309,6 +426,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         ),
     )
     _write_index(root, records)
+    _invalidate_discovery_caches_for_root(root)
     return result
 
 
@@ -438,11 +556,24 @@ def discover_checkpoint_scopes(
 ) -> list[CheckpointScopeResult]:
     resolved = Path(path).expanduser().resolve()
     search_root = resolved if resolved.is_dir() else resolved.parent
-    index_paths = (
-        _full_checkpoint_index_paths(search_root)
-        if full
-        else _bounded_checkpoint_index_paths(search_root, include_generated=False)
+    max_depth = 2**31 - 1 if full else _DISCOVERY_MAX_DEPTH
+    index_paths = _read_cached_checkpoint_index_paths(
+        search_root,
+        full=full,
+        max_depth=max_depth,
     )
+    if index_paths is None:
+        index_paths = (
+            _full_checkpoint_index_paths(search_root)
+            if full
+            else _bounded_checkpoint_index_paths(search_root, include_generated=False)
+        )
+        _write_cached_checkpoint_index_paths(
+            search_root,
+            index_paths,
+            full=full,
+            max_depth=max_depth,
+        )
     return _scopes_from_index_paths(index_paths)
 
 
@@ -553,6 +684,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
             if not any(directory.iterdir()):
                 directory.rmdir()
 
+    _invalidate_discovery_caches_for_root(root)
     return CheckpointUndoResult(
         checkpoint_id=checkpoint_id,
         mode=mode,
