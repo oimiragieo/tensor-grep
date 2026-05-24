@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.13.10 (2026-05-24)
+
+### Bug Fixes
+
+- Recognize js class methods in planning
+  ([#218](https://github.com/oimiragieo/tensor-grep/pull/218),
+  [`38c9823`](https://github.com/oimiragieo/tensor-grep/commit/38c98233941dab77acdf07ac56d369dc1c89e799))
+
+
 ## v1.13.9 (2026-05-24)
 
 ### Bug Fixes
