@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.6 (2026-05-24)
+
+### Bug Fixes
+
+- Add lsp debug trace diagnostics
+  ([`ca19513`](https://github.com/oimiragieo/tensor-grep/commit/ca1951396afac31378edf9e60fa5248a58cd0158))
+
+
 ## v1.13.5 (2026-05-23)
 
 ### Bug Fixes
