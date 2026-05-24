@@ -335,7 +335,47 @@ def test_checkpoint_discover_reuses_valid_index_cache(
     assert second[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
 
 
-def test_checkpoint_create_invalidates_parent_discovery_cache(tmp_path: Path) -> None:
+def test_checkpoint_create_primes_parent_discovery_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "group" / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+
+    checkpoint = checkpoint_store.create_checkpoint(str(project))
+    cache_path = checkpoint_store._discovery_cache_path(workspace.resolve())
+    assert cache_path.exists()
+
+    def fail_bounded_walk(*_args, **_kwargs):
+        raise AssertionError("primed checkpoint discovery should avoid tree walk")
+
+    monkeypatch.setattr(checkpoint_store, "_bounded_checkpoint_index_paths", fail_bounded_walk)
+
+    scopes = checkpoint_store.discover_checkpoint_scopes(str(workspace))
+
+    assert [scope.root for scope in scopes] == [str(project.resolve())]
+    assert scopes[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
+
+
+def test_checkpoint_discovery_cache_roots_never_include_filesystem_anchor(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    anchor = Path(tmp_path.anchor)
+    shallow_root = anchor / "tg-cache-root-a" / "tg-cache-root-b" / "tg-cache-root-c"
+
+    cache_roots = checkpoint_store._bounded_discovery_cache_roots_for_checkpoint(shallow_root)
+
+    assert anchor not in cache_roots
+    assert all(candidate.parent != candidate for candidate in cache_roots)
+
+
+def test_checkpoint_create_merges_parent_discovery_cache(tmp_path: Path) -> None:
     from tensor_grep.cli import checkpoint_store
 
     workspace = tmp_path / "workspace"
@@ -351,9 +391,15 @@ def test_checkpoint_create_invalidates_parent_discovery_cache(tmp_path: Path) ->
     second_project = workspace / "second"
     second_project.mkdir()
     (second_project / "sample.py").write_text("print('second')\n", encoding="utf-8")
-    checkpoint_store.create_checkpoint(str(second_project))
+    second_checkpoint = checkpoint_store.create_checkpoint(str(second_project))
 
-    assert not cache_path.exists()
+    scopes = checkpoint_store.discover_checkpoint_scopes(str(workspace))
+    assert cache_path.exists()
+    assert [scope.root for scope in scopes] == [
+        str(project.resolve()),
+        str(second_project.resolve()),
+    ]
+    assert scopes[1].checkpoints[0].checkpoint_id == second_checkpoint.checkpoint_id
 
 
 def test_checkpoint_list_auto_discovery_does_not_use_unbounded_rglob(
@@ -503,6 +549,38 @@ def test_checkpoint_undo_last_restores_latest_child_scope_checkpoint(tmp_path: P
     assert restored["checkpoint_id"] == latest_checkpoint_id
     assert restored["root"] == str(project.resolve())
     assert source_file.read_text(encoding="utf-8") == "print('middle')\n"
+
+
+def test_checkpoint_undo_last_uses_cached_nested_scope_without_tree_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "group" / "project"
+    project.mkdir(parents=True)
+    source_file = project / "sample.py"
+    source_file.write_text("print('before')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+    source_file.write_text("print('after')\n", encoding="utf-8")
+
+    def fail_bounded_walk(*_args, **_kwargs):
+        raise AssertionError("undo --last should use cached discovery instead of tree walk")
+
+    monkeypatch.setattr(checkpoint_store, "_bounded_checkpoint_index_paths", fail_bounded_walk)
+
+    undo_result = runner.invoke(app, ["checkpoint", "undo", "--last", str(workspace), "--json"])
+
+    assert undo_result.exit_code == 0
+    restored = json.loads(undo_result.stdout)
+    assert restored["checkpoint_id"] == checkpoint_id
+    assert restored["root"] == str(project.resolve())
+    assert source_file.read_text(encoding="utf-8") == "print('before')\n"
 
 
 def test_checkpoint_undo_last_rejects_broad_path_with_multiple_child_scopes(
