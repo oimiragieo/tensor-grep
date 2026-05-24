@@ -162,6 +162,120 @@ def test_session_edit_plan_and_blast_radius_plan_reuse_cached_repo_map(tmp_path:
     assert "rendered_context" not in radius_payload
 
 
+def test_session_commands_accept_positional_query_and_symbol_aliases(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_service.py").write_text(
+        "from src.service import build_invoice\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    expected_module_file = str(module_path.resolve())
+    expected_service_file = str(service_path.resolve())
+
+    def _has_string(value, expected: str) -> bool:
+        if isinstance(value, str):
+            return expected in value
+        if isinstance(value, dict):
+            return any(_has_string(item, expected) for item in value.values())
+        if isinstance(value, list):
+            return any(_has_string(item, expected) for item in value)
+        return False
+
+    query_commands = {
+        "context": "session-context",
+        "context-render": "session-context-render",
+        "edit-plan": "session-context-edit-plan",
+    }
+    for command, routing_reason in query_commands.items():
+        result = runner.invoke(
+            app,
+            [
+                "session",
+                command,
+                opened["session_id"],
+                str(project),
+                "create invoice",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["routing_reason"] == routing_reason
+        assert payload["query"] == "create invoice"
+        assert _has_string(payload, expected_module_file)
+
+    symbol_commands = {
+        "blast-radius": "session-blast-radius",
+        "blast-radius-render": "session-blast-radius-render",
+        "blast-radius-plan": "session-blast-radius-plan",
+    }
+    for command, routing_reason in symbol_commands.items():
+        result = runner.invoke(
+            app,
+            [
+                "session",
+                command,
+                opened["session_id"],
+                str(project),
+                "create_invoice",
+                "--max-depth",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["routing_reason"] == routing_reason
+        assert payload["symbol"] == "create_invoice"
+        assert _has_string(payload, expected_service_file)
+
+
+def test_session_edit_plan_rejects_positional_and_flag_query(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total):\n    return total + 1\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "create invoice",
+            "--query",
+            "other",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either positional QUERY or --query" in result.output
+
+
 def test_session_edit_plan_does_not_walk_repo_for_default_stale_check(
     tmp_path: Path,
     monkeypatch,

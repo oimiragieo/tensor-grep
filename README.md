@@ -483,6 +483,14 @@ tg refs . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
 tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
 ```
 
+The agent-facing command surface also accepts positional aliases when typing at a shell:
+
+```powershell
+tg edit-plan . "change invoice tax" --json
+tg defs . create_invoice --json
+tg session edit-plan SESSION_ID . "change invoice tax" --json
+```
+
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)

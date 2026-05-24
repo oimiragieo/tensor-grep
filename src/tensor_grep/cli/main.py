@@ -5866,8 +5866,11 @@ def map(
 @app.command()
 def context(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    query: str = typer.Option(
-        ..., "--query", help="Query text used to rank relevant repo context."
+    query_arg: str | None = typer.Argument(
+        None, help="Query text used to rank relevant repo context."
+    ),
+    query: str | None = typer.Option(
+        None, "--query", help="Query text used to rank relevant repo context."
     ),
     max_files: int | None = typer.Option(
         None, "--max-files", min=1, help="Maximum ranked source files to include."
@@ -5881,11 +5884,16 @@ def context(
     from tensor_grep.cli.repo_map import build_context_pack, build_context_pack_json
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         if json_output:
             typer.echo(
                 build_context_pack_json(
-                    query,
-                    path,
+                    resolved_query,
+                    resolved_path,
                     max_files=max_files,
                     max_repo_files=max_repo_files,
                 )
@@ -5893,12 +5901,12 @@ def context(
             return
 
         payload = build_context_pack(
-            query,
-            path,
+            resolved_query,
+            resolved_path,
             max_files=max_files,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -5911,8 +5919,11 @@ def context(
 @app.command(name="context-render")
 def context_render(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    query: str = typer.Option(
-        ..., "--query", help="Query text used to rank and render repo context."
+    query_arg: str | None = typer.Argument(
+        None, help="Query text used to rank and render repo context."
+    ),
+    query: str | None = typer.Option(
+        None, "--query", help="Query text used to rank and render repo context."
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
@@ -5957,13 +5968,18 @@ def context_render(
     from tensor_grep.cli.repo_map import build_context_render, build_context_render_json
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
         if json_output:
             typer.echo(
                 build_context_render_json(
-                    query,
-                    path,
+                    resolved_query,
+                    resolved_path,
                     max_files=max_files,
                     max_repo_files=max_repo_files,
                     max_sources=max_sources,
@@ -5979,8 +5995,8 @@ def context_render(
             return
 
         payload = build_context_render(
-            query,
-            path,
+            resolved_query,
+            resolved_path,
             max_files=max_files,
             max_repo_files=max_repo_files,
             max_sources=max_sources,
@@ -5992,7 +6008,7 @@ def context_render(
             render_profile=resolved_render_profile,
             profile=profile,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6002,7 +6018,10 @@ def context_render(
 @app.command(name="agent")
 def agent(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    query: str = typer.Option(..., "--query", help="Natural-language task or symbol query."),
+    query_arg: str | None = typer.Argument(None, help="Natural-language task or symbol query."),
+    query: str | None = typer.Option(
+        None, "--query", help="Natural-language task or symbol query."
+    ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the capsule."
     ),
@@ -6041,12 +6060,17 @@ def agent(
     from tensor_grep.cli.agent_capsule import build_agent_capsule, build_agent_capsule_json
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
         if json_output:
             typer.echo(
                 build_agent_capsule_json(
-                    query,
-                    path,
+                    resolved_query,
+                    resolved_path,
                     max_files=max_files,
                     max_sources=max_sources,
                     max_tokens=max_tokens,
@@ -6059,8 +6083,8 @@ def agent(
             return
 
         payload = build_agent_capsule(
-            query,
-            path,
+            resolved_query,
+            resolved_path,
             max_files=max_files,
             max_sources=max_sources,
             max_tokens=max_tokens,
@@ -6069,7 +6093,7 @@ def agent(
             gpu_device_ids=parsed_gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6092,7 +6116,8 @@ def agent(
 @app.command(name="edit-plan")
 def edit_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
+    query_arg: str | None = typer.Argument(None, help="Query text used to rank edit targets."),
+    query: str | None = typer.Option(None, "--query", help="Query text used to rank edit targets."),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
@@ -6126,11 +6151,16 @@ def edit_plan(
     from tensor_grep.cli.repo_map import build_context_edit_plan, build_context_edit_plan_json
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         if json_output:
             typer.echo(
                 build_context_edit_plan_json(
-                    query,
-                    path,
+                    resolved_query,
+                    resolved_path,
                     max_files=max_files,
                     max_repo_files=max_repo_files,
                     max_sources=max_sources,
@@ -6142,8 +6172,8 @@ def edit_plan(
             return
 
         payload = build_context_edit_plan(
-            query,
-            path,
+            resolved_query,
+            resolved_path,
             max_files=max_files,
             max_repo_files=max_repo_files,
             max_sources=max_sources,
@@ -6151,7 +6181,7 @@ def edit_plan(
             max_symbols=max_symbols,
             profile=profile,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6205,10 +6235,45 @@ def _echo_symbol_location_rows(rows: list[dict[str, Any]]) -> None:
             typer.echo(rendered)
 
 
+def _resolve_path_and_symbol(
+    *,
+    path: str,
+    symbol_arg: str | None,
+    symbol_option: str | None,
+) -> tuple[str, str]:
+    if symbol_arg is not None and symbol_option is not None:
+        raise ValueError("Use either positional SYMBOL or --symbol, not both.")
+    if symbol_option is not None:
+        return path, symbol_option
+    if symbol_arg is not None:
+        return path, symbol_arg
+    if path != "." and not Path(path).expanduser().exists():
+        return ".", path
+    raise ValueError("Missing symbol. Use positional SYMBOL or --symbol SYMBOL.")
+
+
+def _resolve_path_and_query(
+    *,
+    path: str,
+    query_arg: str | None,
+    query_option: str | None,
+) -> tuple[str, str]:
+    if query_arg is not None and query_option is not None:
+        raise ValueError("Use either positional QUERY or --query, not both.")
+    if query_option is not None:
+        return path, query_option
+    if query_arg is not None:
+        return path, query_arg
+    if path != "." and not Path(path).expanduser().exists():
+        return ".", path
+    raise ValueError("Missing query. Use positional QUERY or --query QUERY.")
+
+
 @app.command()
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6224,11 +6289,16 @@ def defs(
     from tensor_grep.cli.repo_map import build_symbol_defs, build_symbol_defs_json
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_defs_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
                 )
@@ -6236,12 +6306,12 @@ def defs(
             return
 
         payload = build_symbol_defs(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6253,7 +6323,8 @@ def defs(
 @app.command()
 def source(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6269,11 +6340,16 @@ def source(
     from tensor_grep.cli.repo_map import build_symbol_source, build_symbol_source_json
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_source_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
                 )
@@ -6281,12 +6357,12 @@ def source(
             return
 
         payload = build_symbol_source(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6297,7 +6373,8 @@ def source(
 @app.command()
 def impact(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to evaluate."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to evaluate."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to evaluate."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6313,11 +6390,16 @@ def impact(
     from tensor_grep.cli.repo_map import build_symbol_impact, build_symbol_impact_json
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_impact_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
                 )
@@ -6325,12 +6407,12 @@ def impact(
             return
 
         payload = build_symbol_impact(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6342,7 +6424,8 @@ def impact(
 @app.command()
 def refs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6358,11 +6441,16 @@ def refs(
     from tensor_grep.cli.repo_map import build_symbol_refs, build_symbol_refs_json
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_refs_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
                 )
@@ -6370,12 +6458,12 @@ def refs(
             return
 
         payload = build_symbol_refs(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6387,7 +6475,8 @@ def refs(
 @app.command()
 def callers(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6403,11 +6492,16 @@ def callers(
     from tensor_grep.cli.repo_map import build_symbol_callers, build_symbol_callers_json
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_callers_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
                 )
@@ -6415,12 +6509,12 @@ def callers(
             return
 
         payload = build_symbol_callers(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6432,7 +6526,8 @@ def callers(
 @app.command(name="blast-radius")
 def blast_radius(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6469,11 +6564,16 @@ def blast_radius(
     )
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_blast_radius_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     max_depth=max_depth,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
@@ -6484,15 +6584,15 @@ def blast_radius(
             return
 
         payload = build_symbol_blast_radius(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             max_depth=max_depth,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
             max_callers=max_callers,
             max_files=max_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6506,7 +6606,8 @@ def blast_radius(
 @app.command(name="blast-radius-render")
 def blast_radius_render(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6556,13 +6657,18 @@ def blast_radius_render(
     )
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
         if json_output:
             typer.echo(
                 build_symbol_blast_radius_render_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     max_depth=max_depth,
                     max_files=max_files,
                     max_sources=max_sources,
@@ -6578,8 +6684,8 @@ def blast_radius_render(
             return
 
         payload = build_symbol_blast_radius_render(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             max_depth=max_depth,
             max_files=max_files,
             max_sources=max_sources,
@@ -6591,7 +6697,7 @@ def blast_radius_render(
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6601,7 +6707,8 @@ def blast_radius_render(
 @app.command(name="blast-radius-plan")
 def blast_radius_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6632,11 +6739,16 @@ def blast_radius_plan(
     )
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if json_output:
             typer.echo(
                 build_symbol_blast_radius_plan_json(
-                    symbol,
-                    path,
+                    resolved_symbol,
+                    resolved_path,
                     max_depth=max_depth,
                     max_files=max_files,
                     max_symbols=max_symbols,
@@ -6647,15 +6759,15 @@ def blast_radius_plan(
             return
 
         payload = build_symbol_blast_radius_plan(
-            symbol,
-            path,
+            resolved_symbol,
+            resolved_path,
             max_depth=max_depth,
             max_files=max_files,
             max_symbols=max_symbols,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -6870,8 +6982,11 @@ def session_refresh(
 def session_context_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
-    query: str = typer.Option(
-        ..., "--query", help="Query text used to rank relevant repo context."
+    query_arg: str | None = typer.Argument(
+        None, help="Query text used to rank relevant repo context."
+    ),
+    query: str | None = typer.Option(
+        None, "--query", help="Query text used to rank relevant repo context."
     ),
     refresh_on_stale: bool = typer.Option(
         False,
@@ -6890,19 +7005,29 @@ def session_context_cmd(
     from tensor_grep.cli.session_store import session_context
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         if daemon:
             payload = request_session_daemon(
-                path,
+                resolved_path,
                 {
                     "command": "context",
                     "session_id": session_id,
-                    "path": path,
-                    "query": query,
+                    "path": resolved_path,
+                    "query": resolved_query,
                     "refresh_on_stale": refresh_on_stale,
                 },
             )
         else:
-            payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
+            payload = session_context(
+                session_id,
+                resolved_query,
+                resolved_path,
+                refresh_on_stale=refresh_on_stale,
+            )
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -6920,8 +7045,11 @@ def session_context_cmd(
 def session_context_render_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
-    query: str = typer.Option(
-        ..., "--query", help="Query text used to rank and render repo context."
+    query_arg: str | None = typer.Argument(
+        None, help="Query text used to rank and render repo context."
+    ),
+    query: str | None = typer.Option(
+        None, "--query", help="Query text used to rank and render repo context."
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
@@ -6974,16 +7102,21 @@ def session_context_render_cmd(
     from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
         if daemon:
             payload = request_session_daemon(
-                path,
+                resolved_path,
                 {
                     "command": "context_render",
                     "session_id": session_id,
-                    "path": path,
-                    "query": query,
+                    "path": resolved_path,
+                    "query": resolved_query,
                     "max_files": max_files,
                     "max_repo_files": max_repo_files,
                     "max_sources": max_sources,
@@ -6999,8 +7132,8 @@ def session_context_render_cmd(
         else:
             payload = session_context_render(
                 session_id,
-                query,
-                path,
+                resolved_query,
+                resolved_path,
                 max_files=max_files,
                 max_repo_files=max_repo_files,
                 max_sources=max_sources,
@@ -7036,7 +7169,8 @@ def session_context_render_cmd(
 def session_edit_plan_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
-    query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
+    query_arg: str | None = typer.Argument(None, help="Query text used to rank edit targets."),
+    query: str | None = typer.Option(None, "--query", help="Query text used to rank edit targets."),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
@@ -7078,14 +7212,19 @@ def session_edit_plan_cmd(
     from tensor_grep.cli.session_store import session_context_edit_plan
 
     try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+        )
         if daemon:
             payload = request_session_daemon(
-                path,
+                resolved_path,
                 {
                     "command": "context_edit_plan",
                     "session_id": session_id,
-                    "path": path,
-                    "query": query,
+                    "path": resolved_path,
+                    "query": resolved_query,
                     "max_files": max_files,
                     "max_sources": max_sources,
                     "max_tokens": max_tokens,
@@ -7097,8 +7236,8 @@ def session_edit_plan_cmd(
         else:
             payload = session_context_edit_plan(
                 session_id,
-                query,
-                path,
+                resolved_query,
+                resolved_path,
                 max_files=max_files,
                 max_sources=max_sources,
                 max_tokens=max_tokens,
@@ -7125,7 +7264,8 @@ def session_edit_plan_cmd(
 def session_blast_radius_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -7149,14 +7289,19 @@ def session_blast_radius_cmd(
     from tensor_grep.cli.session_store import session_blast_radius
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if daemon:
             payload = request_session_daemon(
-                path,
+                resolved_path,
                 {
                     "command": "blast_radius",
                     "session_id": session_id,
-                    "path": path,
-                    "symbol": symbol,
+                    "path": resolved_path,
+                    "symbol": resolved_symbol,
                     "max_depth": max_depth,
                     "refresh_on_stale": refresh_on_stale,
                 },
@@ -7164,8 +7309,8 @@ def session_blast_radius_cmd(
         else:
             payload = session_blast_radius(
                 session_id,
-                symbol,
-                path,
+                resolved_symbol,
+                resolved_path,
                 max_depth=max_depth,
                 refresh_on_stale=refresh_on_stale,
             )
@@ -7184,7 +7329,8 @@ def session_blast_radius_cmd(
 def session_blast_radius_render_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -7230,14 +7376,19 @@ def session_blast_radius_render_cmd(
     from tensor_grep.cli.session_store import session_blast_radius_render
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if daemon:
             payload = request_session_daemon(
-                path,
+                resolved_path,
                 {
                     "command": "blast_radius_render",
                     "session_id": session_id,
-                    "path": path,
-                    "symbol": symbol,
+                    "path": resolved_path,
+                    "symbol": resolved_symbol,
                     "max_depth": max_depth,
                     "max_files": max_files,
                     "max_sources": max_sources,
@@ -7251,8 +7402,8 @@ def session_blast_radius_render_cmd(
         else:
             payload = session_blast_radius_render(
                 session_id,
-                symbol,
-                path,
+                resolved_symbol,
+                resolved_path,
                 max_depth=max_depth,
                 max_files=max_files,
                 max_sources=max_sources,
@@ -7277,7 +7428,8 @@ def session_blast_radius_render_cmd(
 def session_blast_radius_plan_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
-    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -7307,14 +7459,19 @@ def session_blast_radius_plan_cmd(
     from tensor_grep.cli.session_store import session_blast_radius_plan
 
     try:
+        resolved_path, resolved_symbol = _resolve_path_and_symbol(
+            path=path,
+            symbol_arg=symbol_arg,
+            symbol_option=symbol,
+        )
         if daemon:
             payload = request_session_daemon(
-                path,
+                resolved_path,
                 {
                     "command": "blast_radius_plan",
                     "session_id": session_id,
-                    "path": path,
-                    "symbol": symbol,
+                    "path": resolved_path,
+                    "symbol": resolved_symbol,
                     "max_depth": max_depth,
                     "max_files": max_files,
                     "max_symbols": max_symbols,
@@ -7324,8 +7481,8 @@ def session_blast_radius_plan_cmd(
         else:
             payload = session_blast_radius_plan(
                 session_id,
-                symbol,
-                path,
+                resolved_symbol,
+                resolved_path,
                 max_depth=max_depth,
                 max_files=max_files,
                 max_symbols=max_symbols,
