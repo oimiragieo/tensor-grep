@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.13.13 (2026-05-24)
+
+### Bug Fixes
+
+- Harden v1.13.11 dogfood followups
+  ([`323e83a`](https://github.com/oimiragieo/tensor-grep/commit/323e83a7e718c0adb63e632cf46c1c8dd3b17b2f))
+
+Harden v1.13.11 dogfood follow-ups across checkpoint discovery, MCP versioning, LSP confidence
+  evidence, launcher diagnostics, audit help, and scan coverage.
+
+
 ## v1.13.12 (2026-05-24)
 
 ### Bug Fixes
