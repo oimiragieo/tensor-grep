@@ -1023,6 +1023,7 @@ def test_lsp_help_mentions_provider_modes() -> None:
     assert "experimental" in help_text.lower()
     assert "Examples:" in help_text
     assert "--provider hybrid" in normalized_help
+    assert "--debug-trace" in help_text
 
 
 def test_lsp_rejects_unknown_provider_mode() -> None:
@@ -1034,6 +1035,43 @@ def test_lsp_rejects_unknown_provider_mode() -> None:
     combined_output = _strip_ansi(result.stdout + result.stderr)
     assert "Unsupported LSP provider mode" in combined_output
     assert "native, lsp, hybrid" in combined_output
+
+
+def test_lsp_debug_trace_emits_json_probe_payload(monkeypatch, tmp_path) -> None:
+    from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
+
+    def _fake_debug_trace(self, *, language, workspace_root, probe_timeout_seconds=None):
+        return {
+            "schema_version": 1,
+            "language": language,
+            "workspace_root": str(Path(workspace_root).resolve()),
+            "probe_timeout_seconds": probe_timeout_seconds,
+            "status": {"health_status": "ready", "lsp_proof": True},
+            "trace": [{"event": "send_request", "method": "initialize"}],
+            "stderr_tail": [],
+        }
+
+    monkeypatch.setattr(ExternalLSPProviderManager, "provider_debug_trace", _fake_debug_trace)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "lsp",
+            "--debug-trace",
+            "python",
+            "--path",
+            str(tmp_path),
+            "--probe-timeout-seconds",
+            "0.5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == 1
+    assert payload["language"] == "python"
+    assert payload["probe_timeout_seconds"] == 0.5
+    assert payload["trace"][0]["method"] == "initialize"
 
 
 def test_lsp_setup_help_mentions_managed_provider_install() -> None:

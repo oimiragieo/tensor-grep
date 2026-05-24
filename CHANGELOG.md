@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.5 (2026-05-23)
+
+### Bug Fixes
+
+- Harden classify provider cache UX
+  ([`560ae5f`](https://github.com/oimiragieo/tensor-grep/commit/560ae5f832b6219b39d4a71b0577bda32d1d30d6))
+
+
 ## v1.13.4 (2026-05-23)
 
 ### Bug Fixes
