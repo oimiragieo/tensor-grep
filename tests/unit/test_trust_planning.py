@@ -179,8 +179,8 @@ def test_cli_json_planning_surfaces_include_trust_metadata(tmp_path: Path) -> No
     assert render_result.exit_code == 0, render_result.output
     assert edit_plan_result.exit_code == 0, edit_plan_result.output
 
-    render_payload = json.loads(render_result.output)
-    edit_plan_payload = json.loads(edit_plan_result.output)
+    render_payload = json.loads(render_result.stdout)
+    edit_plan_payload = json.loads(edit_plan_result.stdout)
 
     assert render_payload["schema_version"] == render_payload["version"]
     assert edit_plan_payload["schema_version"] == edit_plan_payload["version"]
@@ -267,7 +267,7 @@ def test_cli_context_render_exact_symbol_query_prefers_literal_symbol(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["files"][0] == str(app_path.resolve())
     assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "createInvoice"
     assert payload["edit_plan_seed"]["primary_file"] == str(app_path.resolve())

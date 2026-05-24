@@ -449,6 +449,79 @@ def test_checkpoint_create_merges_parent_discovery_cache(tmp_path: Path) -> None
     assert scopes[1].checkpoints[0].checkpoint_id == second_checkpoint.checkpoint_id
 
 
+def test_checkpoint_list_discover_uses_primed_cache_for_multiple_scopes_without_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    checkpoint_ids: list[str] = []
+    runner = CliRunner()
+    for index in range(4):
+        project = workspace / f"project-{index}"
+        project.mkdir(parents=True)
+        (project / "sample.py").write_text(f"print({index})\n", encoding="utf-8")
+        create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+        assert create_result.exit_code == 0
+        checkpoint_ids.append(json.loads(create_result.stdout)["checkpoint_id"])
+
+    def fail_bounded_walk(*_args, **_kwargs):
+        raise AssertionError("primed checkpoint discovery should avoid tree walk")
+
+    monkeypatch.setattr(checkpoint_store, "_bounded_checkpoint_index_paths", fail_bounded_walk)
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--discover", "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["checkpoint_count"] == 4
+    assert [scope["checkpoints"][0]["checkpoint_id"] for scope in payload["discovered_scopes"]] == (
+        checkpoint_ids
+    )
+
+
+def test_checkpoint_discover_rebuilds_missing_index_from_metadata(tmp_path: Path) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+    checkpoint = checkpoint_store.create_checkpoint(str(project))
+    checkpoint_store._index_path(project.resolve()).unlink()
+
+    scopes = checkpoint_store.discover_checkpoint_scopes(str(workspace))
+
+    assert [scope.root for scope in scopes] == [str(project.resolve())]
+    assert scopes[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
+    assert checkpoint_store._index_path(project.resolve()).exists()
+
+
+def test_checkpoint_list_discover_reports_truncated_bounded_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_store._discovery_cache_path(workspace.resolve()).unlink()
+    monkeypatch.setattr(checkpoint_store, "_DISCOVERY_MAX_DIRECTORIES", 1)
+
+    list_result = runner.invoke(app, ["checkpoint", "list", str(workspace), "--discover", "--json"])
+
+    assert list_result.exit_code == 0
+    payload = json.loads(list_result.stdout)
+    assert payload["truncated"] is True
+    assert "use --discover-full" in payload["warning"]
+
+
 def test_checkpoint_list_auto_discovery_does_not_use_unbounded_rglob(
     tmp_path: Path,
     monkeypatch,

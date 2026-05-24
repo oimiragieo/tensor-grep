@@ -10183,15 +10183,38 @@ def _dedupe_lsp_definition_rows(rows: list[dict[str, Any]]) -> list[dict[str, An
     return _dedupe_definition_rows(rows)
 
 
-def _definition_dedupe_key(row: dict[str, Any]) -> tuple[str, int, str]:
-    file_key = str(row.get("file", ""))
+def _definition_file_display_path(file_value: Any) -> str:
+    file_raw = str(file_value or "")
+    if file_raw.startswith("file:"):
+        parsed = urlparse(file_raw)
+        if parsed.scheme == "file":
+            path = unquote(parsed.path)
+            if os.name == "nt" and re.match(r"^/[A-Za-z]:", path):
+                path = path[1:]
+            if parsed.netloc and parsed.netloc not in {"", "localhost"}:
+                path = f"//{parsed.netloc}{path}"
+            file_raw = path
+
+    try:
+        return str(Path(file_raw).resolve())
+    except (OSError, ValueError):
+        return file_raw
+
+
+def _definition_file_dedupe_key(file_value: Any) -> str:
+    file_key = _definition_file_display_path(file_value)
+
     if os.name == "nt":
-        file_key = file_key.lower()
-    return (
-        file_key,
-        int(row.get("line", row.get("start_line", 0)) or 0),
-        str(row.get("name", "")),
-    )
+        file_key = file_key.lower().replace("/", "\\")
+    return file_key
+
+
+def _definition_dedupe_key(row: dict[str, Any]) -> tuple[str, int, str]:
+    # LSP backends may emit file:// URIs or slash-normalized paths while the
+    # native backend emits OS-native paths. Normalize before merging hybrid rows.
+    file_key = _definition_file_dedupe_key(row.get("file"))
+    line = int(row.get("line", row.get("start_line", 0)) or 0)
+    return (file_key, line, str(row.get("name", "")))
 
 
 def _merge_definition_duplicate(
@@ -10220,6 +10243,8 @@ def _dedupe_definition_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: dict[tuple[str, int, str], dict[str, Any]] = {}
     for current in rows:
+        current = dict(current)
+        current["file"] = _definition_file_display_path(current.get("file"))
         key = _definition_dedupe_key(current)
         if key in seen:
             seen[key] = _merge_definition_duplicate(seen[key], current)

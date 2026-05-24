@@ -1443,6 +1443,34 @@ def test_doctor_path_tg_candidates_splits_windows_pathext_on_semicolon(
     assert candidates == [{"path": str(bridge_tg.resolve()), "version": "tg 1.9.7"}]
 
 
+def test_doctor_path_tg_candidates_includes_powershell_shim_when_not_in_pathext(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    native_tg = bin_dir / "tg.exe"
+    shim_tg = bin_dir / "tg.ps1"
+    bin_dir.mkdir(parents=True)
+    native_tg.write_text("native\n", encoding="utf-8")
+    shim_tg.write_text("& $PSScriptRoot/tg.exe @args\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_tg_candidate_version",
+        lambda candidate: (
+            "tensor-grep 1.13.12" if Path(candidate).suffix.lower() == ".ps1" else "tg 1.13.12"
+        ),
+    )
+
+    candidates = cli_main._doctor_path_tg_candidates(str(bin_dir))
+
+    assert candidates == [
+        {"path": str(native_tg.resolve()), "version": "tg 1.13.12"},
+        {"path": str(shim_tg.resolve()), "version": "tensor-grep 1.13.12"},
+    ]
+
+
 def test_doctor_fresh_shell_path_uses_windows_registry_separator(monkeypatch) -> None:
     import types
 
@@ -1807,6 +1835,29 @@ def test_doctor_json_reports_mcp_stdio_launcher_warning_from_candidate_native(
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     warning = payload["mcp_stdio_launcher_warning"]
+    assert "Start-Process" in warning
+    assert "not `tg.ps1`" in warning
+    assert str(native_tg) in warning
+    assert str(shim_tg) in warning
+
+
+def test_doctor_mcp_stdio_warning_flags_ps1_path_candidate_without_version(
+    tmp_path: Path,
+) -> None:
+    native_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    shim_tg = tmp_path / "bin" / "tg.ps1"
+    native_tg.parent.mkdir(parents=True)
+    shim_tg.parent.mkdir(parents=True)
+    native_tg.write_text("native\n", encoding="utf-8")
+    shim_tg.write_text("& $PSScriptRoot/tg.exe @args\n", encoding="utf-8")
+
+    warning = cli_main._doctor_mcp_stdio_launcher_warning(
+        native_tg_binary=native_tg,
+        launchers=[("PATH", "managed-native", str(native_tg))],
+        path_tg_candidates=[{"path": str(shim_tg), "version": None}],
+    )
+
+    assert warning is not None
     assert "Start-Process" in warning
     assert "not `tg.ps1`" in warning
     assert str(native_tg) in warning
@@ -3233,6 +3284,54 @@ def test_symbol_commands_accept_path_symbol_positional_alias(tmp_path):
     for command, routing_reason in commands.items():
         result = runner.invoke(app, [command, str(project), "create_invoice", "--json"])
         assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        payload = json.loads(result.stdout)
+        assert payload["routing_reason"] == routing_reason
+        assert payload["symbol"] == "create_invoice"
+        assert _has_expected_file(payload)
+
+
+def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    expected_file = str(module_path.resolve())
+
+    def _has_expected_file(value):
+        if isinstance(value, str):
+            return expected_file in value
+        if isinstance(value, dict):
+            return any(_has_expected_file(item) for item in value.values())
+        if isinstance(value, list):
+            return any(_has_expected_file(item) for item in value)
+        return False
+
+    commands = {
+        "defs": "symbol-defs",
+        "source": "symbol-source",
+        "impact": "symbol-impact",
+        "refs": "symbol-refs",
+        "callers": "symbol-callers",
+        "blast-radius": "symbol-blast-radius",
+        "blast-radius-render": "symbol-blast-radius-render",
+        "blast-radius-plan": "symbol-blast-radius-plan",
+    }
+
+    for command, routing_reason in commands.items():
+        result = runner.invoke(
+            app,
+            [command, "--symbol", "create_invoice", str(project), "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert f"Warning: --symbol is deprecated for tg {command}" in result.stderr
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
         assert payload["symbol"] == "create_invoice"
@@ -3934,6 +4033,55 @@ def test_agent_context_commands_accept_path_query_positional_alias(tmp_path):
     for command, routing_reason in commands.items():
         result = runner.invoke(app, [command, str(project), "create invoice", "--json"])
         assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        payload = json.loads(result.stdout)
+        assert payload["routing_reason"] == routing_reason
+        assert payload["query"] == "create invoice"
+        assert _has_expected_file(payload)
+
+
+def test_agent_context_commands_warn_for_legacy_query_option(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n",
+        encoding="utf-8",
+    )
+    expected_file = str(module_path.resolve())
+
+    def _has_expected_file(value):
+        if isinstance(value, str):
+            return expected_file in value
+        if isinstance(value, dict):
+            return any(_has_expected_file(item) for item in value.values())
+        if isinstance(value, list):
+            return any(_has_expected_file(item) for item in value)
+        return False
+
+    commands = {
+        "context": "context-pack",
+        "context-render": "context-render",
+        "agent": "agent-context-capsule",
+        "edit-plan": "context-edit-plan",
+    }
+
+    for command, routing_reason in commands.items():
+        result = runner.invoke(
+            app,
+            [command, "--query", "create invoice", str(project), "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert f"Warning: --query is deprecated for tg {command}" in result.stderr
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
         assert payload["query"] == "create invoice"
@@ -3987,7 +4135,7 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["routing_reason"] == "agent-context-capsule"
     assert payload["capsule_version"] == 1
     assert payload["capsule_kind"] == "actionable_context"
@@ -4052,7 +4200,7 @@ def test_agent_capsule_collects_bounded_call_site_evidence_for_explicit_symbol(t
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["primary_target"]["file"] == str(module_path.resolve())
     assert payload["primary_target"]["symbol"] == "create_invoice"
     assert payload["call_site_evidence"]["status"] == "collected"
@@ -4113,7 +4261,7 @@ def test_agent_capsule_skips_call_site_collection_when_symbol_not_explicit(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["primary_target"]["file"] == str(module_path.resolve())
     assert payload["primary_target"]["symbol"] == "create_invoice"
     assert payload["related_call_sites"] == []
@@ -4434,7 +4582,7 @@ def test_agent_capsule_cli_accepts_gpu_device_ids(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["gpu_acceleration"]["requested_device_ids"] == [0, 1]
     assert payload["gpu_acceleration"]["status"] == "unsupported"
 
@@ -4537,7 +4685,7 @@ def _agent_capsule_payload_for_query(project: Path, query: str) -> dict[str, obj
         ["agent", "--query", query, "--json", str(project)],
     )
     assert result.exit_code == 0, result.output
-    return json.loads(result.output)
+    return json.loads(result.stdout)
 
 
 def test_agent_capsule_python_invoice_tax_query_selects_python_evidence(tmp_path):
@@ -4640,13 +4788,13 @@ def test_agent_context_commands_prefer_invoice_implementation_over_service_menti
     )
 
     assert context_result.exit_code == 0, context_result.output
-    context_payload = json.loads(context_result.output)
+    context_payload = json.loads(context_result.stdout)
     assert context_payload["edit_plan_seed"]["primary_file"] == str(paths["payments"].resolve())
     assert context_payload["navigation_pack"]["primary_target"]["file"] == str(
         paths["payments"].resolve()
     )
     assert edit_result.exit_code == 0, edit_result.output
-    edit_payload = json.loads(edit_result.output)
+    edit_payload = json.loads(edit_result.stdout)
     assert edit_payload["edit_plan_seed"]["primary_file"] == str(paths["payments"].resolve())
     assert edit_payload["navigation_pack"]["primary_target"]["file"] == str(
         paths["payments"].resolve()
@@ -5009,7 +5157,7 @@ def test_context_render_filters_pytest_only_validation_for_typescript_primary(tm
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["edit_plan_seed"]["primary_file"] == str(paths["typescript"].resolve())
     assert payload["edit_plan_seed"]["validation_plan"] == []
     assert payload["edit_plan_seed"]["validation_commands"] == []
@@ -5038,7 +5186,7 @@ def test_edit_plan_filters_pytest_only_validation_for_typescript_primary(tmp_pat
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["edit_plan_seed"]["primary_file"] == str(paths["typescript"].resolve())
     assert payload["edit_plan_seed"]["validation_plan"] == []
     assert payload["edit_plan_seed"]["validation_commands"] == []
@@ -5219,7 +5367,7 @@ def test_agent_capsule_json_preserves_original_line_map_after_compaction(tmp_pat
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     snippet = next(
         item for item in payload["snippets"] if item["file"] == str(module_path.resolve())
     )
@@ -5262,7 +5410,7 @@ def test_agent_capsule_json_reports_omissions_and_follow_up_reads_when_budget_is
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["omissions"]["omitted_section_count"] >= 1
     assert payload["omissions"]["follow_up_reads"]
     assert all(
@@ -5297,7 +5445,7 @@ def test_agent_capsule_json_emits_argv_safe_recovery_commands_for_spaced_paths(t
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     raw_ref = payload["raw_context_ref"]
     assert raw_ref["argv"] == [
         "tg",
@@ -5345,7 +5493,7 @@ def test_agent_capsule_json_requires_user_confirmation_without_validation_comman
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["validation_commands"] == []
     assert payload["validation_plan"] == []
     assert payload["ask_user_before_editing"]["required"] is True
@@ -5388,7 +5536,7 @@ def test_agent_capsule_json_reports_primary_consistency_and_downgrades_when_prim
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert "context_consistency" in payload
     assert payload["primary_target"]["file"] == str(primary_path.resolve())
     assert payload["context_consistency"]["primary_file"] == payload["primary_target"]["file"]
@@ -6394,7 +6542,7 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
 
     assert payload["edit_plan_seed"]["validation_plan"][0]["runner"] == "vitest"
     assert payload["edit_plan_seed"]["validation_plan"][0]["scope"] == "symbol"
@@ -6451,7 +6599,7 @@ def test_edit_plan_json_prefers_ancestor_package_script_for_nested_ts_subdir(tmp
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["edit_plan_seed"]["validation_plan"][0]["runner"] == "javascript"
     assert payload["edit_plan_seed"]["validation_plan"][0]["scope"] == "repo"
     assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
@@ -6480,7 +6628,7 @@ def test_edit_plan_json_omits_js_fallback_for_manifest_free_tsx_subdir(tmp_path)
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["edit_plan_seed"]["validation_commands"] == []
     assert payload["edit_plan_seed"]["validation_plan"] == []
 
@@ -6523,7 +6671,7 @@ def test_edit_plan_json_does_not_escape_manifest_free_repo_boundary(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["edit_plan_seed"]["validation_commands"] == []
     assert payload["edit_plan_seed"]["validation_plan"] == []
 
@@ -6569,7 +6717,7 @@ def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_with
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["edit_plan_seed"]["validation_commands"][0] == "pnpm test"
     assert "uv run pytest -q" not in payload["edit_plan_seed"]["validation_commands"]
 
@@ -9574,7 +9722,7 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["version"] == 1
     assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
@@ -9610,7 +9758,7 @@ def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend
     result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["version"] == 1
     assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
@@ -9647,7 +9795,7 @@ def test_cli_json_output_should_include_aggregated_matched_file_metadata(monkeyp
     result = runner.invoke(app, ["search", "ERROR", ".", "--format", "json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert sorted(payload["matched_file_paths"]) == ["a.log", "b.log"]
     assert payload["match_counts_by_file"] == {"a.log": 1, "b.log": 1}
 
@@ -9685,7 +9833,7 @@ def test_cli_json_output_should_preserve_ast_range_and_meta_variables(monkeypatc
     result = runner.invoke(app, ["search", "def $F($$$ARGS):", ".", "--ast", "--format", "json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["matches"][0]["range"] == {
         "byteOffset": {"start": 0, "end": 16},
         "start": {"line": 0, "column": 0},
@@ -9724,7 +9872,7 @@ def test_cli_json_output_should_prefer_runtime_backend_metadata_over_pipeline_se
     result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["routing_backend"] == "CPUBackend"
     assert payload["routing_reason"] == "torch_regex_cpu_fallback"
     assert payload["routing_gpu_device_ids"] == []
@@ -9879,7 +10027,7 @@ def test_cli_json_output_should_prefer_runtime_single_worker_gpu_metadata_over_s
     result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["routing_backend"] == "CuDFBackend"
     assert payload["routing_reason"] == "cudf_chunked_single_worker_plan"
     assert payload["routing_gpu_device_ids"] == [3]
@@ -10216,7 +10364,7 @@ def test_rulesets_json_lists_builtin_rule_packs():
     result = runner.invoke(app, ["rulesets", "--json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["schema_version"] == payload["version"]
     rulesets = {ruleset["name"]: ruleset for ruleset in payload["rulesets"]}
     assert set(rulesets) == {
@@ -10281,7 +10429,7 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
         )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["schema_version"] == payload["version"]
     assert payload["routing_reason"] == "builtin-ruleset-scan"
     assert payload["ruleset"] == "crypto-safe"
@@ -10339,7 +10487,7 @@ def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch):
         )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["findings"][0]["evidence"][0]["snippets"] == [
         {"text": "hashlib.md5(", "truncated": True}
     ]
@@ -10458,7 +10606,7 @@ def test_scan_supports_single_rule_file_and_positional_path(monkeypatch, tmp_pat
     result = runner.invoke(app, ["scan", "--rule", str(rule_file), str(source_root), "--json"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["routing_reason"] == "ast-single-rule-scan"
     assert payload["findings"][0]["rule_id"] == "no-print"
     assert payload["findings"][0]["matches"] == 1
@@ -10505,7 +10653,7 @@ def test_scan_filter_limits_project_rules(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["rule_count"] == 1
     assert [finding["rule_id"] for finding in payload["findings"]] == ["no-print"]
 
@@ -10573,7 +10721,7 @@ def test_scan_project_filter_respects_positional_scan_paths(monkeypatch, tmp_pat
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["scan_paths"] == [str(src_dir.resolve())]
     assert payload["total_matches"] == 1
     assert payload["findings"][0]["files"] == [str((src_dir / "sample.py").resolve())]
@@ -10637,7 +10785,7 @@ def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: P
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     finding = payload["findings"][0]
     assert finding["rule_id"] == "no-print"
     assert finding["severity"] == "warning"
@@ -10697,7 +10845,7 @@ def test_scan_inline_rules_normalizes_ast_grep_language_names(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["findings"][0]["language"] == normalized_language
     assert seen_config_languages == [normalized_language]
 
@@ -10829,7 +10977,7 @@ def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
         written = json.loads(Path("new-baseline.json").read_text(encoding="utf-8"))
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["findings"][0]["status"] == "existing"
     assert payload["findings"][1]["status"] == "clear"
     assert payload["baseline"]["new_findings"] == 0
@@ -10885,7 +11033,7 @@ def test_scan_builtin_ruleset_can_apply_suppressions(monkeypatch):
         )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["findings"][0]["status"] == "suppressed"
     assert payload["findings"][1]["status"] == "clear"
     assert payload["suppressions"]["suppressed_findings"] == 1
@@ -10922,7 +11070,7 @@ def test_scan_builtin_ruleset_can_write_suppressions(monkeypatch):
         written = json.loads(Path("written-suppressions.json").read_text(encoding="utf-8"))
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["suppressions_written"]["count"] == 1
     assert written["kind"] == "ruleset-scan-suppressions"
     assert written["entries"][0]["fingerprint"] == payload["findings"][0]["fingerprint"]
@@ -11753,7 +11901,7 @@ def test_devices_command_json_outputs_routable_device_inventory(monkeypatch):
     result = runner.invoke(app, ["devices", "--json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["platform"] == "windows"
     assert payload["has_gpu"] is True
     assert payload["device_count"] == 2
@@ -11789,7 +11937,7 @@ def test_devices_command_format_json_outputs_inventory(monkeypatch):
     result = runner.invoke(app, ["devices", "--format", "json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["platform"] == "windows"
     assert payload["device_count"] == 2
 
