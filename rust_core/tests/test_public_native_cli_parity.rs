@@ -973,6 +973,50 @@ fn test_unbounded_no_ignore_search_refuses_generated_root_before_rg() {
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("safety guard, not a zero-match result"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_early_rg_no_ignore_search_refuses_generated_root_before_rg() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_script(dir.path(), "rg-route\n");
+    fs::write(dir.path().join("app.log"), "ERROR failed\n").unwrap();
+    fs::create_dir(dir.path().join("AppData")).unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "ERROR", ".", "--hidden", "--no-ignore"])
+        .env("TG_RG_PATH", &fake_rg)
+        .env("TG_RUST_EARLY_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        ""
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("broad generated-root scan refused"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("safety guard, not a zero-match result"),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

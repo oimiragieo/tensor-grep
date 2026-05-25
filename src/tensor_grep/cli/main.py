@@ -3179,7 +3179,8 @@ def _format_broad_workspace_scan_error(project_dirs: list[str]) -> str:
     if len(project_dirs) > 8:
         visible_dirs = f"{visible_dirs}, ..."
     return (
-        "Error: broad workspace-root scan refused: path looks like a multi-project "
+        "Error: broad workspace-root scan refused as a safety guard, not a zero-match result: "
+        "path looks like a multi-project "
         f"workspace root ({visible_dirs}). Scope the path to one project, add --glob, "
         "--type, or --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
         "For bounded output:\n"
@@ -6966,6 +6967,8 @@ def session_daemon_start(
     typer.echo(
         f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
     )
+    if payload.get("response_cache_scope"):
+        typer.echo(f"response_cache_scope={payload['response_cache_scope']}")
 
 
 @session_daemon_app.command("status")
@@ -6990,6 +6993,8 @@ def session_daemon_status(
         typer.echo(
             f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
         )
+        if payload.get("response_cache_scope"):
+            typer.echo(f"response_cache_scope={payload['response_cache_scope']}")
     else:
         typer.echo("Session daemon not running")
 

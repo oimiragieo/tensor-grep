@@ -42,6 +42,7 @@ _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 _DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
+_DAEMON_RESPONSE_CACHE_SCOPE = "daemon-routed session context-render/edit-plan requests"
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -149,6 +150,7 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
 
 
 def _merge_live_daemon_stats(status: dict[str, Any]) -> dict[str, Any]:
+    status.setdefault("response_cache_scope", _DAEMON_RESPONSE_CACHE_SCOPE)
     if not status.get("running"):
         return status
     stat_fields = {
@@ -168,6 +170,7 @@ def _merge_live_daemon_stats(status: dict[str, Any]) -> dict[str, Any]:
         "response_cache_puts",
         "response_cache_entries",
         "response_cache_oversized_skips",
+        "response_cache_scope",
         "uptime_seconds",
         "inflight_requests",
         "skipped_requests",
@@ -251,6 +254,7 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
             "pid": int(existing["pid"]),
             "started_at": str(existing["started_at"]),
             "auto_started": False,
+            "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
         }
 
     _remove_daemon_metadata(root)
@@ -293,6 +297,7 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
                 "pid": int(metadata["pid"]),
                 "started_at": str(metadata["started_at"]),
                 "auto_started": True,
+                "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
             }
         time.sleep(0.05)
     raise RuntimeError(f"session daemon did not start for {root}")
@@ -617,6 +622,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "response_cache_size_bytes": server.response_cache.size_bytes,
                     "response_cache_max_size_bytes": server.response_cache.max_size_bytes,
                     "response_cache_oversized_skips": server.response_cache.oversized_skips,
+                    "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
                     "uptime_seconds": max(0.0, monotonic() - server.started_at),
                     "request_count": server.request_count,
                 }

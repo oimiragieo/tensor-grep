@@ -1461,6 +1461,9 @@ def test_session_daemon_lifecycle(tmp_path: Path) -> None:
     assert status["response_cache_size_bytes"] == 0
     assert status["response_cache_max_size_bytes"] > 0
     assert status["response_cache_oversized_skips"] == 0
+    assert (
+        status["response_cache_scope"] == "daemon-routed session context-render/edit-plan requests"
+    )
 
     stopped_payload = session_daemon.stop_session_daemon(str(project))
     assert stopped_payload["stopped"] is True

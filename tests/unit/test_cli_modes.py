@@ -464,6 +464,7 @@ def test_plain_search_refuses_unbounded_multi_project_workspace_root(tmp_path: P
 
     assert result.exit_code == 2
     assert "broad workspace-root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
     assert "alpha" in result.output
     assert "beta" in result.output
     assert "gamma" in result.output
