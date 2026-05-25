@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.14
 
 Latest tagged GitHub release: [`v1.13.14`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.14). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.14`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.14). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.13` shipped from PR #222, merge commit `323e83a`, release commit `581c412`, main CI run `26374619263`, and CodeQL run `26375020529`.
+Latest verified release proof: `v1.13.14` shipped from PR #223, merge commit `1e09e59`, release commit `83be919`, main CI run `26378619592`, CodeQL run `26379114812`, and Dependency Graph run `26379116504`.
 
 Current positioning:
 
@@ -61,6 +61,14 @@ Current positioning:
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.14` closed:
+
+- PR #223 `fix: bound agent-loop memory and dogfood contracts` shipped the release as merge commit `1e09e59 fix: bound agent-loop memory and dogfood contracts` and release commit `83be919 chore(release): v1.13.14 [skip ci]`.
+- main CI run `26378619592` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `26379114812` and Dependency Graph run `26379116504` passed on the release commit.
+- GitHub release assets for `v1.13.14` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.14 tg --version` reports `tensor-grep 1.13.14`.
+- The release bounded long-lived agent-loop memory surfaces across CPU/StringZilla/AST/repo-context caches, session/daemon response caches, and optional LSP provider clients/open documents while preserving raw search output contracts. It also fixed the checkpoint discovery false negative under `artifacts/`, clarified path-first `defs` positional deprecation guidance, and preserved LSP proof fields on tied capsule alternatives.
+- The post-release dogfood position remains conservative: `rg` is still the cold exact-text baseline, public GPU remains unsupported/experimental, and agent capsule output is not autonomous-edit proof without validation evidence.
 
 What `v1.13.13` closed:
 
