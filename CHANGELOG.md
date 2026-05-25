@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.13.14 (2026-05-25)
+
+### Bug Fixes
+
+- Bound agent-loop memory and dogfood contracts
+  ([`1e09e59`](https://github.com/oimiragieo/tensor-grep/commit/1e09e596b81349007b5aa5a191312b7e1a770bd2))
+
+Bound agent-loop memory caches, fix v1.13.13 dogfood paper cuts, and refresh release-proof docs.
+
+
 ## v1.13.13 (2026-05-24)
 
 ### Bug Fixes
