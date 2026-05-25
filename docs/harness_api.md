@@ -352,7 +352,7 @@ It reuses the Context Pack JSON shape and adds:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `routing_reason` | `string` | `context-edit-plan`. |
+| `routing_reason` | `string` | `context-edit-plan` for direct builds, or `session-context-edit-plan` when top-level native-provider CLI requests reuse an already-running daemon. |
 | `max_files` | `integer` | Maximum files retained in the plan payload. |
 | `max_sources` | `integer` | Maximum related source/span records retained in `edit_plan_seed` and candidate edit spans. |
 | `max_tokens` | `integer|null` | Accepted for agent command-surface parity with `context-render` and `agent`; edit-plan emits no rendered source text. |
@@ -445,7 +445,7 @@ The `llm` profile is compact, not summary-only. Selected source blocks include e
 | --- | --- | --- |
 | `version` | `integer` | Contract version. |
 | `routing_backend` | `string` | `RepoMap`. |
-| `routing_reason` | `string` | `context-render`. |
+| `routing_reason` | `string` | `context-render` for direct builds, or `session-context-render` when top-level native-provider CLI requests reuse an already-running daemon. |
 | `sidecar_used` | `boolean` | Always `false`. |
 | `coverage` | `object` | Same coverage contract as Repo Map JSON. Omitted by the CLI `llm` JSON profile. |
 | `query` | `string` | Query text used for ranking and rendering. |
@@ -1285,7 +1285,7 @@ Start and status responses include:
 | `port` | `integer` | Bound localhost port. |
 | `pid` | `integer` | Process identifier when the daemon is live. |
 | `started_at` | `string` | ISO-8601 startup timestamp when the daemon is live. |
-| `response_cache_scope` | `string` | Public scope for `response_cache_*` counters. Current value: `daemon-routed session context-render/edit-plan requests`; top-level `tg context-render` is not counted unless routed through the session daemon surface. |
+| `response_cache_scope` | `string` | Public scope for `response_cache_*` counters. Current value: `daemon-routed top-level/session context-render/edit-plan requests`; top-level native-provider `tg context-render` and `tg edit-plan` are counted when they reuse an already-running daemon. Implicit sessions are keyed by root and `max_repo_files` so larger-budget calls do not reuse smaller cached maps. |
 
 Stop responses additionally include:
 

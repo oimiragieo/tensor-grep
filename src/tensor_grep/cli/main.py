@@ -165,7 +165,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
 - The search surface is a validated common rg-compatible subset, not a full ripgrep replacement.
 - Use `--format rg --json` for ripgrep JSON Lines events; plain `--json` is tensor-grep aggregate JSON.
-- Broad generated-root and multi-project workspace-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`.
+- Direct generated-root, broad file-list, and multi-project workspace-root scans are refused unless scoped with paths, `--glob`, `--type`, `--max-depth`, or explicit `--allow-broad-generated-scan`; project-root `--no-ignore` content searches follow ripgrep.
 - On Windows, PowerShell double quotes expand $NAME before `tg` receives literal patterns; use single quotes or escape `$`. In `cmd.exe`, quote or caret-escape metacharacters such as `|` and `&`.
 - `--smart-case`, `--hidden`, `--max-depth`, and `--text` are honored by structured CPU and sidecar search; native GPU falls back when a requested switch changes semantics it cannot safely execute yet.
 - `--gpu-device-ids` pins selected GPUs for explicit search, benchmark, and agent evidence probes; GPU remains experimental until 1GB/5GB correctness and speed beat both `rg` and `tg_cpu`.
@@ -178,7 +178,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
 - Use `tg repair-launcher --allow-foreign-rename` only when Windows Python subprocess resolution is blocked by a foreign `tg.exe` that you own and want tensor-grep to back up.
-- Use `tg session --help` for cached edit-loop and daemon commands; daemon edit-plan/context requests keep a short connect probe, a longer work response timeout, and byte-bounded response-cache stats.
+- Use `tg session --help` for cached edit-loop and daemon commands; daemon-routed edit-plan/context requests keep a short connect probe, a longer work response timeout, and byte-bounded response-cache stats.
 
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
@@ -3057,7 +3057,7 @@ def _config_with_guarded_broad_root_globs(config: "SearchConfig") -> "SearchConf
     return replace(config, glob=existing_globs)
 
 
-def _generated_scan_dir_names(paths: list[str]) -> list[str]:
+def _generated_scan_dir_names(paths: list[str], *, include_child_dirs: bool = True) -> list[str]:
     found: set[str] = set()
     generated_names = {name.lower() for name in _BROAD_GENERATED_SCAN_DIR_NAMES}
     for raw_path in paths:
@@ -3074,6 +3074,8 @@ def _generated_scan_dir_names(paths: list[str]) -> list[str]:
             for candidate_name in {path.name, resolved.name}:
                 if candidate_name and candidate_name.lower() in generated_names:
                     found.add(candidate_name)
+            if not include_child_dirs:
+                continue
             for child in path.iterdir():
                 if child.is_dir() and child.name.lower() in generated_names:
                     found.add(child.name)
@@ -3154,7 +3156,7 @@ def _should_refuse_unbounded_generated_scan(
         or config.unrestricted > 0
     ):
         return False, []
-    generated_dirs = _generated_scan_dir_names(paths)
+    generated_dirs = _generated_scan_dir_names(paths, include_child_dirs=files_mode)
     return bool(generated_dirs), generated_dirs
 
 
@@ -5948,6 +5950,96 @@ def context(
     typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
 
 
+def _maybe_context_render_via_running_daemon(
+    *,
+    path: str,
+    query: str,
+    max_files: int,
+    max_repo_files: int,
+    max_sources: int,
+    max_symbols_per_file: int,
+    max_render_chars: int | None,
+    max_tokens: int | None,
+    model: str | None,
+    optimize_context: bool,
+    render_profile: str,
+    provider: str,
+    profile: bool,
+) -> dict[str, Any] | None:
+    if provider != "native":
+        return None
+    if Path(path).expanduser().is_file():
+        return None
+    try:
+        from tensor_grep.cli.session_daemon import request_running_session_daemon
+
+        payload = request_running_session_daemon(
+            path,
+            {
+                "command": "context_render",
+                "path": path,
+                "query": query,
+                "refresh_on_stale": True,
+                "max_files": max_files,
+                "max_sources": max_sources,
+                "max_symbols_per_file": max_symbols_per_file,
+                "max_render_chars": max_render_chars,
+                "max_tokens": max_tokens,
+                "model": model,
+                "optimize_context": optimize_context,
+                "render_profile": render_profile,
+                "profile": profile,
+                "max_repo_files": max_repo_files,
+            },
+        )
+        if payload is None or "error" in payload:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _maybe_edit_plan_via_running_daemon(
+    *,
+    path: str,
+    query: str,
+    max_files: int,
+    max_repo_files: int,
+    max_sources: int | None,
+    max_tokens: int | None,
+    max_symbols: int,
+    provider: str,
+    profile: bool,
+) -> dict[str, Any] | None:
+    if provider != "native":
+        return None
+    if Path(path).expanduser().is_file():
+        return None
+    try:
+        from tensor_grep.cli.session_daemon import request_running_session_daemon
+
+        payload = request_running_session_daemon(
+            path,
+            {
+                "command": "context_edit_plan",
+                "path": path,
+                "query": query,
+                "refresh_on_stale": True,
+                "max_files": max_files,
+                "max_sources": max_sources,
+                "max_tokens": max_tokens,
+                "max_symbols": max_symbols,
+                "profile": profile,
+                "max_repo_files": max_repo_files,
+            },
+        )
+        if payload is None or "error" in payload:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
 @app.command(name="context-render")
 def context_render(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -6016,6 +6108,30 @@ def context_render(
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
+        daemon_payload = _maybe_context_render_via_running_daemon(
+            path=resolved_path,
+            query=resolved_query,
+            max_files=max_files,
+            max_repo_files=max_repo_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+            max_tokens=max_tokens,
+            model=model,
+            optimize_context=resolved_optimize_context,
+            render_profile=resolved_render_profile,
+            provider=provider,
+            profile=profile,
+        )
+        if daemon_payload is not None:
+            if json_output:
+                if daemon_payload.get("render_profile") == "llm":
+                    typer.echo(json.dumps(daemon_payload, separators=(",", ":")))
+                else:
+                    typer.echo(json.dumps(daemon_payload, indent=2))
+                return
+            typer.echo(str(daemon_payload.get("rendered_context", "")))
+            return
         if json_output:
             typer.echo(
                 build_context_render_json(
@@ -6221,6 +6337,28 @@ def edit_plan(
             query_option=query,
             command_name="edit-plan",
         )
+        daemon_payload = _maybe_edit_plan_via_running_daemon(
+            path=resolved_path,
+            query=resolved_query,
+            max_files=max_files,
+            max_repo_files=max_repo_files,
+            max_sources=max_sources,
+            max_tokens=max_tokens,
+            max_symbols=max_symbols,
+            provider=provider,
+            profile=profile,
+        )
+        if daemon_payload is not None:
+            if json_output:
+                typer.echo(json.dumps(daemon_payload, indent=2))
+                return
+            payload = daemon_payload
+            typer.echo(f"Edit plan for {payload['path']}")
+            typer.echo(f"query={payload['query']}")
+            typer.echo(
+                f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+            )
+            return
         if json_output:
             typer.echo(
                 build_context_edit_plan_json(

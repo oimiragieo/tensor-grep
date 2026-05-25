@@ -25,12 +25,16 @@ from tensor_grep.cli.session_store import (
     _configured_positive_int,
     _ensure_session_not_stale,
     _json_size_bytes,
+    _load_index,
     _resolve_request_session_target,
     _resolve_root,
     _session_health_payload,
+    _session_payload_path,
     _sessions_dir,
     _SessionServeCache,
     _SessionServeResponseCacheEntry,
+    _write_index,
+    open_session,
     refresh_session,
     serve_session_request,
 )
@@ -42,7 +46,8 @@ _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 _DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
-_DAEMON_RESPONSE_CACHE_SCOPE = "daemon-routed session context-render/edit-plan requests"
+_DAEMON_IMPLICIT_SESSION_MAX_ENTRIES = 16
+_DAEMON_RESPONSE_CACHE_SCOPE = "daemon-routed top-level/session context-render/edit-plan requests"
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -340,6 +345,18 @@ def request_session_daemon(path: str, request: dict[str, Any]) -> dict[str, Any]
     )
 
 
+def request_running_session_daemon(path: str, request: dict[str, Any]) -> dict[str, Any] | None:
+    root = _resolve_root(Path(path))
+    metadata = _probe_daemon(root)
+    if metadata is None:
+        return None
+    return _daemon_request(
+        str(metadata.get("host", _DAEMON_HOST)),
+        int(metadata["port"]),
+        request,
+    )
+
+
 def _load_payload_with_status_retry(
     cache: _SessionServeCache, session_id: str, path: str
 ) -> tuple[dict[str, Any], str]:
@@ -445,6 +462,65 @@ def _response_cache_key_for_command(
     return None
 
 
+def _optional_positive_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return max(1, int(cast(int | str, value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> int | None:
+    requested = _optional_positive_int(request.get("max_repo_files"))
+    if requested is not None:
+        return requested
+    if command == "context_render":
+        return _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT
+    if command == "context_edit_plan":
+        return _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT
+    return None
+
+
+def _remove_implicit_session_payload(path: str, session_id: str) -> None:
+    root = _resolve_root(Path(path))
+    try:
+        _session_payload_path(root, session_id).unlink(missing_ok=True)
+        records = [record for record in _load_index(root) if record.session_id != session_id]
+        _write_index(root, records)
+    except OSError:
+        pass
+
+
+def _implicit_session_id_for_request(
+    server: Any,
+    *,
+    command: str,
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+) -> str:
+    if session_id or command not in {"context_render", "context_edit_plan"}:
+        return session_id
+
+    max_repo_files = _implicit_session_max_repo_files(command, request)
+    key = (_path_cache_key(path), str(max_repo_files or ""))
+    with server._implicit_session_lock:
+        existing = server.implicit_session_ids.pop(key, None)
+        if existing:
+            server.implicit_session_ids[key] = existing
+            return str(existing)
+        opened = open_session(
+            path,
+            max_repo_files=max_repo_files,
+        )
+        server.implicit_session_ids[key] = opened.session_id
+        while len(server.implicit_session_ids) > _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES:
+            evicted_key, evicted_session_id = server.implicit_session_ids.popitem(last=False)
+            _remove_implicit_session_payload(evicted_key[0], evicted_session_id)
+        return opened.session_id
+
+
 def _serve_daemon_response_with_cache(
     *,
     server: Any,
@@ -464,6 +540,7 @@ def _serve_daemon_response_with_cache(
     with server._response_cache_lock:
         cached_response = server.response_cache.get(response_cache_key)
     if cached_response is not None:
+        cached_response.pop("serve_response_cache", None)
         return cached_response, "hit"
 
     response = serve_session_request(session_id, request, path, payload=payload)
@@ -560,10 +637,12 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
         self.root = root
         self.payload_cache = _SessionServeCache()
         self.response_cache = _SessionResponseCache()
+        self.implicit_session_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.started_at = monotonic()
         self.request_count = 0
         self._request_lock = threading.Lock()
         self._response_cache_lock = threading.Lock()
+        self._implicit_session_lock = threading.Lock()
 
 
 class _SessionDaemonHandler(socketserver.StreamRequestHandler):
@@ -591,6 +670,15 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 request, session_id, request_path
             )
             command = str(request.get("command", "")).strip().lower()
+            request_session_id = _implicit_session_id_for_request(
+                server,
+                command=command,
+                session_id=request_session_id,
+                path=request_path,
+                request=request,
+            )
+            if request_session_id:
+                request["session_id"] = request_session_id
 
             if command == "stop":
                 response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
