@@ -31,7 +31,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg.exe search --json" in doc
     assert "tg.exe search --index --json" in doc
     assert "tg.exe map --json" in doc
-    assert 'tg.exe context --query "invoice payment" --json' in doc
+    assert 'tg.exe context .\\src "invoice payment" --json' in doc
     assert "tg session open" in doc
     assert "tg session list" in doc
     assert "tg session show" in doc
@@ -40,7 +40,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg session serve" in doc
     assert "--refresh-on-stale" in doc
     assert "tg.exe map --json" in doc
-    assert "tg.exe context --query" in doc
+    assert "tg.exe context .\\src" in doc
     assert "tg.exe search --ndjson" in doc
     assert "tg.exe run --lang python --rewrite" in doc
     assert "--diff" in doc
@@ -63,11 +63,14 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg checkpoint create" in doc
     assert "tg checkpoint list" in doc
     assert "tg checkpoint undo" in doc
-    assert "tg defs --symbol" in doc
-    assert "tg source --symbol" in doc
-    assert "tg impact --symbol" in doc
-    assert "tg refs --symbol" in doc
-    assert "tg callers --symbol" in doc
+    assert "tg defs .\\src create_invoice" in doc
+    assert "tg source .\\src create_invoice" in doc
+    assert "tg impact . create_invoice" in doc
+    assert "tg refs . create_invoice" in doc
+    assert "tg callers . create_invoice" in doc
+    assert "blast_radius_score" in doc
+    assert "0.0` to" in doc
+    assert "affected_files" in doc
     assert "--checkpoint" in doc
     assert "--apply-edit-ids" in doc
     assert "--reject-edit-ids" in doc

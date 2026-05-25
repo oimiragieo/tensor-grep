@@ -317,14 +317,22 @@ def test_refresh_session_uses_incremental_builder_when_changeset_available(
     original_incremental = session_store.build_repo_map_incremental
 
     def tracking_incremental(
-        previous_map: dict[str, object], changeset: dict[str, list[str]]
+        previous_map: dict[str, object],
+        changeset: dict[str, list[str]],
+        *,
+        max_repo_files: int | None = None,
     ) -> dict[str, object]:
         incremental_calls["count"] += 1
-        return original_incremental(previous_map, changeset)
+        assert max_repo_files == session_store.DEFAULT_AGENT_REPO_MAP_LIMIT
+        return original_incremental(previous_map, changeset, max_repo_files=max_repo_files)
 
-    def unexpected_full_build(path: str | Path = ".") -> dict[str, object]:
+    def unexpected_full_build(
+        path: str | Path = ".",
+        *,
+        max_repo_files: int | None = None,
+    ) -> dict[str, object]:
         full_calls["count"] += 1
-        return repo_map.build_repo_map(path)
+        return repo_map.build_repo_map(path, max_repo_files=max_repo_files)
 
     monkeypatch.setattr(session_store, "build_repo_map_incremental", tracking_incremental)
     monkeypatch.setattr(session_store, "build_repo_map", unexpected_full_build)
@@ -349,13 +357,22 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
     full_calls = {"count": 0}
 
     def failing_incremental(
-        previous_map: dict[str, object], changeset: dict[str, list[str]]
+        previous_map: dict[str, object],
+        changeset: dict[str, list[str]],
+        *,
+        max_repo_files: int | None = None,
     ) -> dict[str, object]:
+        assert max_repo_files == session_store.DEFAULT_AGENT_REPO_MAP_LIMIT
         raise RuntimeError("boom")
 
-    def tracking_full_build(path: str | Path = ".") -> dict[str, object]:
+    def tracking_full_build(
+        path: str | Path = ".",
+        *,
+        max_repo_files: int | None = None,
+    ) -> dict[str, object]:
         full_calls["count"] += 1
-        return repo_map.build_repo_map(path)
+        assert max_repo_files == session_store.DEFAULT_AGENT_REPO_MAP_LIMIT
+        return repo_map.build_repo_map(path, max_repo_files=max_repo_files)
 
     monkeypatch.setattr(session_store, "build_repo_map_incremental", failing_incremental)
     monkeypatch.setattr(session_store, "build_repo_map", tracking_full_build)
@@ -411,7 +428,10 @@ def test_refresh_session_incremental_repo_map_matches_full_rebuild(tmp_path: Pat
     payload = _session_payload(paths["project"], session_id)
 
     assert refreshed.refresh_type == "incremental"
-    assert payload["repo_map"] == repo_map.build_repo_map(paths["project"])
+    assert payload["repo_map"] == repo_map.build_repo_map(
+        paths["project"],
+        max_repo_files=session_store.DEFAULT_AGENT_REPO_MAP_LIMIT,
+    )
 
 
 def test_session_context_raises_stale_error_with_changeset_summary(tmp_path: Path) -> None:

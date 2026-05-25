@@ -1088,6 +1088,96 @@ fn test_search_version_is_accepted_on_public_native_frontdoor() {
 }
 
 #[test]
+fn test_public_native_root_help_describes_python_passthrough_commands() {
+    let output = tg().arg("--help").output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected: &[(&str, &[&str])] = &[
+        (
+            "map",
+            &[
+                "Build a bounded repository map",
+                "Return a deterministic repository map",
+            ],
+        ),
+        (
+            "session",
+            &[
+                "Open, query, and manage cached",
+                "Open and reuse cached repository-map sessions",
+            ],
+        ),
+        (
+            "doctor",
+            &["Diagnose launcher, GPU, cache", "Print system, GPU, cache"],
+        ),
+        ("checkpoint", &["Create, list, and undo"]),
+        (
+            "edit-plan",
+            &[
+                "Build a machine-readable edit plan",
+                "Return a machine-readable edit-planning",
+            ],
+        ),
+        (
+            "agent",
+            &[
+                "Emit an actionable context capsule",
+                "Return an actionable context capsule",
+            ],
+        ),
+        (
+            "context-render",
+            &[
+                "Render bounded prompt-ready context",
+                "Return a prompt-ready repository context",
+            ],
+        ),
+        (
+            "defs",
+            &[
+                "Find symbol definitions",
+                "Return exact definition locations",
+            ],
+        ),
+        (
+            "refs",
+            &[
+                "Find symbol references",
+                "Return Python-first symbol references",
+            ],
+        ),
+        (
+            "callers",
+            &["Find direct callers", "Return Python-first call sites"],
+        ),
+        (
+            "blast-radius",
+            &[
+                "Build a transitive blast-radius graph",
+                "Return exact callers plus",
+            ],
+        ),
+    ];
+    for (command, descriptions) in expected {
+        assert!(
+            stdout.contains(command)
+                && descriptions
+                    .iter()
+                    .any(|description| stdout.contains(description)),
+            "missing help for {command}: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn test_top_level_structured_search_accepts_no_ignore() {
     let dir = tempdir().unwrap();
     let file = dir.path().join("ignored.log");
@@ -1117,6 +1207,12 @@ fn test_top_level_structured_search_accepts_no_ignore() {
     );
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["total_matches"], 1);
+    assert_eq!(payload["total_files"], 1);
+    assert_eq!(payload["matched_file_paths"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        payload["match_counts_by_file"].as_object().unwrap().len(),
+        1
+    );
 }
 
 #[test]
@@ -1154,6 +1250,117 @@ fn test_top_level_format_rg_search_is_accepted_on_public_native_frontdoor() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn test_format_rg_no_explicit_path_omits_dot_for_files_with_matches() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_exact_args_script(
+        dir.path(),
+        &["-l", "-g", "AGENTS.md", "-e", "tensor-grep"],
+        "AGENTS.md\n",
+    );
+    fs::write(dir.path().join("AGENTS.md"), "tensor-grep\n").unwrap();
+
+    for args in [
+        vec![
+            "search",
+            "--format",
+            "rg",
+            "-l",
+            "-g",
+            "AGENTS.md",
+            "tensor-grep",
+        ],
+        vec!["--format", "rg", "-l", "-g", "AGENTS.md", "tensor-grep"],
+    ] {
+        let output = tg()
+            .current_dir(dir.path())
+            .args(&args)
+            .env("TG_RG_PATH", &fake_rg)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "args={args:?} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "AGENTS.md\n"
+        );
+    }
+}
+
+#[test]
+fn test_format_rg_explicit_dot_path_is_forwarded_for_files_with_matches() {
+    let dir = tempdir().unwrap();
+    let fake_rg = fake_rg_exact_args_script(
+        dir.path(),
+        &["-l", "-g", "AGENTS.md", "-e", "tensor-grep", "."],
+        "AGENTS.md\n",
+    );
+    fs::write(dir.path().join("AGENTS.md"), "tensor-grep\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args([
+            "search",
+            "--format",
+            "rg",
+            "-l",
+            "-g",
+            "AGENTS.md",
+            "tensor-grep",
+            ".",
+        ])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "AGENTS.md\n"
+    );
+}
+
+#[test]
+fn test_native_json_context_counts_only_real_matches() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("sample.txt"), "before\nneedle\nafter\n").unwrap();
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "--json", "-C", "1", "needle", "sample.txt"])
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["total_matches"], 1);
+    assert_eq!(payload["total_files"], 1);
+    assert_eq!(payload["matched_file_paths"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        payload["match_counts_by_file"].as_object().unwrap().len(),
+        1
+    );
 }
 
 #[test]

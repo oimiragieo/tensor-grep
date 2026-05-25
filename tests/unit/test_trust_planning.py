@@ -397,12 +397,23 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
     node_modules = project / "node_modules" / "pkg"
     cache_dir = project / ".pytest_cache"
     artifacts_dir = project / "artifacts" / "debug"
+    extra_generated_dirs = [
+        project / ".venv_cuda" / "lib",
+        project / "bench_data" / "corpus",
+        project / "gpu_bench_data" / "corpus",
+        project / ".tmp_large" / "cache",
+        project / "many_files" / "generated",
+        project / "group2_many_files" / "generated",
+        project / "site" / "packages",
+    ]
     src_dir.mkdir(parents=True)
     hidden_dir.mkdir()
     git_dir.mkdir()
     node_modules.mkdir(parents=True)
     cache_dir.mkdir()
     artifacts_dir.mkdir(parents=True)
+    for generated_dir in extra_generated_dirs:
+        generated_dir.mkdir(parents=True)
 
     source_path = src_dir / "payments.py"
     source_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
@@ -415,16 +426,28 @@ def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
         "def create_invoice_debug_probe():\n    return 'debug artifact'\n",
         encoding="utf-8",
     )
+    generated_probes = []
+    for index, generated_dir in enumerate(extra_generated_dirs):
+        generated_probe = generated_dir / f"generated_{index}.py"
+        generated_probe.write_text(
+            f"def generated_invoice_probe_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+        generated_probes.append(generated_probe)
     (project / "run.log").write_text("create invoice noisy log\n", encoding="utf-8")
     (project / "blob.bin").write_bytes(b"create invoice\0binary")
 
     payload = repo_map.build_context_render("create invoice", project)
     files = {Path(path).resolve() for path in payload["files"]}
+    serialized = json.dumps(payload)
 
     assert source_path.resolve() in files
     assert (hidden_dir / "notes.txt").resolve() not in files
     assert (node_modules / "dep.js").resolve() not in files
     assert artifact_probe.resolve() not in files
+    for generated_probe in generated_probes:
+        assert generated_probe.resolve() not in files
+        assert str(generated_probe.resolve()) not in serialized
     assert (project / "run.log").resolve() not in files
     assert (project / "blob.bin").resolve() not in files
 

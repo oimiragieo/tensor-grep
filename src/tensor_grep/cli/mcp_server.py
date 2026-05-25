@@ -1055,15 +1055,22 @@ def tg_ruleset_scan(
 
 
 @mcp.tool()  # type: ignore
-def tg_repo_map(path: str = ".") -> str:
+def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
     """
     Return a deterministic repository inventory for agent context selection.
 
     Args:
         path: File or directory to inventory.
+        max_repo_files: Maximum repo files to scan before returning. Defaults to 512.
     """
     try:
-        return json.dumps(build_repo_map(path), indent=2)
+        from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
+
+        effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
+        return json.dumps(
+            build_repo_map(path, max_repo_files=effective_max_repo_files),
+            indent=2,
+        )
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),
@@ -2603,13 +2610,14 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_session_open(path: str = ".", max_repo_files: int | None = None) -> str:
+def tg_session_open(path: str = ".", max_repo_files: int | None = 512) -> str:
     """
     Create a cached repository-map session for repeated edit loops.
 
     Args:
         path: File or directory rooted at the session scope.
         max_repo_files: Optional cap for files scanned into the initial session repo map.
+            Defaults to 512 for agent-safe cold opens.
     """
     from tensor_grep.cli.session_store import open_session
 

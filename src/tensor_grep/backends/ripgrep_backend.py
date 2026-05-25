@@ -65,6 +65,9 @@ class RipgrepBackend(ComputeBackend):
             import json
 
             matches = []
+            matched_file_paths: list[str] = []
+            match_counts_by_file: dict[str, int] = {}
+            total_matches = 0
 
             for line in result.stdout.splitlines():
                 if not line.strip():
@@ -83,6 +86,13 @@ class RipgrepBackend(ComputeBackend):
 
                         # Note: Ripgrep JSON also outputs absolute offsets, but MatchLine requires line_num/text
                         matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
+                        total_matches += 1
+                        if path_str:
+                            match_counts_by_file[path_str] = (
+                                match_counts_by_file.get(path_str, 0) + 1
+                            )
+                            if path_str not in matched_file_paths:
+                                matched_file_paths.append(path_str)
                     elif data.get("type") == "context":
                         data_match = data["data"]
                         line_number = data_match.get("line_number", 0)
@@ -94,12 +104,12 @@ class RipgrepBackend(ComputeBackend):
                 except json.JSONDecodeError:
                     pass
 
-            files_set = {m.file for m in matches}
-
             return SearchResult(
                 matches=matches,
-                total_files=len(files_set),
-                total_matches=len(matches),
+                matched_file_paths=matched_file_paths,
+                match_counts_by_file=match_counts_by_file,
+                total_files=len(matched_file_paths),
+                total_matches=total_matches,
                 routing_backend="RipgrepBackend",
                 routing_reason="rg_json",
                 routing_distributed=False,

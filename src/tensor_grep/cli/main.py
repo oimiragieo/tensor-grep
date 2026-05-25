@@ -139,7 +139,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg PATTERN [PATH ...]`
 - `tg search [OPTIONS] PATTERN [PATH ...]`
 - `tg run PATTERN [PATH]`
-- `tg agent PATH --query "change invoice tax"`
+- `tg agent PATH "change invoice tax"`
 - `tg scan --config sgconfig.yml`
 - `tg doctor --with-lsp`
 - `tg dogfood --output artifacts/agent_readiness.json`
@@ -148,10 +148,10 @@ persisted repeated-query acceleration, and optional GPU routing.
 
 **AI workflows**
 - `tg map PATH`
-- `tg context-render PATH --query "invoice flow"`
-- `tg edit-plan PATH --query "add retry with tests"`
-- `tg agent PATH --query "change behavior" --json`
-- `tg blast-radius-render PATH --symbol create_invoice`
+- `tg context-render PATH "invoice flow"`
+- `tg edit-plan PATH "add retry with tests"`
+- `tg agent PATH "change behavior" --json`
+- `tg blast-radius-render PATH create_invoice`
 - `tg session open PATH`
 - `tg session daemon start PATH`
 
@@ -3163,7 +3163,8 @@ def _format_broad_generated_scan_error(generated_dirs: list[str]) -> str:
     if len(generated_dirs) > 8:
         visible_dirs = f"{visible_dirs}, ..."
     return (
-        "Error: broad generated-root scan refused: path contains generated, cache, "
+        "Error: broad generated-root scan refused as a safety guard, not a zero-match result: "
+        "path contains generated, cache, "
         f"or dependency directories ({visible_dirs}). Scope the path, add --glob, --type, "
         "or --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
         "For bounded output:\n"
@@ -5851,29 +5852,34 @@ def map(
         None, "--max-files", min=1, help="Maximum source files to include in output."
     ),
     max_repo_files: int | None = typer.Option(
-        None, "--max-repo-files", min=1, help="Maximum repo files to scan before returning."
+        512,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning. Defaults to the agent-safe 512-file cap.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a deterministic repository map for AI editing workflows."""
     from tensor_grep.cli.repo_map import (
+        DEFAULT_AGENT_REPO_MAP_LIMIT,
         apply_repo_map_output_limits,
         build_repo_map,
         build_repo_map_json,
     )
 
     try:
+        effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
         if json_output:
             typer.echo(
                 build_repo_map_json(
                     path,
                     max_files=max_files,
-                    max_repo_files=max_repo_files,
+                    max_repo_files=effective_max_repo_files,
                 )
             )
             return
 
-        payload = build_repo_map(path, max_repo_files=max_repo_files)
+        payload = build_repo_map(path, max_repo_files=effective_max_repo_files)
         payload = apply_repo_map_output_limits(payload, max_files=max_files)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -5891,7 +5897,10 @@ def context(
         None, help="Query text used to rank relevant repo context."
     ),
     query: str | None = typer.Option(
-        None, "--query", help="Query text used to rank relevant repo context."
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
     ),
     max_files: int | None = typer.Option(
         None, "--max-files", min=1, help="Maximum ranked source files to include."
@@ -5945,7 +5954,10 @@ def context_render(
         None, help="Query text used to rank and render repo context."
     ),
     query: str | None = typer.Option(
-        None, "--query", help="Query text used to rank and render repo context."
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
@@ -6050,7 +6062,10 @@ def agent(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     query_arg: str | None = typer.Argument(None, help="Natural-language task or symbol query."),
     query: str | None = typer.Option(
-        None, "--query", help="Natural-language task or symbol query."
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the capsule."
@@ -6155,7 +6170,12 @@ def agent(
 def edit_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     query_arg: str | None = typer.Argument(None, help="Query text used to rank edit targets."),
-    query: str | None = typer.Option(None, "--query", help="Query text used to rank edit targets."),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
+    ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
@@ -6336,7 +6356,12 @@ def _resolve_path_and_query(
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6388,7 +6413,12 @@ def defs(
 def source(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6439,7 +6469,12 @@ def source(
 def impact(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to evaluate."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to evaluate."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6491,7 +6526,12 @@ def impact(
 def refs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6543,7 +6583,12 @@ def refs(
 def callers(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6595,7 +6640,12 @@ def callers(
 def blast_radius(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6676,7 +6726,12 @@ def blast_radius(
 def blast_radius_render(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6778,7 +6833,12 @@ def blast_radius_render(
 def blast_radius_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
@@ -6852,12 +6912,12 @@ def blast_radius_plan(
 def session_open(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     max_repo_files: int | None = typer.Option(
-        None,
+        512,
         "--max-repo-files",
         min=1,
         help=(
-            "Opt-in cap for files scanned into the initial session repo map. "
-            "Default keeps the complete session map."
+            "Maximum files scanned into the initial session repo map. "
+            "Defaults to the agent-safe 512-file cap."
         ),
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
@@ -7057,7 +7117,10 @@ def session_context_cmd(
         None, help="Query text used to rank relevant repo context."
     ),
     query: str | None = typer.Option(
-        None, "--query", help="Query text used to rank relevant repo context."
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
     ),
     refresh_on_stale: bool = typer.Option(
         False,
@@ -7121,7 +7184,10 @@ def session_context_render_cmd(
         None, help="Query text used to rank and render repo context."
     ),
     query: str | None = typer.Option(
-        None, "--query", help="Query text used to rank and render repo context."
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
@@ -7243,7 +7309,12 @@ def session_edit_plan_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     query_arg: str | None = typer.Argument(None, help="Query text used to rank edit targets."),
-    query: str | None = typer.Option(None, "--query", help="Query text used to rank edit targets."),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
+    ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
     ),
@@ -7339,7 +7410,12 @@ def session_blast_radius_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -7405,7 +7481,12 @@ def session_blast_radius_render_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -7505,7 +7586,12 @@ def session_blast_radius_plan_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     symbol_arg: str | None = typer.Argument(None, help="Exact symbol name to resolve."),
-    symbol: str | None = typer.Option(None, "--symbol", help="Exact symbol name to resolve."),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Deprecated: use positional SYMBOL.",
+        hidden=True,
+    ),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -7800,6 +7886,10 @@ def checkpoint_undo(
     """Restore a checkpoint."""
     from tensor_grep.cli.checkpoint_store import resolve_latest_checkpoint, undo_checkpoint
 
+    if path == "--json":
+        json_output = True
+        path = "."
+
     try:
         if last:
             if checkpoint_id is not None and path != ".":
@@ -7820,7 +7910,33 @@ def checkpoint_undo(
                 raise typer.Exit(1)
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
-        typer.echo(str(exc), err=True)
+        message = str(exc)
+        if not last and checkpoint_id is not None:
+            candidate = Path(checkpoint_id).expanduser()
+            if candidate.exists():
+                message = (
+                    f"{message}. The first positional argument is parsed as CHECKPOINT_ID; "
+                    f"to restore the newest checkpoint for this path, use "
+                    f"`tg checkpoint undo --last {checkpoint_id}`."
+                )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _with_schema_version(
+                        {
+                            "ok": False,
+                            "error": "checkpoint_not_found",
+                            "detail": message,
+                            "checkpoint_id": checkpoint_id,
+                            "path": path,
+                        },
+                        version=1,
+                    ),
+                    indent=2,
+                )
+            )
+            raise typer.Exit(1) from exc
+        typer.echo(message, err=True)
         raise typer.Exit(1) from exc
 
     if json_output:
@@ -9670,7 +9786,11 @@ def ast_info(
 
 @app.command(
     name="run",
-    help="Run a validated AST slice for structural search and guarded rewrites.",
+    help=(
+        "Run a validated AST slice for structural search and guarded rewrites. "
+        "PowerShell users should single-quote AST patterns containing $ captures, "
+        "for example 'def $NAME($$$ARGS): $$$BODY'."
+    ),
 )
 def run(
     arguments: list[str] | None = typer.Argument(

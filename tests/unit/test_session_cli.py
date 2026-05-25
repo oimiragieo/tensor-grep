@@ -93,6 +93,49 @@ def test_session_open_can_cap_initial_repo_map(tmp_path: Path) -> None:
     assert len(shown["repo_map"]["files"]) == 2
     assert shown["scan_limit"] == opened["scan_limit"]
 
+    refresh_result = runner.invoke(
+        app,
+        ["session", "refresh", opened["session_id"], str(project), "--json"],
+    )
+
+    assert refresh_result.exit_code == 0, refresh_result.output
+    refreshed = json.loads(refresh_result.stdout)
+    assert refreshed["file_count"] == 2
+    assert refreshed["scan_limit"]["max_repo_files"] == 2
+
+
+def test_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(520):
+        (src_dir / f"module_{index:03}.py").write_text(
+            f"def function_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    runner = CliRunner()
+    open_result = runner.invoke(app, ["session", "open", str(project), "--json"])
+
+    assert open_result.exit_code == 0, open_result.output
+    opened = json.loads(open_result.stdout)
+    assert opened["file_count"] == 512
+    assert opened["scan_limit"] == {
+        "max_repo_files": 512,
+        "scanned_files": 512,
+        "possibly_truncated": True,
+    }
+
+    show_result = runner.invoke(
+        app,
+        ["session", "show", opened["session_id"], str(project), "--json"],
+    )
+
+    assert show_result.exit_code == 0, show_result.output
+    shown = json.loads(show_result.stdout)
+    assert len(shown["repo_map"]["files"]) == 512
+    assert shown["scan_limit"] == opened["scan_limit"]
+
 
 def test_session_edit_plan_and_blast_radius_plan_reuse_cached_repo_map(tmp_path: Path) -> None:
     project = tmp_path / "project"
@@ -1412,6 +1455,12 @@ def test_session_daemon_lifecycle(tmp_path: Path) -> None:
     status = session_daemon.get_session_daemon_status(str(project))
     assert status["running"] is True
     assert status["port"] == started["port"]
+    assert status["response_cache_hits"] == 0
+    assert status["response_cache_misses"] == 0
+    assert status["response_cache_entries"] == 0
+    assert status["response_cache_size_bytes"] == 0
+    assert status["response_cache_max_size_bytes"] > 0
+    assert status["response_cache_oversized_skips"] == 0
 
     stopped_payload = session_daemon.stop_session_daemon(str(project))
     assert stopped_payload["stopped"] is True
@@ -1439,6 +1488,8 @@ def test_session_daemon_status_discovers_child_scope_from_parent_cwd(
         assert payload["discovered"] is True
         assert payload["root"] == str(project.resolve())
         assert payload["port"] == started["port"]
+        assert "response_cache_size_bytes" in payload
+        assert "response_cache_max_size_bytes" in payload
     finally:
         session_daemon.stop_session_daemon(str(project))
 

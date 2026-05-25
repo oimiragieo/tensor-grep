@@ -440,7 +440,7 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
     assert "not_lsp_proof_reason" not in status
 
 
-def test_provider_status_verify_health_success_suppresses_stderr_tail(
+def test_provider_status_verify_health_success_preserves_sre_stderr_warning(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -473,8 +473,9 @@ def test_provider_status_verify_health_success_suppresses_stderr_tail(
     assert status["health_status"] == "ready"
     assert status["lsp_proof"] is True
     assert status["last_error"] is None
-    assert status["stderr_tail"] == []
-    assert status["stderr_tail_suppressed"] is True
+    assert status["stderr_tail"] == ["SRE module mismatch traceback"]
+    assert status["provider_warnings"] == ["SRE module mismatch traceback"]
+    assert status["stderr_tail_suppressed"] is False
 
 
 def test_provider_status_verify_health_applies_probe_budget_to_initialize(

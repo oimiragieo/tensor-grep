@@ -1065,7 +1065,8 @@ mod tests {
         fs::write(&local_exe, b"local").unwrap();
 
         assert_eq!(
-            resolve_python_command_for_context(Some(&local_exe), &[home.clone()]).as_os_str(),
+            resolve_python_command_for_context(Some(&local_exe), std::slice::from_ref(&home))
+                .as_os_str(),
             OsStr::new("python")
         );
         assert_eq!(

@@ -148,6 +148,48 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     return metadata
 
 
+def _merge_live_daemon_stats(status: dict[str, Any]) -> dict[str, Any]:
+    if not status.get("running"):
+        return status
+    stat_fields = {
+        "version",
+        "cache_hits",
+        "cache_misses",
+        "refresh_count",
+        "root_count",
+        "session_count",
+        "sessions",
+        "cache_size_bytes",
+        "response_cache_size",
+        "response_cache_size_bytes",
+        "response_cache_max_size_bytes",
+        "response_cache_hits",
+        "response_cache_misses",
+        "response_cache_puts",
+        "response_cache_entries",
+        "response_cache_oversized_skips",
+        "uptime_seconds",
+        "inflight_requests",
+        "skipped_requests",
+        "last_full_rebuild_seconds",
+    }
+    try:
+        stats = _daemon_request(
+            str(status.get("host", _DAEMON_HOST)),
+            int(status["port"]),
+            {"command": "stats"},
+            response_timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        status["stats_unavailable"] = str(exc)
+        return status
+    for key, value in stats.items():
+        if key not in stat_fields:
+            continue
+        status[key] = value
+    return status
+
+
 def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
     metadata = _read_daemon_metadata(root)
@@ -158,7 +200,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
             live = _probe_daemon(discovered_root)
             if live is None:
                 continue
-            return {
+            return _merge_live_daemon_stats({
                 "version": _SESSION_VERSION,
                 "root": str(discovered_root),
                 "requested_root": str(root),
@@ -168,7 +210,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
                 "port": int(live["port"]),
                 "pid": int(live["pid"]),
                 "started_at": str(live["started_at"]),
-            }
+            })
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
@@ -184,7 +226,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
             "running": False,
             "stale_metadata": True,
         }
-    return {
+    return _merge_live_daemon_stats({
         "version": _SESSION_VERSION,
         "root": str(root),
         "discovered": False,
@@ -193,7 +235,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
         "port": int(live["port"]),
         "pid": int(live["pid"]),
         "started_at": str(live["started_at"]),
-    }
+    })
 
 
 def start_session_daemon(path: str = ".") -> dict[str, Any]:

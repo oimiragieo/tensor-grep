@@ -1110,7 +1110,19 @@ def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
     status["lsp_proof"] = lsp_proof
     if lsp_proof:
         status.pop("not_lsp_proof_reason", None)
-        if status.get("stderr_tail"):
+        stderr_tail = [str(item) for item in status.get("stderr_tail", []) if str(item)]
+        provider_warnings = [
+            item
+            for item in stderr_tail
+            if "sre module mismatch" in item.lower()
+            or "_sre" in item.lower()
+            or "abi mismatch" in item.lower()
+        ]
+        if provider_warnings:
+            status["provider_warnings"] = provider_warnings[-3:]
+            status["stderr_tail"] = provider_warnings[-3:]
+            status["stderr_tail_suppressed"] = False
+        elif stderr_tail:
             status["stderr_tail"] = []
             status["stderr_tail_suppressed"] = True
         return status

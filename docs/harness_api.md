@@ -28,10 +28,10 @@ These top-level fields are shared across every JSON shape documented here.
 | Rulesets JSON | `tg.exe rulesets --json` | [`examples/rulesets.json`](examples/rulesets.json) |
 | Ruleset scan JSON | `tg.exe scan --ruleset <name> --json ...` | [`examples/ruleset_scan.json`](examples/ruleset_scan.json) |
 | Repo map JSON | `tg.exe map --json ...` | [`examples/repo_map.json`](examples/repo_map.json) |
-| Context pack JSON | `tg.exe context --query ... --json ...` | [`examples/context_pack.json`](examples/context_pack.json) |
-| Edit plan JSON | `tg.exe edit-plan --query ... --json ...` | [`examples/edit_plan.json`](examples/edit_plan.json) |
-| Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
-| Agent capsule JSON | `tg.exe agent --query ... --json ...` | Schema documented in Agent Capsule JSON below. |
+| Context pack JSON | `tg.exe context <path> <query> --json` | [`examples/context_pack.json`](examples/context_pack.json) |
+| Edit plan JSON | `tg.exe edit-plan <path> <query> --json` | [`examples/edit_plan.json`](examples/edit_plan.json) |
+| Context render JSON | `tg.exe context-render <path> <query> --json` | [`examples/context_render.json`](examples/context_render.json) |
+| Agent capsule JSON | `tg.exe agent <path> <query> --json` | Schema documented in Agent Capsule JSON below. |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
 | Attempt ledger JSON | multi-attempt harness/replay ledger | [`examples/attempt_ledger.json`](examples/attempt_ledger.json) |
@@ -42,16 +42,16 @@ These top-level fields are shared across every JSON shape documented here.
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
 | Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
 | Search NDJSON | `tg.exe search --ndjson ...` | [`examples/search.ndjson`](examples/search.ndjson) |
-| Symbol defs JSON | `tg.exe defs --symbol <name> --json ...` | [`examples/defs.json`](examples/defs.json) |
-| Symbol source JSON | `tg.exe source --symbol <name> --json ...` | [`examples/source.json`](examples/source.json) |
-| Symbol impact JSON | `tg.exe impact --symbol <name> --json ...` | [`examples/impact.json`](examples/impact.json) |
-| Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
-| Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
-| Symbol blast radius JSON | `tg.exe blast-radius --symbol <name> --json ...` | [`examples/blast_radius.json`](examples/blast_radius.json) |
-| Symbol blast radius plan JSON | `tg.exe blast-radius-plan --symbol <name> --json ...` | [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json) |
-| Symbol blast radius render JSON | `tg.exe blast-radius-render --symbol <name> --json ...` | [`examples/blast_radius_render.json`](examples/blast_radius_render.json) |
+| Symbol defs JSON | `tg.exe defs <path> <symbol> --json` | [`examples/defs.json`](examples/defs.json) |
+| Symbol source JSON | `tg.exe source <path> <symbol> --json` | [`examples/source.json`](examples/source.json) |
+| Symbol impact JSON | `tg.exe impact <path> <symbol> --json` | [`examples/impact.json`](examples/impact.json) |
+| Symbol refs JSON | `tg.exe refs <path> <symbol> --json` | [`examples/refs.json`](examples/refs.json) |
+| Symbol callers JSON | `tg.exe callers <path> <symbol> --json` | [`examples/callers.json`](examples/callers.json) |
+| Symbol blast radius JSON | `tg.exe blast-radius <path> <symbol> --json` | [`examples/blast_radius.json`](examples/blast_radius.json) |
+| Symbol blast radius plan JSON | `tg.exe blast-radius-plan <path> <symbol> --json` | [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json) |
+| Symbol blast radius render JSON | `tg.exe blast-radius-render <path> <symbol> --json` | [`examples/blast_radius_render.json`](examples/blast_radius_render.json) |
 | Session open JSON | `tg.exe session open ... --json` | [`examples/session_open.json`](examples/session_open.json) |
-| Session context JSON | `tg.exe session context <id> --query ... --json` | [`examples/session_context.json`](examples/session_context.json) |
+| Session context JSON | `tg.exe session context <id> <path> <query> --json` | [`examples/session_context.json`](examples/session_context.json) |
 | Doctor JSON | `tg.exe doctor --json` | Operational diagnostics schema documented below. |
 | MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
 
@@ -271,7 +271,7 @@ Current `coverage` values:
 
 ## Context Pack JSON
 
-Emitted by `tg.exe context --query <text> --json ...`.
+Emitted by `tg.exe context <path> <query> --json`.
 
 Example: [`examples/context_pack.json`](examples/context_pack.json)
 
@@ -342,7 +342,7 @@ Each ranked `imports[]` object extends the Repo Map JSON import shape with:
 
 ## Edit Plan JSON
 
-Emitted by `tg.exe edit-plan --query ... --json ...`.
+Emitted by `tg.exe edit-plan <path> <query> --json`.
 
 Example: [`examples/edit_plan.json`](examples/edit_plan.json)
 
@@ -431,7 +431,7 @@ Each `navigation_pack.primary_target` or `navigation_pack.follow_up_reads[]` obj
 
 ## Context Render JSON
 
-Emitted by `tg.exe context-render --query ... --json ...`.
+Emitted by `tg.exe context-render <path> <query> --json`.
 
 Example: [`examples/context_render.json`](examples/context_render.json)
 
@@ -511,7 +511,7 @@ For Python source blocks, compact and optimized `llm` profiles can strip:
 
 ## Agent Capsule JSON
 
-Emitted by `tg.exe agent --query ... --json ...`.
+Emitted by `tg.exe agent <path> <query> --json`.
 
 Use this shape when an agent needs the smallest actionable work packet before editing code. It composes context rendering, edit-plan evidence, validation hints, and rollback guidance without changing raw `search --format rg`, `search --json`, or `search --ndjson` output contracts.
 
@@ -965,7 +965,7 @@ This is the streaming variant of Search JSON. Each line is a standalone JSON obj
 
 ## Symbol Defs JSON
 
-Emitted by `tg.exe defs --symbol <name> --json ...`.
+Emitted by `tg.exe defs <path> <name> --json`.
 
 Example: [`examples/defs.json`](examples/defs.json)
 
@@ -1002,7 +1002,7 @@ Each `definitions[]` object contains `name`, `kind`, `file`, `line`, and may add
 
 ## Symbol Source JSON
 
-Emitted by `tg.exe source --symbol <name> --json ...`.
+Emitted by `tg.exe source <path> <name> --json`.
 
 Example: [`examples/source.json`](examples/source.json)
 
@@ -1033,7 +1033,7 @@ Each `sources[]` object contains `name`, `kind`, `file`, `start_line`, `end_line
 
 ## Symbol Impact JSON
 
-Emitted by `tg.exe impact --symbol <name> --json ...`.
+Emitted by `tg.exe impact <path> <name> --json`.
 
 Example: [`examples/impact.json`](examples/impact.json)
 
@@ -1067,7 +1067,7 @@ Each `imports[]` object may additionally include:
 
 ## Symbol Refs JSON
 
-Emitted by `tg.exe refs --symbol <name> --json ...`.
+Emitted by `tg.exe refs <path> <name> --json`.
 
 Example: [`examples/refs.json`](examples/refs.json)
 
@@ -1105,7 +1105,7 @@ Each `references[]` object contains `name`, `kind`, `file`, `line`, `text`, and 
 
 ## Symbol Callers JSON
 
-Emitted by `tg.exe callers --symbol <name> --json ...`.
+Emitted by `tg.exe callers <path> <name> --json`.
 
 Example: [`examples/callers.json`](examples/callers.json)
 
@@ -1137,7 +1137,7 @@ Each `callers[]` object may additionally include:
 
 ## Symbol Blast Radius JSON
 
-Emitted by `tg.exe blast-radius --symbol <name> --json ...`.
+Emitted by `tg.exe blast-radius <path> <name> --json`.
 
 Example: [`examples/blast_radius.json`](examples/blast_radius.json)
 
@@ -1191,7 +1191,7 @@ Each `caller_tree[]` object may additionally include:
 
 ## Symbol Blast Radius Plan JSON
 
-Emitted by `tg.exe blast-radius-plan --symbol <name> --json ...`.
+Emitted by `tg.exe blast-radius-plan <path> <name> --json`.
 
 Example: [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json)
 
@@ -1215,7 +1215,7 @@ The shape matches Symbol Blast Radius JSON and additionally includes:
 
 ## Symbol Blast Radius Render JSON
 
-Emitted by `tg.exe blast-radius-render --symbol <name> --json ...`.
+Emitted by `tg.exe blast-radius-render <path> <name> --json`.
 
 Example: [`examples/blast_radius_render.json`](examples/blast_radius_render.json)
 
@@ -1294,7 +1294,7 @@ Stop responses additionally include:
 
 ## Session Context JSON
 
-Emitted by `tg.exe session context <id> --query ... --json`.
+Emitted by `tg.exe session context <id> <path> <query> --json`.
 
 Example: [`examples/session_context.json`](examples/session_context.json)
 
@@ -1481,7 +1481,7 @@ Response mapping:
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
 - `tg_edit_plan(...)` returns the same v1 envelope and payload shape as [`examples/edit_plan.json`](examples/edit_plan.json)
 - `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)
-- `tg_agent_capsule(...)` returns the same v1 capsule contract as `tg.exe agent --query ... --json ...`, with `routing_reason = "agent-context-capsule"`. Optional `gpu_device_ids` request native GPU evidence and populate `gpu_acceleration`; sidecar-routed GPU evidence is reported as unsupported.
+- `tg_agent_capsule(...)` returns the same v1 capsule contract as `tg.exe agent <path> <query> --json`, with `routing_reason = "agent-context-capsule"`. Optional `gpu_device_ids` request native GPU evidence and populate `gpu_acceleration`; sidecar-routed GPU evidence is reported as unsupported.
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
 - `tg_symbol_source(...)` returns the same v1 envelope and payload shape as [`examples/source.json`](examples/source.json)
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)

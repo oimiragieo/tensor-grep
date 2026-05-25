@@ -24,6 +24,7 @@ from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
+DEFAULT_AGENT_REPO_MAP_LIMIT = 512
 _DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
@@ -39,18 +40,24 @@ _SKIP_DIR_NAMES = {
     ".pytest_cache",
     ".ruff_cache",
     ".tmp",
+    ".venv_cuda",
     ".tox",
     ".turbo",
     ".vite",
     ".vitest",
     "__pycache__",
     "artifacts",
+    "bench_data",
     "build",
     "coverage",
     "dist",
+    "gpu_bench_data",
+    "group2_many_files",
     "htmlcov",
+    "many_files",
     "node_modules",
     "out",
+    "site",
     "target",
     "temp",
     "tmp",
@@ -398,7 +405,11 @@ def _should_skip_repo_dir(path: Path) -> bool:
         return True
     if name == "context" and path.parent.name.lower() == ".claude":
         return True
-    return name.startswith(("tg-agent-gpu-probe", "tg-doctor-gpu-probe"))
+    return name.startswith((
+        ".tmp_",
+        "tg-agent-gpu-probe",
+        "tg-doctor-gpu-probe",
+    ))
 
 
 def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
@@ -4150,6 +4161,8 @@ def build_repo_map(
 def build_repo_map_incremental(
     previous_map: dict[str, Any],
     changeset: dict[str, Any],
+    *,
+    max_repo_files: int | None = None,
 ) -> dict[str, Any]:
     root = Path(str(previous_map.get("path", "."))).expanduser().resolve()
     if not root.exists():
@@ -4177,11 +4190,13 @@ def build_repo_map_incremental(
         dict(symbol) for symbol in previous_map.get("symbols", [])
     ])
 
+    normalized_max_repo_files = max(1, int(max_repo_files)) if max_repo_files is not None else None
     all_files = [
         current
-        for current in _iter_repo_files(root)
+        for current in _iter_repo_files(root, max_files=normalized_max_repo_files)
         if _is_repo_context_file(current, context_root)
     ]
+    capped_file_count = len(all_files)
     current_files_by_path = {str(current): current for current in all_files}
     parsed_imports_by_file: dict[str, list[str]] = {}
     parsed_symbols_by_file: dict[str, list[dict[str, Any]]] = {}
@@ -4224,6 +4239,12 @@ def build_repo_map_incremental(
     payload["imports"] = imports
     payload["tests"] = tests
     payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+    if normalized_max_repo_files is not None:
+        payload["scan_limit"] = {
+            "max_repo_files": normalized_max_repo_files,
+            "scanned_files": capped_file_count,
+            "possibly_truncated": capped_file_count >= normalized_max_repo_files,
+        }
     return payload
 
 
@@ -8776,6 +8797,33 @@ def _sorted_ranked_symbols(symbols: list[dict[str, Any]]) -> list[dict[str, Any]
     return sorted(symbols, key=_symbol_rank_key)
 
 
+def _attach_edit_plan_headline_aliases(payload: dict[str, Any]) -> None:
+    navigation_pack = payload.get("navigation_pack")
+    edit_plan_seed = payload.get("edit_plan_seed")
+    if not isinstance(navigation_pack, dict) or not isinstance(edit_plan_seed, dict):
+        return
+    primary_target = navigation_pack.get("primary_target")
+    if isinstance(primary_target, dict) and primary_target:
+        payload["primary_target"] = dict(primary_target)
+    edit_order = edit_plan_seed.get("edit_ordering") or navigation_pack.get("edit_ordering")
+    if isinstance(edit_order, list):
+        payload["edit_order"] = [str(item) for item in edit_order]
+    payload["plan"] = {
+        "query": str(payload.get("query", "")),
+        "primary_file": edit_plan_seed.get("primary_file"),
+        "primary_symbol": dict(edit_plan_seed.get("primary_symbol", {}))
+        if isinstance(edit_plan_seed.get("primary_symbol"), dict)
+        else edit_plan_seed.get("primary_symbol"),
+        "primary_span": dict(edit_plan_seed.get("primary_span", {}))
+        if isinstance(edit_plan_seed.get("primary_span"), dict)
+        else edit_plan_seed.get("primary_span"),
+        "edit_order": list(payload.get("edit_order", [])),
+        "validation_commands": list(edit_plan_seed.get("validation_commands", [])),
+        "rollback_risk": edit_plan_seed.get("rollback_risk"),
+        "ranking_quality": str(payload.get("ranking_quality", "")),
+    }
+
+
 def _attach_edit_plan_metadata(
     repo_map: dict[str, Any],
     payload: dict[str, Any],
@@ -8911,6 +8959,7 @@ def _attach_edit_plan_metadata(
                 payload,
                 max_reads=max(max_files, max_symbols),
             )
+        _attach_edit_plan_headline_aliases(payload)
     return payload
 
 
@@ -9268,6 +9317,9 @@ _LLM_CONTEXT_RENDER_OMITTED_KEYS = (
     "file_matches",
     "file_summaries",
     "graph_trust_summary",
+    "edit_order",
+    "plan",
+    "primary_target",
     "test_matches",
 )
 
@@ -10047,6 +10099,23 @@ def _is_lsp_proof_row(row: dict[str, Any]) -> bool:
     )
 
 
+def _merge_navigation_duplicate(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    existing_is_lsp = _is_lsp_proof_row(existing)
+    candidate_is_lsp = _is_lsp_proof_row(candidate)
+    if candidate_is_lsp and not existing_is_lsp:
+        merged = {**existing, **candidate}
+    elif existing_is_lsp and not candidate_is_lsp:
+        merged = {**candidate, **existing}
+    else:
+        merged = {**existing, **candidate}
+    if _is_lsp_proof_row(merged):
+        merged["lsp_proof"] = True
+    return dict(merged)
+
+
 def _lsp_proof_row_count(rows: list[dict[str, Any]]) -> int:
     return sum(1 for row in rows if _is_lsp_proof_row(row))
 
@@ -10177,6 +10246,7 @@ def _external_workspace_symbols(
                 "lsp_provider_response": True,
                 "lsp_operation": "workspace/symbol",
             })
+            client.lsp_provider_response = True
     matches.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, int, int, str]] = set()
@@ -10395,6 +10465,7 @@ def _external_definitions(
                 "lsp_operation": "textDocument/definition",
                 "lsp_resolution_basis": "native-definition-anchor",
             })
+            client.lsp_provider_response = True
 
     return _dedupe_lsp_definition_rows(definitions) or workspace_matches
 
@@ -10490,8 +10561,10 @@ def _external_references(
                 "text": text,
                 "provenance": f"lsp-{language}",
                 "lsp_provider_response": True,
+                "lsp_proof": True,
                 "lsp_operation": "textDocument/references",
             })
+            client.lsp_provider_response = True
     references.sort(key=lambda item: (str(item["file"]), int(item["line"])))
     deduped: list[dict[str, Any]] = []
     seen_refs: set[tuple[str, int, int]] = set()
@@ -10591,7 +10664,10 @@ def build_symbol_defs_from_map(
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "strong"
     payload["semantic_provider"] = normalized_provider
-    lsp_proof_count = _lsp_proof_row_count(external_definitions)
+    for definition in definitions:
+        if _is_lsp_proof_row(definition):
+            definition["lsp_proof"] = True
+    lsp_proof_count = _lsp_proof_row_count(definitions)
     if normalized_provider != "native" and lsp_proof_count == 0 and native_definitions:
         fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
@@ -11079,13 +11155,22 @@ def build_symbol_refs_from_map(
                     int(current_ref["line"]),
                     int(current_ref.get("end_line", current_ref["line"])),
                 )
-                merged_refs[key] = dict(current_ref)
+                if key in merged_refs:
+                    merged_refs[key] = _merge_navigation_duplicate(
+                        merged_refs[key],
+                        dict(current_ref),
+                    )
+                else:
+                    merged_refs[key] = dict(current_ref)
             references = list(merged_refs.values())
             references.sort(
                 key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
             )
 
     references = _dedupe_symbol_references(references)
+    for reference in references:
+        if _is_lsp_proof_row(reference):
+            reference["lsp_proof"] = True
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
     related_paths: list[str] = []
     for current in [*payload["files"], *referenced_files, *payload["tests"]]:
@@ -11103,7 +11188,7 @@ def build_symbol_refs_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
-    lsp_proof_count = _lsp_proof_row_count(external_refs)
+    lsp_proof_count = _lsp_proof_row_count(references)
     if normalized_provider != "native" and lsp_proof_count == 0 and references:
         fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
@@ -11388,7 +11473,13 @@ def build_symbol_callers_from_map(
                     int(current_call_entry["line"]),
                     int(current_call_entry.get("end_line", current_call_entry["line"])),
                 )
-                merged_calls[key] = dict(current_call_entry)
+                if key in merged_calls:
+                    merged_calls[key] = _merge_navigation_duplicate(
+                        merged_calls[key],
+                        dict(current_call_entry),
+                    )
+                else:
+                    merged_calls[key] = dict(current_call_entry)
             calls = list(merged_calls.values())
             calls.sort(
                 key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
@@ -11407,6 +11498,9 @@ def build_symbol_callers_from_map(
         for current in calls
         if (str(current["file"]), int(current.get("line", 0) or 0)) not in definition_locations
     ]
+    for call in calls:
+        if _is_lsp_proof_row(call):
+            call["lsp_proof"] = True
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
     context_payload = build_context_pack_from_map(
         repo_map,
@@ -11444,7 +11538,7 @@ def build_symbol_callers_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
-    lsp_proof_count = _lsp_proof_row_count(external_calls)
+    lsp_proof_count = _lsp_proof_row_count(calls)
     if normalized_provider != "native" and lsp_proof_count == 0 and calls:
         fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
@@ -11569,6 +11663,7 @@ def _apply_blast_radius_output_limits(
         selected_files = original_files[:normalized_max_files]
         selected_file_set = set(selected_files)
         limited["files"] = selected_files
+        limited["affected_files"] = list(selected_files)
         limited["file_matches"] = [
             current
             for current in _list_of_dicts(payload.get("file_matches"))
@@ -11625,6 +11720,8 @@ def _apply_blast_radius_output_limits(
             rendered_lines.append(f"Depth {current.get('depth')}:")
             rendered_lines.extend(f"- {path}" for path in _list_of_strings(current.get("files")))
         limited["rendered_caller_tree"] = "\n".join(rendered_lines)
+    elif "files" in limited:
+        limited["affected_files"] = _list_of_strings(limited.get("files"))
 
     limited["output_limit"] = {
         "max_callers": normalized_max_callers,
@@ -11668,6 +11765,8 @@ def build_symbol_blast_radius_from_map(
         payload["routing_reason"] = "symbol-blast-radius"
         payload["max_depth"] = max(0, int(max_depth))
         payload["callers"] = []
+        payload["affected_files"] = []
+        payload["blast_radius_score"] = 0.0
         payload["file_matches"] = []
         payload["file_summaries"] = []
         payload["test_matches"] = []
@@ -11961,6 +12060,13 @@ def build_symbol_blast_radius_from_map(
     payload["definitions"] = definitions
     payload["callers"] = direct_callers
     payload["files"] = radius_files
+    payload["affected_files"] = list(radius_files)
+    evidence_score = sum(min(10, max(0, int(item.get("score", 0)))) for item in ranked_files)
+    evidence_score += len(direct_callers) + len(related_tests)
+    evidence_denominator = max(
+        1, (10 * len(ranked_files)) + len(direct_callers) + len(related_tests)
+    )
+    payload["blast_radius_score"] = round(min(1.0, evidence_score / evidence_denominator), 3)
     payload["file_matches"] = ranked_files
     payload["file_summaries"] = _file_summaries(repo_map.get("symbols", []), radius_files)
     payload["tests"] = related_tests

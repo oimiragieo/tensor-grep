@@ -906,16 +906,19 @@ pub enum Commands {
     GpuOomProbe(GpuOomProbeArgs),
 
     // Editor-plane and Python passthrough commands:
+    /// Build a bounded repository map for agent context selection
     #[command(name = "map", disable_help_flag = true)]
     Map {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Open, query, and manage cached edit-loop sessions
     #[command(name = "session", disable_help_flag = true)]
     Session {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Diagnose launcher, GPU, cache, daemon, and LSP readiness
     #[command(name = "doctor", disable_help_flag = true)]
     Doctor {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -927,101 +930,121 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Create, list, and undo edit checkpoints
     #[command(name = "checkpoint", disable_help_flag = true)]
     Checkpoint {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Run tensor-grep self-check and dogfood diagnostics
     #[command(name = "dogfood", disable_help_flag = true)]
     Dogfood {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Print source snippets for a resolved symbol
     #[command(name = "source", disable_help_flag = true)]
     Source {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Estimate files impacted by a symbol or query
     #[command(name = "impact", disable_help_flag = true)]
     Impact {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Find direct callers of a symbol
     #[command(name = "callers", disable_help_flag = true)]
     Callers {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Build a transitive blast-radius graph for a symbol
     #[command(name = "blast-radius", disable_help_flag = true)]
     BlastRadius {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Render a human-readable symbol blast radius
     #[command(name = "blast-radius-render", disable_help_flag = true)]
     BlastRadiusRender {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Build a machine-readable blast-radius plan
     #[command(name = "blast-radius-plan", disable_help_flag = true)]
     BlastRadiusPlan {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Build a machine-readable edit plan without rendered source
     #[command(name = "edit-plan", disable_help_flag = true)]
     EditPlan {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Emit an actionable context capsule for agents
     #[command(name = "agent", disable_help_flag = true)]
     Agent {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Render bounded prompt-ready context for a task
     #[command(name = "context-render", disable_help_flag = true)]
     ContextRender {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Inspect AST language and parser support
     #[command(name = "ast-info", disable_help_flag = true)]
     AstInfo {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// List and inspect bundled scanning rulesets
     #[command(name = "rulesets", disable_help_flag = true)]
     Rulesets {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Show audit manifest history
     #[command(name = "audit-history", disable_help_flag = true)]
     AuditHistory {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Compare audit manifests
     #[command(name = "audit-diff", disable_help_flag = true)]
     AuditDiff {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Create and verify review bundles
     #[command(name = "review-bundle", disable_help_flag = true)]
     ReviewBundle {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// List GPU devices and routing readiness
     #[command(name = "devices", disable_help_flag = true)]
     Devices {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Find symbol definitions
     #[command(name = "defs", disable_help_flag = true)]
     Defs {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Find symbol references
     #[command(name = "refs", disable_help_flag = true)]
     Refs {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Build a ranked context pack for a task
     #[command(name = "context", disable_help_flag = true)]
     Context {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -1116,6 +1139,7 @@ pub struct GpuOomProbeArgs {
 struct ResolvedSearchRequest {
     patterns: Vec<String>,
     paths: Vec<String>,
+    path_was_implicit: bool,
 }
 
 impl ResolvedSearchRequest {
@@ -1146,6 +1170,16 @@ impl ResolvedSearchRequest {
 }
 
 fn main() -> anyhow::Result<()> {
+    let handle = std::thread::Builder::new()
+        .name("tg-main".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(main_inner)?;
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn main_inner() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
 
     if raw_args.len() <= 1 {
@@ -3671,11 +3705,13 @@ fn resolve_search_request_with_stdin(
     stdin_searches_implicit_path: bool,
 ) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
+    let mut path_was_implicit = false;
     let paths = if args.regexp.is_empty() {
         if let Some(pattern) = args.pattern.as_ref() {
             patterns.push(pattern.clone());
         }
         if args.path.is_empty() {
+            path_was_implicit = true;
             if stdin_searches_implicit_path {
                 Vec::new()
             } else {
@@ -3691,6 +3727,7 @@ fn resolve_search_request_with_stdin(
         }
         paths.extend(args.path.clone());
         if paths.is_empty() {
+            path_was_implicit = true;
             if stdin_searches_implicit_path {
                 Vec::new()
             } else {
@@ -3705,7 +3742,11 @@ fn resolve_search_request_with_stdin(
         anyhow::bail!("search requires a pattern or at least one -e/--regexp pattern");
     }
 
-    Ok(ResolvedSearchRequest { patterns, paths })
+    Ok(ResolvedSearchRequest {
+        patterns,
+        paths,
+        path_was_implicit,
+    })
 }
 
 fn detect_warm_index_state(
@@ -3997,7 +4038,11 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         multiline_dotall: args.multiline_dotall,
         no_multiline_dotall: false,
         patterns: request.patterns.clone(),
-        paths: request.paths.clone(),
+        paths: if request.path_was_implicit {
+            Vec::new()
+        } else {
+            request.paths.clone()
+        },
         pcre2: args.pcre2,
         no_pcre2: false,
         pcre2_unicode: args.pcre2_unicode,
@@ -4788,7 +4833,10 @@ struct SearchResultJson<'a> {
     not_gpu_proof_reason: Option<String>,
     query: &'a str,
     path: &'a str,
+    total_files: usize,
     total_matches: usize,
+    matched_file_paths: Vec<String>,
+    match_counts_by_file: std::collections::BTreeMap<String, usize>,
     matches: Vec<SearchMatchJson>,
 }
 
@@ -7942,6 +7990,13 @@ fn emit_json_search_results(
         decision.routing_backend(),
         decision.sidecar_used(),
     );
+    let mut match_counts_by_file = std::collections::BTreeMap::<String, usize>::new();
+    for matched in &matches {
+        *match_counts_by_file
+            .entry(matched.file.clone())
+            .or_insert(0) += 1;
+    }
+    let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
     let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -7955,7 +8010,10 @@ fn emit_json_search_results(
         not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
         query: pattern,
         path,
+        total_files: matched_file_paths.len(),
         total_matches: matches.len(),
+        matched_file_paths,
+        match_counts_by_file,
         matches,
     };
 
