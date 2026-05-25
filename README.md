@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.17
 
 Latest tagged GitHub release: [`v1.13.17`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.17). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.17`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.17). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.15` shipped from PR #225, merge commit `b0c7cf6`, release commit `d209528`, main CI run `26386327552`, main dynamic/CodeQL run `26386327168`, release-commit dynamic run `26386976717`, and Dependency Graph run `26386978124`.
+Latest verified release proof: `v1.13.17` shipped from PR #228, merge commit `b0e5c27`, release commit `101b8a2`, main CI run `26420296271`, and main dynamic/CodeQL run `26420295981`.
 
 Current positioning:
 
@@ -62,12 +62,18 @@ Current positioning:
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
 
+What `v1.13.17` closed:
+
+- PR #228 `fix: harden v1.13.16 dogfood followups` shipped the release as merge commit `b0e5c27 fix: harden v1.13.16 dogfood followups (#228)` and release commit `101b8a2 chore(release): v1.13.17 [skip ci]`.
+- main CI run `26420296271` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26420295981` passed on the merge commit.
+- GitHub release assets for `v1.13.17` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.17 tg --version` reports `tensor-grep 1.13.17`.
+- The release closes the `v1.13.16` dogfood contract bugs for correctness: bounded explicit `--no-ignore` content searches now return ripgrep-equivalent results, MCP and CLI search counts agree, and previously fixed map/edit-plan/blast-radius/LSP/help surfaces remain in the accepted line. Post-`v1.13.17` dogfood still requires a performance follow-up for non-JSON rg-shaped no-ignore searches and live daemon response-cache hits.
+
 What `v1.13.15` closed:
 
 - PR #225 `fix: harden v1.13.14 dogfood contracts` shipped the release as merge commit `b0c7cf6 fix: harden v1.13.14 dogfood contracts` and release commit `d209528 chore(release): v1.13.15 [skip ci]`.
 - main CI run `26386327552` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26386327168`, release-commit dynamic run `26386976717`, and Dependency Graph run `26386978124` passed.
-- GitHub release assets for `v1.13.15` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.15 tg --version` reports `tensor-grep 1.13.15`.
-- The release closes the `v1.13.14` dogfood contract bugs: search/MCP count parity, implicit no-path `--format rg` path output, LSP proof consistency, bounded agent-facing map/session/MCP defaults with `scan_limit`, daemon cache stats, edit-plan/blast-radius headline aliases, current positional help/docs, checkpoint path hints, and local oversized benchmark-artifact test memory safety.
+- The release closed the `v1.13.14` dogfood contract bugs: search/MCP count parity, implicit no-path `--format rg` path output, LSP proof consistency, bounded agent-facing map/session/MCP defaults with `scan_limit`, daemon cache stats, edit-plan/blast-radius headline aliases, current positional help/docs, checkpoint path hints, and local oversized benchmark-artifact test memory safety.
 
 What `v1.13.14` closed:
 
@@ -365,7 +371,7 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.17` follow-up:
 
-- harden the `v1.13.16` dogfood contract bugs before the next patch release: make explicit `--no-ignore` content searches over project roots follow ripgrep even when ignored generated child directories exist, keep direct generated roots guarded unless the caller opts in, and route repeated top-level `context-render` / `edit-plan` requests through an already-running daemon so `response_cache_*` counters represent live cache activity
+- harden the `v1.13.17` dogfood regressions before the next patch release: keep explicit `--no-ignore` content-search correctness, prefer ripgrep for non-JSON rg-shaped no-ignore searches when `rg` is available for usable performance on ignored generated children, keep tensor-grep aggregate JSON semantics separate from rg passthrough, preserve native fallback when `rg` is unavailable, and make repeated relative top-level `context-render` / `edit-plan` requests hit an already-running daemon response cache
 - keep optional LSP proof honest: top-level `lsp_proof` must be derived from final rows or explicit provider responses, provider-status proof must not contradict result rows, and provider stderr such as Python SRE/ABI mismatch warnings must remain visible when it can explain degraded proof
 - keep agent-facing repo maps bounded by default: `tg map --json`, `tg session open`, MCP `tg_repo_map`, and MCP `tg_session_open` should default to the agent-safe 512-file cap, report `scan_limit`, skip generated/vendor roots such as `.venv`, `bench_data`, `gpu_bench_data`, `many_files`, and `.tmp_*`, and expose daemon response-cache byte stats with an explicit daemon-routed session scope
 - populate headline JSON aliases for agent consumers: `edit-plan` should expose top-level `plan`, `primary_target`, and `edit_order`; `blast-radius` should expose `blast_radius_score` and `affected_files`; deprecated `--query` and `--symbol` forms stay accepted during 1.13.x but current help/docs should show positional query and symbol forms
