@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.13.16 (2026-05-25)
+
+### Bug Fixes
+
+- Harden v1.13.15 dogfood followups
+  ([`f6623bb`](https://github.com/oimiragieo/tensor-grep/commit/f6623bbbf1244c52328739279af49b2d0236012f))
+
+Squash merge PR #227.
+
+### Documentation
+
+- Stamp v1.13.15 release proof ([#226](https://github.com/oimiragieo/tensor-grep/pull/226),
+  [`50ca81c`](https://github.com/oimiragieo/tensor-grep/commit/50ca81cb05dac833fcd343736aa00f08d4df1b05))
+
+
 ## v1.13.15 (2026-05-25)
 
 ### Bug Fixes
