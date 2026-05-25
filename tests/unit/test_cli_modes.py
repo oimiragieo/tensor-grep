@@ -67,7 +67,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "native GPU falls back",
     "gpu_acceleration",
     "sidecar-routed GPU results",
-    "multi-project workspace-root scans",
+    "searches follow ripgrep",
     "PowerShell double quotes expand $NAME",
 )
 
@@ -600,7 +600,7 @@ def test_plain_hidden_search_does_not_trigger_broad_generated_root_guard(
     assert generated_dirs == []
 
 
-def test_no_ignore_search_triggers_broad_generated_root_guard(
+def test_no_ignore_content_search_allows_generated_child_dirs(
     tmp_path: Path,
 ):
     (tmp_path / "src").mkdir()
@@ -614,11 +614,11 @@ def test_no_ignore_search_triggers_broad_generated_root_guard(
         files_mode=False,
     )
 
-    assert refused is True
-    assert generated_dirs == ["node_modules"]
+    assert refused is False
+    assert generated_dirs == []
 
 
-def test_no_ignore_search_treats_windows_appdata_as_broad_generated_scan(
+def test_no_ignore_content_search_allows_windows_appdata_child_dir(
     tmp_path: Path,
 ):
     (tmp_path / "src").mkdir()
@@ -632,25 +632,27 @@ def test_no_ignore_search_treats_windows_appdata_as_broad_generated_scan(
         files_mode=False,
     )
 
-    assert refused is True
-    assert generated_dirs == ["AppData"]
+    assert refused is False
+    assert generated_dirs == []
 
 
-def test_normal_search_refuses_broad_generated_root_before_rg_passthrough(
+def test_normal_no_ignore_search_allows_broad_generated_child_before_rg_passthrough(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
     (tmp_path / "AppData").mkdir()
     (tmp_path / "AppData" / "hit.txt").write_text("foo\n", encoding="utf-8")
     (tmp_path / "normal.txt").write_text("foo\n", encoding="utf-8")
 
     result = CliRunner().invoke(
         app,
-        ["search", "-q", "foo", str(tmp_path), "--hidden", "--no-ignore"],
+        ["search", "foo", str(tmp_path), "--hidden", "--no-ignore", "--cpu"],
     )
 
-    assert result.exit_code == 2
-    assert "broad generated-root scan refused" in result.stderr
-    assert "AppData" in result.stderr
+    assert result.exit_code == 0, result.output
+    assert "normal.txt" in result.stdout
+    assert "AppData" in result.stdout
 
 
 def test_no_ignore_search_treats_cwd_generated_root_as_broad_generated_scan(

@@ -1392,7 +1392,7 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
         return Ok(None);
     }
     if ripgrep_args_need_broad_generated_guard(&rg_args) {
-        let generated_dirs = generated_scan_dir_names(&rg_args.paths);
+        let generated_dirs = generated_scan_dir_names(&rg_args.paths, rg_args.files);
         if !generated_dirs.is_empty() {
             eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
             return Ok(Some(2));
@@ -1598,7 +1598,7 @@ fn is_broad_generated_scan_dir_name(name: &str) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
-fn generated_scan_dir_names(paths: &[String]) -> Vec<String> {
+fn generated_scan_dir_names(paths: &[String], include_child_dirs: bool) -> Vec<String> {
     let mut found = BTreeSet::new();
     for raw_path in paths {
         if raw_path.is_empty() || raw_path == "-" || raw_path.starts_with('-') {
@@ -1612,6 +1612,9 @@ fn generated_scan_dir_names(paths: &[String]) -> Vec<String> {
             if is_broad_generated_scan_dir_name(name) {
                 found.insert(name.to_string());
             }
+        }
+        if !include_child_dirs {
+            continue;
         }
         let entries = match std::fs::read_dir(path) {
             Ok(entries) => entries,
@@ -4444,7 +4447,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     let auto_gpu_ids: [i32; 0] = [];
 
     if search_args_need_broad_generated_guard(&args) {
-        let generated_dirs = generated_scan_dir_names(&request.paths);
+        let generated_dirs = generated_scan_dir_names(&request.paths, false);
         if !generated_dirs.is_empty() {
             eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
             std::process::exit(2);

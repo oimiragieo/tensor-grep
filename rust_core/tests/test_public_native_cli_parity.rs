@@ -943,7 +943,7 @@ fn test_option_first_root_context_flags_forward_to_search_frontdoor() {
 }
 
 #[test]
-fn test_unbounded_no_ignore_search_refuses_generated_root_before_rg() {
+fn test_unbounded_no_ignore_search_allows_project_root_generated_child_dirs() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_script(dir.path(), "rg-route\n");
     fs::write(dir.path().join("app.log"), "ERROR failed\n").unwrap();
@@ -952,6 +952,34 @@ fn test_unbounded_no_ignore_search_refuses_generated_root_before_rg() {
     let output = tg()
         .current_dir(dir.path())
         .args(["search", "ERROR", ".", "--hidden", "--no-ignore"])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "rg-route\n"
+    );
+}
+
+#[test]
+fn test_unbounded_no_ignore_search_still_refuses_generated_root_itself() {
+    let dir = tempdir().unwrap();
+    let venv = dir.path().join(".venv");
+    fs::create_dir(&venv).unwrap();
+    fs::write(venv.join("app.log"), "ERROR failed\n").unwrap();
+    let fake_rg = fake_rg_script(dir.path(), "rg-route\n");
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "ERROR", ".venv", "--hidden", "--no-ignore"])
         .env("TG_RG_PATH", &fake_rg)
         .output()
         .unwrap();
@@ -973,15 +1001,10 @@ fn test_unbounded_no_ignore_search_refuses_generated_root_before_rg() {
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("safety guard, not a zero-match result"),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[test]
-fn test_early_rg_no_ignore_search_refuses_generated_root_before_rg() {
+fn test_early_rg_no_ignore_search_allows_project_root_generated_child_dirs() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_script(dir.path(), "rg-route\n");
     fs::write(dir.path().join("app.log"), "ERROR failed\n").unwrap();
@@ -996,26 +1019,15 @@ fn test_early_rg_no_ignore_search_refuses_generated_root_before_rg() {
         .unwrap();
 
     assert!(
-        !output.status.success(),
+        output.status.success(),
         "status={:?}\nstdout={}\nstderr={}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.status.code(), Some(2));
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        ""
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("broad generated-root scan refused"),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("safety guard, not a zero-match result"),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
+        "rg-route\n"
     );
 }
 
