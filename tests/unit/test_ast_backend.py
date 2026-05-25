@@ -319,6 +319,41 @@ class TestAstBackend:
         assert parser.parse_calls == 2
         assert parser.language.query_calls == 1
 
+    def test_query_cache_obeys_entry_cap(self, monkeypatch):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_QUERY_CACHE_MAX_ENTRIES", "2")
+        backend = AstBackend()
+        parser = _FakeCacheParser()
+
+        backend._get_query(parser, "python", "function_definition")
+        backend._get_query(parser, "python", "class_definition")
+        backend._get_query(parser, "python", "call")
+
+        assert len(AstBackend._shared_queries) == 2
+        assert ("python", "function_definition") not in AstBackend._shared_queries
+        assert ("python", "class_definition") in AstBackend._shared_queries
+        assert ("python", "call") in AstBackend._shared_queries
+
+    def test_node_type_index_cache_obeys_entry_cap(self, tmp_path, monkeypatch):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        monkeypatch.setenv("TENSOR_GREP_AST_NODE_INDEX_CACHE_MAX_ENTRIES", "2")
+        backend = AstBackend()
+        files = []
+        for index in range(3):
+            path = tmp_path / f"module_{index}.py"
+            path.write_text(f"def f_{index}():\n    return {index}\n", encoding="utf-8")
+            files.append(path)
+            backend._persist_node_type_index(str(path), "python", {"function_definition": [1]})
+
+        cache = AstBackend._shared_node_type_index_cache
+        assert len(cache) == 2
+        assert (str(files[0]), "python") not in cache
+        assert (str(files[1]), "python") in cache
+        assert (str(files[2]), "python") in cache
+
     def test_should_reuse_persistent_ast_cache_across_backend_instances(
         self, tmp_path, mocker, monkeypatch
     ):

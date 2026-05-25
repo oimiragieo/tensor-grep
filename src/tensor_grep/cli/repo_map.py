@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import tomllib
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from functools import lru_cache
@@ -118,13 +119,56 @@ _SYMBOL_LITERAL_SEED_SCAN_LIMIT = 4096
 _SYMBOL_LITERAL_SEED_MAX_FILES = 16
 _SYMBOL_LITERAL_SEED_MAX_BYTES = 2_000_000
 _BLAST_RADIUS_LIMITED_SYMBOLS_PER_FILE = 3
+_REPO_CONTEXT_CACHE_MAX_ROOTS_ENV = "TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS"
+_DEFAULT_REPO_CONTEXT_CACHE_MAX_ROOTS = 32
 _RUST_TEST_FN_PATTERN = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
-_JS_TS_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
-_RUST_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
+_JS_TS_REPO_CONTEXTS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_RUST_REPO_CONTEXTS: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _EXTERNAL_LSP_PROVIDER_MANAGER = ExternalLSPProviderManager()
 atexit.register(_EXTERNAL_LSP_PROVIDER_MANAGER.stop_all)
+
+
+def _configured_positive_int(env_var: str, default: int) -> int:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _repo_context_cache_max_roots() -> int:
+    return _configured_positive_int(
+        _REPO_CONTEXT_CACHE_MAX_ROOTS_ENV,
+        _DEFAULT_REPO_CONTEXT_CACHE_MAX_ROOTS,
+    )
+
+
+def _remember_repo_context(
+    cache: OrderedDict[str, dict[str, Any]],
+    key: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    cache.pop(key, None)
+    cache[key] = context
+    while len(cache) > _repo_context_cache_max_roots():
+        cache.popitem(last=False)
+    return context
+
+
+def _get_repo_context_cache_entry(
+    cache: OrderedDict[str, dict[str, Any]],
+    key: str,
+) -> dict[str, Any] | None:
+    cached = cache.pop(key, None)
+    if cached is None:
+        return None
+    cache[key] = cached
+    return cached
 
 
 class _ValidationRunnerInfo(NamedTuple):
@@ -988,13 +1032,13 @@ def _parse_js_ts_tsconfig(root: Path) -> dict[str, Any]:
 
 def _prime_js_ts_repo_context(root: Path) -> dict[str, Any]:
     normalized_root = root.expanduser().resolve()
+    key = str(normalized_root)
     context = {
-        "root": str(normalized_root),
+        "root": key,
         "tsconfig": _parse_js_ts_tsconfig(normalized_root),
         "re_export_cache": {},
     }
-    _JS_TS_REPO_CONTEXTS[str(normalized_root)] = context
-    return context
+    return _remember_repo_context(_JS_TS_REPO_CONTEXTS, key, context)
 
 
 def _js_ts_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
@@ -1009,7 +1053,7 @@ def _js_ts_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
             },
             "re_export_cache": {},
         }
-    cached = _JS_TS_REPO_CONTEXTS.get(str(normalized_root))
+    cached = _get_repo_context_cache_entry(_JS_TS_REPO_CONTEXTS, str(normalized_root))
     if cached is not None:
         return cached
     return _prime_js_ts_repo_context(normalized_root)
@@ -1533,13 +1577,13 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
 
 def _prime_rust_repo_context(root: Path) -> dict[str, Any]:
     normalized_root = root.expanduser().resolve()
+    key = str(normalized_root)
     context = {
-        "root": str(normalized_root),
+        "root": key,
         "workspace": _parse_rust_workspace_members(normalized_root),
         "mod_tree_cache": {},
     }
-    _RUST_REPO_CONTEXTS[str(normalized_root)] = context
-    return context
+    return _remember_repo_context(_RUST_REPO_CONTEXTS, key, context)
 
 
 def _rust_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
@@ -1553,7 +1597,7 @@ def _rust_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
             },
             "mod_tree_cache": {},
         }
-    cached = _RUST_REPO_CONTEXTS.get(str(normalized_root))
+    cached = _get_repo_context_cache_entry(_RUST_REPO_CONTEXTS, str(normalized_root))
     if cached is not None:
         return cached
     return _prime_rust_repo_context(normalized_root)

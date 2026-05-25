@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.13
 
 Latest tagged GitHub release: [`v1.13.13`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.13). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.13`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.13). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.12.34` completed in main CI run `26094452260`; latest CodeQL proof remains run `26064676072`.
+Latest verified release proof: `v1.13.13` shipped from PR #222, merge commit `323e83a`, release commit `581c412`, main CI run `26374619263`, and CodeQL run `26375020529`.
 
 Current positioning:
 
@@ -60,6 +60,15 @@ Current positioning:
 - `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 - `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
+- Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.13` closed:
+
+- PR #222 `fix: harden v1.13.11 dogfood followups` shipped the release as merge commit `323e83a fix: harden v1.13.11 dogfood followups` and release commit `581c412 chore(release): v1.13.13 [skip ci]`.
+- main CI run `26374619263` passed semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `26375020529` passed on the release commit.
+- GitHub release assets for `v1.13.13` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.13 tg --version` reports `tensor-grep 1.13.13`.
+- The release fixed hybrid-provider definition deduplication, pinned MCP `serverInfo.version` to the stable `1.0.0` contract version, made Windows MCP stdio launcher warnings enumerate `.ps1` traps, added feature-flagged capsule LSP confidence boosting, bounded checkpoint discovery with `--discover-full`, and started the 1.13.x deprecation path for legacy `--symbol` / `--query` flags.
+- The post-release dogfood position remains conservative: `rg` is still the cold exact-text baseline, public GPU remains unsupported/experimental, and agent capsule output is not autonomous-edit proof without validation evidence.
 
 What `v1.12.34` closed:
 
@@ -341,6 +350,8 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.13` follow-up:
 
+- harden the new dogfood paper cuts before the next patch release: bounded checkpoint discovery must find tensor-grep checkpoint scopes under `artifacts/`, path-first `tg defs PATH SYMBOL` deprecation guidance must not imply the failing symbol-first form, LSP-tied capsule alternatives must preserve proof evidence honestly, and raw-search/session performance work must remain measurement-first until a concrete regression cause is proven
+- bound long-lived agent-loop memory growth in source: CPU/StringZilla/AST/repo-context caches should evict by entry caps, session serve/daemon response caches should evict by byte caps and report byte usage, and optional LSP providers should close evicted documents and stop evicted workspace clients
 - harden the `v1.12.33` dogfood edge cases without broadening claims: native/root search accepts the rg config-override sequence `--column --no-column`, readiness now reports a stale repo-local `uv run tg` warmup as an unsynchronized entrypoint with a refresh command, and the ripgrep-binary-resolution natural-language hardcase stays pinned as a capsule regression test
 - harden `v1.12.15` dogfood contract gaps: public native `tg search` must accept editor-facing `--vimgrep` and `--path-separator`, native-regex hot-query gates use absolute jitter for millisecond-scale rows, benchmark scripts refuse stale in-tree native binaries by default unless `--allow-claim-unsafe-launcher` marks the run as exploratory, and optional LSP provider routes must expose `lsp_proof` / fallback status instead of treating provider availability as proof of semantic navigation
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output

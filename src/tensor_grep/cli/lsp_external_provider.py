@@ -6,6 +6,7 @@ import queue
 import subprocess
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,8 +27,14 @@ class LSPTransportError(RuntimeError):
 _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS = 15.0
 _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS = 15.0
 _DEFAULT_LSP_STOP_TIMEOUT_SECONDS = 1.0
+_DEFAULT_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES = 8
+_DEFAULT_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES = 64
 _LSP_REQUEST_TIMEOUT_ENV_VAR = "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS"
 _LSP_INITIALIZE_TIMEOUT_ENV_VAR = "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS"
+_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES_ENV_VAR = "TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES"
+_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES_ENV_VAR = (
+    "TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES"
+)
 _GENERATED_CACHE_EXCLUDES = [
     ".git",
     ".mypy_cache",
@@ -54,6 +61,17 @@ def _configured_timeout_seconds(env_var: str, default: float) -> float:
         return max(float(raw_value), 0.0)
     except (TypeError, ValueError):
         return default
+
+
+def _configured_positive_int(env_var: str, default: int) -> int:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def _read_message(stream: Any) -> dict[str, Any] | None:
@@ -272,6 +290,7 @@ class ExternalLSPClient:
         request_timeout_seconds: float | None = None,
         initialize_timeout_seconds: float | None = None,
         retry_cooldown_seconds: float = 30.0,
+        max_open_documents: int | None = None,
     ) -> None:
         self.language = language
         self.workspace_root = workspace_root.resolve()
@@ -279,7 +298,15 @@ class ExternalLSPClient:
         self.process: subprocess.Popen[Any] | None = None
         self._request_id = 0
         self._lock = threading.Lock()
-        self._opened_documents: set[str] = set()
+        self._max_open_documents = (
+            _configured_positive_int(
+                _LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES_ENV_VAR,
+                _DEFAULT_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES,
+            )
+            if max_open_documents is None
+            else max(1, int(max_open_documents))
+        )
+        self._opened_documents: OrderedDict[str, None] = OrderedDict()
         self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
@@ -570,7 +597,13 @@ class ExternalLSPClient:
 
     def ensure_document(self, *, uri: str, text: str, language_id: str) -> None:
         if uri in self._opened_documents:
+            self._opened_documents.move_to_end(uri)
             return
+        evicted_uri = (
+            next(iter(self._opened_documents))
+            if len(self._opened_documents) >= self._max_open_documents
+            else None
+        )
         self.notify(
             "textDocument/didOpen",
             {
@@ -582,7 +615,26 @@ class ExternalLSPClient:
                 }
             },
         )
-        self._opened_documents.add(uri)
+        self._opened_documents[uri] = None
+        if evicted_uri is not None:
+            self._opened_documents.pop(evicted_uri, None)
+            self._notify_document_closed(evicted_uri)
+
+    def _notify_document_closed(self, uri: str) -> None:
+        try:
+            self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+        except Exception:
+            self._record_debug_trace(
+                event="document_close_failed",
+                method="textDocument/didClose",
+                detail={"uri": uri},
+            )
+
+    def close_document(self, *, uri: str) -> None:
+        if uri not in self._opened_documents:
+            return
+        self._opened_documents.pop(uri, None)
+        self._notify_document_closed(uri)
 
     def did_change(self, *, uri: str, text: str, version: int = 1) -> None:
         if uri not in self._opened_documents:
@@ -613,6 +665,7 @@ class ExternalLSPClient:
             "lsp_provider_response": self.lsp_provider_response,
             "last_error": self.last_error,
             "opened_documents": len(self._opened_documents),
+            "max_open_documents": self._max_open_documents,
             "stderr_tail": self.stderr_tail(),
             "request_timeout_seconds": self.request_timeout_seconds,
             "initialize_timeout_seconds": self.initialize_timeout_seconds,
@@ -774,15 +827,26 @@ class ExternalLSPClient:
 
 
 class ExternalLSPProviderManager:
-    def __init__(self) -> None:
-        self._clients: dict[tuple[str, str], ExternalLSPClient] = {}
+    def __init__(self, max_clients: int | None = None) -> None:
+        self._max_clients = (
+            _configured_positive_int(
+                _LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES_ENV_VAR,
+                _DEFAULT_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES,
+            )
+            if max_clients is None
+            else max(1, int(max_clients))
+        )
+        self._clients: OrderedDict[tuple[str, str], ExternalLSPClient] = OrderedDict()
 
     def get_client(self, *, language: str, workspace_root: Path) -> ExternalLSPClient:
         key = (language.lower(), str(workspace_root.resolve()))
-        current = self._clients.get(key)
+        current = self._clients.pop(key, None)
         if current is None:
             current = ExternalLSPClient(language=language, workspace_root=workspace_root)
-            self._clients[key] = current
+        self._clients[key] = current
+        while len(self._clients) > self._max_clients:
+            _, evicted = self._clients.popitem(last=False)
+            evicted.stop()
         return current
 
     def provider_status(
@@ -794,8 +858,9 @@ class ExternalLSPProviderManager:
         probe_timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         key = (language.lower(), str(workspace_root.resolve()))
-        current = self._clients.get(key)
+        current = self._clients.pop(key, None)
         if current is not None:
+            self._clients[key] = current
             if verify_health:
                 return self._verified_provider_status(
                     client=current,
@@ -950,43 +1015,45 @@ class ExternalLSPProviderManager:
         client.request_timeout_seconds = timeout
         client.initialize_timeout_seconds = timeout
         try:
-            client.start()
-            phase = "did_open"
-            client.ensure_document(
-                uri=probe["uri"],
-                text=probe["text"],
-                language_id=probe["language_id"],
-            )
-            phase = "document_symbol"
-            result = client.request(
-                "textDocument/documentSymbol",
-                {"textDocument": {"uri": probe["uri"]}},
-            )
-            if not _document_symbol_result_contains(result, probe["symbol"]):
-                raise LSPTransportError("semantic documentSymbol probe returned no matching symbol")
-            probe_succeeded = True
-            client.lsp_provider_response = True
-        except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
-            probe_error = exc
-            client.lsp_provider_response = False
-        finally:
-            client.request_timeout_seconds = original_request_timeout
-            client.initialize_timeout_seconds = original_initialize_timeout
-        status = client.status()
-        status["available"] = True
-        status["health_check"] = "semantic-document-symbol"
-        status["health_phase"] = phase
-        status["probe_timeout_seconds"] = timeout
-        status["probe_document_uri"] = probe["uri"]
-        status["probe_symbol"] = probe["symbol"]
-        if probe_succeeded:
-            status["health_status"] = "ready"
-        else:
-            status["health_status"] = "unhealthy"
-            status["lsp_provider_response"] = False
-            if probe_error is not None:
-                status["last_error"] = status.get("last_error") or str(probe_error)
-        try:
+            try:
+                client.start()
+                phase = "did_open"
+                client.ensure_document(
+                    uri=probe["uri"],
+                    text=probe["text"],
+                    language_id=probe["language_id"],
+                )
+                phase = "document_symbol"
+                result = client.request(
+                    "textDocument/documentSymbol",
+                    {"textDocument": {"uri": probe["uri"]}},
+                )
+                if not _document_symbol_result_contains(result, probe["symbol"]):
+                    raise LSPTransportError(
+                        "semantic documentSymbol probe returned no matching symbol"
+                    )
+                probe_succeeded = True
+                client.lsp_provider_response = True
+            except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
+                probe_error = exc
+                client.lsp_provider_response = False
+            finally:
+                client.request_timeout_seconds = original_request_timeout
+                client.initialize_timeout_seconds = original_initialize_timeout
+            status = client.status()
+            status["available"] = True
+            status["health_check"] = "semantic-document-symbol"
+            status["health_phase"] = phase
+            status["probe_timeout_seconds"] = timeout
+            status["probe_document_uri"] = probe["uri"]
+            status["probe_symbol"] = probe["symbol"]
+            if probe_succeeded:
+                status["health_status"] = "ready"
+            else:
+                status["health_status"] = "unhealthy"
+                status["lsp_provider_response"] = False
+                if probe_error is not None:
+                    status["last_error"] = status.get("last_error") or str(probe_error)
             return _attach_lsp_proof_fields(status)
         finally:
             if stop_after_probe:

@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-15
+Last updated: 2026-05-24
 
 ## Current Release State
 
@@ -8,18 +8,20 @@ release_docs_current_tag: v1.13.13
 
 - Latest tagged version: `v1.13.13`
 - Latest complete PyPI version: `v1.13.13`
-- Latest verified release proof PR: #163 `fix: harden v1.12.33 dogfood contracts`
-- Latest verified release proof merge commit: `c0cb613 fix: harden v1.12.33 dogfood contracts`
-- Latest verified release proof commit: `e069f67 chore(release): v1.12.34 [skip ci]`
-- Latest verified proof public release PR: #163 `fix: harden v1.12.33 dogfood contracts`
-- Latest verified proof public release commit: `e069f67 chore(release): v1.12.34 [skip ci]`
-- Latest fix commit: `c0cb613 fix: harden v1.12.33 dogfood contracts`
+- Latest verified release proof PR: #222 `fix: harden v1.13.11 dogfood followups`
+- Latest verified release proof merge commit: `323e83a fix: harden v1.13.11 dogfood followups`
+- Latest verified release proof commit: `581c412 chore(release): v1.13.13 [skip ci]`
+- Latest verified proof public release PR: #222 `fix: harden v1.13.11 dogfood followups`
+- Latest verified proof public release commit: `581c412 chore(release): v1.13.13 [skip ci]`
+- Latest fix commit: `323e83a fix: harden v1.13.11 dogfood followups`
 - Latest feature commit: `a518cc6 feat: add agent success harness`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.13>
 - `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
-- Main CI run `26094452260`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CI run `26374619263`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Latest CodeQL proof run `26375020529`: passed on the `v1.13.13` release commit
+- Previous release CI run `26094452260`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Previous verified release CI run `25951521056`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Latest CodeQL proof run `26064676072`: passed on the `v1.12.32` release line
+- Previous CodeQL proof run `26064676072`: passed on the `v1.12.32` release line
 - Previous CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.13 tg --version` reports `tensor-grep 1.13.13`
@@ -79,6 +81,8 @@ The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in
 
 Active post-`v1.13.13` implementation scope:
 
+- Current branch `codex/v1-13-14-memory-dogfood-followups` addresses the v1.13.13 dogfood paper cuts plus long-lived agent-loop memory growth before the next patch release. Scope is intentionally narrow: bound CPU/StringZilla/AST/repo-context caches, byte-bound session serve/daemon response caches with telemetry, cap and close optional LSP clients/documents, allow bounded checkpoint discovery to descend into tensor-grep `artifacts/` checkpoint scopes, clarify path-first `tg defs PATH SYMBOL` deprecation guidance, preserve LSP proof fields on tied capsule alternatives, and keep raw-search/session performance work measurement-first.
+- Current branch evidence so far: Exa anchors covered Python bounded caches, LSP `didOpen`/`didClose`, psutil memory terminology, and ripgrep benchmark positioning; thinktank reviewers `019e5c6f-f50e-7fd1-838c-ba68d27cf934`, `019e5c70-3c2e-7120-8fd5-f66e39c13887`, and `019e5c70-7c95-7cb2-b317-44c075d34796` shaped the plan; targeted tests for cache eviction, session byte caps, LSP lifecycle caps, checkpoint discovery under `artifacts/`, path-first `tg defs` warnings, and equal-LSP capsule ties pass locally (`16 passed`). Exploratory timing on `C:\dev\projects\agent-studio` reproduced that raw `uv run tg` search is still slower than `rg` on cold/unsorted shapes; no publishable performance claim or hot-path optimization is made from that noisy local run.
 - Current v1.13.0 dogfood follow-up branch `feat/v1-13-dogfood-hardening` fixes concrete 1.12.66 feedback without promoting unfinished surfaces. Default `tg checkpoint list` now checks only direct, ancestor, and immediate child scopes when the requested scope is empty; recursive discovery remains `--discover` / `--discover-full`. Daemon-routed session edit-plan requests resolve relative paths against the daemon root and keep repeated core payloads stable. `doctor --json` now carries `schema_version = 2`, `doctor_schema_version = 2`, `lsp.schema_version = 2`, an array at `lsp.providers` / `lsp_provider_items`, and keyed compatibility maps at `lsp.providers_by_language` / top-level `lsp_providers` with `health` as an alias for `health_status`. Read-only `tg run` returns exit `1` on zero AST matches and warns on Windows when a `cmd.exe` single-quoted pattern was passed literally; the validated JS call pattern `calculateTotal($$$)` remains covered.
 - Current v1.13.0 branch evidence: Exa anchors covered ast-grep pattern/run syntax, LSP initialize lifecycle, and ripgrep file-list behavior; read-only subagents covered checkpoint discovery, daemon path/cache behavior, doctor LSP schema compatibility, and AST Windows quoting. Gemini 0.42 / `gemini-2.5-flash` read-only diff audit returned `GEMINI_AUDIT_RESULT: PASS` with no blocker/high findings after a first unavailable plan-mode attempt. Local validation passes: `uv run ruff check .`; `uv run ruff format --check --preview .`; `uv run mypy src/tensor_grep`; `C:/Users/oimir/.cargo/bin/cargo.exe fmt --manifest-path rust_core/Cargo.toml --check`; `C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml`; `uv run pytest -q` (`2372 passed, 24 skipped`); `uv run python scripts/agent_readiness.py --no-shell-probes --no-wsl-probe --json` (`12 passed, 0 failed`); and `git diff --check`.
 - PR slice order 2 / LSP production-readiness: branch `codex/harden-lsp-production-readiness` hardens provider proof plumbing without promoting LSP to default/production. Exa anchor: official Language Server Protocol 3.17 lifecycle docs for initialize/initialized sequencing and request-capability evidence. Thinktank consensus: validate `tg lsp --provider`, budget editor-facing provider requests, decode provider `file://` URIs, query repo-file languages when symbols are empty, and require explicit provider-response markers for `lsp_proof`. Subagent review found two concrete gaps, both fixed: `ensure_document()` now shares the operation budget before provider requests, and `defs_provider_disagreement.json` now carries marker-backed proof with a regression test. Gemini 0.42 read-only review returned `APPROVED` after one `gemini-3.1-pro-preview` capacity retry. Local validation: `uv run pytest tests/unit/test_lsp_external_provider.py tests/unit/test_lsp_server.py tests/unit/test_semantic_provider_navigation.py tests/unit/test_cli_modes.py::test_lsp_help_mentions_provider_modes tests/unit/test_cli_modes.py::test_lsp_rejects_unknown_provider_mode tests/unit/test_cli_modes.py::test_doctor_text_reports_lsp_health_and_proof_fields tests/unit/test_harness_api_docs.py tests/unit/test_public_docs_governance.py -q`, `uv run ruff check .`, `uv run ruff format --check --preview .`, `uv run mypy src/tensor_grep`, `cargo fmt --manifest-path rust_core/Cargo.toml --check`, and `git diff --check` pass locally.

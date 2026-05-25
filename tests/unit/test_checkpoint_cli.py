@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,114 @@ def test_checkpoint_list_discover_finds_child_checkpoint_scope(tmp_path: Path) -
     assert payload["checkpoint_count"] == 1
     assert payload["discovered_scopes"][0]["root"] == str(project.resolve())
     assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
+def test_checkpoint_list_discover_finds_artifacts_checkpoint_scope(tmp_path: Path) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "artifacts" / "rewrite_checkpoint_case_codex"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    create_result = runner.invoke(app, ["checkpoint", "create", str(project), "--json"])
+    assert create_result.exit_code == 0
+    checkpoint_id = json.loads(create_result.stdout)["checkpoint_id"]
+    checkpoint_store._discovery_cache_path(workspace.resolve()).unlink(missing_ok=True)
+
+    discover_result = runner.invoke(
+        app,
+        ["checkpoint", "list", str(workspace), "--discover", "--json"],
+    )
+
+    assert discover_result.exit_code == 0
+    payload = json.loads(discover_result.stdout)
+    assert payload["checkpoint_count"] == 1
+    assert payload["discovered_scopes"][0]["root"] == str(project.resolve())
+    assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+
+def test_checkpoint_snapshot_still_excludes_artifacts_content(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    artifacts = project / "artifacts"
+    artifacts.mkdir(parents=True)
+    (project / "sample.py").write_text("print('tracked')\n", encoding="utf-8")
+    (artifacts / "generated.py").write_text("print('generated')\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["checkpoint", "create", str(project), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "filesystem-snapshot"
+    assert payload["file_count"] == 1
+
+
+def test_checkpoint_discover_ignores_stale_false_negative_cache_for_artifacts_policy(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    project = workspace / "artifacts" / "rewrite_checkpoint_case_codex"
+    project.mkdir(parents=True)
+    (project / "sample.py").write_text("print('before')\n", encoding="utf-8")
+    checkpoint = checkpoint_store.create_checkpoint(str(project))
+    cache_path = checkpoint_store._discovery_cache_path(workspace.resolve())
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps({
+            "version": max(0, checkpoint_store._DISCOVERY_CACHE_VERSION - 1),
+            "entries": {
+                checkpoint_store._discovery_cache_key(
+                    full=False,
+                    max_depth=checkpoint_store._DISCOVERY_MAX_DEPTH,
+                ): {
+                    "created_at_epoch_s": time.time(),
+                    "index_paths": [],
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    scopes = checkpoint_store.discover_checkpoint_scopes(str(workspace))
+
+    assert scopes
+    assert scopes[0].root == str(project.resolve())
+    assert scopes[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
+
+
+def test_checkpoint_discovery_cache_preserves_truncated_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    workspace = tmp_path / "workspace"
+    (workspace / "one").mkdir(parents=True)
+    (workspace / "two").mkdir()
+    monkeypatch.setattr(checkpoint_store, "_DISCOVERY_MAX_DIRECTORIES", 1)
+
+    first = checkpoint_store.discover_checkpoint_scopes_result(str(workspace))
+    assert first.truncated is True
+
+    def fail_bounded_walk(*_args, **_kwargs):
+        raise AssertionError("cached truncated discovery should avoid tree walk")
+
+    monkeypatch.setattr(checkpoint_store, "_bounded_checkpoint_index_paths", fail_bounded_walk)
+
+    second = checkpoint_store.discover_checkpoint_scopes_result(str(workspace))
+
+    assert second.truncated is True
+
+
+def test_checkpoint_list_discover_help_mentions_artifacts_exception() -> None:
+    result = CliRunner().invoke(app, ["checkpoint", "list", "--help"])
+
+    assert result.exit_code == 0
+    assert "artifacts" in result.stdout
+    assert "checkpoint scopes" in result.stdout
 
 
 def test_checkpoint_list_auto_discovers_child_scope_when_direct_scope_is_empty(

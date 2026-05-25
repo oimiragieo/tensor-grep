@@ -1,12 +1,16 @@
 import hashlib
 import json
 import os
+from collections import OrderedDict
 from pathlib import Path
 from typing import ClassVar
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+
+_STRING_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES"
+_DEFAULT_STRING_INDEX_CACHE_MAX_ENTRIES = 512
 
 
 class StringZillaBackend(ComputeBackend):
@@ -17,12 +21,44 @@ class StringZillaBackend(ComputeBackend):
     """
 
     _shared_index_cache: ClassVar[
-        dict[tuple[str, bool, bool], tuple[tuple[int, int], list[str], dict[str, list[int]]]]
-    ] = {}
+        OrderedDict[
+            tuple[str, bool, bool],
+            tuple[tuple[int, int], list[str], dict[str, list[int]]],
+        ]
+    ] = OrderedDict()
 
     @classmethod
     def _clear_shared_caches(cls) -> None:
         cls._shared_index_cache.clear()
+
+    @staticmethod
+    def _configured_positive_int(env_var: str, default: int) -> int:
+        raw_value = os.environ.get(env_var)
+        if raw_value is None:
+            return default
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+
+    @classmethod
+    def _index_cache_max_entries(cls) -> int:
+        return cls._configured_positive_int(
+            _STRING_INDEX_CACHE_MAX_ENTRIES_ENV,
+            _DEFAULT_STRING_INDEX_CACHE_MAX_ENTRIES,
+        )
+
+    @classmethod
+    def _remember_index(
+        cls,
+        cache_key: tuple[str, bool, bool],
+        cache_entry: tuple[tuple[int, int], list[str], dict[str, list[int]]],
+    ) -> None:
+        cls._shared_index_cache.pop(cache_key, None)
+        cls._shared_index_cache[cache_key] = cache_entry
+        while len(cls._shared_index_cache) > cls._index_cache_max_entries():
+            cls._shared_index_cache.popitem(last=False)
 
     def is_available(self) -> bool:
         try:
@@ -155,7 +191,10 @@ class StringZillaBackend(ComputeBackend):
         cache_signature = self._build_file_signature(file_path)
         cached = self._shared_index_cache.get(cache_key)
         if cached and cached[0] == cache_signature:
+            self._shared_index_cache.move_to_end(cache_key)
             return cached[1], cached[2]
+        if cached:
+            self._shared_index_cache.pop(cache_key, None)
 
         if not self._is_index_enabled():
             return None
@@ -184,7 +223,7 @@ class StringZillaBackend(ComputeBackend):
                 return None
             trigram_index[trigram] = [int(v) for v in values]
 
-        self._shared_index_cache[cache_key] = (cache_signature, lines, trigram_index)
+        self._remember_index(cache_key, (cache_signature, lines, trigram_index))
         return lines, trigram_index
 
     def _persist_index(
@@ -196,10 +235,13 @@ class StringZillaBackend(ComputeBackend):
         trigram_index: dict[str, list[int]],
     ) -> None:
         cache_signature = self._build_file_signature(file_path)
-        self._shared_index_cache[(file_path, ignore_case, treat_binary_as_text)] = (
-            cache_signature,
-            lines,
-            trigram_index,
+        self._remember_index(
+            (file_path, ignore_case, treat_binary_as_text),
+            (
+                cache_signature,
+                lines,
+                trigram_index,
+            ),
         )
         if not self._is_index_enabled():
             return

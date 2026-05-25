@@ -46,6 +46,9 @@ def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
     cleaned = dict(payload)
     cleaned.pop("_profiling", None)
     cleaned.pop("profile", None)
+    cleaned.pop("serve_response_cache", None)
+    cleaned.pop("daemon_response_cache", None)
+    cleaned.pop("session_timing", None)
     return cleaned
 
 
@@ -130,11 +133,11 @@ def test_session_serve_profile_requests_include_profiling_without_changing_outpu
 
     assert "_profiling" not in baseline_context
     assert profiled_context["_profiling"]["phases"]
-    assert _without_profiling(profiled_context) == baseline_context
+    assert _without_profiling(profiled_context) == _without_profiling(baseline_context)
 
     assert "_profiling" not in baseline_blast
     assert profiled_blast["_profiling"]["phases"]
-    assert _without_profiling(profiled_blast) == baseline_blast
+    assert _without_profiling(profiled_blast) == _without_profiling(baseline_blast)
 
 
 def test_run_editor_profiling_writes_standard_json_with_phase_breakdown_rows(

@@ -1143,6 +1143,104 @@ def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
     assert stats["cache_misses"] >= 1
 
 
+def test_session_serve_response_cache_obeys_byte_cap() -> None:
+    from tensor_grep.cli.session_store import _SessionServeResponseCache
+
+    cache = _SessionServeResponseCache(max_entries=8, max_size_bytes=60)
+    cache.put(("one",), {"payload": "a" * 20})
+    cache.put(("two",), {"payload": "b" * 20})
+
+    assert cache.entry_count == 1
+    assert cache.size_bytes <= cache.max_size_bytes
+    assert cache.get(("one",)) is None
+    assert cache.get(("two",)) == {"payload": "b" * 20}
+
+    cache.put(("oversized",), {"payload": "c" * 80})
+    assert cache.get(("oversized",)) is None
+    assert cache.oversized_skips == 1
+
+    cache.put(("stable",), {"payload": "ok"})
+    cache.put(("stable",), {"payload": "d" * 80})
+    assert cache.get(("stable",)) == {"payload": "ok"}
+    assert cache.oversized_skips == 2
+
+
+def test_session_response_cache_invalid_byte_env_uses_default(monkeypatch) -> None:
+    from tensor_grep.cli.session_store import (
+        _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
+        _SessionServeResponseCache,
+    )
+
+    monkeypatch.setenv("TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES", "not-an-int")
+
+    cache = _SessionServeResponseCache()
+
+    assert cache.max_size_bytes == _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES
+
+
+def test_session_daemon_response_cache_obeys_byte_cap() -> None:
+    from tensor_grep.cli.session_daemon import _SessionResponseCache
+
+    cache = _SessionResponseCache(max_entries=8, max_size_bytes=60)
+    cache.put(("one",), {"payload": "a" * 20})
+    cache.put(("two",), {"payload": "b" * 20})
+
+    assert cache.entry_count == 1
+    assert cache.size_bytes <= cache.max_size_bytes
+    assert cache.get(("one",)) is None
+    assert cache.get(("two",)) == {"payload": "b" * 20}
+
+    cache.put(("oversized",), {"payload": "c" * 80})
+    assert cache.get(("oversized",)) is None
+    assert cache.oversized_skips == 1
+
+    cache.put(("stable",), {"payload": "ok"})
+    cache.put(("stable",), {"payload": "d" * 80})
+    assert cache.get(("stable",)) == {"payload": "ok"}
+    assert cache.oversized_skips == 2
+
+
+def test_session_daemon_payload_fingerprint_uses_repo_map_counts() -> None:
+    from tensor_grep.cli.session_daemon import _session_payload_fingerprint
+
+    base_payload = {
+        "root": "repo",
+        "created_at": "created",
+        "refreshed_at": "refreshed",
+        "repo_map": {"files": ["a.py"], "symbols": ["create_invoice"]},
+    }
+    changed_payload = {
+        **base_payload,
+        "repo_map": {"files": ["a.py", "b.py"], "symbols": ["create_invoice"]},
+    }
+
+    assert _session_payload_fingerprint(base_payload) != _session_payload_fingerprint(
+        changed_payload
+    )
+
+
+def test_session_daemon_payload_retry_handles_partial_json(monkeypatch) -> None:
+    from tensor_grep.cli import session_daemon
+
+    class FlakyCache:
+        calls = 0
+
+        def load_with_status(self, _session_id: str, _path: str):
+            self.calls += 1
+            if self.calls == 1:
+                raise json.JSONDecodeError("partial", "{", 1)
+            return {"ok": True}, "miss"
+
+    monkeypatch.setattr(session_daemon, "_DAEMON_SESSION_LOOKUP_RETRY_SECONDS", 0.5)
+    cache = FlakyCache()
+
+    payload, status = session_daemon._load_payload_with_status_retry(cache, "s", ".")
+
+    assert payload == {"ok": True}
+    assert status == "miss"
+    assert cache.calls == 2
+
+
 def test_session_serve_context_render_reuses_identical_response_cache(
     tmp_path: Path,
     monkeypatch,
@@ -1524,6 +1622,72 @@ def test_session_daemon_edit_plan_reuses_identical_response_cache(
     assert second["session_timing"]["response_cache_status"] == "hit"
     assert stats["response_cache_hits"] == 1
     assert stats["response_cache_misses"] == 1
+    assert stats["response_cache_entries"] == 1
+
+
+def test_session_daemon_refresh_on_stale_response_is_cached(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    module_path.write_text("def create_invoice():\n    return 2\n", encoding="utf-8")
+    calls = 0
+
+    def fake_serve_session_request(
+        session_id: str,
+        request: dict[str, object],
+        path: str,
+        *,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "session_id": session_id,
+            "routing_reason": "session-context-edit-plan",
+            "files": [str(module_path.resolve())],
+            "call_count": calls,
+        }
+
+    monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_edit_plan",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "create invoice",
+            "refresh_on_stale": True,
+            "max_repo_files": 2,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        second = session_daemon._daemon_request(host, port, request)
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    assert calls == 1
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert second["daemon_response_cache"]["status"] == "hit"
+    assert second["call_count"] == 1
+    assert stats["response_cache_hits"] == 1
     assert stats["response_cache_entries"] == 1
 
 
