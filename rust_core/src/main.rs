@@ -1391,6 +1391,13 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
     if !should_use_early_ripgrep_fast_path(&rg_args) {
         return Ok(None);
     }
+    if ripgrep_args_need_broad_generated_guard(&rg_args) {
+        let generated_dirs = generated_scan_dir_names(&rg_args.paths);
+        if !generated_dirs.is_empty() {
+            eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
+            return Ok(Some(2));
+        }
+    }
 
     let exit_code = execute_ripgrep_search(&rg_args)?;
     Ok(Some(exit_code))
@@ -1638,7 +1645,8 @@ fn format_broad_generated_scan_error(generated_dirs: &[String]) -> String {
         visible_dirs.push_str(", ...");
     }
     format!(
-        "Error: broad generated-root scan refused: path contains generated, cache, \
+        "Error: broad generated-root scan refused as a safety guard, not a zero-match result: \
+path contains generated, cache, \
 or dependency directories ({visible_dirs}). Scope the path, add --glob, --type, \
 or --max-depth, or pass --allow-broad-generated-scan to opt in.\n\
 For bounded output:\n\

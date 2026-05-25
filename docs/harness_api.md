@@ -1285,6 +1285,7 @@ Start and status responses include:
 | `port` | `integer` | Bound localhost port. |
 | `pid` | `integer` | Process identifier when the daemon is live. |
 | `started_at` | `string` | ISO-8601 startup timestamp when the daemon is live. |
+| `response_cache_scope` | `string` | Public scope for `response_cache_*` counters. Current value: `daemon-routed session context-render/edit-plan requests`; top-level `tg context-render` is not counted unless routed through the session daemon surface. |
 
 Stop responses additionally include:
 

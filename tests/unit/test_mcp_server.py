@@ -327,6 +327,45 @@ def test_tg_search_context_rows_do_not_inflate_header_count():
     assert "  3: after" in out
 
 
+def test_tg_search_uses_single_aggregate_ripgrep_search_for_cli_parity():
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli import mcp_server
+
+    backend = RipgrepBackend()
+    backend.search = MagicMock(
+        return_value=SearchResult(
+            matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+            matched_file_paths=["a.log"],
+            match_counts_by_file={"a.log": 1},
+            total_files=1,
+            total_matches=1,
+            routing_backend="RipgrepBackend",
+            routing_reason="rg_json",
+        )
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = backend
+        pipeline.selected_backend_name = "RipgrepBackend"
+        pipeline.selected_backend_reason = "rg_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.side_effect = AssertionError(
+            "MCP rg search must not enumerate explicit files"
+        )
+
+        out = mcp_server.tg_search("ERROR", ".")
+
+    backend.search.assert_called_once()
+    assert backend.search.call_args.args[:2] == (".", "ERROR")
+    assert "Found 1 matches across 1 files:" in out
+    assert "Routing: backend=RipgrepBackend reason=rg_json" in out
+
+
 def test_tg_search_should_report_runtime_routing_override_when_backend_falls_back():
     from tensor_grep.cli import mcp_server
 

@@ -18,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
 from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 
+from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.cli.main import _build_rulesets_payload, _run_ast_scan_payload
 from tensor_grep.cli.repo_map import (
     build_context_pack,
@@ -1979,13 +1980,12 @@ def tg_search(
 
     pipeline = Pipeline(config=config)
     backend = pipeline.get_backend()
-    scanner = DirectoryScanner(config)
+    selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
+    selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
-    all_results.routing_backend = getattr(
-        pipeline, "selected_backend_name", backend.__class__.__name__
-    )
-    all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+    all_results.routing_backend = selected_backend_name
+    all_results.routing_reason = selected_backend_reason
     all_results.routing_gpu_device_ids = list(
         getattr(pipeline, "selected_gpu_device_ids", []) or []
     )
@@ -1993,22 +1993,26 @@ def tg_search(
         getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
     try:
-        for current_file in scanner.walk(path):
-            result = backend.search(current_file, pattern, config=config)
-            all_results.matches.extend(result.matches)
-            all_results.matched_file_paths.extend(result.matched_file_paths)
-            _merge_count_metadata(all_results, result)
-            all_results.total_matches += result.total_matches
-            if result.total_files > 0 or result.total_matches > 0:
-                all_results.total_files += 1
-            _merge_runtime_routing(all_results, result)
+        if isinstance(backend, RipgrepBackend):
+            all_results = backend.search(path, pattern, config=config)
+            all_results.routing_backend = all_results.routing_backend or selected_backend_name
+            all_results.routing_reason = all_results.routing_reason or selected_backend_reason
+        else:
+            scanner = DirectoryScanner(config)
+            for current_file in scanner.walk(path):
+                result = backend.search(current_file, pattern, config=config)
+                all_results.matches.extend(result.matches)
+                all_results.matched_file_paths.extend(result.matched_file_paths)
+                _merge_count_metadata(all_results, result)
+                all_results.total_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    all_results.total_files += 1
+                _merge_runtime_routing(all_results, result)
 
         _apply_selected_gpu_defaults(
             all_results=all_results,
-            selected_backend_name=getattr(
-                pipeline, "selected_backend_name", backend.__class__.__name__
-            ),
-            selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
+            selected_backend_name=selected_backend_name,
+            selected_backend_reason=selected_backend_reason,
         )
         _finalize_aggregate_result(all_results)
 
