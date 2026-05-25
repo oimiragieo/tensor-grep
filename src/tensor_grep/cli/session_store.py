@@ -13,6 +13,7 @@ from typing import Any, TextIO, cast
 from uuid import uuid4
 
 from tensor_grep.cli.repo_map import (
+    DEFAULT_AGENT_REPO_MAP_LIMIT,
     _is_repo_context_file,
     _iter_repo_files,
     apply_repo_map_output_limits,
@@ -38,8 +39,8 @@ _SESSION_SERVE_CACHE_MAX_ENTRIES = 32
 _SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES = 32
 _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV = "TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES"
 _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES = 8 * 1024 * 1024
-_DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = 512
-_DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = 512
+_DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+_DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 
 
 @dataclass
@@ -74,6 +75,7 @@ class SessionRefreshResult:
     symbol_count: int
     refresh_type: str
     changeset: dict[str, list[str]]
+    scan_limit: dict[str, Any] | None = None
 
 
 class SessionStaleError(RuntimeError):
@@ -447,10 +449,31 @@ def _new_session_id(root: Path) -> str:
     return f"session-{timestamp}-{root.name}-{uuid4().hex[:8]}"
 
 
-def open_session(path: str = ".", *, max_repo_files: int | None = None) -> SessionOpenResult:
+def _effective_session_max_repo_files(
+    requested: int | None,
+    payload: dict[str, Any] | None = None,
+) -> int | None:
+    if requested is not None:
+        return max(1, int(requested))
+    if payload is not None:
+        scan_limit = payload.get("scan_limit")
+        if isinstance(scan_limit, dict) and scan_limit.get("max_repo_files") is not None:
+            try:
+                return max(1, int(cast(int | str, scan_limit["max_repo_files"])))
+            except (TypeError, ValueError):
+                pass
+    return DEFAULT_AGENT_REPO_MAP_LIMIT
+
+
+def open_session(
+    path: str = ".",
+    *,
+    max_repo_files: int | None = DEFAULT_AGENT_REPO_MAP_LIMIT,
+) -> SessionOpenResult:
     root = _resolve_root(Path(path))
     started_at = monotonic()
-    repo_map = build_repo_map(root, max_repo_files=max_repo_files)
+    effective_max_repo_files = _effective_session_max_repo_files(max_repo_files)
+    repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
     built_at = monotonic()
     created_at = datetime.now(UTC).isoformat()
     session_id = _new_session_id(root)
@@ -500,10 +523,12 @@ def refresh_session(
     session_id: str,
     path: str = ".",
     *,
+    max_repo_files: int | None = None,
     payload_cache: _SessionServeCache | None = None,
 ) -> SessionRefreshResult:
     root = _resolve_root(Path(path))
     existing = get_session(session_id, path)
+    effective_max_repo_files = _effective_session_max_repo_files(max_repo_files, existing)
     changeset = _stale_changeset(existing, detect_added_files=True)
     refresh_type = "full"
     if changeset is not None:
@@ -511,13 +536,14 @@ def refresh_session(
             repo_map = build_repo_map_incremental(
                 cast(dict[str, Any], existing["repo_map"]),
                 changeset,
+                max_repo_files=effective_max_repo_files,
             )
             refresh_type = "incremental"
         except Exception:
-            repo_map = build_repo_map(root)
+            repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
             refresh_type = "full"
     else:
-        repo_map = build_repo_map(root)
+        repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
         changeset = _empty_changeset()
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
@@ -531,6 +557,7 @@ def refresh_session(
         "snapshot": _capture_snapshot(repo_map["related_paths"]),
         "refresh_type": refresh_type,
         "changeset": changeset,
+        "scan_limit": cast(dict[str, Any] | None, repo_map.get("scan_limit")),
     }
     session_path = _session_payload_path(root, session_id)
     session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -572,6 +599,7 @@ def refresh_session(
         symbol_count=len(repo_map["symbols"]),
         refresh_type=refresh_type,
         changeset=changeset,
+        scan_limit=cast(dict[str, Any] | None, repo_map.get("scan_limit")),
     )
 
 

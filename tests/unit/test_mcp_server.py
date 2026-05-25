@@ -289,6 +289,44 @@ def test_tg_search_includes_routing_summary_in_non_empty_output():
     assert "workers=2" in out
 
 
+def test_tg_search_context_rows_do_not_inflate_header_count():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(
+        matches=[
+            MatchLine(line_number=1, text="before", file="a.log"),
+            MatchLine(line_number=2, text="ERROR here", file="a.log"),
+            MatchLine(line_number=3, text="after", file="a.log"),
+        ],
+        matched_file_paths=["a.log"],
+        match_counts_by_file={"a.log": 1},
+        total_files=1,
+        total_matches=1,
+        routing_backend="RipgrepBackend",
+        routing_reason="rg_json",
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "RipgrepBackend"
+        pipeline.selected_backend_reason = "rg_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", context=1)
+
+    assert "Found 1 matches across 1 files:" in out
+    assert "  1: before" in out
+    assert "  2: ERROR here" in out
+    assert "  3: after" in out
+
+
 def test_tg_search_should_report_runtime_routing_override_when_backend_falls_back():
     from tensor_grep.cli import mcp_server
 
@@ -669,6 +707,25 @@ def test_tg_session_open_accepts_initial_repo_map_cap(tmp_path: Path):
     assert payload["scan_limit"]["max_repo_files"] == 2
     assert payload["scan_limit"]["possibly_truncated"] is True
     assert payload["build_seconds"] >= 0
+
+
+def test_tg_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(520):
+        (src_dir / f"module_{index:03}.py").write_text(
+            f"def function_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    payload = json.loads(mcp_server.tg_session_open(str(project)))
+
+    assert payload["file_count"] == 512
+    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert payload["scan_limit"]["possibly_truncated"] is True
 
 
 def test_tg_rulesets_returns_builtin_ruleset_metadata():
@@ -2541,6 +2598,8 @@ def test_tg_repo_map_returns_json_inventory(tmp_path):
     assert payload["sidecar_used"] is False
     assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
     assert payload["path"] == str(project.resolve())
+    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert payload["scan_limit"]["possibly_truncated"] is False
     assert str(module_path.resolve()) in payload["files"]
     assert str(test_path.resolve()) in payload["tests"]
     assert any(
@@ -3008,6 +3067,11 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
         primary_file=module_path,
         primary_symbol_name="create_invoice",
     )
+    assert payload["primary_target"] == payload["navigation_pack"]["primary_target"]
+    assert payload["edit_order"] == payload["edit_plan_seed"]["edit_ordering"]
+    assert payload["plan"]["primary_file"] == str(module_path.resolve())
+    assert payload["plan"]["primary_symbol"]["name"] == "create_invoice"
+    assert "rendered_context" not in payload["plan"]
 
 
 def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):

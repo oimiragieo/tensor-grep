@@ -15,6 +15,7 @@ use rayon::prelude::*;
 use regex::RegexBuilder as OutputRegexBuilder;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -637,7 +638,10 @@ struct NativeJsonOutput<'a> {
     not_gpu_proof_reason: Option<String>,
     query: &'a str,
     path: String,
+    total_files: usize,
     total_matches: usize,
+    matched_file_paths: Vec<String>,
+    match_counts_by_file: BTreeMap<String, usize>,
     matches: Vec<NativeJsonMatch>,
 }
 
@@ -1893,6 +1897,12 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         config.routing_backend,
         config.sidecar_used,
     );
+    let mut match_counts_by_file: BTreeMap<String, usize> = BTreeMap::new();
+    for matched in &stats.matches {
+        let path = matched.path.to_string_lossy().into_owned();
+        *match_counts_by_file.entry(path).or_insert(0) += 1;
+    }
+    let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
     let payload = NativeJsonOutput {
         version: JSON_OUTPUT_VERSION,
         routing_backend: config.routing_backend,
@@ -1906,7 +1916,10 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
         query: &config.pattern,
         path: display_search_path(&config.paths),
+        total_files: stats.matched_files,
         total_matches: stats.total_matches,
+        matched_file_paths,
+        match_counts_by_file,
         matches: stats
             .matches
             .iter()

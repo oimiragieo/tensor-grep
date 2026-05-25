@@ -1244,6 +1244,54 @@ def test_repo_map_callers_hybrid_deduplicates_external_and_native_same_call_site
     assert [(row["file"], row["line"], row["text"]) for row in payload["callers"]] == [
         (resolved_consumer, 3, "create_invoice()")
     ]
+    assert payload["callers"][0]["lsp_provider_response"] is True
+    assert payload["callers"][0]["lsp_proof"] is True
+    assert payload["lsp_proof"] is True
+    assert payload["lsp_evidence_status"] == "lsp_proof"
+
+
+def test_repo_map_refs_hybrid_deduplicates_external_and_native_same_reference_with_lsp_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_path = tmp_path / "service.py"
+    consumer_path = tmp_path / "consumer.py"
+    service_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+    consumer_path.write_text(
+        "from service import create_invoice\n\ncreate_invoice()\n",
+        encoding="utf-8",
+    )
+    resolved_consumer = str(consumer_path.resolve())
+    monkeypatch.setattr(
+        repo_map,
+        "_external_references",
+        lambda root, symbol, definitions: [
+            {
+                "name": symbol,
+                "kind": "reference",
+                "file": resolved_consumer,
+                "line": 3,
+                "end_line": 3,
+                "text": "create_invoice()",
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_proof": True,
+                "lsp_operation": "textDocument/references",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_refs("create_invoice", tmp_path, semantic_provider="hybrid")
+    matching_refs = [
+        row
+        for row in payload["references"]
+        if row["file"] == resolved_consumer and row["line"] == 3
+    ]
+
+    assert len(matching_refs) == 1
+    assert matching_refs[0]["lsp_provider_response"] is True
+    assert matching_refs[0]["lsp_proof"] is True
+    assert payload["lsp_proof"] is True
+    assert payload["lsp_evidence_status"] == "lsp_proof"
 
 
 def test_repo_map_blast_radius_hybrid_can_include_js_ts_alias_wrapper_callers(

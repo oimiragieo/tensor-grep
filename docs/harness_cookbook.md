@@ -24,7 +24,10 @@ Expected top-level fields:
 - `"sidecar_used"`
 - `"query"`
 - `"path"`
+- `"total_files"`
 - `"total_matches"`
+- `"matched_file_paths"`
+- `"match_counts_by_file"`
 - `"matches"`
 
 Recommended consumer behavior:
@@ -87,7 +90,7 @@ Current coverage values describe the limits of this surface:
 Use context packs when the agent already has a task/query and wants a smaller ranked subset than the full repo map.
 
 ```powershell
-tg.exe context --query "invoice payment" --json .\src
+tg.exe context .\src "invoice payment" --json
 ```
 
 Expected top-level fields:
@@ -119,32 +122,38 @@ Before any autonomous edit, inspect the top-level `ambiguity` object. `ambiguity
 Resolve exact definitions:
 
 ```powershell
-tg defs --symbol create_invoice --max-repo-files 512 --json .\src
+tg defs .\src create_invoice --max-repo-files 512 --json
 ```
 
 Fetch the exact source block:
 
 ```powershell
-tg source --symbol create_invoice --max-repo-files 512 --json .\src
+tg source .\src create_invoice --max-repo-files 512 --json
 ```
 
 Estimate likely change impact:
 
 ```powershell
-tg impact --symbol create_invoice --max-repo-files 512 --json .
+tg impact . create_invoice --max-repo-files 512 --json
 ```
 
 Find reference sites:
 
 ```powershell
-tg refs --symbol create_invoice --max-repo-files 512 --json .
+tg refs . create_invoice --max-repo-files 512 --json
 ```
 
 Find call sites plus likely impacted tests:
 
 ```powershell
-tg callers --symbol create_invoice --max-repo-files 512 --json .
+tg callers . create_invoice --max-repo-files 512 --json
 ```
+
+For `tg blast-radius ... --json`, `blast_radius_score` is a bounded `0.0` to
+`1.0` evidence-density score derived from ranked files, direct callers, and
+related tests before output limiting. Use `affected_files` for the concrete
+file list and treat the score as a prioritization hint, not a correctness
+proof.
 
 For broad repo roots, read `scan_limit` before assuming the inventory is complete. If `no_match` is true on `defs` or `source`, treat the compact payload as a real miss and refine the symbol/query instead of scanning unrelated inventories.
 
@@ -169,7 +178,7 @@ tg session refresh session-20260320071200-rewrite . --json
 Reuse the cached repo map for another query:
 
 ```powershell
-tg session context session-20260320071200-rewrite . --query "invoice payment" --json
+tg session context session-20260320071200-rewrite . "invoice payment" --json
 tg session serve session-20260320071200-rewrite . < requests.jsonl
 tg session serve session-20260320071200-rewrite . --refresh-on-stale < requests.jsonl
 ```
@@ -206,9 +215,9 @@ Minimal command chain:
 
 ```powershell
 tg.exe map --json .\src
-tg.exe context --query "invoice payment" --json .\src
-tg defs --symbol create_invoice --json .\src
-tg callers --symbol create_invoice --json .\src
+tg.exe context .\src "invoice payment" --json
+tg defs .\src create_invoice --json
+tg callers .\src create_invoice --json
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --json 'def $F($$$ARGS): return $EXPR' .\src\sample.py
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --apply --verify --checkpoint --lint-cmd "ruff check ." --test-cmd "pytest -q" --json 'def $F($$$ARGS): return $EXPR' .\src\sample.py
 python benchmarks/run_patch_bakeoff.py --scenarios benchmarks/patch_eval/real_patch_bakeoff_scenarios.json --predictions artifacts/patch_eval_demo/gemini_skill_ab_limit12_bakeoff.json --output artifacts/patch_eval_demo/gemini_skill_ab_limit12_bakeoff_scored.json

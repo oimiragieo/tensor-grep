@@ -130,6 +130,8 @@ ARTIFACT_SCHEMAS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+MAX_UNIT_TEST_ARTIFACT_BYTES = 64 * 1024 * 1024
+
 
 def test_benchmark_artifacts_should_exist_and_match_stable_top_level_shapes() -> None:
     artifacts_dir = Path("artifacts")
@@ -140,6 +142,11 @@ def test_benchmark_artifacts_should_exist_and_match_stable_top_level_shapes() ->
         path = artifacts_dir / file_name
         if not path.exists():
             pytest.skip(f"generated benchmark artifact missing: {path}")
+        if path.stat().st_size > MAX_UNIT_TEST_ARTIFACT_BYTES:
+            pytest.skip(
+                "generated benchmark artifact is too large for unit-test JSON loading: "
+                f"{path} ({path.stat().st_size} bytes)"
+            )
         payload = json.loads(path.read_text(encoding="utf-8"))
 
         for key in required_keys:

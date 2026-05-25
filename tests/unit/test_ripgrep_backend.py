@@ -49,6 +49,34 @@ def test_should_forward_no_ignore_flag():
     assert "--no-ignore" in cmd
 
 
+def test_json_context_events_do_not_inflate_match_totals():
+    backend = RipgrepBackend()
+    config = SearchConfig(context=1)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "\n".join([
+        '{"type":"begin","data":{"path":{"text":"app.log"}}}',
+        '{"type":"context","data":{"path":{"text":"app.log"},"lines":{"text":"before\\n"},"line_number":1}}',
+        '{"type":"match","data":{"path":{"text":"app.log"},"lines":{"text":"ERROR here\\n"},"line_number":2}}',
+        '{"type":"context","data":{"path":{"text":"app.log"},"lines":{"text":"after\\n"},"line_number":3}}',
+        '{"type":"end","data":{"path":{"text":"app.log"},"binary_offset":null,"stats":{"matches":1}}}',
+    ])
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch("tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search("app.log", "ERROR", config=config)
+
+    assert len(result.matches) == 3
+    assert result.total_matches == 1
+    assert result.total_files == 1
+    assert result.matched_file_paths == ["app.log"]
+    assert result.match_counts_by_file == {"app.log": 1}
+
+
 def test_should_forward_rg_config_override_flags():
     backend = RipgrepBackend()
     config = SearchConfig(

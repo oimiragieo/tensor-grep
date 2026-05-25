@@ -436,6 +436,7 @@ def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
 
     assert result.exit_code == 2
     assert "broad generated-root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
     assert "node_modules" in result.output
     assert "--glob" in result.output
     assert "--max-depth" in result.output
@@ -1005,9 +1006,10 @@ def test_session_context_help_mentions_daemon_flag() -> None:
     result = runner.invoke(app, ["session", "context", "--help"])
 
     assert result.exit_code == 0
-    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    normalized_output = re.sub(r"\s+", " ", re.sub(r"\x1b\[[0-9;]*m", "", result.stdout))
     assert "-daemon" in normalized_output
-    assert "localhost session daemon" in normalized_output
+    assert "warm localhost" in normalized_output
+    assert "session daemon" in normalized_output
 
 
 def test_lsp_help_mentions_provider_modes() -> None:
@@ -3091,6 +3093,8 @@ def test_map_json_emits_repo_inventory_envelope(tmp_path):
     assert payload["routing_reason"] == "repo-map"
     assert payload["sidecar_used"] is False
     assert payload["path"] == str(project.resolve())
+    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert payload["scan_limit"]["possibly_truncated"] is False
     assert str(module_path.resolve()) in payload["files"]
     assert str(test_path.resolve()) in payload["tests"]
     assert any(
@@ -3337,6 +3341,24 @@ def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
         assert payload["routing_reason"] == routing_reason
         assert payload["symbol"] == "create_invoice"
         assert _has_expected_file(payload)
+
+
+def test_symbol_command_help_hides_legacy_symbol_option():
+    runner = CliRunner()
+
+    for command in (
+        "defs",
+        "source",
+        "impact",
+        "refs",
+        "callers",
+        "blast-radius",
+        "blast-radius-render",
+        "blast-radius-plan",
+    ):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--symbol" not in _strip_ansi(result.stdout)
 
 
 def test_symbol_commands_reject_positional_and_flag_symbol(tmp_path):
@@ -3741,6 +3763,9 @@ def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
     assert any(caller["file"] == str(service_path.resolve()) for caller in payload["callers"])
     assert payload["files"][0] == str(module_path.resolve())
+    assert payload["affected_files"] == payload["files"]
+    assert payload["blast_radius_score"] is not None
+    assert 0.0 <= payload["blast_radius_score"] <= 1.0
     assert str(service_path.resolve()) in payload["files"]
     assert str(api_path.resolve()) in payload["files"]
     assert payload["tests"][0] == str(test_path.resolve())
@@ -4087,6 +4112,15 @@ def test_agent_context_commands_warn_for_legacy_query_option(tmp_path):
         assert payload["routing_reason"] == routing_reason
         assert payload["query"] == "create invoice"
         assert _has_expected_file(payload)
+
+
+def test_agent_context_help_hides_legacy_query_option():
+    runner = CliRunner()
+
+    for command in ("context", "context-render", "agent", "edit-plan"):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--query" not in _strip_ansi(result.stdout)
 
 
 def test_agent_context_commands_reject_positional_and_flag_query(tmp_path):
@@ -6320,6 +6354,14 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     assert payload["candidate_edit_targets"]["spans"][0]["file"] == str(module_path.resolve())
     assert payload["candidate_edit_targets"]["spans"][0]["symbol"] == "create_invoice"
     assert payload["candidate_edit_targets"]["spans"][0]["depth"] == 0
+    assert payload["primary_target"] == payload["navigation_pack"]["primary_target"]
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["edit_order"] == payload["edit_plan_seed"]["edit_ordering"]
+    assert payload["plan"]["primary_file"] == str(module_path.resolve())
+    assert payload["plan"]["primary_symbol"]["name"] == "create_invoice"
+    assert payload["plan"]["edit_order"] == payload["edit_order"]
+    assert "rendered_context" not in payload["plan"]
+    assert "sources" not in payload["plan"]
     _assert_enriched_edit_plan_seed(
         payload["edit_plan_seed"],
         primary_file=module_path,
@@ -7368,6 +7410,7 @@ def test_tg_run_help_should_position_ast_as_validated_slice_not_ast_grep_parity(
     help_text = _strip_ansi(result.stdout)
     normalized_help = re.sub(r"\s+", " ", help_text)
     assert "validated AST slice" in normalized_help
+    assert "PowerShell users should single-quote AST patterns" in normalized_help
     assert "--selector" in help_text
     assert "--strictness" in help_text
     assert "--stdin" in help_text
@@ -12174,6 +12217,22 @@ def test_main_entry_should_not_rewrite_checkpoint_subcommand(monkeypatch):
     cli_main.main_entry()
 
     assert seen["argv"] == ["tg", "checkpoint", "list"]
+
+
+def test_checkpoint_undo_existing_path_reports_last_hint_json(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = CliRunner().invoke(app, ["checkpoint", "undo", str(project), "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "checkpoint_not_found"
+    assert payload["checkpoint_id"] == str(project)
+    assert payload["path"] == "."
+    assert "parsed as CHECKPOINT_ID" in payload["detail"]
+    assert "tg checkpoint undo --last" in payload["detail"]
 
 
 def test_main_entry_should_not_rewrite_dogfood_subcommand(monkeypatch):

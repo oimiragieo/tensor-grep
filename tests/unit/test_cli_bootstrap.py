@@ -686,7 +686,7 @@ def test_root_help_should_surface_current_agent_gpu_launcher_and_validation_cont
     assert result.exit_code == 0
     help_text = result.stdout
     for expected in [
-        "tg agent PATH --query",
+        'tg agent PATH "change invoice tax"',
         "alternative targets",
         "validation_commands",
         "$file",

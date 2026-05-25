@@ -57,8 +57,8 @@ Current positioning:
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - Root search shortcuts are part of that native-front-door contract. `tg PATTERN PATH`, `tg -t js PATTERN PATH`, and `tg --count-matches PATTERN PATH` must behave as `tg search ...`, preserving the common rg-compatible flags instead of falling into positional-only parsing.
 - `tg new project NAME` creates a named AST project directory; `--base-dir DIR` acts as the parent directory. Bare `tg new` and `tg new project` still initialize the current or configured `--base-dir` directly.
-- `tg agent --query ... --json` is the first Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
-- `tg agent --gpu-device-ids 0,1 --query ... --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
+- `tg agent PATH "query" --json` is the Actionable Context Capsule surface: a bounded, deterministic work packet with primary files/functions, alternative targets, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, confidence, optional native GPU route evidence, unresolved equal-confidence tie metadata, and an ask-before-editing recommendation. It is an opt-in agent command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
+- `tg agent PATH "query" --gpu-device-ids 0,1 --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
 
@@ -336,7 +336,7 @@ What `v1.9.1` closed:
 
 What `v1.9.0` closed:
 
-- `tg agent --query ... --json` is released as the first Actionable Context Capsule surface for agent workflows, with primary target metadata, route rationale, bounded snippets with line maps, validation evidence, edit order, rollback/checkpoint metadata, omissions, confidence, and ask-before-editing recommendations
+- `tg agent PATH "query" --json` is released as the Actionable Context Capsule surface for agent workflows, with primary target metadata, route rationale, bounded snippets with line maps, validation evidence, edit order, rollback/checkpoint metadata, omissions, confidence, and ask-before-editing recommendations
 - the native front door sidecar-routes `tg agent` intentionally so public installs expose the same capsule contract as the Python CLI
 - stable managed install scripts now prefer the matching release-native CPU `tg` front door when the GitHub release asset exists, while keeping the managed Python environment as the sidecar/fallback for Python-backed commands
 - main CI builds, uploads, and verifies release-native CPU assets before PyPI publish, so `v1.9.0` includes `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, and package-manager bundle assets on the GitHub release
@@ -358,8 +358,10 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.14` follow-up:
 
-- harden the new dogfood paper cuts before the next patch release: bounded checkpoint discovery must find tensor-grep checkpoint scopes under `artifacts/`, path-first `tg defs PATH SYMBOL` deprecation guidance must not imply the failing symbol-first form, LSP-tied capsule alternatives must preserve proof evidence honestly, and raw-search/session performance work must remain measurement-first until a concrete regression cause is proven
-- bound long-lived agent-loop memory growth in source: CPU/StringZilla/AST/repo-context caches should evict by entry caps, session serve/daemon response caches should evict by byte caps and report byte usage, and optional LSP providers should close evicted documents and stop evicted workspace clients
+- harden the `v1.13.14` dogfood contract bugs before the next patch release: `--no-ignore` / `--format rg` search shapes must preserve ripgrep-compatible scope and path output, MCP `tg_search` counts must agree with CLI aggregate search counts, and context rows must not inflate match totals
+- keep optional LSP proof honest: top-level `lsp_proof` must be derived from final rows or explicit provider responses, provider-status proof must not contradict result rows, and provider stderr such as Python SRE/ABI mismatch warnings must remain visible when it can explain degraded proof
+- keep agent-facing repo maps bounded by default: `tg map --json`, `tg session open`, MCP `tg_repo_map`, and MCP `tg_session_open` should default to the agent-safe 512-file cap, report `scan_limit`, skip generated/vendor roots such as `.venv`, `bench_data`, `gpu_bench_data`, `many_files`, and `.tmp_*`, and expose daemon response-cache byte stats
+- populate headline JSON aliases for agent consumers: `edit-plan` should expose top-level `plan`, `primary_target`, and `edit_order`; `blast-radius` should expose `blast_radius_score` and `affected_files`; deprecated `--query` and `--symbol` forms stay accepted during 1.13.x but current help/docs should show positional query and symbol forms
 - harden the `v1.12.33` dogfood edge cases without broadening claims: native/root search accepts the rg config-override sequence `--column --no-column`, readiness now reports a stale repo-local `uv run tg` warmup as an unsynchronized entrypoint with a refresh command, and the ripgrep-binary-resolution natural-language hardcase stays pinned as a capsule regression test
 - harden `v1.12.15` dogfood contract gaps: public native `tg search` must accept editor-facing `--vimgrep` and `--path-separator`, native-regex hot-query gates use absolute jitter for millisecond-scale rows, benchmark scripts refuse stale in-tree native binaries by default unless `--allow-claim-unsafe-launcher` marks the run as exploratory, and optional LSP provider routes must expose `lsp_proof` / fallback status instead of treating provider availability as proof of semantic navigation
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
@@ -453,7 +455,7 @@ Release proof:
 - main CodeQL run `25601232120` passed on the release-bearing merge commit
 - GitHub release assets for `v1.9.0` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions
 - PyPI reports `tensor-grep 1.9.0`; `tensor-grep==1.9.0` resolves from PyPI
-- Public `tg agent src/tensor_grep/cli --query "agent context capsule" --json` returned a capsule with primary target, snippets, omissions/follow-up reads, confidence, rollback, and ask-before-editing metadata
+- Public `tg agent src/tensor_grep/cli "agent context capsule" --json` returned a capsule with primary target, snippets, omissions/follow-up reads, confidence, rollback, and ask-before-editing metadata
 - Public launcher dogfood verified `cmd /c tg`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...])` return exit `1` with no stdout for a fresh quoted no-match phrase
 - Public `tg classify --format json tests\conftest.py` completed in 0.206s with local deterministic classifications
 
@@ -495,11 +497,11 @@ For large internal-library roots, `tensor-grep` supports a bounded context-rende
 Agent-facing broad-scan commands now default to bounded repo-map scans and report that boundary in JSON via `scan_limit`:
 
 ```powershell
-tg context-render . --query "how auth routing works" --render-profile llm --max-repo-files 512 --json
-tg defs . --symbol runCursorWorker --max-repo-files 512 --json
-tg source . --symbol safeParseJSON --max-repo-files 512 --json
-tg refs . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
-tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
+tg context-render . "how auth routing works" --render-profile llm --max-repo-files 512 --json
+tg defs . runCursorWorker --max-repo-files 512 --json
+tg source . safeParseJSON --max-repo-files 512 --json
+tg refs . prepareCursorWorkerInvocation --max-repo-files 512 --json
+tg blast-radius . prepareCursorWorkerInvocation --max-repo-files 512 --json
 ```
 
 The agent-facing command surface also accepts positional aliases when typing at a shell:

@@ -772,7 +772,6 @@ def build_check_plan(
                 "tg",
                 "context-render",
                 "tests/unit/test_trust_planning.py",
-                "--query",
                 "invoice tax calculation",
                 "--json",
             ],
