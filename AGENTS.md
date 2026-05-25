@@ -18,16 +18,17 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 release_docs_current_tag: v1.13.14
 
-As of 2026-05-14, the current tagged release state is `v1.13.14`, and the latest complete public PyPI/release-asset distribution is also `v1.13.14`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, and Windows subprocess bridge ranking hardening are released through `v1.13.14` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-05-25, the current tagged release state is `v1.13.14`, and the latest complete public PyPI/release-asset distribution is also `v1.13.14`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.13.14` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Latest verified release proof PR: #222 `fix: harden v1.13.11 dogfood followups`
-- Latest verified release proof merge commit: `323e83a fix: harden v1.13.11 dogfood followups`
-- Latest verified release proof commit: `581c412 chore(release): v1.13.13 [skip ci]`
-- Latest verified proof public release PR: #222 `fix: harden v1.13.11 dogfood followups`
-- Latest verified proof public release commit: `581c412 chore(release): v1.13.13 [skip ci]`
-- Latest merged fix commit: `323e83a fix: harden v1.13.11 dogfood followups`
+- Latest verified release proof PR: #223 `fix: bound agent-loop memory and dogfood contracts`
+- Latest verified release proof merge commit: `1e09e59 fix: bound agent-loop memory and dogfood contracts`
+- Latest verified release proof commit: `83be919 chore(release): v1.13.14 [skip ci]`
+- Latest verified proof public release PR: #223 `fix: bound agent-loop memory and dogfood contracts`
+- Latest verified proof public release commit: `83be919 chore(release): v1.13.14 [skip ci]`
+- Latest merged fix commit: `1e09e59 fix: bound agent-loop memory and dogfood contracts`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - Recent fix commits:
+  - `1e09e59 fix: bound agent-loop memory and dogfood contracts`
   - `21e5437 fix: collect capsule call-site evidence`
   - `8a73f8d fix: harden agent bridge ranking`
   - `b601366 fix: harden agent output budget hygiene`
@@ -94,8 +95,8 @@ As of 2026-05-14, the current tagged release state is `v1.13.14`, and the latest
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
 - `v1.11.0` GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0> exists, but main CI run `25834508800` was cancelled during release-native asset publication; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `26374619263`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `26375020529`: passed on the `v1.13.13` release commit
+- Main CI run `26378619592`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `26379114812`: passed on the `v1.13.14` release commit
 - Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.14 tg --version` reports `tensor-grep 1.13.14`
