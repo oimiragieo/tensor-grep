@@ -41,6 +41,28 @@ def test_reverse_importers_stays_bounded_for_large_cached_session_maps() -> None
     assert elapsed < 1.0
 
 
+def test_repo_context_root_caches_obey_entry_cap(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS", "2")
+    repo_map._JS_TS_REPO_CONTEXTS.clear()
+    repo_map._RUST_REPO_CONTEXTS.clear()
+    roots = []
+    for index in range(3):
+        root = tmp_path / f"repo_{index}"
+        root.mkdir()
+        roots.append(root.resolve())
+        repo_map._js_ts_repo_context(root)
+        repo_map._rust_repo_context(root)
+
+    assert len(repo_map._JS_TS_REPO_CONTEXTS) == 2
+    assert str(roots[0]) not in repo_map._JS_TS_REPO_CONTEXTS
+    assert str(roots[1]) in repo_map._JS_TS_REPO_CONTEXTS
+    assert str(roots[2]) in repo_map._JS_TS_REPO_CONTEXTS
+    assert len(repo_map._RUST_REPO_CONTEXTS) == 2
+    assert str(roots[0]) not in repo_map._RUST_REPO_CONTEXTS
+    assert str(roots[1]) in repo_map._RUST_REPO_CONTEXTS
+    assert str(roots[2]) in repo_map._RUST_REPO_CONTEXTS
+
+
 def test_reverse_import_pagerank_caps_broad_query_seed_sets() -> None:
     file_count = 3690
     files = [f"C:/repo/src/mod_{index}.py" for index in range(file_count)]

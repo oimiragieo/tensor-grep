@@ -16,6 +16,7 @@ Current release facts:
 - Current release tag: `v1.13.13`.
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.13>.
 - PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.13 tg --version` reports `tensor-grep 1.13.13`.
+- Latest verified release proof: PR #222 `fix: harden v1.13.11 dogfood followups`; merge commit `323e83a fix: harden v1.13.11 dogfood followups`; release commit `581c412 chore(release): v1.13.13 [skip ci]`; main CI run `26374619263`; CodeQL run `26375020529`.
 - Root-forwarding slice proof: PR #185 `c631a1a fix: preserve root search flag forwarding (#185)` merged and released as `v1.12.50`; release commit `a89e049 chore(release): v1.12.50 [skip ci]`; main CI run `26260569216` passed; CodeQL run `26261222395` passed; Dependency Graph run `26261223749` passed; Security Audit run `26261585797` passed.
 
 Recent release history:

@@ -102,12 +102,23 @@ def _tied_alternative_targets(
         alternative_name = Path(alternative_file).name.lower()
         if primary_name and primary_name in query_lower and alternative_name not in query_lower:
             continue
-        tied.append({
+        tied_target: dict[str, Any] = {
             "file": alternative_file,
             "symbol": alternative.get("symbol"),
             "language": alternative.get("language") or alternative_language,
             "confidence": round(alternative_confidence, 3),
-        })
+        }
+        for proof_field in (
+            "semantic_provider",
+            "provenance",
+            "lsp_provider_response",
+            "lsp_proof",
+            "lsp_operation",
+            "lsp_resolution_basis",
+        ):
+            if proof_field in alternative:
+                tied_target[proof_field] = alternative[proof_field]
+        tied.append(tied_target)
     return tied
 
 

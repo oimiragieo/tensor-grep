@@ -181,6 +181,28 @@ class TestCPUBackend:
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
+    def test_literal_index_cache_obeys_entry_cap(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")
+        monkeypatch.setenv("TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES", "2")
+        backend = CPUBackend()
+        files = []
+        for index in range(3):
+            path = tmp_path / f"file_{index}.log"
+            path.write_text(f"needle {index}\n", encoding="utf-8")
+            files.append(path)
+            backend._store_literal_index(
+                str(path),
+                False,
+                [f"needle {index}"],
+                {"nee": [0]},
+            )
+
+        cache = CPUBackend._shared_literal_index_cache
+        assert len(cache) == 2
+        assert (str(files[0]), False) not in cache
+        assert (str(files[1]), False) in cache
+        assert (str(files[2]), False) in cache
+
     def test_should_strip_line_terminators_from_rust_backend_matches(self, tmp_path):
         log = tmp_path / "rust_newlines.log"
         log.write_text("apple\nbanana\n", encoding="utf-8")

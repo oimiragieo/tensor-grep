@@ -36,6 +36,8 @@ _SESSIONS_SUBDIR = "sessions"
 _INDEX_FILE = "index.json"
 _SESSION_SERVE_CACHE_MAX_ENTRIES = 32
 _SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES = 32
+_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV = "TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES"
+_DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = 512
 _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = 512
 
@@ -84,6 +86,27 @@ class _SessionServeCacheEntry:
     size_bytes: int
 
 
+@dataclass
+class _SessionServeResponseCacheEntry:
+    payload: dict[str, Any]
+    size_bytes: int
+
+
+def _configured_positive_int(env_var: str, default: int) -> int:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _json_size_bytes(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 class _SessionServeCache:
     def __init__(self, max_entries: int = _SESSION_SERVE_CACHE_MAX_ENTRIES) -> None:
         self._max_entries = max(1, max_entries)
@@ -114,9 +137,7 @@ class _SessionServeCache:
 
         entry = _SessionServeCacheEntry(
             payload=payload,
-            size_bytes=len(
-                json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            ),
+            size_bytes=_json_size_bytes(payload),
         )
         self._entries[key] = entry
         self._size_bytes += entry.size_bytes
@@ -174,28 +195,54 @@ class _SessionServeCache:
 
 
 class _SessionServeResponseCache:
-    def __init__(self, max_entries: int = _SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES) -> None:
+    def __init__(
+        self,
+        max_entries: int = _SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES,
+        max_size_bytes: int | None = None,
+    ) -> None:
         self._max_entries = max(1, max_entries)
-        self._entries: OrderedDict[tuple[str, ...], dict[str, Any]] = OrderedDict()
+        self._max_size_bytes = (
+            _configured_positive_int(
+                _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
+                _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
+            )
+            if max_size_bytes is None
+            else max(1, int(max_size_bytes))
+        )
+        self._entries: OrderedDict[tuple[str, ...], _SessionServeResponseCacheEntry] = OrderedDict()
+        self._size_bytes = 0
         self._hits = 0
         self._misses = 0
         self._puts = 0
+        self._oversized_skips = 0
 
     def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
-        cached = self._entries.pop(key, None)
-        if cached is None:
+        entry = self._entries.pop(key, None)
+        if entry is None:
             self._misses += 1
             return None
         self._hits += 1
-        self._entries[key] = cached
-        return copy.deepcopy(cached)
+        self._entries[key] = entry
+        return copy.deepcopy(entry.payload)
 
     def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
-        self._entries.pop(key, None)
-        self._entries[key] = copy.deepcopy(response)
         self._puts += 1
-        while len(self._entries) > self._max_entries:
-            self._entries.popitem(last=False)
+        size_bytes = _json_size_bytes(response)
+        if size_bytes > self._max_size_bytes:
+            self._oversized_skips += 1
+            return
+        previous = self._entries.pop(key, None)
+        if previous is not None:
+            self._size_bytes -= previous.size_bytes
+        entry = _SessionServeResponseCacheEntry(
+            payload=copy.deepcopy(response),
+            size_bytes=size_bytes,
+        )
+        self._entries[key] = entry
+        self._size_bytes += entry.size_bytes
+        while len(self._entries) > self._max_entries or self._size_bytes > self._max_size_bytes:
+            _, evicted = self._entries.popitem(last=False)
+            self._size_bytes -= evicted.size_bytes
 
     @property
     def hits(self) -> int:
@@ -212,6 +259,18 @@ class _SessionServeResponseCache:
     @property
     def entry_count(self) -> int:
         return len(self._entries)
+
+    @property
+    def size_bytes(self) -> int:
+        return self._size_bytes
+
+    @property
+    def max_size_bytes(self) -> int:
+        return self._max_size_bytes
+
+    @property
+    def oversized_skips(self) -> int:
+        return self._oversized_skips
 
 
 def _resolve_root(path: Path) -> Path:
@@ -1075,6 +1134,9 @@ def serve_session_stream(
                     "response_cache_misses": response_cache.misses,
                     "response_cache_puts": response_cache.puts,
                     "response_cache_entries": response_cache.entry_count,
+                    "response_cache_size_bytes": response_cache.size_bytes,
+                    "response_cache_max_size_bytes": response_cache.max_size_bytes,
+                    "response_cache_oversized_skips": response_cache.oversized_skips,
                     "uptime_seconds": max(0.0, monotonic() - started_at),
                     "request_count": request_count,
                 }
@@ -1136,6 +1198,9 @@ def serve_session_stream(
                         "entries": response_cache.entry_count,
                         "hits": response_cache.hits,
                         "misses": response_cache.misses,
+                        "size_bytes": response_cache.size_bytes,
+                        "max_size_bytes": response_cache.max_size_bytes,
+                        "oversized_skips": response_cache.oversized_skips,
                     }
         except SessionStaleError as exc:
             if refresh_on_stale:

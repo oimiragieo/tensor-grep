@@ -3332,6 +3332,7 @@ def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
         )
         assert result.exit_code == 0, result.output
         assert f"Warning: --symbol is deprecated for tg {command}" in result.stderr
+        assert f"for example: tg {command} <PATH> <SYMBOL>" in result.stderr
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
         assert payload["symbol"] == "create_invoice"

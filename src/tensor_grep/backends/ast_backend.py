@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _PARSED_SOURCE_CACHE_ENTRY_SIZE_CALIBRATION_MULTIPLIER = 3
+_AST_QUERY_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_AST_QUERY_CACHE_MAX_ENTRIES"
+_AST_NODE_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_AST_NODE_INDEX_CACHE_MAX_ENTRIES"
+_DEFAULT_AST_QUERY_CACHE_MAX_ENTRIES = 256
+_DEFAULT_AST_NODE_INDEX_CACHE_MAX_ENTRIES = 512
 
 FileSignature = tuple[int, int, int, int, int]
 ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
@@ -138,12 +142,14 @@ class AstBackend(ComputeBackend):
     """
 
     _shared_parsers: ClassVar[dict[str, Any]] = {}
-    _shared_queries: ClassVar[dict[tuple[str, str], Any]] = {}
+    _shared_queries: ClassVar[OrderedDict[tuple[str, str], Any]] = OrderedDict()
     _shared_parsed_source_cache: ClassVar[OrderedDict[tuple[str, str], ParsedSourceCacheEntry]] = (
         OrderedDict()
     )
     _shared_parsed_source_cache_bytes: ClassVar[int] = 0
-    _shared_node_type_index_cache: ClassVar[dict[tuple[str, str], NodeTypeIndexCacheEntry]] = {}
+    _shared_node_type_index_cache: ClassVar[
+        OrderedDict[tuple[str, str], NodeTypeIndexCacheEntry]
+    ] = OrderedDict()
 
     def __init__(self) -> None:
         self._parsers = self._shared_parsers
@@ -158,6 +164,42 @@ class AstBackend(ComputeBackend):
         cls._shared_parsed_source_cache.clear()
         cls._shared_parsed_source_cache_bytes = 0
         cls._shared_node_type_index_cache.clear()
+
+    @staticmethod
+    def _configured_positive_int(env_var: str, default: int) -> int:
+        raw_value = os.environ.get(env_var)
+        if raw_value is None:
+            return default
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+
+    @classmethod
+    def _query_cache_max_entries(cls) -> int:
+        return cls._configured_positive_int(
+            _AST_QUERY_CACHE_MAX_ENTRIES_ENV,
+            _DEFAULT_AST_QUERY_CACHE_MAX_ENTRIES,
+        )
+
+    @classmethod
+    def _node_index_cache_max_entries(cls) -> int:
+        return cls._configured_positive_int(
+            _AST_NODE_INDEX_CACHE_MAX_ENTRIES_ENV,
+            _DEFAULT_AST_NODE_INDEX_CACHE_MAX_ENTRIES,
+        )
+
+    @classmethod
+    def _remember_node_type_index(
+        cls,
+        cache_key: tuple[str, str],
+        cache_entry: NodeTypeIndexCacheEntry,
+    ) -> None:
+        cls._shared_node_type_index_cache.pop(cache_key, None)
+        cls._shared_node_type_index_cache[cache_key] = cache_entry
+        while len(cls._shared_node_type_index_cache) > cls._node_index_cache_max_entries():
+            cls._shared_node_type_index_cache.popitem(last=False)
 
     def _is_persistent_cache_enabled(self) -> bool:
         return os.environ.get("TENSOR_GREP_AST_CACHE", "1").strip().lower() not in {
@@ -372,7 +414,10 @@ class AstBackend(ComputeBackend):
         cache_signature = self._build_file_signature(file_path)
         cached = self._node_type_index_cache.get(cache_key)
         if cached and cached[0] == cache_signature:
+            self._node_type_index_cache.move_to_end(cache_key)
             return cached[1]
+        if cached:
+            self._node_type_index_cache.pop(cache_key, None)
 
         if not self._is_persistent_cache_enabled():
             return None
@@ -398,15 +443,18 @@ class AstBackend(ComputeBackend):
             if not isinstance(node_type, str) or not isinstance(line_numbers, list):
                 return None
             normalized[node_type] = [int(line_number) for line_number in line_numbers]
-        self._node_type_index_cache[cache_key] = (cache_signature, normalized)
+        self._remember_node_type_index(cache_key, (cache_signature, normalized))
         return normalized
 
     def _persist_node_type_index(
         self, file_path: str, lang: str, node_type_index: dict[str, list[int]]
     ) -> None:
-        self._node_type_index_cache[(file_path, lang)] = (
-            self._build_file_signature(file_path),
-            node_type_index,
+        self._remember_node_type_index(
+            (file_path, lang),
+            (
+                self._build_file_signature(file_path),
+                node_type_index,
+            ),
         )
         if not self._is_persistent_cache_enabled():
             return
@@ -503,10 +551,15 @@ class AstBackend(ComputeBackend):
     def _get_query(self, parser: Any, lang: str, pattern: str) -> Any:
         cache_key = (lang, pattern)
         if cache_key in self._queries:
-            return self._queries[cache_key]
+            query = self._queries.pop(cache_key)
+            self._queries[cache_key] = query
+            return query
 
         query = parser.language.query(f"({pattern}) @match")
+        self._queries.pop(cache_key, None)
         self._queries[cache_key] = query
+        while len(self._queries) > self._query_cache_max_entries():
+            self._queries.popitem(last=False)
         return query
 
     def _get_parsed_source(

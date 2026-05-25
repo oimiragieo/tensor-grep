@@ -19,11 +19,10 @@ _INDEX_FILE = "index.json"
 _SNAPSHOT_SUBDIR = "snapshot"
 _METADATA_FILE = "metadata.json"
 _DISCOVERY_CACHE_FILE = "checkpoint-discovery-cache.json"
-_DISCOVERY_CACHE_VERSION = 1
+_DISCOVERY_CACHE_VERSION = 2
 _DISCOVERY_MAX_DEPTH = 6
 _DISCOVERY_MAX_DIRECTORIES = 10_000
 _DISCOVERY_CACHE_TTL_SECONDS = 300.0
-_LAST_BOUNDED_DISCOVERY_TRUNCATED = False
 _NON_GIT_IGNORED_DIRS = {
     ".git",
     ".hg",
@@ -41,10 +40,11 @@ _NON_GIT_IGNORED_DIRS = {
     "site",
     "target",
 }
+_DISCOVERY_IGNORED_DIRS = _NON_GIT_IGNORED_DIRS - {"artifacts"}
 
 
 def _is_generated_discovery_dir(path: Path) -> bool:
-    return path.name in _NON_GIT_IGNORED_DIRS or path.name.startswith(".tmp")
+    return path.name in _DISCOVERY_IGNORED_DIRS or path.name.startswith(".tmp")
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
@@ -205,7 +205,7 @@ def _read_cached_checkpoint_index_paths(
     *,
     full: bool,
     max_depth: int,
-) -> set[Path] | None:
+) -> tuple[set[Path], bool] | None:
     cache_path = _discovery_cache_path(search_root)
     try:
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -244,7 +244,7 @@ def _read_cached_checkpoint_index_paths(
         ) != fingerprint.get("size"):
             return None
         index_paths.add(index_path)
-    return index_paths
+    return index_paths, bool(entry.get("truncated", False))
 
 
 def _write_cached_checkpoint_index_paths(
@@ -253,6 +253,7 @@ def _write_cached_checkpoint_index_paths(
     *,
     full: bool,
     max_depth: int,
+    truncated: bool = False,
 ) -> None:
     cache_path = _discovery_cache_path(search_root)
     payload: dict[str, Any] = {"version": _DISCOVERY_CACHE_VERSION, "entries": {}}
@@ -274,6 +275,7 @@ def _write_cached_checkpoint_index_paths(
             for index_path in sorted(index_paths)
             if (fingerprint := _fingerprint_index_path(index_path)) is not None
         ],
+        "truncated": bool(truncated),
     }
     _write_json_atomic(cache_path, payload)
 
@@ -368,6 +370,12 @@ def _refresh_bounded_discovery_caches_for_root(root: Path) -> None:
             index_paths.add(index_path)
         else:
             index_paths.discard(index_path)
+        previous_entry = entries.get(key)
+        truncated = (
+            bool(previous_entry.get("truncated", False))
+            if isinstance(previous_entry, dict)
+            else False
+        )
         entries[key] = {
             "created_at_epoch_s": time.time(),
             "index_paths": [
@@ -375,6 +383,7 @@ def _refresh_bounded_discovery_caches_for_root(root: Path) -> None:
                 for cached_index_path in sorted(index_paths)
                 if (fingerprint := _fingerprint_index_path(cached_index_path)) is not None
             ],
+            "truncated": truncated,
         }
         for entry_key in list(entries):
             if isinstance(entry_key, str) and entry_key.startswith("full:"):
@@ -594,9 +603,8 @@ def _bounded_checkpoint_index_paths(
     *,
     include_generated: bool,
     max_depth: int = _DISCOVERY_MAX_DEPTH,
-) -> set[Path]:
-    global _LAST_BOUNDED_DISCOVERY_TRUNCATED
-    _LAST_BOUNDED_DISCOVERY_TRUNCATED = False
+) -> tuple[set[Path], bool]:
+    truncated = False
     index_paths: set[Path] = set()
     stack: list[tuple[Path, int]] = [(search_root, 0)]
     visited_directories = 0
@@ -604,7 +612,7 @@ def _bounded_checkpoint_index_paths(
         current, depth = stack.pop()
         visited_directories += 1
         if visited_directories > _DISCOVERY_MAX_DIRECTORIES:
-            _LAST_BOUNDED_DISCOVERY_TRUNCATED = True
+            truncated = True
             break
         index_path = _index_path(current)
         if not index_path.exists():
@@ -636,7 +644,7 @@ def _bounded_checkpoint_index_paths(
             continue
         for child in reversed(child_dirs):
             stack.append((child, depth + 1))
-    return index_paths
+    return index_paths, truncated
 
 
 def _nearby_checkpoint_index_paths(search_root: Path) -> set[Path]:
@@ -742,24 +750,29 @@ def discover_checkpoint_scopes_result(
     search_root = resolved if resolved.is_dir() else resolved.parent
     max_depth = 2**31 - 1 if full else _DISCOVERY_MAX_DEPTH
     truncated = False
-    index_paths = _read_cached_checkpoint_index_paths(
+    cached = _read_cached_checkpoint_index_paths(
         search_root,
         full=full,
         max_depth=max_depth,
     )
-    if index_paths is None:
-        index_paths = (
-            _full_checkpoint_index_paths(search_root)
-            if full
-            else _bounded_checkpoint_index_paths(search_root, include_generated=False)
-        )
-        truncated = False if full else _LAST_BOUNDED_DISCOVERY_TRUNCATED
+    if cached is None:
+        if full:
+            index_paths = _full_checkpoint_index_paths(search_root)
+            truncated = False
+        else:
+            index_paths, truncated = _bounded_checkpoint_index_paths(
+                search_root,
+                include_generated=False,
+            )
         _write_cached_checkpoint_index_paths(
             search_root,
             index_paths,
             full=full,
             max_depth=max_depth,
+            truncated=truncated,
         )
+    else:
+        index_paths, truncated = cached
     return CheckpointDiscoveryResult(
         scopes=_scopes_from_index_paths(index_paths),
         truncated=truncated,
@@ -775,13 +788,14 @@ def discover_nearby_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeRe
 def discover_cached_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
     resolved = Path(path).expanduser().resolve()
     search_root = resolved if resolved.is_dir() else resolved.parent
-    index_paths = _read_cached_checkpoint_index_paths(
+    cached = _read_cached_checkpoint_index_paths(
         search_root,
         full=False,
         max_depth=_DISCOVERY_MAX_DEPTH,
     )
-    if index_paths is None:
+    if cached is None:
         return []
+    index_paths, _truncated = cached
     return _scopes_from_index_paths(index_paths)
 
 

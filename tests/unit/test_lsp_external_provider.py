@@ -193,6 +193,157 @@ def test_provider_manager_uses_configured_timeouts(
     assert client.initialize_timeout_seconds == 18.0
 
 
+def test_provider_manager_evicts_lru_clients_and_stops_evicted_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    stopped_roots: list[Path] = []
+
+    def _fake_stop(self: ExternalLSPClient) -> None:
+        stopped_roots.append(self.workspace_root)
+
+    monkeypatch.setattr(ExternalLSPClient, "stop", _fake_stop)
+    roots = []
+    for index in range(3):
+        root = tmp_path / f"repo_{index}"
+        root.mkdir()
+        roots.append(root.resolve())
+
+    manager = ExternalLSPProviderManager(max_clients=2)
+    for root in roots:
+        manager.get_client(language="python", workspace_root=root)
+
+    assert len(manager._clients) == 2
+    assert stopped_roots == [roots[0]]
+    assert ("python", str(roots[0])) not in manager._clients
+    assert ("python", str(roots[1])) in manager._clients
+    assert ("python", str(roots[2])) in manager._clients
+
+
+def test_lsp_cache_cap_invalid_env_values_use_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    monkeypatch.setenv("TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES", "invalid")
+    monkeypatch.setenv("TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES", "invalid")
+
+    manager = ExternalLSPProviderManager()
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+
+    assert manager._max_clients == provider_module._DEFAULT_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES
+    assert (
+        client.status()["max_open_documents"]
+        == provider_module._DEFAULT_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES
+    )
+
+
+def test_lsp_client_closes_oldest_document_when_open_document_cap_is_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path, max_open_documents=2)
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    def _fake_notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    monkeypatch.setattr(client, "notify", _fake_notify)
+    uris = [f"file:///{index}.py" for index in range(3)]
+    for uri in uris:
+        client.ensure_document(uri=uri, text="def f():\n    pass\n", language_id="python")
+
+    did_close = [
+        params["textDocument"]["uri"]
+        for method, params in notifications
+        if method == "textDocument/didClose"
+    ]
+    assert did_close == [uris[0]]
+    assert len(client._opened_documents) == 2
+    assert uris[0] not in client._opened_documents
+    assert uris[1] in client._opened_documents
+    assert uris[2] in client._opened_documents
+
+
+def test_lsp_client_preserves_old_document_when_new_open_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path, max_open_documents=1)
+    old_uri = "file:///old.py"
+    new_uri = "file:///new.py"
+    client._opened_documents[old_uri] = None
+    notifications: list[str] = []
+
+    def _fake_notify(method: str, _params: dict[str, Any]) -> None:
+        notifications.append(method)
+        if method == "textDocument/didOpen":
+            raise LSPTransportError("open failed")
+
+    monkeypatch.setattr(client, "notify", _fake_notify)
+
+    with pytest.raises(LSPTransportError):
+        client.ensure_document(uri=new_uri, text="def f():\n    pass\n", language_id="python")
+
+    assert old_uri in client._opened_documents
+    assert new_uri not in client._opened_documents
+    assert "textDocument/didClose" not in notifications
+
+
+def test_verified_provider_status_stops_probe_client_on_unexpected_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    manager = ExternalLSPProviderManager()
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    stopped = False
+
+    def _raise_runtime_error() -> None:
+        raise RuntimeError("unexpected probe failure")
+
+    def _fake_stop() -> None:
+        nonlocal stopped
+        stopped = True
+
+    monkeypatch.setattr(client, "start", _raise_runtime_error)
+    monkeypatch.setattr(client, "stop", _fake_stop)
+
+    with pytest.raises(RuntimeError, match="unexpected probe failure"):
+        manager._verified_provider_status(
+            client=client,
+            language="python",
+            workspace_root=tmp_path,
+            probe_timeout_seconds=0.1,
+            stop_after_probe=True,
+        )
+
+    assert stopped is True
+
+
 def test_provider_status_reports_configured_timeouts_without_cached_client(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

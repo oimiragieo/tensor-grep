@@ -182,3 +182,28 @@ def test_stringzilla_cache_hit_search_uses_sorted_posting_intersection(tmp_path,
     assert second.matches[0].line_number == 4
     assert second.routing_reason == "stringzilla_fixed_strings_index_cache"
     assert calls["count"] == 1
+
+
+def test_stringzilla_in_memory_index_cache_obeys_entry_cap(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES", "2")
+    StringZillaBackend._clear_shared_caches()
+    backend = StringZillaBackend()
+    files = []
+    for index in range(3):
+        path = tmp_path / f"file_{index}.log"
+        path.write_text(f"needle {index}\n", encoding="utf-8")
+        files.append(path)
+        backend._persist_index(
+            str(path),
+            False,
+            False,
+            [f"needle {index}"],
+            {"nee": [0]},
+        )
+
+    cache = StringZillaBackend._shared_index_cache
+    assert len(cache) == 2
+    assert (str(files[0]), False, False) not in cache
+    assert (str(files[1]), False, False) in cache
+    assert (str(files[2]), False, False) in cache
