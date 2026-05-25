@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.15
 
 Latest tagged GitHub release: [`v1.13.15`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.15). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.15`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.15). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.14` shipped from PR #223, merge commit `1e09e59`, release commit `83be919`, main CI run `26378619592`, CodeQL run `26379114812`, and Dependency Graph run `26379116504`.
+Latest verified release proof: `v1.13.15` shipped from PR #225, merge commit `b0c7cf6`, release commit `d209528`, main CI run `26386327552`, main dynamic/CodeQL run `26386327168`, release-commit dynamic run `26386976717`, and Dependency Graph run `26386978124`.
 
 Current positioning:
 
@@ -61,6 +61,13 @@ Current positioning:
 - `tg agent PATH "query" --gpu-device-ids 0,1 --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.15` closed:
+
+- PR #225 `fix: harden v1.13.14 dogfood contracts` shipped the release as merge commit `b0c7cf6 fix: harden v1.13.14 dogfood contracts` and release commit `d209528 chore(release): v1.13.15 [skip ci]`.
+- main CI run `26386327552` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26386327168`, release-commit dynamic run `26386976717`, and Dependency Graph run `26386978124` passed.
+- GitHub release assets for `v1.13.15` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.15 tg --version` reports `tensor-grep 1.13.15`.
+- The release closes the `v1.13.14` dogfood contract bugs: search/MCP count parity, implicit no-path `--format rg` path output, LSP proof consistency, bounded agent-facing map/session/MCP defaults with `scan_limit`, daemon cache stats, edit-plan/blast-radius headline aliases, current positional help/docs, checkpoint path hints, and local oversized benchmark-artifact test memory safety.
 
 What `v1.13.14` closed:
 
