@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.21
 
 Latest tagged GitHub release: [`v1.13.21`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.21). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.21`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.21). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.20` shipped from PR #231, merge commit `6525853`, release commit `c41d475`, main CI run `26437847778`, and main dynamic/CodeQL run `26437847528`.
+Latest verified release proof: `v1.13.21` shipped from PR #233, merge commit `b69bc5b`, release commit `1b62da7`, main CI run `26450640497`, and main dynamic/CodeQL run `26450639894`.
 
 Current positioning:
 
@@ -61,6 +61,13 @@ Current positioning:
 - `tg agent PATH "query" --gpu-device-ids 0,1 --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.21` closed:
+
+- PR #233 `fix: harden upgrade daemon and lsp diagnostics` shipped the release as merge commit `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)` and release commit `1b62da7 chore(release): v1.13.21 [skip ci]`.
+- main CI run `26450640497` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26450639894` passed on the merge commit.
+- GitHub release assets for `v1.13.21` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.21 tg --version` reports `tensor-grep 1.13.21`.
+- The release restarts a pre-existing session daemon after direct or scheduled Windows `tg upgrade` handoff loss and keeps successful LSP proof payloads from surfacing stale Pyright SRE mismatch tracebacks as current stderr.
 
 What `v1.13.20` closed:
 
