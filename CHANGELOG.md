@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.13.19 (2026-05-26)
+
+### Bug Fixes
+
+- Harden daemon response cache writes
+  ([`0c9155f`](https://github.com/oimiragieo/tensor-grep/commit/0c9155f805fe6c5766844fc1a91674f64e9f11b5))
+
+fix: harden daemon response cache writes
+
+
 ## v1.13.18 (2026-05-26)
 
 ### Bug Fixes
