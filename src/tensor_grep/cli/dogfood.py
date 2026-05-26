@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,8 @@ RELEASE_DOCS_GOVERNANCE_PATHS = (
     "tests/unit/test_public_docs_governance.py",
 )
 RELEASE_DOCS_STAMP_COMMAND = "python scripts/stamp_release_assets.py"
+DEFAULT_DOGFOOD_TIMEOUT_SECONDS = 170.0
+POST_TIMEOUT_COMMUNICATE_SECONDS = 5.0
 
 
 def _json_from_stdout(stdout: str) -> dict[str, Any]:
@@ -52,6 +56,75 @@ def _bounded_tail_lines(
     return tail
 
 
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _terminate_process_tree(pid: int) -> list[int]:
+    killed: list[int] = []
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        root = psutil.Process(pid)
+        processes = [*root.children(recursive=True), root]
+        killed = [int(process.pid) for process in processes]
+        for process in processes:
+            try:
+                process.terminate()
+            except psutil.Error:
+                pass
+        _gone, alive = psutil.wait_procs(processes, timeout=3)
+        for process in alive:
+            try:
+                process.kill()
+            except psutil.Error:
+                pass
+        psutil.wait_procs(alive, timeout=2)
+        return killed
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+        )
+        return [pid]
+
+    killpg = getattr(os, "killpg", None)
+    sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        if callable(killpg):
+            killpg(pid, signal.SIGTERM)
+            killed.append(pid)
+            time.sleep(0.2)
+            killpg(pid, sigkill)
+        else:
+            raise AttributeError("os.killpg unavailable")
+    except Exception:
+        try:
+            os.kill(pid, sigkill)
+            killed.append(pid)
+        except Exception:
+            pass
+    return killed
+
+
 def _build_verdict(agent_readiness: dict[str, Any], returncode: int) -> dict[str, Any]:
     summary = agent_readiness.get("summary")
     failed = 1
@@ -69,6 +142,62 @@ def _build_verdict(agent_readiness: dict[str, Any], returncode: int) -> dict[str
         "failed_checks": failed_checks,
         "summary": "agent-readiness passed" if status == "PASS" else "agent-readiness failed",
     }
+
+
+def _timeout_agent_readiness_report(
+    *,
+    repo_root: Path,
+    expected_version: str | None,
+    partial_output: Path,
+    timeout_s: float,
+    stdout: str,
+    stderr: str,
+    killed_process_ids: list[int],
+) -> dict[str, Any]:
+    agent_readiness = _read_json_object(partial_output) or {
+        "artifact": "agent_readiness_report",
+        "root": str(repo_root),
+        "expected_version": expected_version,
+        "summary": {"passed": 0, "failed": 0, "skipped": 0},
+        "results": [],
+    }
+    agent_readiness["status"] = "timed_out"
+    results = agent_readiness.get("results")
+    if not isinstance(results, list):
+        results = []
+        agent_readiness["results"] = results
+    results.append({
+        "name": "agent-readiness-timeout",
+        "status": "failed",
+        "duration_s": round(timeout_s, 3),
+        "command": [],
+        "message": f"agent-readiness timed out after {timeout_s:g}s",
+        "timeout_s": timeout_s,
+        "killed_process_ids": killed_process_ids,
+        "stdout_tail": _bounded_tail_lines(stdout),
+        "stderr_tail": _bounded_tail_lines(stderr),
+    })
+    agent_readiness["summary"] = {
+        "passed": sum(
+            1 for result in results if isinstance(result, dict) and result.get("status") == "passed"
+        ),
+        "failed": sum(
+            1 for result in results if isinstance(result, dict) and result.get("status") == "failed"
+        ),
+        "skipped": sum(
+            1
+            for result in results
+            if isinstance(result, dict) and result.get("status") == "skipped"
+        ),
+    }
+    return agent_readiness
+
+
+def _has_failed_result(agent_readiness: dict[str, Any]) -> bool:
+    results = agent_readiness.get("results")
+    if not isinstance(results, list):
+        return False
+    return any(isinstance(result, dict) and result.get("status") == "failed" for result in results)
 
 
 def _build_world_class_readiness() -> dict[str, Any]:
@@ -289,15 +418,19 @@ def run_dogfood_readiness(
     progress_mode: str = "auto",
     progress_interval_s: float = 30.0,
     json_output: bool = False,
+    timeout_s: float = DEFAULT_DOGFOOD_TIMEOUT_SECONDS,
 ) -> tuple[int, dict[str, Any]]:
     repo_root = root.expanduser().resolve()
     readiness_script = repo_root / "scripts" / "agent_readiness.py"
+    child_output = repo_root / "artifacts" / "agent_readiness" / "dogfood-agent-readiness.json"
     command = [
         sys.executable,
         str(readiness_script),
         "--root",
         str(repo_root),
         "--json",
+        "--output",
+        str(child_output),
     ]
     if expected_version:
         command.extend(["--expected-version", expected_version])
@@ -324,22 +457,72 @@ def run_dogfood_readiness(
         else:
             env = dict(os.environ)
             env.setdefault("PYTHONUTF8", "1")
-            completed = subprocess.run(
-                command,
-                cwd=repo_root,
-                env=env,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                check=False,
-            )
-            returncode = completed.returncode
-            stdout = completed.stdout
-            stderr = completed.stderr
             try:
-                agent_readiness = _json_from_stdout(stdout)
-            except ValueError as exc:
+                child_output.unlink()
+            except FileNotFoundError:
+                pass
+            popen_kwargs: dict[str, Any] = {
+                "cwd": repo_root,
+                "env": env,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                popen_kwargs["start_new_session"] = True
+            process = subprocess.Popen(command, **popen_kwargs)
+            try:
+                stdout, stderr = process.communicate(timeout=timeout_s)
+                returncode = int(process.returncode or 0)
+                try:
+                    agent_readiness = _json_from_stdout(stdout)
+                except ValueError as exc:
+                    file_readiness = _read_json_object(child_output)
+                    if file_readiness is not None:
+                        agent_readiness = file_readiness
+                    else:
+                        agent_readiness = {
+                            "artifact": "agent_readiness_report",
+                            "root": str(repo_root),
+                            "summary": {"passed": 0, "failed": 1, "skipped": 0},
+                            "results": [
+                                {
+                                    "name": "agent-readiness-json",
+                                    "status": "failed",
+                                    "message": str(exc),
+                                    "stdout_tail": _bounded_tail_lines(stdout),
+                                    "stderr_tail": _bounded_tail_lines(stderr),
+                                }
+                            ],
+                        }
+                        returncode = 1
+            except subprocess.TimeoutExpired as exc:
+                stdout = str(exc.stdout or "")
+                stderr = str(exc.stderr or "")
+                killed_process_ids = _terminate_process_tree(int(process.pid))
+                try:
+                    more_stdout, more_stderr = process.communicate(
+                        timeout=POST_TIMEOUT_COMMUNICATE_SECONDS
+                    )
+                    stdout = stdout or str(more_stdout or "")
+                    stderr = stderr or str(more_stderr or "")
+                except Exception:
+                    pass
+                agent_readiness = _timeout_agent_readiness_report(
+                    repo_root=repo_root,
+                    expected_version=expected_version,
+                    partial_output=child_output,
+                    timeout_s=timeout_s,
+                    stdout=stdout,
+                    stderr=stderr,
+                    killed_process_ids=killed_process_ids,
+                )
+                returncode = 1
+            if returncode != 0 and not _has_failed_result(agent_readiness):
                 agent_readiness = {
                     "artifact": "agent_readiness_report",
                     "root": str(repo_root),
@@ -348,13 +531,12 @@ def run_dogfood_readiness(
                         {
                             "name": "agent-readiness-json",
                             "status": "failed",
-                            "message": str(exc),
+                            "message": f"agent-readiness exited {returncode}",
                             "stdout_tail": _bounded_tail_lines(stdout),
                             "stderr_tail": _bounded_tail_lines(stderr),
                         }
                     ],
                 }
-                returncode = 1
 
     report = {
         "artifact": "dogfood_readiness_report",
@@ -369,6 +551,5 @@ def run_dogfood_readiness(
         "stderr_tail": _bounded_tail_lines(stderr),
     }
     if output is not None:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _write_json_atomic(output, report)
     return returncode, report

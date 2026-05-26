@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.19
 
 Latest tagged GitHub release: [`v1.13.19`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.19). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.19`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.19). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.18` shipped from PR #229, merge commit `77a73b2`, release commit `4a0dad0`, main CI run `26425383595`, and main dynamic/CodeQL run `26425914836`.
+Latest verified release proof: `v1.13.19` shipped from PR #230, merge commit `0c9155f`, release commit `b9197a6`, main CI run `26431129535`, and main dynamic/CodeQL run `26431129155`.
 
 Current positioning:
 
@@ -61,6 +61,13 @@ Current positioning:
 - `tg agent PATH "query" --gpu-device-ids 0,1 --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.19` closed:
+
+- PR #230 `fix: harden daemon response cache writes` shipped the release as merge commit `0c9155f fix: harden daemon response cache writes` and release commit `b9197a6 chore(release): v1.13.19 [skip ci]`.
+- main CI run `26431129535` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26431129155` passed on the merge commit.
+- GitHub release assets for `v1.13.19` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.19 tg --version` reports `tensor-grep 1.13.19`.
+- The release connects daemon response-cache writes and hits for top-level `context-render` / `edit-plan`, recovering sub-second warm context/edit-plan calls while preserving capped-session stale-file checks and complete-session added-file refresh.
 
 What `v1.13.18` closed:
 
@@ -378,8 +385,8 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.19` follow-up:
 
-- harden the daemon-cache dogfood regression before the next patch release: top-level native-provider `context-render` / `edit-plan` requests that route through an already-running daemon must write response-cache entries on the first capped implicit-session call and hit on repeated identical calls, while complete sessions with `refresh_on_stale` must still refresh when a genuinely new file appears
-- recover context-render latency toward the `v1.13.16` baseline by keeping capped implicit-session daemon requests on the cacheable path and avoiding repeated full local fallback renders
+- harden built-in `tg dogfood` readiness so the wrapper has its own timeout, writes a failure JSON report before external watchdogs kill it, passes an incremental child `--output` to `scripts/agent_readiness.py`, and cleans up the launched child process tree by PID only
+- preserve the `v1.13.19` daemon-cache recovery: top-level native-provider `context-render` / `edit-plan` requests that route through an already-running daemon must write response-cache entries on the first capped implicit-session call and hit on repeated identical calls, while complete sessions with `refresh_on_stale` must still refresh when a genuinely new file appears
 - keep optional LSP proof honest: top-level `lsp_proof` must be derived from final rows or explicit provider responses, provider-status proof must not contradict result rows, and provider stderr such as Python SRE/ABI mismatch warnings must remain visible when it can explain degraded proof
 - keep agent-facing repo maps bounded by default: `tg map --json`, `tg session open`, MCP `tg_repo_map`, and MCP `tg_session_open` should default to the agent-safe 512-file cap, report `scan_limit`, skip generated/vendor roots such as `.venv`, `bench_data`, `gpu_bench_data`, `many_files`, and `.tmp_*`, and expose daemon response-cache byte stats with an explicit daemon-routed session scope
 - populate headline JSON aliases for agent consumers: `edit-plan` should expose top-level `plan`, `primary_target`, and `edit_order`; `blast-radius` should expose `blast_radius_score` and `affected_files`; deprecated `--query` and `--symbol` forms stay accepted during 1.13.x but current help/docs should show positional query and symbol forms

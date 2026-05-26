@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -154,6 +155,75 @@ def test_dogfood_command_returns_failure_when_readiness_fails(tmp_path: Path) ->
     payload = json.loads(result.stdout)
     assert payload["verdict"]["status"] == "FAIL"
     assert payload["verdict"]["failed_checks"] == ["docs-claim-check"]
+
+
+def test_dogfood_timeout_writes_partial_report_and_kills_process_tree(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "agent_readiness.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    output = tmp_path / "artifacts" / "dogfood.json"
+    killed: list[int] = []
+
+    class HangingProcess:
+        pid = 4242
+        returncode = None
+
+        def __init__(self, command, **_kwargs):
+            self.command = command
+            partial_path = Path(command[command.index("--output") + 1])
+            partial_path.parent.mkdir(parents=True, exist_ok=True)
+            partial_path.write_text(
+                json.dumps({
+                    "artifact": "agent_readiness_report",
+                    "status": "running",
+                    "root": str(tmp_path.resolve()),
+                    "expected_version": "1.13.19",
+                    "current_check": {"name": "slow-check"},
+                    "summary": {"passed": 1, "failed": 0, "skipped": 0},
+                    "results": [{"name": "first-check", "status": "passed"}],
+                }),
+                encoding="utf-8",
+            )
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(self.command, timeout, output="", stderr="")
+
+    def fake_kill_tree(pid: int) -> list[int]:
+        killed.append(pid)
+        return [pid, 5000]
+
+    monkeypatch.setattr(dogfood_module.subprocess, "Popen", HangingProcess)
+    monkeypatch.setattr(dogfood_module, "_terminate_process_tree", fake_kill_tree)
+    monkeypatch.setattr(
+        dogfood_module,
+        "_build_release_docs_worktree_status",
+        lambda _root: {"status": "clean", "read_only": True, "dirty_paths": []},
+    )
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=tmp_path,
+        output=output,
+        expected_version="1.13.19",
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        timeout_s=0.01,
+        json_output=True,
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert killed == [4242]
+    assert payload == report
+    assert payload["verdict"]["status"] == "FAIL"
+    assert payload["agent_readiness"]["status"] == "timed_out"
+    assert payload["agent_readiness"]["current_check"] == {"name": "slow-check"}
+    timeout_result = payload["agent_readiness"]["results"][-1]
+    assert timeout_result["name"] == "agent-readiness-timeout"
+    assert "timed out after 0.01s" in timeout_result["message"]
+    assert timeout_result["killed_process_ids"] == [4242, 5000]
 
 
 def test_dogfood_non_repo_root_uses_public_self_check(tmp_path: Path) -> None:
