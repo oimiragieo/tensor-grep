@@ -1031,9 +1031,12 @@ def build_report(
     results: list[dict[str, Any]],
     expected_version: str,
     repo_root: Path,
+    status: str = "complete",
+    current_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    report: dict[str, Any] = {
         "artifact": "agent_readiness_report",
+        "status": status,
         "expected_version": expected_version,
         "root": str(repo_root.resolve()),
         "summary": {
@@ -1043,6 +1046,16 @@ def build_report(
         },
         "results": results,
     }
+    if current_check is not None:
+        report["current_check"] = current_check
+    return report
+
+
+def _write_report(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1089,6 +1102,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     results: list[dict[str, Any]] = []
     for check in checks:
+        if args.output:
+            _write_report(
+                args.output,
+                build_report(
+                    results=results,
+                    expected_version=expected_version,
+                    repo_root=repo_root,
+                    status="running",
+                    current_check={"name": check.name},
+                ),
+            )
         with progress.phase(check.name):
             result = run_check(check, repo_root=repo_root, expected_version=expected_version)
         results.append(result)
@@ -1100,10 +1124,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report = build_report(results=results, expected_version=expected_version, repo_root=repo_root)
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        _write_report(args.output, report)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     return 1 if report["summary"]["failed"] else 0

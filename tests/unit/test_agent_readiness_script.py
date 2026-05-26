@@ -935,6 +935,63 @@ def test_agent_readiness_main_should_write_json_summary(monkeypatch, tmp_path) -
     assert payload["summary"]["failed"] == 0
 
 
+def test_agent_readiness_main_writes_incremental_partial_report(monkeypatch, tmp_path) -> None:
+    module = _load_script_module()
+    output_path = tmp_path / "agent-readiness.json"
+    seen_partial: dict[str, object] = {}
+
+    checks = [
+        module.Check(
+            name="first-check",
+            command=[],
+            description="first",
+            validator=lambda _stdout, _root, _expected: None,
+        ),
+        module.Check(
+            name="second-check",
+            command=[],
+            description="second",
+            validator=lambda _stdout, _root, _expected: None,
+        ),
+    ]
+
+    monkeypatch.setattr(module, "read_project_version", lambda _root: "1.13.19")
+    monkeypatch.setattr(module, "build_check_plan", lambda **_kwargs: checks)
+
+    def fake_run_check(check, *, repo_root, expected_version):
+        if check.name == "second-check":
+            seen_partial.update(json.loads(output_path.read_text(encoding="utf-8")))
+        return {
+            "name": check.name,
+            "status": "passed",
+            "duration_s": 0.001,
+            "command": check.command,
+            "message": "ok",
+            "stdout_tail": [],
+            "stderr_tail": [],
+        }
+
+    monkeypatch.setattr(module, "run_check", fake_run_check)
+
+    exit_code = module.main([
+        "--root",
+        str(tmp_path),
+        "--output",
+        str(output_path),
+        "--json",
+        "--progress",
+        "never",
+        "--no-shell-probes",
+    ])
+
+    assert exit_code == 0
+    assert seen_partial["artifact"] == "agent_readiness_report"
+    assert seen_partial["status"] == "running"
+    assert seen_partial["current_check"] == {"name": "second-check"}
+    assert seen_partial["summary"] == {"passed": 1, "failed": 0, "skipped": 0}
+    assert [result["name"] for result in seen_partial["results"]] == ["first-check"]
+
+
 def test_agent_readiness_json_auto_progress_keeps_stdout_json_and_captured_stderr_quiet(
     monkeypatch, tmp_path, capsys
 ) -> None:
