@@ -462,6 +462,17 @@ def _response_cache_key_for_command(
     return None
 
 
+def _session_payload_is_possibly_truncated(payload: dict[str, Any]) -> bool:
+    repo_map = payload.get("repo_map")
+    candidates: list[Any] = [payload.get("scan_limit")]
+    if isinstance(repo_map, dict):
+        candidates.append(repo_map.get("scan_limit"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("possibly_truncated") is True:
+            return True
+    return False
+
+
 def _optional_positive_int(value: object) -> int | None:
     if value in (None, ""):
         return None
@@ -530,11 +541,18 @@ def _serve_daemon_response_with_cache(
     request: dict[str, Any],
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
+    session_request = dict(request)
+    if bool(session_request.get("refresh_on_stale")) and _session_payload_is_possibly_truncated(
+        payload
+    ):
+        # Truncated snapshots validate included files below; added-file detection would
+        # treat files omitted by the cap as stale and prevent response-cache writes.
+        session_request["refresh_on_stale"] = False
     response_cache_key = _response_cache_key_for_command(
-        command, session_id, path, request, payload
+        command, session_id, path, session_request, payload
     )
     if response_cache_key is None:
-        return serve_session_request(session_id, request, path, payload=payload), "bypass"
+        return serve_session_request(session_id, session_request, path, payload=payload), "bypass"
 
     _ensure_session_not_stale(payload, detect_added_files=False)
     with server._response_cache_lock:
@@ -543,7 +561,7 @@ def _serve_daemon_response_with_cache(
         cached_response.pop("serve_response_cache", None)
         return cached_response, "hit"
 
-    response = serve_session_request(session_id, request, path, payload=payload)
+    response = serve_session_request(session_id, session_request, path, payload=payload)
     with server._response_cache_lock:
         server.response_cache.put(response_cache_key, response)
     return response, "miss"
