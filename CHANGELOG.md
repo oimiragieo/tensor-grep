@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.20 (2026-05-26)
+
+### Bug Fixes
+
+- Harden dogfood timeout reporting
+  ([`6525853`](https://github.com/oimiragieo/tensor-grep/commit/6525853f0684ee1df448a3785edd477639418f1e))
+
+
 ## v1.13.19 (2026-05-26)
 
 ### Bug Fixes
