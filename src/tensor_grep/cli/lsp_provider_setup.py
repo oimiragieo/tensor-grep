@@ -516,6 +516,8 @@ def managed_provider_env(
     root = managed_provider_root(managed_root)
     if _command_source(command, root) != "managed":
         return env
+    for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
+        env.pop(key, None)
     path_entries = [str(_node_runtime_path_entry(root)), str(_managed_bin_dir(root).resolve())]
     existing_path = env.get("PATH")
     if existing_path:
