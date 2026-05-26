@@ -1801,6 +1801,73 @@ def test_top_level_context_render_routes_relative_directory_to_daemon_cache(
     assert status_payload["response_cache_entries"] >= 1
 
 
+def test_top_level_context_render_capped_implicit_session_populates_daemon_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (src_dir / "shipping.py").write_text(
+        "def ship_invoice():\n    return 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    project_root = str(project.resolve())
+    start = runner.invoke(app, ["session", "daemon", "start", "project", "--json"])
+    assert start.exit_code == 0, start.output
+
+    try:
+        first = runner.invoke(
+            app,
+            [
+                "context-render",
+                "project",
+                "create invoice",
+                "--render-profile",
+                "llm",
+                "--max-repo-files",
+                "1",
+                "--json",
+            ],
+        )
+        second = runner.invoke(
+            app,
+            [
+                "context-render",
+                "project",
+                "create invoice",
+                "--render-profile",
+                "llm",
+                "--max-repo-files",
+                "1",
+                "--json",
+            ],
+        )
+        status = runner.invoke(app, ["session", "daemon", "status", "project", "--json"])
+    finally:
+        session_daemon.stop_session_daemon(project_root)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    first_payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    status_payload = json.loads(status.stdout)
+    assert first_payload["routing_reason"] == "session-context-render"
+    assert first_payload["daemon_response_cache"]["status"] == "miss"
+    assert second_payload["daemon_response_cache"]["status"] == "hit"
+    assert status_payload["response_cache_puts"] >= 1
+    assert status_payload["response_cache_hits"] >= 1
+    assert status_payload["response_cache_entries"] >= 1
+
+
 def test_top_level_edit_plan_daemon_request_uses_absolute_directory_path(
     tmp_path: Path,
     monkeypatch,
@@ -1867,6 +1934,69 @@ def test_top_level_edit_plan_routes_relative_directory_to_daemon_cache(
     try:
         first = runner.invoke(app, ["edit-plan", "project", "create invoice", "--json"])
         second = runner.invoke(app, ["edit-plan", "project", "create invoice", "--json"])
+        status = runner.invoke(app, ["session", "daemon", "status", "project", "--json"])
+    finally:
+        session_daemon.stop_session_daemon(project_root)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    first_payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    status_payload = json.loads(status.stdout)
+    assert first_payload["routing_reason"] == "session-context-edit-plan"
+    assert first_payload["daemon_response_cache"]["status"] == "miss"
+    assert second_payload["daemon_response_cache"]["status"] == "hit"
+    assert status_payload["response_cache_puts"] >= 1
+    assert status_payload["response_cache_hits"] >= 1
+    assert status_payload["response_cache_entries"] >= 1
+
+
+def test_top_level_edit_plan_capped_implicit_session_populates_daemon_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (src_dir / "shipping.py").write_text(
+        "def ship_invoice():\n    return 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    project_root = str(project.resolve())
+    start = runner.invoke(app, ["session", "daemon", "start", "project", "--json"])
+    assert start.exit_code == 0, start.output
+
+    try:
+        first = runner.invoke(
+            app,
+            [
+                "edit-plan",
+                "project",
+                "create invoice",
+                "--max-repo-files",
+                "1",
+                "--json",
+            ],
+        )
+        second = runner.invoke(
+            app,
+            [
+                "edit-plan",
+                "project",
+                "create invoice",
+                "--max-repo-files",
+                "1",
+                "--json",
+            ],
+        )
         status = runner.invoke(app, ["session", "daemon", "status", "project", "--json"])
     finally:
         session_daemon.stop_session_daemon(project_root)
@@ -2128,6 +2258,67 @@ def test_session_daemon_refresh_on_stale_response_is_cached(
     assert second["call_count"] == 1
     assert stats["response_cache_hits"] == 1
     assert stats["response_cache_entries"] == 1
+
+
+def test_session_daemon_refresh_on_added_file_response_is_cached(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(
+        runner.invoke(
+            app,
+            ["session", "open", str(project), "--max-repo-files", "10", "--json"],
+        ).stdout
+    )
+    (src_dir / "refunds.py").write_text(
+        "def issue_refund():\n    return 2\n",
+        encoding="utf-8",
+    )
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_render",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "issue refund",
+            "refresh_on_stale": True,
+            "max_repo_files": 10,
+            "render_profile": "llm",
+            "optimize_context": True,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        second = session_daemon._daemon_request(host, port, request)
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    serialized_first = json.dumps(first)
+    assert first["routing_reason"] == "session-context-render"
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert "refunds.py" in serialized_first
+    assert "issue_refund" in serialized_first
+    assert second["daemon_response_cache"]["status"] == "hit"
+    assert stats["response_cache_puts"] >= 1
+    assert stats["response_cache_hits"] >= 1
+    assert stats["response_cache_entries"] >= 1
 
 
 def test_session_daemon_edit_plan_repeated_core_payload_is_stable(
@@ -2572,6 +2763,82 @@ def test_session_daemon_edit_plan_cache_checks_stale_files_before_hit(
     assert first["daemon_response_cache"]["status"] == "miss"
     assert second["error"]["code"] == "invalid_request"
     assert "cached session files changed" in second["error"]["message"]
+
+
+def test_session_daemon_capped_refresh_checks_modified_files_before_hit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    (src_dir / "shipping.py").write_text("def ship_invoice():\n    return 2\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(
+        runner.invoke(
+            app,
+            ["session", "open", str(project), "--max-repo-files", "1", "--json"],
+        ).stdout
+    )
+    assert opened["scan_limit"]["possibly_truncated"] is True
+
+    calls = 0
+
+    def fake_serve_session_request(
+        session_id: str,
+        request: dict[str, object],
+        path: str,
+        *,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "session_id": session_id,
+            "routing_reason": "session-context-render",
+            "files": [str(module_path.resolve())],
+            "call_count": calls,
+            "scan_limit": payload.get("scan_limit"),
+        }
+
+    monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
+
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        request = {
+            "command": "context_render",
+            "session_id": opened["session_id"],
+            "path": str(project),
+            "query": "create invoice",
+            "refresh_on_stale": True,
+            "max_repo_files": 1,
+        }
+
+        first = session_daemon._daemon_request(host, port, request)
+        module_path.write_text("def create_invoice():\n    return 100\n", encoding="utf-8")
+        second = session_daemon._daemon_request(host, port, request)
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        server.server_close()
+
+    assert first["daemon_response_cache"]["status"] == "miss"
+    assert second["daemon_response_cache"]["status"] == "miss"
+    assert second["call_count"] == 2
+    assert second["scan_limit"]["possibly_truncated"] is True
+    assert stats["response_cache_hits"] == 0
+    assert stats["response_cache_puts"] == 2
+    assert stats["response_cache_entries"] == 2
 
 
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
