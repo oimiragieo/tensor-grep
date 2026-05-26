@@ -323,20 +323,29 @@ def _build_release_docs_worktree_status(root: Path) -> dict[str, Any]:
     }
 
 
-def _build_write_policy(repo_root: Path, output: Path | None) -> dict[str, Any]:
-    allowed_writes = [
-        str((repo_root / "artifacts" / "agent_readiness").resolve()),
-    ]
+def _agent_readiness_output_path(repo_root: Path, output: Path | None) -> Path:
+    if output is not None:
+        return output.expanduser().resolve().with_suffix(".agent-readiness.json")
+    return repo_root / "artifacts" / "agent_readiness" / "dogfood-agent-readiness.json"
+
+
+def _build_write_policy(
+    repo_root: Path,
+    output: Path | None,
+    child_output: Path,
+) -> dict[str, Any]:
+    allowed_writes = []
     if output is not None:
         allowed_writes.append(str(output.expanduser().resolve()))
+    allowed_writes.append(str(child_output.expanduser().resolve()))
     return {
-        "mode": "read_only_except_explicit_output_and_readiness_probes",
+        "mode": "read_only_except_explicit_output_and_readiness_probe_output",
         "allowed_writes": allowed_writes,
         "tracked_release_docs_mutation": "not_performed",
         "release_docs_stamp_command": RELEASE_DOCS_STAMP_COMMAND,
         "summary": (
-            "tg dogfood validates readiness and only writes agent-readiness probe "
-            "artifacts plus the explicit --output artifact when requested; release-doc "
+            "tg dogfood validates readiness and writes the explicit --output artifact "
+            "plus a sibling agent-readiness child report when --output is provided; release-doc "
             "stamping is a separate manual or release-workflow step."
         ),
     }
@@ -422,7 +431,7 @@ def run_dogfood_readiness(
 ) -> tuple[int, dict[str, Any]]:
     repo_root = root.expanduser().resolve()
     readiness_script = repo_root / "scripts" / "agent_readiness.py"
-    child_output = repo_root / "artifacts" / "agent_readiness" / "dogfood-agent-readiness.json"
+    child_output = _agent_readiness_output_path(repo_root, output)
     command = [
         sys.executable,
         str(readiness_script),
@@ -546,7 +555,7 @@ def run_dogfood_readiness(
         "agent_readiness": agent_readiness,
         "verdict": _build_verdict(agent_readiness, returncode),
         "world_class_readiness": _build_world_class_readiness(),
-        "write_policy": _build_write_policy(repo_root, output),
+        "write_policy": _build_write_policy(repo_root, output, child_output),
         "release_docs_worktree": _build_release_docs_worktree_status(repo_root),
         "stderr_tail": _bounded_tail_lines(stderr),
     }

@@ -31,7 +31,7 @@ pub enum Commands {
         #[arg(short = 'C', long)]
         context: Option<usize>,
     },
-    /// Classify logs using cyBERT semantic NLP
+    /// Classify logs with local heuristics; CyBERT/Triton is opt-in
     Classify {
         /// The log file to classify
         file: String,

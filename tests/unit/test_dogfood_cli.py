@@ -80,12 +80,15 @@ def test_dogfood_command_wraps_agent_readiness_report(tmp_path: Path) -> None:
     assert "rg -F -e ... -e ..." in gpu_limitation["required_evidence"]
     assert payload["agent_readiness"]["summary"]["passed"] == 2
     assert (
-        payload["write_policy"]["mode"] == "read_only_except_explicit_output_and_readiness_probes"
+        payload["write_policy"]["mode"]
+        == "read_only_except_explicit_output_and_readiness_probe_output"
     )
     assert payload["write_policy"]["tracked_release_docs_mutation"] == "not_performed"
+    child_output = Path(payload["command"][payload["command"].index("--output") + 1])
+    assert child_output == output.with_suffix(".agent-readiness.json").resolve()
     assert payload["write_policy"]["allowed_writes"] == [
-        str((tmp_path / "artifacts" / "agent_readiness").resolve()),
         str(output.resolve()),
+        str(child_output),
     ]
     assert payload["write_policy"]["release_docs_stamp_command"] == (
         "python scripts/stamp_release_assets.py"
@@ -98,7 +101,7 @@ def test_dogfood_help_documents_probe_artifact_write_policy() -> None:
 
     assert result.exit_code == 0
     normalized = " ".join(result.stdout.split())
-    assert "writes only probe artifacts and --output" in normalized
+    assert "writes only explicit --output and a sibling readiness report" in normalized
 
 
 def test_dogfood_release_docs_worktree_status_reports_dirty_docs(

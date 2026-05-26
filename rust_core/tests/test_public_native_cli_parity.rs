@@ -1735,6 +1735,57 @@ fn test_classify_format_json_is_accepted_on_public_native_frontdoor() {
 }
 
 #[test]
+fn test_classify_help_describes_local_default_provider_contract() {
+    let output = tg()
+        .current_dir(repo_root())
+        .args(["classify", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("local heuristics") && stdout.contains("CyBERT/Triton is opt-in"),
+        "classify help should describe local default provider contract: {stdout}"
+    );
+    assert!(
+        !stdout.contains("via cyBERT"),
+        "classify help should not imply CyBERT is the default provider: {stdout}"
+    );
+}
+
+#[test]
+fn test_classify_reports_clear_error_for_literal_input_on_public_native_frontdoor() {
+    let output = tg()
+        .current_dir(repo_root())
+        .args([
+            "classify",
+            "--format",
+            "json",
+            "2026-05-26 ERROR payment retry failed",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "literal classify input should fail until literal/stdin mode exists"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("classify expects a file path")
+            && stderr.contains("--text/stdin literal classification is not supported yet"),
+        "classify literal error should be actionable: {stderr}"
+    );
+}
+
+#[test]
 fn test_agent_json_is_accepted_on_public_native_frontdoor() {
     let dir = tempdir().unwrap();
     let project = dir.path().join("project");

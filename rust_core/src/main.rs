@@ -850,7 +850,7 @@ pub enum Commands {
     },
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
-    /// Run semantic NLP threat classification on logs via cyBERT
+    /// Run log classification with local heuristics; CyBERT/Triton is opt-in
     Classify(ClassifyArgs),
     /// Run a validated AST slice for structural search and guarded rewrites
     Run(RunArgs),
@@ -3213,16 +3213,24 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::AuditVerify(args) => handle_audit_verify_command(args),
         Commands::Audit { args } => handle_python_passthrough("audit", args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
-        Commands::Classify(args) => handle_sidecar_command(
-            "classify",
-            vec![
-                "--format".to_string(),
-                args.format,
-                "--max-lines".to_string(),
-                args.max_lines.to_string(),
-                args.file_path,
-            ],
-        ),
+        Commands::Classify(args) => {
+            if !Path::new(&args.file_path).exists() {
+                anyhow::bail!(
+                    "classify expects a file path; --text/stdin literal classification is not supported yet. Received: {}",
+                    args.file_path
+                );
+            }
+            handle_sidecar_command(
+                "classify",
+                vec![
+                    "--format".to_string(),
+                    args.format,
+                    "--max-lines".to_string(),
+                    args.max_lines.to_string(),
+                    args.file_path,
+                ],
+            )
+        }
         Commands::Run(args) => handle_ast_run(args),
         Commands::Scan { args } => {
             if ast_scan_requires_python_passthrough(&args) {

@@ -238,13 +238,23 @@ def _capsule_trust_checks(
 def _validation_plan_has_targeted_primary_evidence(
     validation_plan: list[dict[str, Any]],
 ) -> bool:
+    return bool(_targeted_validation_evidence(validation_plan))
+
+
+def _targeted_validation_evidence(validation_plan: list[dict[str, Any]]) -> list[str]:
+    evidence: list[str] = []
     for step in validation_plan:
         scope = str(step.get("scope") or "").strip().lower()
         target = str(step.get("target") or "").strip()
         confidence = _numeric_confidence(step.get("confidence"))
         if scope in {"symbol", "file"} and target and confidence >= 0.7:
-            return True
-    return False
+            command = str(step.get("command") or "").strip()
+            if command:
+                evidence.append(command)
+            else:
+                runner = str(step.get("runner") or "").strip()
+                evidence.append(f"{runner}:{scope}:{target}" if runner else f"{scope}:{target}")
+    return _dedupe(evidence)
 
 
 def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1288,14 +1298,12 @@ def build_agent_capsule(
     )
     validation_alignment_status = str(validation_alignment.get("status") or "")
     validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
-    targeted_validation_evidence = _validation_plan_has_targeted_primary_evidence(
-        validation_plan,
-    )
+    targeted_validation_evidence = _targeted_validation_evidence(validation_plan)
     tie_resolved_by_validation = (
         bool(tied_alternatives)
         and not marker_helper_tie
         and bool(validation_commands)
-        and targeted_validation_evidence
+        and bool(targeted_validation_evidence)
         and (
             validation_alignment_status == "aligned"
             or (validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0)
@@ -1319,9 +1327,13 @@ def build_agent_capsule(
     if tied_alternatives and tie_resolved_by_lsp:
         tie_resolved_by = "lsp"
     elif tied_alternatives and tie_resolved_by_validation:
-        tie_resolved_by = "validation"
+        tie_resolved_by = "targeted-validation"
     if tied_alternatives and tie_resolved_by is not None:
         consistency["alternative_confidence_tie_resolved_by"] = tie_resolved_by
+        if tie_resolved_by == "targeted-validation":
+            consistency["alternative_confidence_tie_resolution_evidence"] = (
+                targeted_validation_evidence
+            )
         tied_alternatives = []
     if tied_alternatives:
         confidence["overall"] = round(min(float(confidence["overall"]), 0.74), 3)
@@ -1364,6 +1376,8 @@ def build_agent_capsule(
             "tie_count": len(tie_candidates),
             "tied_alternative_targets": tie_candidates,
         }
+        if tie_resolved_by == "targeted-validation":
+            ambiguity["resolution_evidence"] = targeted_validation_evidence
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
     if tied_alternatives:

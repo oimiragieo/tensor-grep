@@ -168,6 +168,19 @@ def test_python_cli_classify_caps_json_output_by_default(monkeypatch, tmp_path):
     }
 
 
+def test_python_cli_classify_reports_clear_error_for_literal_input():
+    from tensor_grep.cli.main import app
+
+    result = CliRunner().invoke(
+        app,
+        ["classify", "--format", "json", "2026-05-26 ERROR payment retry failed"],
+    )
+
+    assert result.exit_code == 1
+    assert "classify expects a file path" in result.stderr
+    assert "--text/stdin literal classification is not supported yet" in result.stderr
+
+
 def test_sidecar_classify_accepts_explicit_max_lines(monkeypatch):
     from tensor_grep.sidecar import _classify_payload
 

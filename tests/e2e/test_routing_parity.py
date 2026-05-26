@@ -286,8 +286,9 @@ def test_native_scan_ruleset_json_uses_python_full_contract_without_sgconfig(
 
 
 # We check which layer handled it.
-# For native rust, search is usually native unless it falls back to python.
-# `run` etc. usually fall back to python.
+# For native rust, search is usually native unless it falls back to Python.
+# The public Python/bootstrap entrypoints delegate `run` to the managed native front door
+# when one is available, so its advertised edit flags stay route-consistent.
 # We don't strictly assert the exact layer unless requested, but we can verify it doesn't crash.
 
 COMMAND_CASES = [
@@ -472,6 +473,20 @@ def test_search_help_exposes_required_public_flags(parity_env):
     for flag in PUBLIC_SEARCH_HELP_FLAGS:
         assert flag in python_stdout, f"Missing {flag} in python-m search --help"
         assert flag in native_stdout, f"Missing {flag} in native search --help"
+
+
+def test_run_help_exposes_native_diff_contract_on_public_routes(parity_env):
+    _skip_if_native_binary_missing("native")
+
+    for launcher in LAUNCHERS:
+        result = run_command(launcher, ["run", "--help"], cwd=parity_env)
+
+        assert result.returncode == 0, (
+            f"{launcher} run --help failed\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "--diff" in _strip_ansi(result.stdout), (
+            f"{launcher} run --help is missing native --diff contract"
+        )
 
 
 def test_top_level_help_visible_commands_match_public_contract(parity_env):
