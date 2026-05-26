@@ -5950,6 +5950,16 @@ def context(
     typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
 
 
+def _daemon_directory_path(path: str) -> str | None:
+    try:
+        resolved = Path(path).expanduser().resolve(strict=False)
+    except OSError:
+        return None
+    if resolved.is_file():
+        return None
+    return str(resolved)
+
+
 def _maybe_context_render_via_running_daemon(
     *,
     path: str,
@@ -5968,16 +5978,17 @@ def _maybe_context_render_via_running_daemon(
 ) -> dict[str, Any] | None:
     if provider != "native":
         return None
-    if Path(path).expanduser().is_file():
+    daemon_path = _daemon_directory_path(path)
+    if daemon_path is None:
         return None
     try:
         from tensor_grep.cli.session_daemon import request_running_session_daemon
 
         payload = request_running_session_daemon(
-            path,
+            daemon_path,
             {
                 "command": "context_render",
-                "path": path,
+                "path": daemon_path,
                 "query": query,
                 "refresh_on_stale": True,
                 "max_files": max_files,
@@ -6013,16 +6024,17 @@ def _maybe_edit_plan_via_running_daemon(
 ) -> dict[str, Any] | None:
     if provider != "native":
         return None
-    if Path(path).expanduser().is_file():
+    daemon_path = _daemon_directory_path(path)
+    if daemon_path is None:
         return None
     try:
         from tensor_grep.cli.session_daemon import request_running_session_daemon
 
         payload = request_running_session_daemon(
-            path,
+            daemon_path,
             {
                 "command": "context_edit_plan",
-                "path": path,
+                "path": daemon_path,
                 "query": query,
                 "refresh_on_stale": True,
                 "max_files": max_files,

@@ -20,14 +20,16 @@ release_docs_current_tag: v1.13.17
 
 As of 2026-05-25, the current tagged release state is `v1.13.17`, and the latest complete public PyPI/release-asset distribution is also `v1.13.17`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.13.17` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Latest verified release proof PR: #225 `fix: harden v1.13.14 dogfood contracts`
-- Latest verified release proof merge commit: `b0c7cf6 fix: harden v1.13.14 dogfood contracts`
-- Latest verified release proof commit: `d209528 chore(release): v1.13.15 [skip ci]`
-- Latest verified proof public release PR: #225 `fix: harden v1.13.14 dogfood contracts`
-- Latest verified proof public release commit: `d209528 chore(release): v1.13.15 [skip ci]`
-- Latest merged fix commit: `b0c7cf6 fix: harden v1.13.14 dogfood contracts`
+- Latest verified release proof PR: #228 `fix: harden v1.13.16 dogfood followups`
+- Latest verified release proof merge commit: `b0e5c27 fix: harden v1.13.16 dogfood followups (#228)`
+- Latest verified release proof commit: `101b8a2 chore(release): v1.13.17 [skip ci]`
+- Latest verified proof public release PR: #228 `fix: harden v1.13.16 dogfood followups`
+- Latest verified proof public release commit: `101b8a2 chore(release): v1.13.17 [skip ci]`
+- Latest merged fix commit: `b0e5c27 fix: harden v1.13.16 dogfood followups (#228)`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - Recent fix commits:
+  - `b0e5c27 fix: harden v1.13.16 dogfood followups (#228)`
+  - `f6623bb fix: harden v1.13.15 dogfood followups`
   - `b0c7cf6 fix: harden v1.13.14 dogfood contracts`
   - `1e09e59 fix: bound agent-loop memory and dogfood contracts`
   - `21e5437 fix: collect capsule call-site evidence`
@@ -96,10 +98,10 @@ As of 2026-05-25, the current tagged release state is `v1.13.17`, and the latest
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
 - `v1.11.0` GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0> exists, but main CI run `25834508800` was cancelled during release-native asset publication; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `26386327552`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main dynamic/CodeQL run `26386327168`: passed on the `b0c7cf6` merge commit
-- Release-commit dynamic run `26386976717`: passed on the `v1.13.15` release commit
-- Dependency Graph run `26386978124`: passed on the `v1.13.15` release commit
+- Main CI run `26420296271`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main dynamic/CodeQL run `26420295981`: passed on the `b0e5c27` merge commit
+- Release commit `101b8a2`: published `v1.13.17` with `[skip ci]` after main CI completed
+- Previous `v1.13.15` proof runs `26386327552`, `26386327168`, `26386976717`, and `26386978124` remain retained as historical release proof
 - Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.17 tg --version` reports `tensor-grep 1.13.17`
@@ -163,10 +165,11 @@ Known current weak spots:
 
 1. Start with a failing test when behavior changes.
 2. Make the smallest defensible change.
-3. Run local gates before pushing.
+3. Run local gates before pushing, but keep them scoped on this desktop unless the user explicitly approves heavy validation. Prefer targeted tests locally and use PR/main CI for full pytest, full Rust test/clippy matrices, benchmark suites, release asset builds, and other high-memory gates.
 4. Benchmark every hot-path change.
 5. Reject regressions even if the code is otherwise clean.
 6. Do not change workflow, release, or docs contracts without updating the validator-backed tests.
+7. Do not run `wsl --shutdown`, restart WSL, stop Docker/WSL services, kill WSL processes, or reboot/restart the host as memory cleanup without explicit user approval. Other agents use WSL. If memory pressure is observed, first collect read-only process/memory evidence, stop only tensor-grep-owned processes you started, and ask before touching unrelated processes.
 
 ## Dogfood follow-up workflow
 
@@ -183,6 +186,7 @@ Maintain a per-slice evidence ledger in `docs/SESSION_HANDOFF.md`, `SKILL.md`, a
 
 Current post-`v1.13.17` dogfood slice ledger:
 
+- PR order: 10; scope: harden `v1.13.17` dogfood regressions by making non-JSON rg-shaped explicit no-ignore searches prefer ripgrep passthrough when `rg` is available while preserving the native fallback when it is not, preserving tensor-grep aggregate JSON semantics, resolving top-level `context-render` / `edit-plan` daemon requests to absolute directory roots so repeated relative invocations can populate and hit the daemon response cache, and documenting desktop memory-safety operating rules for local validation; Exa anchors: official ripgrep guide/manpage behavior for `--no-ignore` and `-u` disabling ignore filtering; thinktank/planning consensus: read-only subagent review agreed the no-ignore fast path should stay in the rg-shaped non-JSON lane and the daemon cache fix should normalize request paths at the top-level caller boundary; subagent ownership: McClintock read-only plan/diff review, implementation local; Claude Opus review: accepted findings for direct JSON/NDJSON passthrough tests, no-ignore-vcs coverage, guarded daemon path normalization, daemon-start assertions, and absolute cleanup; validation: targeted daemon path/cache tests, targeted Rust routing test, ruff, preview format check, cargo fmt check, and diff whitespace check pass locally; full pytest/Rust matrices and benchmark suites intentionally deferred to PR/main CI unless the user approves heavy desktop validation; PR CI/main CI: pending.
 - PR order: 7; scope: close concrete `v1.13.11` dogfood regressions by deduplicating `defs --provider hybrid` native/LSP definition rows while preserving LSP proof, bounding checkpoint discovery cache priming at the user-home boundary so Windows standalone `checkpoint create` does not write `C:\Users\.tensor-grep`, separating MCP protocol/CLI version fields in capabilities, sharpening the PowerShell `Start-Process`/`tg.ps1` MCP stdio warning, suppressing stale LSP stderr tails once a provider request proves healthy, routing `tg audit --help` to audit help instead of search, and broadening `secrets-basic` fake API key detection; Exa anchors: official MCP lifecycle/version negotiation docs and LSP 3.17 `Location`/range semantics for merge identity; thinktank/planning consensus: compressed read-only review through subagents because the separate thinktank spawn hit the agent thread limit; Aquinas recommended explicit MCP protocol versus CLI fields, Cicero recommended post-merge LSP/native dedupe with LSP proof preservation and quiet successful provider status, and Ohm recommended home-bounded checkpoint discovery plus explicit native-`tg.exe` MCP stdio warning; subagent ownership: Aquinas (MCP), Cicero (hybrid/LSP), Ohm (checkpoint/doctor/audit); Gemini review: unavailable because `gemini-3-flash-preview --approval-mode plan` stalled after startup/tool noise and was killed without a report; validation: targeted checkpoint, semantic-provider, LSP-provider, trust/audit, MCP, doctor, scan, docs, and integration tests pass locally; `uv run pytest -q` passes (`2451 passed, 16 skipped`); `uv run ruff check .`; `uv run ruff format --check --preview .`; `uv run mypy src/tensor_grep`; full Rust crate tests; cargo fmt check; `uv run python scripts/agent_readiness.py --no-shell-probes --no-wsl-probe --json` passes (`13 passed, 0 failed`); direct Windows checkpoint-create smoke, direct agent-studio hybrid-defs smoke, audit-help smoke, MCP-capabilities smoke, public-command contract smoke, and `git diff --check` pass locally; PR CI/main CI: pending.
 - PR order: 1; scope: accept and forward remaining rg config-override flags (`--pcre2-unicode`, `--ignore`, `--messages`, `--require-git`, `--no-hidden`) in native/Python search and add installed-public sweep coverage; Exa anchors: ripgrep manpage option inversion/config behavior plus ripgrep guide automatic-filtering defaults; thinktank/planning consensus: local planning review, external council not applicable for this parser/forwarding contract slice; subagent ownership: not applicable; Gemini review: unavailable because Gemini CLI 0.42.0 hung on a one-token read-only model probe and was killed; validation: Rust crate tests, full pytest, lint, format, mypy, and diff whitespace checks pass locally; PR CI/main CI: pending.
 - PR order: 1; scope: make `run_agent_success_harness.py` refuse stale in-tree native `tg` binaries by default and mark `--allow-claim-unsafe-launcher` runs as exploratory; Exa anchors: not applicable beyond existing benchmark-governance policy; thinktank/planning consensus: local planning review aligned with `run_benchmarks.py` stale-binary refusal; subagent ownership: not applicable; Gemini review: unavailable because Gemini CLI 0.42.0 hung on a one-token read-only model probe and was killed; validation: Rust crate tests, full pytest, lint, format, mypy, and diff whitespace checks pass locally; PR CI/main CI: pending.

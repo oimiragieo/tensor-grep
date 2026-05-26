@@ -2839,6 +2839,73 @@ mod tests {
             true
         ));
 
+        let no_ignore_args =
+            parse_search_args(&["tg", "search", "--no-ignore", "ERROR", "bench_data"]);
+        let no_ignore_request = resolve_search_request(&no_ignore_args).unwrap();
+        assert!(!search_requires_ripgrep_passthrough(&no_ignore_args));
+        assert!(search_prefers_ripgrep_passthrough(
+            &no_ignore_args,
+            &no_ignore_request,
+            true
+        ));
+        let no_ignore_json_args = parse_search_args(&[
+            "tg",
+            "search",
+            "--json",
+            "--no-ignore",
+            "ERROR",
+            "bench_data",
+        ]);
+        let no_ignore_json_request = resolve_search_request(&no_ignore_json_args).unwrap();
+        assert!(!search_requires_ripgrep_passthrough(&no_ignore_json_args));
+        assert!(!search_prefers_ripgrep_passthrough(
+            &no_ignore_json_args,
+            &no_ignore_json_request,
+            true
+        ));
+        let no_ignore_ndjson_args = parse_search_args(&[
+            "tg",
+            "search",
+            "--ndjson",
+            "--no-ignore",
+            "ERROR",
+            "bench_data",
+        ]);
+        let no_ignore_ndjson_request = resolve_search_request(&no_ignore_ndjson_args).unwrap();
+        assert!(!search_requires_ripgrep_passthrough(&no_ignore_ndjson_args));
+        assert!(!search_prefers_ripgrep_passthrough(
+            &no_ignore_ndjson_args,
+            &no_ignore_ndjson_request,
+            true
+        ));
+
+        let no_ignore_vcs_args =
+            parse_search_args(&["tg", "search", "--no-ignore-vcs", "ERROR", "bench_data"]);
+        let no_ignore_vcs_request = resolve_search_request(&no_ignore_vcs_args).unwrap();
+        assert!(!search_requires_ripgrep_passthrough(&no_ignore_vcs_args));
+        assert!(search_prefers_ripgrep_passthrough(
+            &no_ignore_vcs_args,
+            &no_ignore_vcs_request,
+            true
+        ));
+        let no_ignore_vcs_json_args = parse_search_args(&[
+            "tg",
+            "search",
+            "--json",
+            "--no-ignore-vcs",
+            "ERROR",
+            "bench_data",
+        ]);
+        let no_ignore_vcs_json_request = resolve_search_request(&no_ignore_vcs_json_args).unwrap();
+        assert!(!search_requires_ripgrep_passthrough(
+            &no_ignore_vcs_json_args
+        ));
+        assert!(!search_prefers_ripgrep_passthrough(
+            &no_ignore_vcs_json_args,
+            &no_ignore_vcs_json_request,
+            true
+        ));
+
         let many_fixed_args = parse_search_args(&[
             "tg",
             "search",
@@ -4152,6 +4219,8 @@ fn search_prefers_ripgrep_passthrough(
     }
     rg_available
         && (args.count
+            || args.no_ignore
+            || args.no_ignore_vcs
             || !args.globs.is_empty()
             || (args.fixed_strings && request.patterns.len() > 1))
 }

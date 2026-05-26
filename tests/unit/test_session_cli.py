@@ -1696,6 +1696,194 @@ def test_top_level_context_render_does_not_daemon_route_file_targets(
     assert payload is None
 
 
+def test_top_level_context_render_daemon_request_uses_absolute_directory_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import main as cli_main
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_request(path: str, request: dict[str, object]) -> dict[str, object]:
+        seen["path"] = path
+        seen["request"] = request
+        return {
+            "routing_reason": "session-context-render",
+            "render_profile": request["render_profile"],
+            "rendered_context": "from daemon",
+            "daemon_response_cache": {"status": "hit"},
+        }
+
+    monkeypatch.setattr(session_daemon, "request_running_session_daemon", fake_request)
+
+    payload = cli_main._maybe_context_render_via_running_daemon(
+        path="project",
+        query="create invoice",
+        max_files=3,
+        max_repo_files=512,
+        max_sources=5,
+        max_symbols_per_file=6,
+        max_render_chars=None,
+        max_tokens=None,
+        model=None,
+        optimize_context=False,
+        render_profile="llm",
+        provider="native",
+        profile=False,
+    )
+
+    expected_path = str(project.resolve())
+    assert payload is not None
+    assert seen["path"] == expected_path
+    assert seen["request"]["path"] == expected_path
+
+
+def test_top_level_context_render_routes_relative_directory_to_daemon_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    project_root = str(project.resolve())
+    start = runner.invoke(app, ["session", "daemon", "start", "project", "--json"])
+    assert start.exit_code == 0, start.output
+
+    try:
+        first = runner.invoke(
+            app,
+            [
+                "context-render",
+                "project",
+                "create invoice",
+                "--render-profile",
+                "llm",
+                "--json",
+            ],
+        )
+        second = runner.invoke(
+            app,
+            [
+                "context-render",
+                "project",
+                "create invoice",
+                "--render-profile",
+                "llm",
+                "--json",
+            ],
+        )
+        status = runner.invoke(app, ["session", "daemon", "status", "project", "--json"])
+    finally:
+        session_daemon.stop_session_daemon(project_root)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    first_payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    status_payload = json.loads(status.stdout)
+    assert first_payload["routing_reason"] == "session-context-render"
+    assert first_payload["daemon_response_cache"]["status"] == "miss"
+    assert second_payload["daemon_response_cache"]["status"] == "hit"
+    assert status_payload["response_cache_puts"] >= 1
+    assert status_payload["response_cache_hits"] >= 1
+    assert status_payload["response_cache_entries"] >= 1
+
+
+def test_top_level_edit_plan_daemon_request_uses_absolute_directory_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import main as cli_main
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_request(path: str, request: dict[str, object]) -> dict[str, object]:
+        seen["path"] = path
+        seen["request"] = request
+        return {
+            "routing_reason": "session-context-edit-plan",
+            "query": request["query"],
+            "files": [],
+            "tests": [],
+            "symbols": [],
+            "daemon_response_cache": {"status": "hit"},
+        }
+
+    monkeypatch.setattr(session_daemon, "request_running_session_daemon", fake_request)
+
+    payload = cli_main._maybe_edit_plan_via_running_daemon(
+        path="project",
+        query="create invoice",
+        max_files=3,
+        max_repo_files=512,
+        max_sources=None,
+        max_tokens=None,
+        max_symbols=5,
+        provider="native",
+        profile=False,
+    )
+
+    expected_path = str(project.resolve())
+    assert payload is not None
+    assert seen["path"] == expected_path
+    assert seen["request"]["path"] == expected_path
+
+
+def test_top_level_edit_plan_routes_relative_directory_to_daemon_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    project_root = str(project.resolve())
+    start = runner.invoke(app, ["session", "daemon", "start", "project", "--json"])
+    assert start.exit_code == 0, start.output
+
+    try:
+        first = runner.invoke(app, ["edit-plan", "project", "create invoice", "--json"])
+        second = runner.invoke(app, ["edit-plan", "project", "create invoice", "--json"])
+        status = runner.invoke(app, ["session", "daemon", "status", "project", "--json"])
+    finally:
+        session_daemon.stop_session_daemon(project_root)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    first_payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    status_payload = json.loads(status.stdout)
+    assert first_payload["routing_reason"] == "session-context-edit-plan"
+    assert first_payload["daemon_response_cache"]["status"] == "miss"
+    assert second_payload["daemon_response_cache"]["status"] == "hit"
+    assert status_payload["response_cache_puts"] >= 1
+    assert status_payload["response_cache_hits"] >= 1
+    assert status_payload["response_cache_entries"] >= 1
+
+
 def test_top_level_edit_plan_does_not_daemon_route_file_targets(
     tmp_path: Path,
     monkeypatch,
