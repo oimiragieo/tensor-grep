@@ -89,6 +89,55 @@ def test_managed_provider_env_should_prefix_managed_node_runtime_for_node_shims(
     assert env["PATH"].endswith("system-path")
 
 
+def test_managed_provider_env_should_strip_python_runtime_vars_for_managed_node_shims(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "providers"
+    node_bin = root / "node-packages" / "node_modules" / ".bin"
+    node_bin.mkdir(parents=True)
+    command = [str((node_bin / "pyright-langserver").resolve()), "--stdio"]
+
+    env = provider_setup.managed_provider_env(
+        command,
+        base_env={
+            "PATH": "system-path",
+            "PYTHONHOME": r"C:\stale-python",
+            "PYTHONPATH": r"C:\stale-python\Lib",
+            "VIRTUAL_ENV": r"C:\stale-venv",
+            "__PYVENV_LAUNCHER__": r"C:\stale-venv\python.exe",
+        },
+        managed_root=root,
+    )
+
+    assert "PYTHONHOME" not in env
+    assert "PYTHONPATH" not in env
+    assert "VIRTUAL_ENV" not in env
+    assert "__PYVENV_LAUNCHER__" not in env
+    assert env["PATH"].endswith("system-path")
+
+
+def test_managed_provider_env_should_preserve_python_runtime_vars_for_path_providers(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "providers"
+    command = [str((tmp_path / "path-provider" / "pyright-langserver").resolve()), "--stdio"]
+    base_env = {
+        "PATH": "system-path",
+        "PYTHONHOME": r"C:\custom-python",
+        "PYTHONPATH": r"C:\custom-python\Lib",
+        "VIRTUAL_ENV": r"C:\custom-venv",
+        "__PYVENV_LAUNCHER__": r"C:\custom-venv\python.exe",
+    }
+
+    env = provider_setup.managed_provider_env(
+        command,
+        base_env=base_env,
+        managed_root=root,
+    )
+
+    assert env == base_env
+
+
 @pytest.mark.parametrize(
     ("language", "binary_name", "expected_command"),
     [

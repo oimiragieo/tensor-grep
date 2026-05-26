@@ -1631,6 +1631,42 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
     return get_session_daemon_status(path)
 
 
+def _upgrade_running_session_daemon_snapshot(path: str = ".") -> dict[str, Any] | None:
+    try:
+        status = _doctor_session_daemon_status(path)
+    except Exception:
+        return None
+    if status.get("running") is not True:
+        return None
+    root = str(status.get("root") or "").strip()
+    if not root:
+        return None
+    return {"root": root}
+
+
+def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> str | None:
+    if not snapshot:
+        return None
+    root = str(snapshot.get("root") or "").strip()
+    if not root:
+        return None
+    try:
+        current = _doctor_session_daemon_status(root)
+    except Exception as exc:
+        current = {"running": False, "status_error": str(exc)}
+    if current.get("running") is True:
+        return None
+    try:
+        from tensor_grep.cli.session_daemon import start_session_daemon
+
+        started = start_session_daemon(root)
+    except Exception as exc:
+        return f"WARNING: session daemon was running before upgrade but restart failed for {root}: {exc}"
+    if started.get("running") is True:
+        return f"Session daemon restarted after upgrade for {root}."
+    return f"WARNING: session daemon was running before upgrade but did not restart for {root}."
+
+
 def _doctor_lsp_languages() -> list[str]:
     return supported_lsp_languages()
 
@@ -8947,6 +8983,7 @@ def upgrade() -> None:
         native_path: Path | None = None,
         native_assets: list[dict[str, str]] | None = None,
         bridge_paths: list[Path] | None = None,
+        daemon_root: str | None = None,
     ) -> Path:
         import textwrap
 
@@ -8971,6 +9008,7 @@ def upgrade() -> None:
             native_path_arg = sys.argv[5]
             native_assets = json.loads(sys.argv[6])
             bridge_paths = [Path(path) for path in json.loads(sys.argv[7])]
+            daemon_root = sys.argv[8] if len(sys.argv) > 8 else ""
             native_path = Path(native_path_arg) if native_path_arg else None
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -9327,6 +9365,66 @@ def upgrade() -> None:
                     messages.append(cleanup_payload)
                 return "\\n".join(messages)
 
+            def _restart_session_daemon_after_upgrade() -> str:
+                if not daemon_root:
+                    return ""
+                status_command = [
+                    sys.executable,
+                    "-m",
+                    "tensor_grep.cli.main",
+                    "session",
+                    "daemon",
+                    "status",
+                    daemon_root,
+                    "--json",
+                ]
+                start_command = [
+                    sys.executable,
+                    "-m",
+                    "tensor_grep.cli.main",
+                    "session",
+                    "daemon",
+                    "start",
+                    daemon_root,
+                    "--json",
+                ]
+                try:
+                    status = subprocess.run(
+                        status_command,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if status.returncode == 0:
+                        try:
+                            if json.loads(status.stdout).get("running") is True:
+                                return ""
+                        except json.JSONDecodeError:
+                            pass
+                    started = subprocess.run(
+                        start_command,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if started.returncode == 0:
+                        return "Session daemon restarted after scheduled upgrade for " + daemon_root + "."
+                    error = (started.stderr or started.stdout or "").strip()
+                    return (
+                        "WARNING: session daemon was running before scheduled upgrade but "
+                        "restart failed for "
+                        + daemon_root
+                        + (": " + error if error else ".")
+                    )
+                except Exception as exc:
+                    return (
+                        "WARNING: session daemon was running before scheduled upgrade but "
+                        "restart failed for "
+                        + daemon_root
+                        + ": "
+                        + str(exc)
+                    )
+
             ok, method, payload = _run_attempts()
             if ok:
                 verified, version = _verify_installed_version(expected_version)
@@ -9350,6 +9448,9 @@ def upgrade() -> None:
                 text += "\\nVerified tensor-grep " + version + "."
                 if native_payload:
                     text += "\\n" + native_payload
+                daemon_payload = _restart_session_daemon_after_upgrade()
+                if daemon_payload:
+                    text += "\\n" + daemon_payload
                 if payload:
                     text += "\\n" + payload
                 log_path.write_text(text, encoding="utf-8")
@@ -9379,6 +9480,7 @@ def upgrade() -> None:
                 str(native_path) if native_path is not None else "",
                 native_asset_payload,
                 bridge_payload,
+                daemon_root or "",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -9397,6 +9499,7 @@ def upgrade() -> None:
     typer.echo("Upgrading tensor-grep to the latest version...")
 
     try:
+        daemon_snapshot = _upgrade_running_session_daemon_snapshot()
         previous_version = _installed_version()
         latest_version = _latest_pypi_tensor_grep_version()
         exact_latest_requested = False
@@ -9452,6 +9555,9 @@ def upgrade() -> None:
                 typer.echo(output)
         if native_refresh_message:
             typer.echo(native_refresh_message)
+        daemon_restart_message = _restart_session_daemon_after_upgrade(daemon_snapshot)
+        if daemon_restart_message:
+            typer.echo(daemon_restart_message)
 
     except RuntimeError as e:
         if _looks_like_windows_self_update_lock(str(e)):
@@ -9492,6 +9598,11 @@ def upgrade() -> None:
                 native_path=native_path,
                 native_assets=native_assets,
                 bridge_paths=bridge_paths,
+                daemon_root=(
+                    str(daemon_snapshot.get("root"))
+                    if isinstance(daemon_snapshot, dict) and daemon_snapshot.get("root")
+                    else None
+                ),
             )
             typer.echo(
                 "Windows is still using tg.exe, so the upgrade was scheduled in the background."

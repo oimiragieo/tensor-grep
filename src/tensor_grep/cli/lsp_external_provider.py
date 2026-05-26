@@ -1118,11 +1118,21 @@ def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
             or "_sre" in item.lower()
             or "abi mismatch" in item.lower()
         ]
+        other_stderr = [item for item in stderr_tail if item not in provider_warnings]
         if provider_warnings:
             status["provider_warnings"] = provider_warnings[-3:]
-            status["stderr_tail"] = provider_warnings[-3:]
-            status["stderr_tail_suppressed"] = False
+            status["provider_warning_status"] = "non_current_diagnostic"
+            status["provider_warning_remediation"] = (
+                "Managed provider proof succeeded, but provider stderr previously reported a "
+                "Python runtime or stdlib mismatch. Re-run `tg lsp-setup` after clearing "
+                "inherited PYTHONHOME/PYTHONPATH or inspect `tg doctor --with-lsp --json`."
+            )
+            status["stderr_tail"] = []
+            status["stderr_tail_suppressed"] = True
+            if other_stderr:
+                status["provider_recent_stderr"] = other_stderr[-3:]
         elif stderr_tail:
+            status["provider_recent_stderr"] = stderr_tail[-3:]
             status["stderr_tail"] = []
             status["stderr_tail_suppressed"] = True
         return status

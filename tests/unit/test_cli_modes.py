@@ -7695,6 +7695,98 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
 
 
+def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypatch):
+    calls: list[list[str]] = []
+    daemon_statuses = iter([
+        {
+            "running": True,
+            "root": r"C:\dev\projects\tensor-grep",
+            "host": "127.0.0.1",
+            "port": 43123,
+            "pid": 9001,
+        },
+        {
+            "running": False,
+            "root": r"C:\dev\projects\tensor-grep",
+            "stale_metadata": True,
+        },
+    ])
+    restarted: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
+        raise AssertionError("pip fallback should not be used when uv succeeds")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda _path: next(daemon_statuses),
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.start_session_daemon",
+        lambda path: (
+            restarted.append(path) or {"running": True, "root": path, "auto_started": True}
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "uv"
+    assert restarted == [r"C:\dev\projects\tensor-grep"]
+    assert "Session daemon restarted after upgrade" in result.stdout
+
+
+def test_upgrade_does_not_start_session_daemon_when_none_was_running(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:2] == ["python", "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
+        raise AssertionError("pip fallback should not be used when uv succeeds")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda _path: {"running": False, "root": r"C:\dev\projects\tensor-grep"},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.start_session_daemon",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("upgrade should not start a daemon that was not already running")
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "uv"
+    assert "Session daemon restarted after upgrade" not in result.stdout
+
+
 def test_upgrade_pins_exact_latest_pypi_version_when_local_metadata_is_stale(monkeypatch):
     calls: list[list[str]] = []
 
@@ -9455,6 +9547,67 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     assert "Windows is still using tg.exe" in result.output
     assert "Wait a few seconds, then run `tg --version` again." in result.output
     assert "Upgrade log:" in result.output
+
+
+def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
+    monkeypatch, tmp_path
+):
+    popen_calls: list[list[str]] = []
+    daemon_root = r"C:\dev\projects\tensor-grep"
+    locked_error = (
+        "failed to remove file `C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
+        "The process cannot access the file because it is being used by another process. "
+        "(os error 32)"
+    )
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        command = list(cmd)
+        if command[0] == "uv":
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        if command[:3] == ["python", "-m", "pip"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        raise AssertionError(f"unexpected command: {command}")
+
+    class _FakePopen:
+        def __init__(
+            self,
+            cmd,
+            stdout=None,
+            stderr=None,
+            stdin=None,
+            close_fds=None,
+            creationflags=0,
+        ):
+            popen_calls.append([str(part) for part in cmd])
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.32.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda _path: {"running": True, "root": daemon_root},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert popen_calls
+    helper_code = popen_calls[0][2]
+    compile(helper_code, "<scheduled-upgrade-helper>", "exec")
+    assert popen_calls[0][-1] == daemon_root
+    assert "def _restart_session_daemon_after_upgrade" in helper_code
+    assert '"daemon"' in helper_code
+    assert '"start"' in helper_code
+    assert "daemon_root" in helper_code
 
 
 def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch, tmp_path):

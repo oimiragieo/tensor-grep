@@ -440,7 +440,7 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
     assert "not_lsp_proof_reason" not in status
 
 
-def test_provider_status_verify_health_success_preserves_sre_stderr_warning(
+def test_provider_status_verify_health_success_suppresses_sre_stderr_tail(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -473,9 +473,82 @@ def test_provider_status_verify_health_success_preserves_sre_stderr_warning(
     assert status["health_status"] == "ready"
     assert status["lsp_proof"] is True
     assert status["last_error"] is None
-    assert status["stderr_tail"] == ["SRE module mismatch traceback"]
+    assert status["stderr_tail"] == []
     assert status["provider_warnings"] == ["SRE module mismatch traceback"]
-    assert status["stderr_tail_suppressed"] is False
+    assert status["provider_warning_status"] == "non_current_diagnostic"
+    assert "PYTHONHOME" in status["provider_warning_remediation"]
+    assert status["stderr_tail_suppressed"] is True
+
+
+def test_provider_status_verify_health_success_preserves_other_suppressed_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        self.capabilities = {"documentSymbolProvider": True}
+        self._stderr_tail = ["provider indexed workspace"]
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
+    monkeypatch.setattr(
+        ExternalLSPClient,
+        "request",
+        lambda self, method, params: [{"name": "tg_lsp_health_probe", "kind": 12}],
+    )
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.25,
+    )
+
+    assert status["lsp_proof"] is True
+    assert status["stderr_tail"] == []
+    assert status["provider_recent_stderr"] == ["provider indexed workspace"]
+    assert status["stderr_tail_suppressed"] is True
+
+
+def test_provider_status_verify_health_failure_preserves_sre_stderr_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    def _fake_start(self: ExternalLSPClient) -> None:
+        self.capabilities = {"documentSymbolProvider": True}
+        self._stderr_tail = ["AssertionError: SRE module mismatch"]
+
+    def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
+        raise LSPTransportError("semantic probe failed")
+
+    monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
+    monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
+    monkeypatch.setattr(ExternalLSPClient, "request", _fake_request)
+    monkeypatch.setattr(ExternalLSPClient, "stop", lambda self: None)
+
+    status = ExternalLSPProviderManager().provider_status(
+        language="python",
+        workspace_root=tmp_path,
+        verify_health=True,
+        probe_timeout_seconds=0.25,
+    )
+
+    assert status["health_status"] == "unhealthy"
+    assert status["lsp_proof"] is False
+    assert status["stderr_tail"] == ["AssertionError: SRE module mismatch"]
+    assert "not_lsp_proof_reason" in status
 
 
 def test_provider_status_verify_health_applies_probe_budget_to_initialize(
