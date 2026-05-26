@@ -10,18 +10,19 @@ The current tagged state is `v1.13.21`, and the latest complete public PyPI/rele
 
 Current release facts:
 
-- Latest verified release proof PR: #231 `fix: harden dogfood timeout reporting`
-- Latest verified release proof merge commit: `6525853 fix: harden dogfood timeout reporting`
-- Latest verified release proof commit: `c41d475 chore(release): v1.13.20 [skip ci]`
-- Latest verified proof public release commit: `c41d475 chore(release): v1.13.20 [skip ci]`
-- Latest merged fix commit: `6525853 fix: harden dogfood timeout reporting`
+- Latest verified release proof PR: #233 `fix: harden upgrade daemon and lsp diagnostics`
+- Latest verified release proof merge commit: `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
+- Latest verified release proof commit: `1b62da7 chore(release): v1.13.21 [skip ci]`
+- Latest verified proof public release commit: `1b62da7 chore(release): v1.13.21 [skip ci]`
+- Latest merged fix commit: `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
-- Latest verified proof public release PR: #231 `fix: harden dogfood timeout reporting`
-- Latest verified proof public merge commit: `6525853 fix: harden dogfood timeout reporting`
+- Latest verified proof public release PR: #233 `fix: harden upgrade daemon and lsp diagnostics`
+- Latest verified proof public merge commit: `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
 - `v1.11.0` main CI run `25834508800` passed pre-release checks and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `26437847778`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
-- Main dynamic/CodeQL run `26437847528`: passed on the `6525853` merge commit.
-- Release commit `c41d475`: published `v1.13.20` with `[skip ci]` after main CI completed.
+- Main CI run `26450640497`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- Main dynamic/CodeQL run `26450639894`: passed on the `b69bc5b` merge commit.
+- Release commit `1b62da7`: published `v1.13.21` with `[skip ci]` after main CI completed.
+- Previous `v1.13.20` proof runs `26437847778` and `26437847528` remain retained as historical release proof.
 - Previous `v1.13.19` proof runs `26431129535` and `26431129155` remain retained as historical release proof.
 - Previous `v1.13.18` proof runs `26425383595` and `26425914836` remain retained as historical release proof.
 - Previous `v1.13.15` proof runs `26386327552`, `26386327168`, `26386976717`, and `26386978124` remain retained as historical release proof.
@@ -29,8 +30,8 @@ Current release facts:
 - Previous verified release CI run `25951521056`: passed pre-release checks, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
 - Previous CodeQL run `25951813292`: passed on the v1.12.14 release line.
-- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.20 tg --version` reports `tensor-grep 1.13.20`.
-- GitHub release assets for `v1.13.20` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- PyPI pinned public install: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.21 tg --version` reports `tensor-grep 1.13.21`.
+- GitHub release assets for `v1.13.21` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
 - Public `v1.12.14` dogfood verified post-release-safe docs governance, public launcher resolution, bounded capsule call-site evidence, Windows subprocess bridge ranking hardening, agent output-budget hygiene, AST CLI contract hygiene, bounded map/context output, `tg run --pattern`, root cold rg-shaped routing, accepted native/dev CLI flag alignment, `tg new --base-dir`, edit-plan budget flags, explicit rg JSON Lines routing via `--format rg --json`, explicit JSON/NDJSON schema positioning, and rg flag-contract aliases; public managed GPU remains not promotion-ready and falls back to CPU or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
 - Current retained release-baseline commits: `361e0db fix: harden public GPU unavailable routing`, `2100122 fix: harden release docs stamp governance`, and `87d4ca4 fix: accelerate fixed multi-pattern native search`.
 - Historical `v1.10.10` launcher dogfood: direct `C:\Users\oimir\.tensor-grep\bin\tg.exe --version`, fresh `cmd`, unprofiled `pwsh`, and Python `subprocess.run(["tg", "--version"])` all reported `tg 1.10.10` after the explicit repair command.
