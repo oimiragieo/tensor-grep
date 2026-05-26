@@ -4885,7 +4885,11 @@ def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tm
     assert payload["ask_user_before_editing"]["required"] is False
     ambiguity = payload["ambiguity"]
     assert ambiguity["status"] == "tie_resolved"
-    assert ambiguity["resolved_by"] == "validation"
+    assert ambiguity["resolved_by"] == "targeted-validation"
+    assert any(
+        command.startswith("uv run pytest tests/test_payments.py")
+        for command in ambiguity["resolution_evidence"]
+    )
     assert ambiguity["requires_confirmation"] is False
     assert ambiguity["tie_count"] == 1
     assert ambiguity["tied_alternative_targets"][0]["file"] == str(paths["typescript"].resolve())

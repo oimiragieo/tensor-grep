@@ -327,6 +327,113 @@ def test_tg_search_context_rows_do_not_inflate_header_count():
     assert "  3: after" in out
 
 
+def test_tg_search_accepts_query_alias_and_bounds_text_output():
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli import mcp_server
+
+    backend = RipgrepBackend()
+    backend.search = MagicMock(
+        return_value=SearchResult(
+            matches=[
+                MatchLine(line_number=1, text="ERROR one", file="a.log"),
+                MatchLine(line_number=2, text="ERROR two", file="a.log"),
+                MatchLine(line_number=3, text="ERROR three", file="a.log"),
+                MatchLine(line_number=1, text="ERROR four", file="b.log"),
+            ],
+            matched_file_paths=["a.log", "b.log"],
+            total_files=2,
+            total_matches=4,
+        )
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = backend
+        pipeline.selected_backend_name = "RustCoreBackend"
+        pipeline.selected_backend_reason = "native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search(
+            pattern=None,
+            query="ERROR",
+            path=".",
+            max_files=1,
+            max_results=2,
+        )
+
+    backend.search.assert_called_once()
+    assert backend.search.call_args.args[1] == "ERROR"
+    assert "Found 4 matches across 2 files:" in out
+    assert "\na.log:" in out
+    assert "\nb.log:" not in out
+    assert "  1: ERROR one" in out
+    assert "  2: ERROR two" in out
+    assert "  3: ERROR three" not in out
+    assert "... output truncated to 2 results across 1 files" in out
+
+
+def test_tg_search_can_return_bounded_structured_json():
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli import mcp_server
+
+    backend = RipgrepBackend()
+    backend.search = MagicMock(
+        return_value=SearchResult(
+            matches=[
+                MatchLine(line_number=1, text="ERROR one", file="a.log"),
+                MatchLine(line_number=2, text="ERROR two", file="a.log"),
+                MatchLine(line_number=1, text="ERROR three", file="b.log"),
+            ],
+            matched_file_paths=["a.log", "b.log"],
+            total_files=2,
+            total_matches=3,
+            routing_backend="RipgrepBackend",
+            routing_reason="rg_json",
+        )
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = backend
+        pipeline.selected_backend_name = "RipgrepBackend"
+        pipeline.selected_backend_reason = "rg_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search(
+            "ERROR",
+            ".",
+            max_files=1,
+            max_results=2,
+            structured_json=True,
+        )
+
+    payload = json.loads(out)
+    assert payload["pattern"] == "ERROR"
+    assert payload["path"] == "."
+    assert payload["total_matches"] == 3
+    assert payload["total_files"] == 2
+    assert payload["rendered_match_count"] == 2
+    assert payload["rendered_file_count"] == 1
+    assert payload["truncated"] is True
+    assert payload["omitted_matches"] == 1
+    assert payload["omitted_files"] == 1
+    assert payload["matches"] == [
+        {"file": "a.log", "line_number": 1, "text": "ERROR one"},
+        {"file": "a.log", "line_number": 2, "text": "ERROR two"},
+    ]
+    assert payload["routing"]["backend"] == "RipgrepBackend"
+
+
 def test_tg_search_uses_single_aggregate_ripgrep_search_for_cli_parity():
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
     from tensor_grep.cli import mcp_server

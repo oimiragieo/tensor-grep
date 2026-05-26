@@ -101,7 +101,7 @@ What `v1.13.15` closed:
 
 - PR #225 `fix: harden v1.13.14 dogfood contracts` shipped the release as merge commit `b0c7cf6 fix: harden v1.13.14 dogfood contracts` and release commit `d209528 chore(release): v1.13.15 [skip ci]`.
 - main CI run `26386327552` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26386327168`, release-commit dynamic run `26386976717`, and Dependency Graph run `26386978124` passed.
-- The release closed the `v1.13.14` dogfood contract bugs: search/MCP count parity, implicit no-path `--format rg` path output, LSP proof consistency, bounded agent-facing map/session/MCP defaults with `scan_limit`, daemon cache stats, edit-plan/blast-radius headline aliases, current positional help/docs, checkpoint path hints, and local oversized benchmark-artifact test memory safety.
+- The release closed the `v1.13.14` dogfood contract bugs around implicit no-path `--format rg` path output, LSP proof consistency, bounded agent-facing map/session/MCP defaults with `scan_limit`, daemon cache status schema, edit-plan/blast-radius headline aliases, current positional help/docs, checkpoint path hints, and local oversized benchmark-artifact test memory safety. MCP/CLI search count parity completed in `v1.13.16`.
 
 What `v1.13.14` closed:
 
@@ -399,11 +399,11 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.21` follow-up:
 
-- harden built-in `tg dogfood` readiness so the wrapper has its own timeout, writes a failure JSON report before external watchdogs kill it, passes an incremental child `--output` to `scripts/agent_readiness.py`, and cleans up the launched child process tree by PID only
-- preserve the `v1.13.19` daemon-cache recovery: top-level native-provider `context-render` / `edit-plan` requests that route through an already-running daemon must write response-cache entries on the first capped implicit-session call and hit on repeated identical calls, while complete sessions with `refresh_on_stale` must still refresh when a genuinely new file appears
-- keep optional LSP proof honest: top-level `lsp_proof` must be derived from final rows or explicit provider responses, provider-status proof must not contradict result rows, and provider stderr such as Python SRE/ABI mismatch warnings must remain visible when it can explain degraded proof
-- keep agent-facing repo maps bounded by default: `tg map --json`, `tg session open`, MCP `tg_repo_map`, and MCP `tg_session_open` should default to the agent-safe 512-file cap, report `scan_limit`, skip generated/vendor roots such as `.venv`, `bench_data`, `gpu_bench_data`, `many_files`, and `.tmp_*`, and expose daemon response-cache byte stats with an explicit daemon-routed session scope
-- populate headline JSON aliases for agent consumers: `edit-plan` should expose top-level `plan`, `primary_target`, and `edit_order`; `blast-radius` should expose `blast_radius_score` and `affected_files`; deprecated `--query` and `--symbol` forms stay accepted during 1.13.x but current help/docs should show positional query and symbol forms
+- keep Windows public launcher routes contract-equivalent: tensor-grep-owned Python Scripts entrypoints ahead of the managed native front door are repair candidates, and Python/bootstrap `tg run` delegates to the managed native front door when present so advertised rewrite flags such as `--diff` do not drift by route
+- keep MCP `tg_search` bounded for agent use: callers may pass either `pattern` or `query`, cap output with `max_results` / `max_files`, and request `structured_json` when they need machine-readable bounded rows instead of text
+- keep capsule tie resolution concrete: unresolved equal-confidence alternatives require confirmation; validation-resolved ties should report `resolved_by = "targeted-validation"` plus the exact validation command evidence, and LSP-resolved ties require explicit provider-response proof
+- keep classify UX path-based until literal/stdin mode exists: `tg classify TEXT --format json` should fail with a clear file-path error instead of silent empty output
+- keep `tg dogfood --output PATH` writes under the explicit artifact location: the wrapper writes the dogfood report plus a sibling `.agent-readiness.json` child report; repo-side `artifacts/agent_readiness` output is reserved for runs without explicit `--output`
 - harden the `v1.12.33` dogfood edge cases without broadening claims: native/root search accepts the rg config-override sequence `--column --no-column`, readiness now reports a stale repo-local `uv run tg` warmup as an unsynchronized entrypoint with a refresh command, and the ripgrep-binary-resolution natural-language hardcase stays pinned as a capsule regression test
 - harden `v1.12.15` dogfood contract gaps: public native `tg search` must accept editor-facing `--vimgrep` and `--path-separator`, native-regex hot-query gates use absolute jitter for millisecond-scale rows, benchmark scripts refuse stale in-tree native binaries by default unless `--allow-claim-unsafe-launcher` marks the run as exploratory, and optional LSP provider routes must expose `lsp_proof` / fallback status instead of treating provider availability as proof of semantic navigation
 - continue hardening `tg agent` / Actionable Context Capsule ranking for ambiguous multi-language queries, token economy, follow-up reads, call-site evidence, and validation evidence as an opt-in agent workflow, not a replacement for raw search output
@@ -528,7 +528,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This checks the current `v1.13.21` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs.
+This checks the current `v1.13.21` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs; with `--output artifacts/dogfood_readiness.json`, the nested readiness report is written beside it as `artifacts/dogfood_readiness.agent-readiness.json`.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan and workspace-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories, and unbounded searches against a parent containing multiple child project roots, must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -935,7 +935,7 @@ To use it with Claude Desktop, just add this to your `claude_desktop_config.json
 
 Available MCP tools now include:
 - `tg_mcp_capabilities` (reports which MCP tools are local, embedded-safe, or native-required)
-- `tg_search`
+- `tg_search` (accepts `pattern` or `query`; supports `max_results`, `max_files`, and `structured_json` for bounded agent output)
 - `tg_ast_search`
 - `tg_classify_logs`
 - `tg_devices` (returns routable GPU IDs and VRAM inventory; supports JSON output)

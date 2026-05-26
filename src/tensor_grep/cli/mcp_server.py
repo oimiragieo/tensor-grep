@@ -913,6 +913,17 @@ def _routing_summary(result: SearchResult) -> str:
     )
 
 
+def _routing_payload(result: SearchResult) -> dict[str, object]:
+    return {
+        "backend": result.routing_backend or "unknown",
+        "reason": result.routing_reason or "unknown",
+        "gpu_device_ids": result.routing_gpu_device_ids,
+        "gpu_chunk_plan_mb": result.routing_gpu_chunk_plan_mb,
+        "distributed": result.routing_distributed,
+        "workers": result.routing_worker_count,
+    }
+
+
 def _selected_gpu_execution_defaults(
     gpu_device_ids: list[int], gpu_chunk_plan_mb: list[tuple[int, int]]
 ) -> tuple[bool, int]:
@@ -1937,7 +1948,7 @@ def tg_symbol_blast_radius_render(
 
 @mcp.tool()  # type: ignore
 def tg_search(
-    pattern: str,
+    pattern: str | None = None,
     path: str = ".",
     case_sensitive: bool = False,
     ignore_case: bool = False,
@@ -1945,15 +1956,20 @@ def tg_search(
     word_regexp: bool = False,
     context: int | None = None,
     max_count: int | None = None,
+    max_results: int | None = None,
+    max_files: int | None = None,
     count_matches: bool = False,
     glob: str | None = None,
     type_filter: str | None = None,
+    query: str | None = None,
+    structured_json: bool = False,
 ) -> str:
     """
     Search files for a regex pattern using tensor-grep's high-speed GPU or CPU engine.
 
     Args:
         pattern: A regular expression or exact string used for searching.
+        query: Alias for pattern, accepted for agent callers that use query-shaped tools.
         path: A file or directory to search. Defaults to current directory.
         case_sensitive: Execute the search case sensitively.
         ignore_case: Search case insensitively (-i).
@@ -1961,10 +1977,18 @@ def tg_search(
         word_regexp: Only show matches surrounded by word boundaries (-w).
         context: Show NUM lines before and after each match (-C).
         max_count: Limit the number of matching lines per file (-m).
+        max_results: Maximum materialized result rows to return. Defaults to 150.
+        max_files: Maximum files to render. Defaults to 15.
         count_matches: Just count the matches using ultra-fast Rust backend (-c).
         glob: Include/exclude files matching glob (e.g. '*.py').
         type_filter: Only search files matching TYPE (e.g. 'py', 'js').
+        structured_json: Return bounded structured JSON instead of text.
     """
+    search_pattern = pattern or query
+    if not search_pattern:
+        return "Search failed: either pattern or query is required."
+    rendered_file_limit = max(0, max_files if max_files is not None else 15)
+    rendered_result_limit = max(0, max_results if max_results is not None else 150)
     config = SearchConfig(
         case_sensitive=case_sensitive,
         ignore_case=ignore_case,
@@ -1994,13 +2018,13 @@ def tg_search(
     )
     try:
         if isinstance(backend, RipgrepBackend):
-            all_results = backend.search(path, pattern, config=config)
+            all_results = backend.search(path, search_pattern, config=config)
             all_results.routing_backend = all_results.routing_backend or selected_backend_name
             all_results.routing_reason = all_results.routing_reason or selected_backend_reason
         else:
             scanner = DirectoryScanner(config)
             for current_file in scanner.walk(path):
-                result = backend.search(current_file, pattern, config=config)
+                result = backend.search(current_file, search_pattern, config=config)
                 all_results.matches.extend(result.matches)
                 all_results.matched_file_paths.extend(result.matched_file_paths)
                 _merge_count_metadata(all_results, result)
@@ -2017,12 +2041,79 @@ def tg_search(
         _finalize_aggregate_result(all_results)
 
         if all_results.is_empty:
-            return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
+            if structured_json:
+                return json.dumps(
+                    {
+                        "pattern": search_pattern,
+                        "path": path,
+                        "total_matches": 0,
+                        "total_files": all_results.total_files,
+                        "rendered_match_count": 0,
+                        "rendered_file_count": 0,
+                        "matches": [],
+                        "truncated": False,
+                        "omitted_matches": 0,
+                        "omitted_files": 0,
+                        "routing": _routing_payload(all_results),
+                    },
+                    indent=2,
+                )
+            return f"No matches found for '{search_pattern}' in {path}.\n{_routing_summary(all_results)}"
 
         if count_matches:
             return (
                 f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
                 f"{_routing_summary(all_results)}"
+            )
+
+        by_file: dict[str, list[Any]] = {}
+        for match in all_results.matches:
+            if match.file not in by_file:
+                by_file[match.file] = []
+            by_file[match.file].append(match)
+
+        rendered_by_file: dict[str, list[Any]] = {}
+        rendered_match_count = 0
+        if by_file:
+            for filepath, matches in by_file.items():
+                if filepath not in rendered_by_file:
+                    if len(rendered_by_file) >= rendered_file_limit:
+                        continue
+                    rendered_by_file[filepath] = []
+                for match in matches:
+                    if rendered_match_count >= rendered_result_limit:
+                        break
+                    rendered_by_file[filepath].append(match)
+                    rendered_match_count += 1
+                if rendered_match_count >= rendered_result_limit:
+                    break
+
+        rendered_file_count = len(rendered_by_file)
+        omitted_matches = max(0, all_results.total_matches - rendered_match_count)
+        omitted_files = max(0, all_results.total_files - rendered_file_count)
+        truncated = omitted_matches > 0 or omitted_files > 0
+
+        if structured_json:
+            payload_matches = [
+                {"file": filepath, "line_number": match.line_number, "text": match.text.strip()}
+                for filepath, matches in rendered_by_file.items()
+                for match in matches
+            ]
+            return json.dumps(
+                {
+                    "pattern": search_pattern,
+                    "path": path,
+                    "total_matches": all_results.total_matches,
+                    "total_files": all_results.total_files,
+                    "rendered_match_count": len(payload_matches),
+                    "rendered_file_count": rendered_file_count,
+                    "matches": payload_matches,
+                    "truncated": truncated,
+                    "omitted_matches": omitted_matches,
+                    "omitted_files": omitted_files,
+                    "routing": _routing_payload(all_results),
+                },
+                indent=2,
             )
 
         # Format the results into a readable string for the LLM
@@ -2031,34 +2122,35 @@ def tg_search(
             _routing_summary(all_results),
         ]
 
-        # Group by file
-        by_file: dict[str, list[Any]] = {}
-        for match in all_results.matches:
-            if match.file not in by_file:
-                by_file[match.file] = []
-            by_file[match.file].append(match)
-
-        if by_file:
-            for filepath, matches in list(by_file.items())[
-                :15
-            ]:  # Limit to first 15 files to prevent context explosion
+        if rendered_by_file:
+            for filepath, matches in rendered_by_file.items():
                 output.append(f"\n{filepath}:")
-                for m in matches[:10]:  # Limit to 10 matches per file
+                for m in matches:
                     output.append(f"  {m.line_number}: {m.text.strip()}")
 
-            if len(by_file) > 15:
-                output.append(f"\n... and {len(by_file) - 15} more files.")
+            if truncated:
+                output.append(
+                    f"\n... output truncated to {rendered_match_count} results across "
+                    f"{rendered_file_count} files; omitted {omitted_matches} matches "
+                    f"across {omitted_files} files."
+                )
         elif all_results.match_counts_by_file:
-            for filepath, count in list(all_results.match_counts_by_file.items())[:15]:
+            rendered_counts = list(all_results.match_counts_by_file.items())[:rendered_file_limit]
+            for filepath, count in rendered_counts:
                 output.append(f"\n{filepath}:")
                 output.append(f"  count={count}")
-            if len(all_results.match_counts_by_file) > 15:
-                output.append(f"\n... and {len(all_results.match_counts_by_file) - 15} more files.")
+            omitted_count_files = max(
+                0, len(all_results.match_counts_by_file) - len(rendered_counts)
+            )
+            if omitted_count_files:
+                output.append(f"\n... and {omitted_count_files} more files.")
         elif all_results.matched_file_paths:
-            for filepath in all_results.matched_file_paths[:15]:
+            rendered_paths = all_results.matched_file_paths[:rendered_file_limit]
+            for filepath in rendered_paths:
                 output.append(f"\n{filepath}:")
-            if len(all_results.matched_file_paths) > 15:
-                output.append(f"\n... and {len(all_results.matched_file_paths) - 15} more files.")
+            omitted_path_files = max(0, len(all_results.matched_file_paths) - len(rendered_paths))
+            if omitted_path_files:
+                output.append(f"\n... and {omitted_path_files} more files.")
 
         return "\n".join(output)
 

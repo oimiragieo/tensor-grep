@@ -893,6 +893,7 @@ def test_main_entry_should_route_run_to_full_cli(monkeypatch):
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "run", "ERROR", ".", "--lang", "python"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: seen.update({"full_cli": True}))
     monkeypatch.setattr(
         bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
@@ -901,6 +902,35 @@ def test_main_entry_should_route_run_to_full_cli(monkeypatch):
     bootstrap.main_entry()
 
     assert seen == {"full_cli": True}
+
+
+def test_main_entry_should_delegate_run_to_managed_native_when_available(monkeypatch, tmp_path):
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native tg", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "run", "--help"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+    monkeypatch.setattr(
+        bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
+    )
+
+    def _fake_run(command, check=False):
+        seen["command"] = [str(part) for part in command]
+        seen["check"] = check
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {
+        "command": [str(native_tg), "run", "--help"],
+        "check": False,
+    }
 
 
 def test_main_entry_should_route_test_to_full_cli(monkeypatch):

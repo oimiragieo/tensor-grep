@@ -562,6 +562,11 @@ def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
     return int(result.returncode)
 
 
+def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
+    result = subprocess.run([binary_name, *argv], check=False)
+    return int(result.returncode)
+
+
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
     result = subprocess.run([binary_name, *search_args], check=False)
     return int(result.returncode)
@@ -596,7 +601,14 @@ def main_entry() -> None:
         return
 
     if argv and argv[0] in {"run", "scan", "test", "ast-info"}:
-        if (argv[0] in {"run", "test", "ast-info"}) or (
+        if argv[0] == "run":
+            native_binary_path = resolve_native_tg_binary()
+            native_binary = str(native_binary_path) if native_binary_path else None
+            if native_binary is not None:
+                raise SystemExit(_run_native_tg_command(native_binary, argv))
+            _run_full_cli()
+            return
+        if (argv[0] in {"test", "ast-info"}) or (
             argv[0] == "scan" and _scan_requires_full_cli(argv[1:])
         ):
             _run_full_cli()

@@ -224,6 +224,42 @@ def test_capsule_lsp_boost_is_feature_gated(
     assert payload["context_consistency"]["lsp_confidence_boost_eligible"] is False
 
 
+def test_capsule_validation_resolved_tie_cites_targeted_validation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    primary_file = tmp_path / "payments.py"
+    alternative_file = tmp_path / "billing.py"
+    primary_file.write_text("def create_invoice():\n    return None\n", encoding="utf-8")
+    alternative_file.write_text("def create_invoice():\n    return None\n", encoding="utf-8")
+    monkeypatch.delenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, raising=False)
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render",
+        lambda *args, **kwargs: _context_payload(
+            primary_file=primary_file.resolve(),
+            alternative_file=alternative_file.resolve(),
+            lsp_primary=False,
+            include_validation=True,
+        ),
+    )
+
+    payload = agent_capsule.build_agent_capsule(
+        "change create_invoice behavior",
+        tmp_path,
+        include_blast_radius=False,
+        max_tokens=None,
+    )
+
+    assert payload["ambiguity"]["status"] == "tie_resolved"
+    assert payload["ambiguity"]["resolved_by"] == "targeted-validation"
+    assert payload["ambiguity"]["resolution_evidence"] == ["python -m pytest tests/test_invoice.py"]
+    assert (
+        payload["context_consistency"]["alternative_confidence_tie_resolved_by"]
+        == "targeted-validation"
+    )
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
 def test_capsule_lsp_boost_keeps_confirmation_when_tied_alternative_is_lsp_backed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

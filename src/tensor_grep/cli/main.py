@@ -142,7 +142,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg agent PATH "change invoice tax"`
 - `tg scan --config sgconfig.yml`
 - `tg doctor --with-lsp`
-- `tg dogfood --output artifacts/agent_readiness.json`
+- `tg dogfood --output artifacts/dogfood_readiness.json`
 - `tg repair-launcher --allow-foreign-rename`
 - `tg mcp`
 
@@ -8160,6 +8160,15 @@ def classify(
         _enrich_classifications,
     )
 
+    classify_path = Path(file_path).expanduser()
+    if not classify_path.exists():
+        typer.echo(
+            "Error: classify expects a file path; --text/stdin literal classification "
+            f"is not supported yet. Received: {file_path}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     reader = FallbackReader()
     lines = list(reader.read_lines(file_path))
     if not lines:
@@ -8656,7 +8665,7 @@ def dogfood(
     ),
     no_wsl_probe: bool = typer.Option(False, "--no-wsl-probe", help="Skip the optional WSL probe."),
 ) -> None:
-    """Run the agent-readiness dogfood gate; writes only probe artifacts and --output."""
+    """Run the agent-readiness dogfood gate; writes only explicit --output and a sibling readiness report."""
     from tensor_grep.cli.dogfood import run_dogfood_readiness
     from tensor_grep.cli.progress import normalize_progress_mode
 
