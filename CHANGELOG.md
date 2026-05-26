@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.13.21 (2026-05-26)
+
+### Bug Fixes
+
+- Harden upgrade daemon and lsp diagnostics
+  ([#233](https://github.com/oimiragieo/tensor-grep/pull/233),
+  [`b69bc5b`](https://github.com/oimiragieo/tensor-grep/commit/b69bc5b1f140ed8b0226df04480956c0425c86c4))
+
+### Documentation
+
+- Refresh v1.13.20 release proof
+  ([`17c311c`](https://github.com/oimiragieo/tensor-grep/commit/17c311c7d023a0339a35f88b23798f8643caa8ac))
+
+
 ## v1.13.20 (2026-05-26)
 
 ### Bug Fixes
