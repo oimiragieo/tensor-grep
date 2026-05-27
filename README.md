@@ -413,7 +413,7 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.23` follow-up:
 
-- keep Windows public launcher routes contract-equivalent: `tg repair-launcher` removes verified tensor-grep-owned Python Scripts entrypoints ahead of the managed native front door, and Python/bootstrap `tg run` delegates to the managed native front door when present so advertised rewrite flags such as `--diff` do not drift by route
+- keep Windows public launcher routes contract-equivalent: `tg repair-launcher` removes verified tensor-grep-owned Python Scripts entrypoints and backs up self-identifying orphaned tensor-grep Python Scripts entrypoints ahead of the managed native front door, and Python/bootstrap `tg run` delegates to the managed native front door when present so advertised rewrite flags such as `--diff` do not drift by route
 - keep MCP `tg_search` bounded for agent use: callers may pass either `pattern` or `query`, cap output with `max_results` / `max_files`, and request `structured_json` when they need machine-readable bounded rows instead of text
 - keep capsule tie resolution concrete: unresolved equal-confidence alternatives require confirmation; validation-resolved ties should report `resolved_by = "targeted-validation"` plus the exact validation command evidence, and LSP-resolved ties require explicit provider-response proof
 - keep classify UX path-based until literal/stdin mode exists: `tg classify TEXT --format json` should fail with a clear file-path error instead of silent empty output

@@ -8730,7 +8730,52 @@ def test_upgrade_does_not_remove_unowned_broken_python_scripts_launcher(
     assert [str(tool_python), "-m", "pip", "uninstall", "-y", "tensor-grep"] not in calls
 
 
-def test_upgrade_does_not_remove_readable_unowned_python_scripts_launcher(
+def test_upgrade_ignores_foreign_python_scripts_launcher(
+    monkeypatch,
+    tmp_path,
+):
+    native_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    tool_dir = tmp_path / "Python314" / "Scripts"
+    native_binary.parent.mkdir(parents=True)
+    tool_dir.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    tool_tg = tool_dir / "tg.exe"
+    tool_tg.write_text("foreign launcher", encoding="utf-8")
+    tool_python = tool_dir.parent / "python.exe"
+    tool_python.write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate == native_binary:
+            return "tg 0.33.0"
+        if candidate == tool_tg:
+            return "together 0.32.0"
+        return None
+
+    def _fake_run(cmd, capture_output=True, text=True, timeout=None, **_kwargs):
+        command = [str(part) for part in cmd]
+        calls.append(command)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", f"{tool_dir};{native_binary.parent}")
+    monkeypatch.setattr(cli_main, "_doctor_fresh_shell_path_value", lambda: str(tool_dir))
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    message = cli_main._remove_windows_stale_tensor_grep_python_launchers(
+        "0.33.0",
+        native_binary,
+    )
+
+    assert message is None
+    assert tool_tg.exists()
+    assert not list(tool_dir.glob("tg.exe.orphaned-tensor-grep-*.bak"))
+    assert calls == []
+
+
+def test_upgrade_backs_up_readable_unowned_tensor_grep_python_scripts_launcher(
     monkeypatch,
     tmp_path,
 ):
@@ -8783,8 +8828,11 @@ def test_upgrade_does_not_remove_readable_unowned_python_scripts_launcher(
     )
 
     assert message is not None
-    assert "package ownership could not be verified" in message
-    assert tool_tg.exists()
+    assert "Backed up orphaned tensor-grep Python Scripts launchers" in message
+    assert not tool_tg.exists()
+    backups = list(tool_dir.glob("tg.exe.orphaned-tensor-grep-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "manually copied tensor-grep-looking launcher"
     assert [str(tool_python), "-m", "pip", "show", "-f", "tensor-grep"] in calls
     assert [str(tool_python), "-m", "pip", "uninstall", "-y", "tensor-grep"] not in calls
 
@@ -8966,6 +9014,59 @@ def test_repair_launcher_removes_owned_python_scripts_entrypoint(monkeypatch, tm
     assert repaired["post_repair_version"] == "tg 0.33.0"
     assert not python_tg.exists()
     assert [str(python_executable), "-m", "pip", "uninstall", "-y", "tensor-grep"] in calls
+
+
+def test_repair_launcher_backs_up_orphaned_tensor_grep_python_scripts_entrypoint(
+    monkeypatch,
+    tmp_path,
+):
+    install_dir = tmp_path / ".tensor-grep"
+    native_binary = install_dir / "bin" / "tg.exe"
+    scripts_dir = tmp_path / "Python314" / "Scripts"
+    native_binary.parent.mkdir(parents=True)
+    scripts_dir.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    python_tg = scripts_dir / "tg.exe"
+    python_tg.write_text("orphaned tensor-grep launcher", encoding="utf-8")
+    python_executable = scripts_dir.parent / "python.exe"
+    python_executable.write_text("", encoding="utf-8")
+
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate == native_binary:
+            return "tg 0.33.0"
+        if candidate == python_tg:
+            return "tensor-grep 0.32.0"
+        return None
+
+    def _fake_run(cmd, capture_output=True, text=True, timeout=None, **_kwargs):
+        command = [str(part) for part in cmd]
+        if command[:5] == [str(python_executable), "-m", "pip", "show", "-f"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                stdout="",
+                stderr="WARNING: Package(s) not found: tensor-grep\n",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", f"{scripts_dir};{native_binary.parent}")
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr(cli_main, "_doctor_installed_version", lambda: "0.33.0")
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+    monkeypatch.setattr(cli_main, "_doctor_fresh_shell_path_value", lambda: "")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    repaired = cli_main._repair_windows_python_subprocess_launcher(allow_foreign_rename=False)
+
+    assert repaired["status"] == "repaired"
+    assert repaired["replaced_path"] == str(python_tg)
+    assert repaired["post_repair_version"] == "tg 0.33.0"
+    assert not python_tg.exists()
+    backups = list(scripts_dir.glob("tg.exe.orphaned-tensor-grep-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "orphaned tensor-grep launcher"
 
 
 def test_repair_launcher_command_emits_json_and_nonzero_when_blocked(

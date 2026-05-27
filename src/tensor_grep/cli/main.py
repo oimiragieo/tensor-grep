@@ -177,7 +177,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
-- Use `tg repair-launcher` to remove verified tensor-grep-owned Python Scripts launchers that shadow the managed native front door; add `--allow-foreign-rename` only for a foreign `tg.exe` that you own and want tensor-grep to back up.
+- Use `tg repair-launcher` to remove verified or self-identifying tensor-grep Python Scripts launchers that shadow the managed native front door; add `--allow-foreign-rename` only for a foreign `tg.exe` that you own and want tensor-grep to back up.
 - Use `tg session --help` for cached edit-loop and daemon commands; daemon-routed edit-plan/context requests keep a short connect probe, a longer work response timeout, and byte-bounded response-cache stats.
 
 **Environment overrides**
@@ -864,6 +864,7 @@ def _remove_windows_stale_tensor_grep_python_launchers(
         return None
 
     removed: list[str] = []
+    backed_up_orphans: list[str] = []
     failed: list[str] = []
     for launcher in stale_launchers:
         reason = launcher.version or (
@@ -897,23 +898,48 @@ def _remove_windows_stale_tensor_grep_python_launchers(
         except Exception as exc:
             failed.append(f"- {launcher.path} ({reason}): {exc}")
 
+    remaining_unowned_launchers: list[_WindowsUnownedPythonLauncher] = []
+    for unowned_launcher in unowned_launchers:
+        reason = unowned_launcher.version or "<unreadable --version>"
+        if unowned_launcher.version is None or not _doctor_tg_version_looks_like_tensor_grep(
+            unowned_launcher.version
+        ):
+            remaining_unowned_launchers.append(unowned_launcher)
+            continue
+        backup_path = unowned_launcher.path.with_name(
+            f"{unowned_launcher.path.name}.orphaned-tensor-grep-"
+            f"{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}.bak"
+        )
+        try:
+            os.replace(unowned_launcher.path, backup_path)
+            if unowned_launcher.path.exists():
+                raise OSError("launcher still exists after backup")
+            backed_up_orphans.append(f"- {unowned_launcher.path} -> {backup_path} ({reason})")
+        except Exception as exc:
+            failed.append(f"- {unowned_launcher.path} ({reason}): {exc}")
+
     sections: list[str] = []
     if removed:
         sections.append(
             "Removed stale tensor-grep Python package launchers from PATH:\n" + "\n".join(removed)
+        )
+    if backed_up_orphans:
+        sections.append(
+            "Backed up orphaned tensor-grep Python Scripts launchers from PATH:\n"
+            + "\n".join(backed_up_orphans)
         )
     if failed:
         sections.append(
             "WARNING: stale tensor-grep Python package launchers remain ahead of managed "
             "native tg.exe:\n" + "\n".join(failed)
         )
-    if unowned_launchers:
+    if remaining_unowned_launchers:
         sections.append(
             "WARNING: tensor-grep-looking Python Scripts tg.exe launchers remain ahead of "
             "managed native tg.exe, but package ownership could not be verified:\n"
             + "\n".join(
                 f"- {launcher.path} ({launcher.version or '<unreadable --version>'})"
-                for launcher in unowned_launchers
+                for launcher in remaining_unowned_launchers
             )
         )
     return "\n".join(sections) if sections else None
@@ -1143,9 +1169,9 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
                 "status": "repaired",
                 "replaced_path": str(candidate_path),
                 "message": (
-                    "Python subprocess launcher repaired. Removed the tensor-grep-owned "
-                    "Python Scripts entrypoint so the verified managed native tg.exe is "
-                    "selected first."
+                    "Python subprocess launcher repaired. Removed or backed up the "
+                    "tensor-grep Python Scripts entrypoint so the verified managed native "
+                    "tg.exe is selected first."
                 ),
             })
             return payload
@@ -8910,9 +8936,9 @@ def repair_launcher(
 ) -> None:
     """Repair Windows Python subprocess tg resolution.
 
-    Removes verified tensor-grep-owned Python Scripts entrypoints that shadow
-    the managed native front door. Use --allow-foreign-rename only for a
-    foreign tg.exe that you own and want tensor-grep to back up.
+    Removes verified or self-identifying tensor-grep Python Scripts entrypoints
+    that shadow the managed native front door. Use --allow-foreign-rename only
+    for a foreign tg.exe that you own and want tensor-grep to back up.
     """
     payload = _repair_windows_python_subprocess_launcher(allow_foreign_rename=allow_foreign_rename)
     if json_output:
