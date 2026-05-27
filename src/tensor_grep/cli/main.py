@@ -143,7 +143,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg scan --config sgconfig.yml`
 - `tg doctor --with-lsp`
 - `tg dogfood --output artifacts/dogfood_readiness.json`
-- `tg repair-launcher --allow-foreign-rename`
+- `tg repair-launcher`
 - `tg mcp`
 
 **AI workflows**
@@ -177,7 +177,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, daemon, and launcher diagnostics including path_tg_first_launcher_kind and fresh_shell_path_tg_first_launcher_kind.
-- Use `tg repair-launcher --allow-foreign-rename` only when Windows Python subprocess resolution is blocked by a foreign `tg.exe` that you own and want tensor-grep to back up.
+- Use `tg repair-launcher` to remove verified tensor-grep-owned Python Scripts launchers that shadow the managed native front door; add `--allow-foreign-rename` only for a foreign `tg.exe` that you own and want tensor-grep to back up.
 - Use `tg session --help` for cached edit-loop and daemon commands; daemon-routed edit-plan/context requests keep a short connect probe, a longer work response timeout, and byte-bounded response-cache stats.
 
 **Environment overrides**
@@ -1064,6 +1064,7 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
         "replaced_path": None,
         "pre_repair_version": None,
         "post_repair_version": None,
+        "cleanup_message": None,
     }
     if not sys.platform.startswith("win"):
         return payload
@@ -1120,6 +1121,46 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
             "status": "already_ok",
             "message": "Python subprocess resolution already finds the managed native tg.exe.",
             "post_repair_version": candidate_version,
+        })
+        return payload
+
+    if candidate_kind == "python-entrypoint":
+        cleanup_message = _remove_windows_stale_tensor_grep_python_launchers(
+            expected_version,
+            native_tg_binary,
+        )
+        payload["cleanup_message"] = cleanup_message
+        post_candidate = _doctor_python_subprocess_path_tg_candidate()
+        post_path = Path(str(post_candidate.get("path") or "")) if post_candidate else None
+        post_version = post_candidate.get("version") if post_candidate else None
+        payload["post_repair_version"] = post_version
+        if (
+            post_path is not None
+            and _same_path(post_path, native_tg_binary)
+            and _native_tg_version_matches(expected_version, post_version)
+        ):
+            payload.update({
+                "status": "repaired",
+                "replaced_path": str(candidate_path),
+                "message": (
+                    "Python subprocess launcher repaired. Removed the tensor-grep-owned "
+                    "Python Scripts entrypoint so the verified managed native tg.exe is "
+                    "selected first."
+                ),
+            })
+            return payload
+
+        payload.update({
+            "status": "blocked_python_entrypoint_cleanup",
+            "message": (
+                "Python subprocess resolution is still blocked by a Python Scripts "
+                "tensor-grep entrypoint. "
+                + (
+                    cleanup_message
+                    if cleanup_message
+                    else "Package ownership could not be verified, so no launcher was removed."
+                )
+            ),
         })
         return payload
 
@@ -8867,7 +8908,12 @@ def repair_launcher(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Repair Windows Python subprocess tg resolution when explicitly allowed."""
+    """Repair Windows Python subprocess tg resolution.
+
+    Removes verified tensor-grep-owned Python Scripts entrypoints that shadow
+    the managed native front door. Use --allow-foreign-rename only for a
+    foreign tg.exe that you own and want tensor-grep to back up.
+    """
     payload = _repair_windows_python_subprocess_launcher(allow_foreign_rename=allow_foreign_rename)
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
