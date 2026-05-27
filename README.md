@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.23
 
 Latest tagged GitHub release: [`v1.13.23`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.23). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.23`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.23). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.22` shipped from PR #235, merge commit `995b414`, release commit `5a2ad6b`, main CI run `26473492381`, and main dynamic/CodeQL run `26473490540`.
+Latest verified release proof: `v1.13.23` shipped from PR #236, merge commit `3c0c213`, release commit `bd7035c`, main CI run `26513809791`, and main dynamic/CodeQL run `26513808787`.
 
 Current positioning:
 
@@ -61,6 +61,13 @@ Current positioning:
 - `tg agent PATH "query" --gpu-device-ids 0,1 --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.23` closed:
+
+- PR #236 `fix: repair owned python launchers` shipped the release as merge commit `3c0c213 fix: repair owned python launchers` and release commit `bd7035c chore(release): v1.13.23 [skip ci]`.
+- main CI run `26513809791` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26513808787` passed on the merge commit.
+- GitHub release assets for `v1.13.23` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.23 tg --version` reports `tensor-grep 1.13.23`.
+- The release makes `tg repair-launcher` remove verified tensor-grep-owned Python Scripts entrypoints that shadow the managed native front door, preserves explicit `--allow-foreign-rename` for unrelated foreign launchers, and keeps help/docs aligned with that Windows launcher repair contract.
 
 What `v1.13.22` closed:
 
