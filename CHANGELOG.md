@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.23 (2026-05-27)
+
+### Bug Fixes
+
+- Repair owned python launchers
+  ([`3c0c213`](https://github.com/oimiragieo/tensor-grep/commit/3c0c2130d1f87d2c8958317b0b5e8bc3aa65ab44))
+
+
 ## v1.13.22 (2026-05-26)
 
 ### Bug Fixes
