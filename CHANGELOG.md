@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.13.24 (2026-05-27)
+
+### Bug Fixes
+
+- Repair orphaned python launchers
+  ([`39829b4`](https://github.com/oimiragieo/tensor-grep/commit/39829b497f8a80cd45fad97328689bb17847f19c))
+
+Back up self-identifying orphaned tensor-grep Python Scripts launchers while preserving foreign
+  launcher opt-in safety.
+
+### Documentation
+
+- Refresh v1.13.23 release proof
+  ([`abfaba5`](https://github.com/oimiragieo/tensor-grep/commit/abfaba51ac3e9442b8ce548ac5ec5499ea6c6b11))
+
+
 ## v1.13.23 (2026-05-27)
 
 ### Bug Fixes
