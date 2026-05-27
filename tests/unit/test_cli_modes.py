@@ -8907,6 +8907,67 @@ def test_repair_launcher_requires_explicit_foreign_rename(monkeypatch, tmp_path)
     assert repaired["post_repair_version"] == "tg 0.33.0"
 
 
+def test_repair_launcher_removes_owned_python_scripts_entrypoint(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    native_binary = install_dir / "bin" / "tg.exe"
+    scripts_dir = tmp_path / "Python314" / "Scripts"
+    native_binary.parent.mkdir(parents=True)
+    scripts_dir.mkdir(parents=True)
+    native_binary.write_text("managed native", encoding="utf-8")
+    python_tg = scripts_dir / "tg.exe"
+    python_tg.write_text("tensor-grep console launcher", encoding="utf-8")
+    python_executable = scripts_dir.parent / "python.exe"
+    python_executable.write_text("", encoding="utf-8")
+    package_location = scripts_dir.parent / "Lib" / "site-packages"
+    package_launcher = os.path.relpath(python_tg, package_location)
+    calls: list[list[str]] = []
+
+    def _fake_candidate_version(path):
+        candidate = Path(path)
+        if candidate == native_binary:
+            return "tg 0.33.0"
+        if candidate == python_tg:
+            return "tensor-grep 0.33.0"
+        return None
+
+    def _fake_run(cmd, capture_output=True, text=True, timeout=None, **_kwargs):
+        command = [str(part) for part in cmd]
+        calls.append(command)
+        if command[:5] == [str(python_executable), "-m", "pip", "show", "-f"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "Name: tensor-grep\n"
+                    "Version: 0.33.0\n"
+                    f"Location: {package_location}\n"
+                    "Files:\n"
+                    f"{package_launcher}\n"
+                ),
+                stderr="",
+            )
+        if command[:4] == [str(python_executable), "-m", "pip", "uninstall"]:
+            python_tg.unlink(missing_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout="uninstalled\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", f"{scripts_dir};{native_binary.parent}")
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr(cli_main, "_doctor_installed_version", lambda: "0.33.0")
+    monkeypatch.setattr(cli_main, "_doctor_tg_candidate_version", _fake_candidate_version)
+    monkeypatch.setattr(cli_main, "_doctor_fresh_shell_path_value", lambda: "")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    repaired = cli_main._repair_windows_python_subprocess_launcher(allow_foreign_rename=False)
+
+    assert repaired["status"] == "repaired"
+    assert repaired["replaced_path"] == str(python_tg)
+    assert repaired["post_repair_version"] == "tg 0.33.0"
+    assert not python_tg.exists()
+    assert [str(python_executable), "-m", "pip", "uninstall", "-y", "tensor-grep"] in calls
+
+
 def test_repair_launcher_command_emits_json_and_nonzero_when_blocked(
     monkeypatch,
     tmp_path,

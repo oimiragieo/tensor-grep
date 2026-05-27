@@ -45,7 +45,7 @@ release_docs_current_tag: v1.13.22
 
 Latest tagged GitHub release: [`v1.13.22`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.22). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
 Latest complete PyPI release: [`v1.13.22`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.22). This is also the latest complete release-asset distribution.
-Latest verified release proof: `v1.13.21` shipped from PR #233, merge commit `b69bc5b`, release commit `1b62da7`, main CI run `26450640497`, and main dynamic/CodeQL run `26450639894`.
+Latest verified release proof: `v1.13.22` shipped from PR #235, merge commit `995b414`, release commit `5a2ad6b`, main CI run `26473492381`, and main dynamic/CodeQL run `26473490540`.
 
 Current positioning:
 
@@ -61,6 +61,13 @@ Current positioning:
 - `tg agent PATH "query" --gpu-device-ids 0,1 --json` runs an opt-in batched GPU evidence scan for the selected devices and records `gpu_acceleration`; sidecar-routed or CPU-fallback results are reported as unsupported instead of being counted as GPU proof.
 - Capsule confidence must be honest when query language hints, primary target language, selected snippets, and validation commands disagree. Mixed-language agent workflows use `validation_alignment` and ask-before-editing metadata instead of silently pairing a TypeScript target with pytest-only validation.
 - Long-lived agent-loop memory surfaces are operationally bounded: session response caches report byte usage, LSP providers cap workspace clients and opened documents, and search/repo-context caches have environment-overridable entry caps. These controls do not change raw search output contracts.
+
+What `v1.13.22` closed:
+
+- PR #235 `fix: harden v1.13.21 dogfood contracts` shipped the release as merge commit `995b414 fix: harden v1.13.21 dogfood contracts` and release commit `5a2ad6b chore(release): v1.13.22 [skip ci]`.
+- main CI run `26473492381` passed semantic-release, native asset publication, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; main dynamic/CodeQL run `26473490540` passed on the merge commit.
+- GitHub release assets for `v1.13.22` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions; `uvx --refresh-package tensor-grep --from tensor-grep==1.13.22 tg --version` reports `tensor-grep 1.13.22`.
+- The release keeps Windows public launcher routes contract-equivalent for `tg run --diff`, bounds MCP `tg_search` with `query`, `max_results`, `max_files`, and `structured_json`, makes capsule validation tie resolution cite concrete `targeted-validation` evidence, gives literal `classify` inputs a clear file-path error, and keeps explicit `tg dogfood --output` writes beside the requested artifact.
 
 What `v1.13.21` closed:
 
@@ -399,7 +406,7 @@ What `v1.9.0` closed:
 
 Active post-`v1.13.22` follow-up:
 
-- keep Windows public launcher routes contract-equivalent: tensor-grep-owned Python Scripts entrypoints ahead of the managed native front door are repair candidates, and Python/bootstrap `tg run` delegates to the managed native front door when present so advertised rewrite flags such as `--diff` do not drift by route
+- keep Windows public launcher routes contract-equivalent: `tg repair-launcher` removes verified tensor-grep-owned Python Scripts entrypoints ahead of the managed native front door, and Python/bootstrap `tg run` delegates to the managed native front door when present so advertised rewrite flags such as `--diff` do not drift by route
 - keep MCP `tg_search` bounded for agent use: callers may pass either `pattern` or `query`, cap output with `max_results` / `max_files`, and request `structured_json` when they need machine-readable bounded rows instead of text
 - keep capsule tie resolution concrete: unresolved equal-confidence alternatives require confirmation; validation-resolved ties should report `resolved_by = "targeted-validation"` plus the exact validation command evidence, and LSP-resolved ties require explicit provider-response proof
 - keep classify UX path-based until literal/stdin mode exists: `tg classify TEXT --format json` should fail with a clear file-path error instead of silent empty output

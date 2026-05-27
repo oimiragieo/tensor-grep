@@ -8,18 +8,19 @@ release_docs_current_tag: v1.13.22
 
 - Latest tagged version: `v1.13.22`
 - Latest complete PyPI version: `v1.13.22`
-- Latest verified release proof PR: #233 `fix: harden upgrade daemon and lsp diagnostics`
-- Latest verified release proof merge commit: `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
-- Latest verified release proof commit: `1b62da7 chore(release): v1.13.21 [skip ci]`
-- Latest verified proof public release PR: #233 `fix: harden upgrade daemon and lsp diagnostics`
-- Latest verified proof public release commit: `1b62da7 chore(release): v1.13.21 [skip ci]`
-- Latest fix commit: `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
+- Latest verified release proof PR: #235 `fix: harden v1.13.21 dogfood contracts`
+- Latest verified release proof merge commit: `995b414 fix: harden v1.13.21 dogfood contracts`
+- Latest verified release proof commit: `5a2ad6b chore(release): v1.13.22 [skip ci]`
+- Latest verified proof public release PR: #235 `fix: harden v1.13.21 dogfood contracts`
+- Latest verified proof public release commit: `5a2ad6b chore(release): v1.13.22 [skip ci]`
+- Latest fix commit: `995b414 fix: harden v1.13.21 dogfood contracts`
 - Latest feature commit: `a518cc6 feat: add agent success harness`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.22>
 - `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
-- Main CI run `26450640497`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Latest main dynamic/CodeQL proof run `26450639894`: passed on the `b69bc5b` merge commit
-- Release commit `1b62da7`: published `v1.13.21` with `[skip ci]` after main CI completed
+- Main CI run `26473492381`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Latest main dynamic/CodeQL proof run `26473490540`: passed on the `995b414` merge commit
+- Release commit `5a2ad6b`: published `v1.13.22` with `[skip ci]` after main CI completed
+- Previous `v1.13.21` proof runs `26450640497` and `26450639894` remain retained as historical release proof
 - Previous `v1.13.20` proof runs `26437847778` and `26437847528` remain retained as historical release proof
 - Previous `v1.13.19` proof runs `26431129535` and `26431129155` remain retained as historical release proof
 - Previous `v1.13.18` proof runs `26425383595` and `26425914836` remain retained as historical release proof
@@ -31,6 +32,7 @@ release_docs_current_tag: v1.13.22
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.13.22 tg --version` reports `tensor-grep 1.13.22`
 - GitHub release assets: `v1.13.22` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Closed v1.13.22 dogfood follow-up gap: PR #235 keeps Windows public launcher routes contract-equivalent for `tg run --diff`, bounds MCP `tg_search` with `query`, `max_results`, `max_files`, and `structured_json`, makes capsule validation tie resolution cite concrete `targeted-validation` evidence, gives literal `classify` inputs a clear file-path error, and keeps explicit `tg dogfood --output` writes beside the requested artifact.
 - Closed v1.13.21 dogfood follow-up gap: PR #233 restarts pre-existing session daemons after direct or scheduled Windows `tg upgrade` handoff loss and keeps successful LSP proof payloads from surfacing stale Pyright SRE mismatch tracebacks as current stderr; post-v1.13.21 dogfood should verify daemon handoff and LSP diagnostic quieting on public installs.
 - Public `v1.12.14` dogfood verified PyPI, `uvx`, release assets, public launcher resolution, bounded capsule call-site evidence, Windows subprocess bridge ranking hardening, agent output-budget hygiene, AST CLI contract hygiene, accepted search/native-front-door CLI drift fixes from `v1.12.9`, and rg flag-contract aliases including `--maxdepth`, `--sort-files`, and advertised ignore controls. `--print0` is intentionally not added because current ripgrep 15.1 rejects it; the compatible NUL path-list flag is `-0` / `--null`. Public managed GPU is not promotion-ready: explicit GPU requests fall back to `NativeCpuBackend` or unsupported rows unless a CUDA-feature native build proves `NativeGpuBackend` with `sidecar_used = false`.
 - Closed v1.12.11 AST CLI contract-hygiene gap: safe ast-grep-compatible aliases route or execute (`scan --rule`, `scan --filter`, positional scan paths, `run --update-all`, `new --config`) while unsupported semantic matcher flags fail explicitly instead of surfacing parser drift.
