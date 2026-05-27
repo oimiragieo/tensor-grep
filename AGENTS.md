@@ -20,14 +20,15 @@ release_docs_current_tag: v1.13.23
 
 As of 2026-05-26, the current tagged release state is `v1.13.23`, and the latest complete public PyPI/release-asset distribution is also `v1.13.23`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.13.23` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Latest verified release proof PR: #235 `fix: harden v1.13.21 dogfood contracts`
-- Latest verified release proof merge commit: `995b414 fix: harden v1.13.21 dogfood contracts`
-- Latest verified release proof commit: `5a2ad6b chore(release): v1.13.22 [skip ci]`
-- Latest verified proof public release PR: #235 `fix: harden v1.13.21 dogfood contracts`
-- Latest verified proof public release commit: `5a2ad6b chore(release): v1.13.22 [skip ci]`
-- Latest merged fix commit: `995b414 fix: harden v1.13.21 dogfood contracts`
+- Latest verified release proof PR: #236 `fix: repair owned python launchers`
+- Latest verified release proof merge commit: `3c0c213 fix: repair owned python launchers`
+- Latest verified release proof commit: `bd7035c chore(release): v1.13.23 [skip ci]`
+- Latest verified proof public release PR: #236 `fix: repair owned python launchers`
+- Latest verified proof public release commit: `bd7035c chore(release): v1.13.23 [skip ci]`
+- Latest merged fix commit: `3c0c213 fix: repair owned python launchers`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - Recent fix commits:
+  - `3c0c213 fix: repair owned python launchers`
   - `995b414 fix: harden v1.13.21 dogfood contracts`
   - `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
   - `6525853 fix: harden dogfood timeout reporting`
@@ -103,9 +104,10 @@ As of 2026-05-26, the current tagged release state is `v1.13.23`, and the latest
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
 - `v1.11.0` GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.11.0> exists, but main CI run `25834508800` was cancelled during release-native asset publication; `publish-success-gate` failed and PyPI latest remains `1.10.10`.
-- Main CI run `26473492381`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main dynamic/CodeQL run `26473490540`: passed on the `995b414` merge commit
-- Release commit `5a2ad6b`: published `v1.13.22` with `[skip ci]` after main CI completed
+- Main CI run `26513809791`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main dynamic/CodeQL run `26513808787`: passed on the `3c0c213` merge commit
+- Release commit `bd7035c`: published `v1.13.23` with `[skip ci]` after main CI completed
+- Previous `v1.13.22` proof runs `26473492381` and `26473490540` remain retained as historical release proof
 - Previous `v1.13.21` proof runs `26450640497` and `26450639894` remain retained as historical release proof
 - Previous `v1.13.20` proof runs `26437847778` and `26437847528` remain retained as historical release proof
 - Previous `v1.13.19` proof runs `26431129535` and `26431129155` remain retained as historical release proof
