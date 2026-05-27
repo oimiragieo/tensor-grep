@@ -1,1 +1,1 @@
-{"matches": [{"file": "text/file1.txt", "line": 1, "text": "hello world"}, {"file": "text/file2.txt", "line": 2, "text": "hello again friend"}], "path": "text", "query": "hello", "total_matches": 2, "version": "X"}
+{"match_counts_by_file": {"text/file1.txt": 1, "text/file2.txt": 1}, "matched_file_paths": ["text/file1.txt", "text/file2.txt"], "matches": [{"file": "text/file1.txt", "line": 1, "text": "hello world"}, {"file": "text/file2.txt", "line": 2, "text": "hello again friend"}], "path": "text", "query": "hello", "total_files": 2, "total_matches": 2, "version": "X"}
