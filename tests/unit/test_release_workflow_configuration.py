@@ -1,4 +1,13 @@
+import re
 from pathlib import Path
+
+
+def _job_section(workflow: str, job_name: str) -> str:
+    start = workflow.index(f"  {job_name}:")
+    match = re.search(r"\n  [A-Za-z0-9_-]+:", workflow[start + 1 :])
+    if match is None:
+        return workflow[start:]
+    return workflow[start : start + 1 + match.start()]
 
 
 def test_release_workflow_should_not_use_removed_skip_pypi_flag() -> None:
@@ -38,6 +47,51 @@ def test_ci_publish_parity_gate_should_validate_package_manager_versions() -> No
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "python scripts/validate_release_version_parity.py" in workflow
     assert "--skip-package-managers" not in workflow
+
+
+def test_ci_workflow_should_run_smoke_gate_before_expensive_jobs() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    smoke_section = _job_section(workflow, "smoke")
+    assert "needs: repo-hygiene" in smoke_section
+    assert "cargo build --no-default-features" in smoke_section
+    assert "uv run python -m tensor_grep --version" in smoke_section
+    assert "tests/golden/fixture_data" in smoke_section
+
+    for job_name in [
+        "release-readiness",
+        "package-manager-readiness",
+        "static-analysis",
+        "test-python",
+        "test-rust-core",
+        "search-golden-parity",
+        "native-build-smoke",
+        "test-gpu-linux",
+        "benchmark-regression",
+    ]:
+        assert "needs: smoke" in _job_section(workflow, job_name)
+
+    assert "needs: [smoke," in _job_section(workflow, "release")
+
+
+def test_gitignore_should_track_rust_cargo_lock_and_scope_root_text_artifacts() -> None:
+    gitignore = Path(".gitignore").read_text(encoding="utf-8")
+    ignore_lines = {
+        line.strip()
+        for line in gitignore.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "rust_core/Cargo.lock" not in ignore_lines
+    assert "*.txt" not in ignore_lines
+    assert "*.log" not in ignore_lines
+    assert "/*.txt" in ignore_lines
+    assert "/*.log" in ignore_lines
+
+
+def test_ci_repo_hygiene_guard_should_block_scratch_artifacts_and_missing_lockfile() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    repo_hygiene = _job_section(workflow, "repo-hygiene")
+    assert "Repo Hygiene Guard" in repo_hygiene
+    assert "python scripts/check_repo_hygiene.py" in repo_hygiene
 
 
 def test_ci_workflow_should_keep_dependency_install_retry_guards() -> None:
