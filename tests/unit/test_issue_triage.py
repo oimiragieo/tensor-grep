@@ -81,6 +81,31 @@ def test_feature_request_for_gpu_performance_should_require_benchmark_evidence()
     assert "needs-info" not in result.labels
 
 
+def test_perf_issue_should_get_performance_labels_and_benchmark_gate() -> None:
+    module = _load_module()
+    result = module.triage_issue({
+        "title": "perf: reduce public shim startup overhead",
+        "body": "\n".join([
+            "### Problem",
+            "Cold CLI startup is slower than rg.",
+            "### Proposed solution",
+            "Reduce launcher overhead.",
+            "### Acceptance criteria",
+            "- Preserve semantic parity.",
+            "- Include benchmark artifacts.",
+            "### Security check",
+            "- [x] This request does not contain an undisclosed vulnerability, exploit, secret, credential, or private token.",
+        ]),
+        "labels": [],
+    })
+
+    assert "type:feature" in result.labels
+    assert "area:performance" in result.labels
+    assert "area:gpu" not in result.labels
+    assert "benchmark-required" in result.labels
+    assert "type:question" not in result.labels
+
+
 def test_cli_entrypoint_should_emit_json(tmp_path) -> None:
     event_path = tmp_path / "event.json"
     output_path = tmp_path / "triage.json"

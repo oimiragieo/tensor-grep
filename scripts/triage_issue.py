@@ -58,7 +58,7 @@ AREA_KEYWORDS = {
     "area:ci": ("ci", "workflow", "github actions", "action", "check", "job"),
     "area:cli": ("cli", "search", "tg search", "rg", "format", "flag", "option"),
     "area:docs": ("docs", "documentation", "readme", "help text", "--help"),
-    "area:gpu": ("gpu", "cuda", "nvidia", "cudf", "benchmark", "nativegpu"),
+    "area:gpu": ("gpu", "cuda", "nvidia", "cudf", "nativegpu"),
     "area:install": ("install", "upgrade", "launcher", "shim", "path", "uvx", "pipx"),
     "area:performance": ("performance", "slow", "speed", "benchmark", "regression", "latency"),
     "area:python": ("python", "pypi", "wheel", "maturin", "uv"),
@@ -134,7 +134,7 @@ def _looks_security_sensitive(text: str, body: str) -> bool:
 def _classify_type(text: str, existing_labels: set[str]) -> str:
     if "bug" in existing_labels or text.startswith("bug:"):
         return "type:bug"
-    if "enhancement" in existing_labels or text.startswith("feat:"):
+    if "enhancement" in existing_labels or text.startswith(("feat:", "perf:")):
         return "type:feature"
     if "documentation" in existing_labels or text.startswith("docs:"):
         return "type:docs"
