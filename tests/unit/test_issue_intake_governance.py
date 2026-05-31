@@ -33,6 +33,7 @@ def test_issue_templates_should_exist_and_disable_blank_public_reports() -> None
     assert config["blank_issues_enabled"] is False
     links = config.get("contact_links", [])
     assert any("security/advisories/new" in link["url"] for link in links)
+    assert all("/discussions" not in link["url"] for link in links)
 
 
 def test_issue_templates_should_require_non_security_confirmation() -> None:
@@ -90,9 +91,13 @@ def test_issue_triage_workflow_should_define_every_script_label() -> None:
 
 
 def test_issue_intake_process_should_be_documented() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
     contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
 
+    assert "Reporting Bugs and Requests" in readme
+    assert "issues/new/choose" in readme
+    assert "does not call external AI services" in readme
     assert "Public Issue Intake" in contributing
     assert "security/advisories/new" in contributing
     assert "does not call external AI services" in contributing

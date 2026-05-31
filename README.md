@@ -39,6 +39,14 @@ These documents define the operating and governance surface for teams running `t
 - [SECURITY.md](SECURITY.md) for vulnerability reporting expectations
 - [CONTRIBUTING.md](CONTRIBUTING.md) for contribution, validation, and release-intent rules
 
+## Reporting Bugs and Requests
+
+Use [GitHub issue forms](https://github.com/oimiragieo/tensor-grep/issues/new/choose) for public bug reports, feature requests, usage questions, and docs issues. Do not include secrets, credentials, private code, private logs, or undisclosed vulnerability details in public issues.
+
+Security-sensitive reports belong in [private vulnerability reporting](https://github.com/oimiragieo/tensor-grep/security/advisories/new), not a public issue.
+
+Public issues are labeled by a deterministic triage workflow that classifies area/type/priority, requests missing reproduction details, and routes possible security-sensitive reports to private maintainer review. The workflow does not call external AI services, execute reporter-provided commands, open links, inspect attachments, or echo raw reporter content back into comments.
+
 ## Current Release State
 
 release_docs_current_tag: v1.13.26
