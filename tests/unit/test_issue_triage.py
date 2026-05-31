@@ -103,6 +103,7 @@ def test_perf_issue_should_get_performance_labels_and_benchmark_gate() -> None:
     assert "area:performance" in result.labels
     assert "area:gpu" not in result.labels
     assert "benchmark-required" in result.labels
+    assert "priority:medium" in result.labels
     assert "type:question" not in result.labels
 
 

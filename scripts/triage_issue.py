@@ -204,7 +204,10 @@ def _missing_info(type_label: str, body: str) -> list[str]:
 def _priority(type_label: str, areas: set[str], security_sensitive: bool, text: str) -> str:
     if security_sensitive:
         return "priority:high"
-    if "area:install" in areas or "area:release" in areas:
+    if ("area:install" in areas or "area:release" in areas) and (
+        type_label == "type:bug"
+        or re.search(r"\b(regression|crash|cannot install|publish failed|asset missing)\b", text)
+    ):
         return "priority:high"
     if type_label == "type:bug" and re.search(
         r"\b(regression|crash|cannot install|data loss)\b", text
