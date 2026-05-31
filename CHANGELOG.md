@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.26 (2026-05-31)
+
+### Bug Fixes
+
+- Sync rust lockfile in release automation
+  ([`c242845`](https://github.com/oimiragieo/tensor-grep/commit/c2428459db2ba5de327671d0837cd6b81c1a56a0))
+
+
 ## v1.13.25 (2026-05-31)
 
 ### Bug Fixes
