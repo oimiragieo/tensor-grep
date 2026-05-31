@@ -33,22 +33,42 @@ htmlcov/
 
 # Rust
 rust_core/target/
-rust_core/Cargo.lock
 rustup-init.exe
 
 # Node
 npm/node_modules/
 
 # Logs and Temp Files
-*.log
-*.patch
-*.txt
+/*.log
+/*.patch
+/*.txt
+/.tmp*/
+/.tensor-grep/
+/.factory/*.patch
+/.factory/*.txt
+/_archive/*.log
+/_archive/*.patch
+/_archive/*.txt
+/agent_out.json
+/src/.tensor-grep/
+/src/tensor_grep/cli/commands.txt
+/src/tensor_grep/core/import_trace.txt
 stream_test.py
 test_group2.py
 artifacts/
+bench_data/
+bench_ast_data/
 benchmarks/corpus/
+benchmarks/dummy_replace_data/
 ripgrep-*/
 gpu_bench_data/
+group2_many_files/
+many_files/
+rg-temp/
+scripts/ci_logs/
+tg_rg_probe_*/
+tmp_rg_probe/
+tmp_rg_tg_probe/
 
 !tests/golden/
 !tests/golden/**/*.txt
