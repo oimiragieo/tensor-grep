@@ -11,3 +11,5 @@ When reporting:
 - describe whether the issue affects release binaries, Python packaging, or package-manager installers
 
 Do not open a public issue for undisclosed vulnerabilities.
+
+Public issue triage is automated and intentionally conservative. If a public issue appears security-sensitive, or the reporter does not confirm that it contains no undisclosed vulnerability, exploit, secret, credential, or private token, the triage workflow labels it for private security review and points the reporter to the private advisory flow. The workflow does not execute issue content or send it to external AI services.

@@ -1,0 +1,137 @@
+name: Issue Intake Triage
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    name: secure-issue-triage
+    if: ${{ github.event.issue.pull_request == null }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Run secure issue triage
+        run: python scripts/triage_issue.py --event-path "$GITHUB_EVENT_PATH" --output "$RUNNER_TEMP/issue-triage.json"
+
+      - name: Ensure triage labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRIAGE_OUTPUT: ${{ runner.temp }}/issue-triage.json
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$TRIAGE_OUTPUT" <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          label_defs = {
+              "area:agent": ("5319e7", "Agent, context capsule, or AI-harness surface"),
+              "area:ast": ("5319e7", "AST or structural search"),
+              "area:ci": ("5319e7", "CI automation or workflow behavior"),
+              "area:cli": ("1d76db", "CLI or search command behavior"),
+              "area:docs": ("0075ca", "Documentation surface"),
+              "area:gpu": ("b60205", "GPU or benchmark path"),
+              "area:install": ("d93f0b", "Install, upgrade, or launcher behavior"),
+              "area:performance": ("fbca04", "Performance or benchmark claim"),
+              "area:python": ("0e8a16", "Python package surface"),
+              "area:release": ("d93f0b", "Release, PyPI, or package-manager publication"),
+              "area:rust": ("b60205", "Rust native core"),
+              "area:security": ("d93f0b", "Security-sensitive triage"),
+              "area:windows": ("0075ca", "Windows-specific behavior"),
+              "benchmark-required": ("fbca04", "Requires benchmark evidence before claims"),
+              "manual-review": ("d93f0b", "Requires maintainer review before action"),
+              "needs-info": ("d93f0b", "Reporter input is needed"),
+              "needs-private-security-review": ("b60205", "Move sensitive details to private security reporting"),
+              "needs-repro": ("d93f0b", "Needs a minimal reproduction"),
+              "needs-triage": ("fbca04", "Awaiting maintainer triage"),
+              "priority:high": ("b60205", "High-priority report"),
+              "priority:low": ("c2e0c6", "Low-priority report"),
+              "priority:medium": ("fbca04", "Medium-priority report"),
+              "security-review": ("b60205", "Security review required"),
+              "type:bug": ("d73a4a", "Bug report"),
+              "type:docs": ("0075ca", "Documentation issue"),
+              "type:feature": ("a2eeef", "Feature request"),
+              "type:question": ("d876e3", "Question or support request"),
+          }
+
+          triage = json.loads(open(sys.argv[1], encoding="utf-8").read())
+          for label in triage.get("labels", []):
+              if label not in label_defs:
+                  raise SystemExit(f"unexpected triage label: {label}")
+              color, description = label_defs[label]
+              subprocess.run(
+                  [
+                      "gh",
+                      "label",
+                      "create",
+                      label,
+                      "--repo",
+                      os.environ["GH_REPO"],
+                      "--color",
+                      color,
+                      "--description",
+                      description,
+                      "--force",
+                  ],
+                  check=True,
+              )
+          PY
+
+      - name: Apply triage labels and comment
+        uses: actions/github-script@v8
+        env:
+          TRIAGE_OUTPUT: ${{ runner.temp }}/issue-triage.json
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- tensor-grep-issue-triage -->";
+            const triage = JSON.parse(fs.readFileSync(process.env.TRIAGE_OUTPUT, "utf8"));
+            const issue_number = context.payload.issue.number;
+
+            if (triage.labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                labels: triage.labels,
+              });
+            }
+
+            const body = `${marker}\n${triage.comment_body}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((comment) =>
+              comment.user?.type === "Bot" && comment.body?.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body,
+              });
+            }

@@ -1,0 +1,31 @@
+name: Documentation issue
+description: Report confusing, missing, or stale documentation.
+title: "docs: "
+labels: ["documentation"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page or section
+      placeholder: "README.md, docs/CONTRACTS.md, CLI help, ..."
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested correction
+    validations:
+      required: false
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This issue does not contain an undisclosed vulnerability, exploit, secret, credential, or private token.
+          required: true

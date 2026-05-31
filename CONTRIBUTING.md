@@ -18,6 +18,15 @@ For release/workflow/package-manager changes, also run:
 uv run python scripts/validate_release_assets.py
 ```
 
+## Public Issue Intake
+
+Use the GitHub issue forms for public bug reports, feature requests, questions, and documentation issues. Do not put secrets, private code, credentials, tokens, or undisclosed vulnerability details in public issues.
+
+Security-sensitive reports belong in private vulnerability reporting:
+<https://github.com/oimiragieo/tensor-grep/security/advisories/new>
+
+New and edited public issues are classified by a deterministic triage workflow. The workflow labels area/type/priority, requests missing reproduction details when needed, and flags possible security-sensitive reports for private maintainer review. It does not call external AI services, run reporter-provided commands, open links, inspect attachments, or echo raw reporter content back into comments.
+
 ## Performance Discipline
 
 - Start with a failing test when behavior changes.

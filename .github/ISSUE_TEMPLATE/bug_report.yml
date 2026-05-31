@@ -1,0 +1,83 @@
+name: Bug report
+description: Report reproducible broken behavior in tensor-grep.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets, private code, tokens, credentials, or undisclosed vulnerability details.
+
+        If this is security-sensitive, stop here and use private vulnerability reporting instead.
+  - type: input
+    id: version
+    attributes:
+      label: tensor-grep version
+      description: Run `tg --version` or `python -m tensor_grep --version`.
+      placeholder: "tensor-grep 1.13.26"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI/search
+        - Install/upgrade/launcher
+        - Windows
+        - Rust native core
+        - Python package
+        - AST/structural search
+        - Agent/context capsule
+        - GPU/benchmarking
+        - Docs
+        - CI/release
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or API call
+      description: Include the exact command or minimal API call. Redact private paths or values.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reproducible case. Do not attach private repositories.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include relevant output, stack traces, or logs. Redact secrets.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "Windows 11, Ubuntu 24.04, macOS 15, Python 3.12"
+    validations:
+      required: true
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not contain an undisclosed vulnerability, exploit, secret, credential, or private token.
+          required: true

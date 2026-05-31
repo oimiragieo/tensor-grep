@@ -1,0 +1,51 @@
+name: Question or support
+description: Ask for help using tensor-grep.
+title: "question: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for usage questions. Do not include secrets, private code, tokens, credentials, or undisclosed vulnerability details.
+  - type: input
+    id: version
+    attributes:
+      label: tensor-grep version
+      placeholder: "tensor-grep 1.13.26"
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI/search
+        - Install/upgrade/launcher
+        - AST/structural search
+        - Agent/context capsule
+        - GPU/benchmarking
+        - Docs
+        - CI/release
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include non-sensitive command output or environment details if relevant.
+    validations:
+      required: false
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This question does not contain an undisclosed vulnerability, exploit, secret, credential, or private token.
+          required: true
