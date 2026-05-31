@@ -36,6 +36,22 @@ def _version_from_cargo() -> str:
     return match.group(1)
 
 
+def _version_from_cargo_lock() -> str:
+    data = tomllib.loads(_read(ROOT / "rust_core" / "Cargo.lock"))
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("rust_core/Cargo.lock package list is missing or invalid")
+
+    for package in packages:
+        if isinstance(package, dict) and package.get("name") == "tensor_grep_rs":
+            version = package.get("version")
+            if not version:
+                raise ValueError("Missing tensor_grep_rs version in rust_core/Cargo.lock")
+            return str(version)
+
+    raise ValueError("Missing tensor_grep_rs package in rust_core/Cargo.lock")
+
+
 def _version_from_npm() -> str:
     data = json.loads(_read(ROOT / "npm" / "package.json"))
     return str(data["version"])
@@ -3218,17 +3234,44 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
     lock_command = "uv lock --upgrade-package tensor-grep"
     lock_position = build_command.find(lock_command)
     git_add_position = build_command.find("git add uv.lock")
+    cargo_lock_command = "cargo generate-lockfile --manifest-path rust_core/Cargo.toml"
+    cargo_lock_position = build_command.find(cargo_lock_command)
+    cargo_lock_add_position = build_command.find("git add rust_core/Cargo.lock")
     build_position = build_command.rfind("uv build")
     if lock_position < 0:
         errors.append(f"semantic_release.build_command must run `{lock_command}`")
     if git_add_position < 0:
         errors.append("semantic_release.build_command must stage `uv.lock`")
+    if cargo_lock_position < 0:
+        errors.append(f"semantic_release.build_command must run `{cargo_lock_command}`")
+    if cargo_lock_add_position < 0:
+        errors.append("semantic_release.build_command must stage `rust_core/Cargo.lock`")
     if build_position >= 0 and lock_position >= 0 and build_position < lock_position:
         errors.append("semantic_release.build_command must refresh `uv.lock` before `uv build`")
     if lock_position >= 0 and git_add_position >= 0 and git_add_position < lock_position:
         errors.append("semantic_release.build_command must stage `uv.lock` after refreshing it")
     if build_position >= 0 and git_add_position >= 0 and build_position < git_add_position:
         errors.append("semantic_release.build_command must stage `uv.lock` before `uv build`")
+    if build_position >= 0 and cargo_lock_position >= 0 and build_position < cargo_lock_position:
+        errors.append(
+            "semantic_release.build_command must refresh `rust_core/Cargo.lock` before `uv build`"
+        )
+    if (
+        cargo_lock_position >= 0
+        and cargo_lock_add_position >= 0
+        and cargo_lock_add_position < cargo_lock_position
+    ):
+        errors.append(
+            "semantic_release.build_command must stage `rust_core/Cargo.lock` after refreshing it"
+        )
+    if (
+        build_position >= 0
+        and cargo_lock_add_position >= 0
+        and build_position < cargo_lock_add_position
+    ):
+        errors.append(
+            "semantic_release.build_command must stage `rust_core/Cargo.lock` before `uv build`"
+        )
     if (
         build_position >= 0
         and release_docs_add_position >= 0
@@ -3271,6 +3314,7 @@ def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
     cargo_version = _version_from_cargo()
+    cargo_lock_version = _version_from_cargo_lock()
     uv_lock_version = _version_from_uv_lock()
     pyproject_content = _read(ROOT / "pyproject.toml")
     npm_root = ROOT / "npm"
@@ -3280,6 +3324,11 @@ def validate_all() -> list[str]:
     if cargo_version != py_version:
         errors.append(
             f"Version mismatch: rust_core/Cargo.toml={cargo_version} != pyproject={py_version}"
+        )
+    if cargo_lock_version != py_version:
+        errors.append(
+            "rust_core/Cargo.lock tensor_grep_rs version does not match pyproject version: "
+            f"{cargo_lock_version} != {py_version}"
         )
     if npm_version != py_version:
         errors.append(f"Version mismatch: npm/package.json={npm_version} != pyproject={py_version}")

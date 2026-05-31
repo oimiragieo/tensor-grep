@@ -51,6 +51,7 @@ def test_should_require_uv_lock_editable_version_to_match_pyproject():
 
     module._version_from_pyproject = lambda: "1.3.2"
     module._version_from_cargo = lambda: "1.3.2"
+    module._version_from_cargo_lock = lambda: "1.3.2"
     real_read = module._read
 
     def fake_read(path: Path) -> str:
@@ -72,6 +73,37 @@ def test_should_require_uv_lock_editable_version_to_match_pyproject():
     errors = module.validate_all()
     assert any(
         "uv.lock editable tensor-grep version does not match pyproject version" in err
+        for err in errors
+    )
+
+
+def test_should_require_cargo_lock_version_to_match_pyproject():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    module._version_from_pyproject = lambda: "1.3.2"
+    module._version_from_cargo = lambda: "1.3.2"
+    module._version_from_cargo_lock = lambda: "1.3.1"
+    module._version_from_uv_lock = lambda: "1.3.2"
+    real_read = module._read
+
+    def fake_read(path: Path) -> str:
+        if path == module.ROOT / "npm" / "package.json":
+            return (
+                '{"version": "1.3.2", '
+                '"repository": {"url": "git+https://github.com/oimiragieo/tensor-grep.git"}}'
+            )
+        return real_read(path)
+
+    module._read = fake_read
+    errors = module.validate_all()
+    assert any(
+        "rust_core/Cargo.lock tensor_grep_rs version does not match pyproject version" in err
         for err in errors
     )
 
@@ -121,6 +153,11 @@ def test_should_require_semantic_release_build_to_refresh_uv_lock():
         in joined_errors
     )
     assert "semantic_release.build_command must stage `uv.lock`" in joined_errors
+    assert (
+        "semantic_release.build_command must run "
+        "`cargo generate-lockfile --manifest-path rust_core/Cargo.toml`"
+    ) in joined_errors
+    assert "semantic_release.build_command must stage `rust_core/Cargo.lock`" in joined_errors
     assert "semantic_release.build_command must stage release docs after stamping" in joined_errors
 
 

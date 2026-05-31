@@ -26,6 +26,7 @@ def test_should_fail_when_expected_version_does_not_match_project_versions():
     errors = module.validate_release_version_parity(expected_version="9.9.9")
     assert any("pyproject version" in err for err in errors)
     assert any("cargo version" in err for err in errors)
+    assert any("cargo lock version" in err for err in errors)
     assert any("npm version" in err for err in errors)
 
 
@@ -40,6 +41,10 @@ def test_should_fail_when_uv_lock_editable_version_mismatches_expected(tmp_path)
     )
     (tmp_path / "rust_core" / "Cargo.toml").write_text(
         '[package]\nname = "tensor_grep_rs"\nversion = "1.7.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "rust_core" / "Cargo.lock").write_text(
+        '[[package]]\nname = "tensor_grep_rs"\nversion = "1.7.0"\n',
+        encoding="utf-8",
     )
     (tmp_path / "npm" / "package.json").write_text('{"version": "1.7.0"}', encoding="utf-8")
     (tmp_path / "uv.lock").write_text(
@@ -164,6 +169,7 @@ def test_should_fail_when_package_manager_urls_do_not_target_expected_release_ve
 
     module._version_from_pyproject = lambda: expected_version
     module._version_from_cargo = lambda: expected_version
+    module._version_from_cargo_lock = lambda: expected_version
     module._version_from_npm = lambda: expected_version
     module._version_from_brew_formula = lambda: expected_version
     module._version_from_winget_manifest = lambda: expected_version
@@ -197,6 +203,7 @@ def test_should_accept_templated_homebrew_urls_for_expected_release_version():
 
     module._version_from_pyproject = lambda: expected_version
     module._version_from_cargo = lambda: expected_version
+    module._version_from_cargo_lock = lambda: expected_version
     module._version_from_npm = lambda: expected_version
     module._version_from_brew_formula = lambda: expected_version
     module._version_from_winget_manifest = lambda: expected_version

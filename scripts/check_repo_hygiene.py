@@ -3,11 +3,13 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_TRACKED_FILES = ("rust_core/Cargo.lock",)
+RUST_PACKAGE_NAME = "tensor_grep_rs"
 
 EXPLICIT_FORBIDDEN_TRACKED_PATHS = {
     ".coverage",
@@ -64,6 +66,28 @@ def _gitignore_lines(repo_root: Path) -> list[str]:
     return (repo_root / ".gitignore").read_text(encoding="utf-8").splitlines()
 
 
+def _cargo_toml_package_version(content: str) -> str:
+    data = tomllib.loads(content)
+    package = data.get("package")
+    if not isinstance(package, dict) or not package.get("version"):
+        raise ValueError("rust_core/Cargo.toml is missing package.version")
+    return str(package["version"])
+
+
+def _cargo_lock_package_version(content: str) -> str:
+    data = tomllib.loads(content)
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("rust_core/Cargo.lock is missing package entries")
+    for package in packages:
+        if isinstance(package, dict) and package.get("name") == RUST_PACKAGE_NAME:
+            version = package.get("version")
+            if not version:
+                raise ValueError(f"rust_core/Cargo.lock package {RUST_PACKAGE_NAME} has no version")
+            return str(version)
+    raise ValueError(f"rust_core/Cargo.lock is missing package {RUST_PACKAGE_NAME}")
+
+
 def _forbidden_tracked_reason(path: str) -> str | None:
     if path in EXPLICIT_FORBIDDEN_TRACKED_PATHS:
         return "tracked scratch/debug artifact"
@@ -78,7 +102,13 @@ def _forbidden_tracked_reason(path: str) -> str | None:
     return None
 
 
-def check_repo_hygiene(*, tracked_paths: list[str], gitignore_lines: list[str]) -> list[str]:
+def check_repo_hygiene(
+    *,
+    tracked_paths: list[str],
+    gitignore_lines: list[str],
+    cargo_toml_text: str | None = None,
+    cargo_lock_text: str | None = None,
+) -> list[str]:
     normalized_paths = [path.replace("\\", "/") for path in tracked_paths]
     tracked_set = set(normalized_paths)
     errors: list[str] = []
@@ -108,17 +138,38 @@ def check_repo_hygiene(*, tracked_paths: list[str], gitignore_lines: list[str]) 
             "or lockfiles:\n" + "\n".join(broad_ignores)
         )
 
+    if cargo_toml_text is not None and cargo_lock_text is not None:
+        try:
+            cargo_version = _cargo_toml_package_version(cargo_toml_text)
+            lock_version = _cargo_lock_package_version(cargo_lock_text)
+        except (tomllib.TOMLDecodeError, ValueError) as exc:
+            errors.append(f"Unable to validate rust_core/Cargo.lock version: {exc}")
+        else:
+            if lock_version != cargo_version:
+                errors.append(
+                    "rust_core/Cargo.lock tensor_grep_rs version "
+                    f"{lock_version} != rust_core/Cargo.toml package version {cargo_version}"
+                )
+
     return errors
 
 
 def main(argv: list[str] | None = None) -> int:
     _ = argv
     try:
+        cargo_toml_path = ROOT / "rust_core" / "Cargo.toml"
+        cargo_lock_path = ROOT / "rust_core" / "Cargo.lock"
         errors = check_repo_hygiene(
             tracked_paths=_git_ls_files(ROOT),
             gitignore_lines=_gitignore_lines(ROOT),
+            cargo_toml_text=(
+                cargo_toml_path.read_text(encoding="utf-8") if cargo_toml_path.exists() else None
+            ),
+            cargo_lock_text=(
+                cargo_lock_path.read_text(encoding="utf-8") if cargo_lock_path.exists() else None
+            ),
         )
-    except subprocess.CalledProcessError as exc:
+    except (OSError, subprocess.CalledProcessError) as exc:
         print(f"repo hygiene check failed to inspect tracked files: {exc}", file=sys.stderr)
         return 2
 

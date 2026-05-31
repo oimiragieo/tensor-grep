@@ -87,3 +87,19 @@ def test_repo_hygiene_requires_rust_lockfile_and_rejects_broad_ignores() -> None
     assert "*.txt" in joined
     assert "*.log" in joined
     assert "*.patch" in joined
+
+
+def test_repo_hygiene_requires_rust_lockfile_version_to_match_cargo_toml() -> None:
+    module = _load_module()
+
+    errors = module.check_repo_hygiene(
+        tracked_paths=["pyproject.toml", "rust_core/Cargo.lock"],
+        gitignore_lines=["/*.txt", "/*.log"],
+        cargo_toml_text='[package]\nname = "tensor_grep_rs"\nversion = "1.13.25"\n',
+        cargo_lock_text=('[[package]]\nname = "tensor_grep_rs"\nversion = "1.13.24"\n'),
+    )
+
+    assert (
+        "rust_core/Cargo.lock tensor_grep_rs version 1.13.24 "
+        "!= rust_core/Cargo.toml package version 1.13.25"
+    ) in errors

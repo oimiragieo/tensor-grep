@@ -31,6 +31,20 @@ def _version_from_cargo() -> str:
     return match.group(1)
 
 
+def _version_from_cargo_lock() -> str:
+    data = tomllib.loads(_read(ROOT / "rust_core" / "Cargo.lock"))
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("Missing package list in rust_core/Cargo.lock")
+    for package in packages:
+        if isinstance(package, dict) and package.get("name") == "tensor_grep_rs":
+            version = package.get("version")
+            if not version:
+                raise ValueError("Missing tensor_grep_rs version in rust_core/Cargo.lock")
+            return str(version)
+    raise ValueError("Missing tensor_grep_rs package in rust_core/Cargo.lock")
+
+
 def _version_from_npm() -> str:
     data = json.loads(_read(ROOT / "npm" / "package.json"))
     return str(data["version"])
@@ -197,6 +211,7 @@ def validate_release_version_parity(
     versions = {
         "pyproject": _version_from_pyproject(),
         "cargo": _version_from_cargo(),
+        "cargo lock": _version_from_cargo_lock(),
         "npm": _version_from_npm(),
         "uv.lock editable": _version_from_uv_lock(),
     }
