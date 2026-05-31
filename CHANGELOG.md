@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.25 (2026-05-31)
+
+### Bug Fixes
+
+- Harden CI smoke and repo hygiene
+  ([`812957f`](https://github.com/oimiragieo/tensor-grep/commit/812957f149949108cba2795aaa2be2ec4eec72c0))
+
+
 ## v1.13.24 (2026-05-27)
 
 ### Bug Fixes
