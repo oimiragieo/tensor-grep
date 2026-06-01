@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.28 (2026-06-01)
+
+### Bug Fixes
+
+- Harden agent symbol dogfood contracts
+  ([`70e93da`](https://github.com/oimiragieo/tensor-grep/commit/70e93da2bb833af1502465ca9f215974f46981bc))
+
+
 ## v1.13.27 (2026-06-01)
 
 ### Bug Fixes
