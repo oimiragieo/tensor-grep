@@ -113,7 +113,7 @@ Turn `defs` / `refs` / `callers` / `impact` into a stronger change-impact surfac
 
 ### Proposed features
 
-1. `tg blast-radius --symbol ... --json`
+1. `tg blast-radius REPO_PATH SYMBOL --json`
    - return downstream callers, importers, affected tests, and ranked related files
 
 2. graph depth controls

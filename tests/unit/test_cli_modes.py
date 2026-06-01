@@ -3404,6 +3404,47 @@ def test_defs_text_lists_definition_locations(tmp_path):
     assert "create_invoice" in result.stdout
 
 
+def test_defs_auto_corrects_reversed_symbol_path_positionals(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    # Reversed `<SYMBOL> <PATH>` order (grep muscle memory / older docs): the
+    # first positional is not a path but the second one is, so it should be
+    # transparently swapped instead of failing with `Path not found`.
+    result = CliRunner().invoke(app, ["defs", "create_invoice", str(project)])
+
+    assert result.exit_code == 0, result.output
+    assert "Path not found" not in result.output
+    assert "interpreting as `tg defs <PATH> <SYMBOL>`" in result.output
+    assert "definitions=1" in result.stdout
+    assert f"{module_path.resolve()}:1" in result.stdout
+
+
+def test_defs_does_not_swap_when_first_positional_is_a_real_path(tmp_path):
+    # When the first positional is a real path we must honor the caller's
+    # explicit `<PATH> <SYMBOL>` request even if the symbol shares a name with
+    # an existing path; the anti-swap guard must not fire.
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["defs", str(project), "create_invoice"])
+
+    assert result.exit_code == 0, result.output
+    assert "interpreting as" not in result.output
+    assert "definitions=1" in result.stdout
+
+
 def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -4840,6 +4881,96 @@ def test_agent_context_commands_prefer_invoice_implementation_over_service_menti
     assert agent_payload["primary_target"]["file"] == str(paths["payments"].resolve())
     assert agent_payload["primary_target"]["symbol"] == "create_invoice"
     assert agent_payload["ask_user_before_editing"]["required"] is False
+
+
+def test_agent_capsule_exact_symbol_query_prefers_exact_symbol_over_prefix(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "native_search.py"
+    module_path.write_text(
+        "def run_native_search_files():\n"
+        "    total = 0\n"
+        "    total += 1\n"
+        "    total += 2\n"
+        "    return total\n\n"
+        "def run_native_search():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_capsule_payload_for_query(project, "run_native_search")
+
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["primary_target"]["symbol"] == "run_native_search"
+
+
+def test_agent_capsule_filters_file_only_alternative_targets(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    primary_path = src_dir / "payments.py"
+    alternative_path = src_dir / "notes.py"
+    primary_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    alternative_path.write_text("invoice notes\n", encoding="utf-8")
+
+    def _fake_context_render(*_args, **_kwargs):
+        return {
+            "navigation_pack": {
+                "primary_target": {
+                    "file": str(primary_path),
+                    "symbol": "create_invoice",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                },
+                "follow_up_reads": [],
+                "validation_commands": [],
+            },
+            "edit_plan_seed": {
+                "primary_file": str(primary_path),
+                "primary_symbol": {"name": "create_invoice", "kind": "function"},
+                "primary_span": {"start_line": 1, "end_line": 2},
+                "confidence": {"overall": 0.9},
+                "validation_plan": [],
+                "validation_commands": [],
+                "edit_ordering": [str(primary_path)],
+            },
+            "candidate_edit_targets": {
+                "files": [str(alternative_path)],
+                "symbols": [],
+            },
+            "file_matches": [
+                {
+                    "path": str(alternative_path),
+                    "score": 80,
+                    "reasons": ["source"],
+                    "provenance": ["heuristic"],
+                }
+            ],
+            "validation_commands": [],
+            "sources": [
+                {
+                    "file": str(primary_path),
+                    "symbol": "create_invoice",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "source": primary_path.read_text(encoding="utf-8"),
+                }
+            ],
+            "context_consistency": {"primary_file_included": True},
+        }
+
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        "create_invoice",
+        project,
+        include_blast_radius=False,
+        max_tokens=400,
+    )
+
+    assert payload["alternative_targets"] == []
 
 
 def test_context_pack_uses_repo_map_imports_for_direct_validation_evidence(

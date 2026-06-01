@@ -11,22 +11,22 @@ tg search --format rg "PATTERN" REPO_PATH
 tg agent REPO_PATH --query "change behavior" --json
 tg edit-plan REPO_PATH --query "change behavior" --json
 tg context-render REPO_PATH --query "feature flow" --json
-tg source --symbol SYMBOL REPO_PATH
-tg defs --symbol SYMBOL REPO_PATH
-tg refs --symbol SYMBOL REPO_PATH
-tg callers --symbol SYMBOL REPO_PATH
-tg blast-radius --symbol SYMBOL REPO_PATH
-tg blast-radius-plan --symbol SYMBOL REPO_PATH
+tg source REPO_PATH SYMBOL
+tg defs REPO_PATH SYMBOL
+tg refs REPO_PATH SYMBOL
+tg callers REPO_PATH SYMBOL
+tg blast-radius REPO_PATH SYMBOL
+tg blast-radius-plan REPO_PATH SYMBOL
 ```
 
 ## Useful Variants
 
 ```powershell
-tg source --symbol SYMBOL REPO_PATH --json
-tg defs --symbol SYMBOL REPO_PATH --provider native --json
-tg refs --symbol SYMBOL REPO_PATH --provider lsp --json
-tg blast-radius --symbol SYMBOL REPO_PATH --provider hybrid --json
-tg blast-radius-plan --symbol SYMBOL REPO_PATH --provider native --json
+tg source REPO_PATH SYMBOL --json
+tg defs REPO_PATH SYMBOL --provider native --json
+tg refs REPO_PATH SYMBOL --provider lsp --json
+tg blast-radius REPO_PATH SYMBOL --provider hybrid --json
+tg blast-radius-plan REPO_PATH SYMBOL --provider native --json
 tg search --format rg --sort path "PATTERN" REPO_PATH
 tg search --json "PATTERN" REPO_PATH
 tg search --format rg --json "PATTERN" REPO_PATH
@@ -37,15 +37,15 @@ tg session edit-plan SESSION_ID REPO_PATH --query "change behavior" --daemon --j
 ## Practical Sequence
 
 ```powershell
-tg source --symbol open_file C:\repo --json
-tg blast-radius --symbol open_file C:\repo --json
-tg blast-radius-plan --symbol open_file C:\repo --json
+tg source C:\repo open_file --json
+tg blast-radius C:\repo open_file --json
+tg blast-radius-plan C:\repo open_file --json
 ```
 
 Use the top-ranked file/span first. Only broaden to refs/callers if the primary file is still ambiguous.
 
 Notes:
 
-- Symbol commands use `--symbol`; do not pass the symbol positionally.
+- Symbol commands use path-first positional order: `tg <command> REPO_PATH SYMBOL`.
 - `tg search --format rg --json` emits ripgrep JSON Lines. Plain `tg search --json` is tensor-grep aggregate JSON.
 - LSP and GPU surfaces are experimental until their proof fields say otherwise.

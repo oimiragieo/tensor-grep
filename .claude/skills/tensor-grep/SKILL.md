@@ -14,18 +14,25 @@ Use this skill when you need to locate code precisely, understand likely edit im
 - You need an edit plan, blast radius, or validation target instead of ad hoc grep loops.
 - You are preparing a patch and want a smaller, more accurate context bundle.
 
+## Argument Order
+
+All symbol commands are **path-first**: `tg <command> <REPO_PATH> <SYMBOL>`.
+A reversed `<SYMBOL> <REPO_PATH>` call is auto-corrected with a stderr hint, and
+a single `tg <command> <SYMBOL>` resolves against the current directory — but
+prefer the canonical path-first form.
+
 ## Default Workflow
 
 1. Confirm the installed CLI is available:
    - `tg --version`
 2. Start with direct source lookup:
-   - `tg source SYMBOL REPO_PATH`
+   - `tg source REPO_PATH SYMBOL`
 3. If you need symbol navigation:
-   - `tg defs SYMBOL REPO_PATH`
-   - `tg refs SYMBOL REPO_PATH`
+   - `tg defs REPO_PATH SYMBOL`
+   - `tg refs REPO_PATH SYMBOL`
 4. If you need edit planning:
-   - `tg blast-radius SYMBOL REPO_PATH`
-   - `tg blast-radius-plan SYMBOL REPO_PATH`
+   - `tg blast-radius REPO_PATH SYMBOL`
+   - `tg blast-radius-plan REPO_PATH SYMBOL`
 5. Use the returned file/span candidates to make the smallest correct edit.
 6. Run only the most relevant validation commands after the edit.
 
@@ -48,8 +55,8 @@ Use this skill when you need to locate code precisely, understand likely edit im
 
 - Default: `native`
 - Optional:
-  - `tg defs SYMBOL REPO_PATH --provider lsp`
-  - `tg blast-radius SYMBOL REPO_PATH --provider hybrid`
+  - `tg defs REPO_PATH SYMBOL --provider lsp`
+  - `tg blast-radius REPO_PATH SYMBOL --provider hybrid`
 
 Use `lsp` or `hybrid` only if native lookup seems ambiguous or incomplete.
 

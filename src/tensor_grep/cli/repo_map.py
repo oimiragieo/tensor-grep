@@ -4423,8 +4423,17 @@ def _symbol_span_length(symbol: dict[str, Any]) -> int:
     return max(1, end_line - start_line + 1)
 
 
-def _symbol_rank_key(symbol: dict[str, Any]) -> tuple[int, int, int, str, int, str]:
+def _symbol_rank_key(symbol: dict[str, Any]) -> tuple[int, int, int, int, str, int, str]:
+    if bool(symbol.get("exact_query_match")):
+        query_match_rank = 0
+    elif bool(symbol.get("bridge_query_match")):
+        query_match_rank = 1
+    elif bool(symbol.get("covered_query_match")):
+        query_match_rank = 2
+    else:
+        query_match_rank = 3
     return (
+        query_match_rank,
         -int(symbol.get("score", 0)),
         0 if str(symbol.get("kind")) == "function" else 1,
         -_symbol_span_length(symbol),
