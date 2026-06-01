@@ -60,6 +60,38 @@ def _passing_native_scale_summary(module):
     )
 
 
+def _passing_many_pattern_payload(module):
+    patterns = list(module.DEFAULT_CORRECTNESS_PATTERNS)
+    correctness_check = {
+        "status": "PASS",
+        "matches_equal": True,
+        "files_equal": True,
+        "rg_matches_equal": True,
+        "rg_files_equal": True,
+        "rg_match_identity_equal": True,
+    }
+    payload = {
+        "status": "PASS",
+        "workload_class": module.NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
+        "fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
+        "patterns": patterns,
+        "speedup_vs_cpu": 2.0,
+        "speedup_vs_rg_multi_pattern": 1.5,
+        "gpu_stats": {
+            "pipeline": {
+                "pattern_count": len(patterns),
+                "single_dispatch": True,
+            }
+        },
+        "correctness_check": correctness_check,
+    }
+    payload["proof_gate"] = module.build_many_pattern_proof_gate(
+        multi_pattern=payload,
+        correctness_check=correctness_check,
+    )
+    return payload
+
+
 def test_run_gpu_benchmarks_should_parse_5gb_corpus_size():
     module = _load_script_module(
         "run_gpu_benchmarks_scale_parse", "benchmarks/run_gpu_benchmarks.py"
@@ -320,6 +352,7 @@ def test_public_managed_gpu_proof_gate_requires_managed_nvidia_metadata():
             "version_status": "matches",
         },
         scale_gate_summary=scale_gate_summary,
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
     )
 
     assert gate["status"] == "PASS"
@@ -348,6 +381,7 @@ def test_public_managed_gpu_proof_gate_rejects_stale_or_incomplete_metadata():
             "version_status": "matches",
         },
         scale_gate_summary=scale_gate_summary,
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
     )
 
     incomplete = module.build_public_managed_gpu_proof_gate(
@@ -361,6 +395,7 @@ def test_public_managed_gpu_proof_gate_rejects_stale_or_incomplete_metadata():
             "version_status": "matches",
         },
         scale_gate_summary=scale_gate_summary,
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
     )
 
     assert stale["status"] == "FAIL"
@@ -389,6 +424,7 @@ def test_public_managed_gpu_proof_gate_rejects_in_tree_cuda_proof():
             "version_status": "matches",
         },
         scale_gate_summary=_passing_native_scale_summary(module),
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
     )
 
     assert gate["status"] == "FAIL"
@@ -415,6 +451,7 @@ def test_public_managed_gpu_proof_gate_rejects_cpu_frontdoor_fallback():
             "version_status": "matches",
         },
         scale_gate_summary=_passing_native_scale_summary(module),
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
     )
 
     assert gate["status"] == "FAIL"
@@ -440,13 +477,14 @@ def test_public_managed_gpu_proof_gate_rejects_weak_scale_summary():
             "version_status": "matches",
         },
         scale_gate_summary={"promotion_ready": True},
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
     )
 
     assert gate["status"] == "FAIL"
     assert gate["public_gpu_proof"] is False
     assert "native_cuda_scale_surface_missing" in gate["blockers"]
     assert "native_cuda_correctness_gate_not_passed" in gate["blockers"]
-    assert "native_cuda_speed_gate_not_passed" in gate["blockers"]
+    assert "native_cuda_runtime_gate_not_passed" in gate["blockers"]
 
 
 def test_native_scale_gate_requires_rg_identity_correctness():

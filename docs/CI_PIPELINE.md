@@ -81,8 +81,12 @@ uv run python benchmarks/run_gpu_native_benchmarks.py \
 ```
 
 The artifact is promotion-quality only when the benchmark emits `public_gpu_proof = true` and
-`public_managed_promotion_ready = true`. Local CUDA-feature binaries, sidecar rows, or CPU fallback
-rows remain implementation evidence, not public managed acceleration proof.
+`public_managed_promotion_ready = true`. That public gate requires managed NVIDIA front-door
+metadata, `NativeGpuBackend` with `sidecar_used = false`, direct `rg --json` 1GB/5GB route and
+correctness evidence, and the advanced many fixed-string proof gate against the fair
+single-invocation `rg -F -e ... -e ...` baseline. Local CUDA-feature binaries, sidecar rows, CPU
+fallback rows, or single-pattern speed wins remain implementation evidence, not public managed
+acceleration proof.
 
 ### `audit.yml`
 

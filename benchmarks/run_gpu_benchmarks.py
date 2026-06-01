@@ -1268,6 +1268,69 @@ def _gpu_proof_status_from_summary(summary: dict[str, object]) -> dict[str, obje
     }
 
 
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def build_gpu_proof_summary(scale_gate_summary: dict[str, object]) -> dict[str, object]:
+    proof_status = _gpu_proof_status_from_summary(scale_gate_summary)
+    runtime_gate = scale_gate_summary.get("native_cuda_scale_gate")
+    correctness_gate = scale_gate_summary.get("correctness_gate")
+    speed_gate = scale_gate_summary.get("speed_gate")
+    runtime_gate = runtime_gate if isinstance(runtime_gate, dict) else {}
+    correctness_gate = correctness_gate if isinstance(correctness_gate, dict) else {}
+    speed_gate = speed_gate if isinstance(speed_gate, dict) else {}
+
+    local_gpu_proof = bool(proof_status.get("gpu_proof", False))
+    blockers = _string_list(scale_gate_summary.get("promotion_blockers"))
+    if local_gpu_proof:
+        status = "local_promotion_ready"
+        summary = (
+            "Python GPU scale artifact observed local native CUDA promotion evidence; "
+            "public managed release proof still requires the native benchmark gate."
+        )
+        next_action = "run-native-public-managed-proof-before-public-promotion"
+    elif proof_status.get("gpu_evidence_status") == "unsupported":
+        status = "unsupported"
+        summary = (
+            "Python GPU scale artifact is not native CUDA proof; CPU fallback, sidecar, "
+            "or missing native runtime evidence blocks promotion."
+        )
+        next_action = "run-native-cuda-benchmark-with-cuda-enabled-tg"
+    else:
+        status = "experimental"
+        summary = (
+            "Python GPU scale artifact has native CUDA evidence, but correctness or speed "
+            "gates still block promotion."
+        )
+        next_action = "fix-correctness-or-speed-gates"
+
+    return {
+        "status": status,
+        "summary": summary,
+        "gpu_evidence_status": proof_status.get("gpu_evidence_status"),
+        "local_native_gpu_proof": local_gpu_proof,
+        "public_gpu_proof": False,
+        "public_managed_promotion_ready": False,
+        "native_gpu_unavailable": proof_status.get("native_gpu_unavailable"),
+        "not_gpu_proof_reason": proof_status.get("not_gpu_proof_reason"),
+        "workload_class": scale_gate_summary.get("workload_class"),
+        "scale_gate_promotion_ready": bool(scale_gate_summary.get("promotion_ready", False)),
+        "blockers": blockers,
+        "scale_gate_blockers": blockers,
+        "next_action": next_action,
+        "observed": {
+            "runtime_gate_status": runtime_gate.get("status"),
+            "correctness_gate_status": correctness_gate.get("status"),
+            "speed_gate_status": speed_gate.get("status"),
+            "runtime_observed_backends": runtime_gate.get("observed_backends"),
+            "runtime_sidecar_observed": runtime_gate.get("sidecar_observed"),
+        },
+    }
+
+
 def build_scale_gate_summary(
     *,
     devices: list[dict[str, object]],
@@ -1451,6 +1514,7 @@ def run_gpu_scale_benchmarks(
             "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
             "scale_gate_summary": scale_gate_summary,
             **_gpu_proof_status_from_summary(scale_gate_summary),
+            "gpu_proof_summary": build_gpu_proof_summary(scale_gate_summary),
             "warnings": warnings,
             "errors": errors,
             "benchmark_pattern": benchmark_pattern,
@@ -1727,6 +1791,7 @@ def run_gpu_scale_benchmarks(
         "gpu_readiness_next_steps": build_gpu_readiness_next_steps(gpu_bottleneck_summary),
         "scale_gate_summary": scale_gate_summary,
         **_gpu_proof_status_from_summary(scale_gate_summary),
+        "gpu_proof_summary": build_gpu_proof_summary(scale_gate_summary),
         "warnings": warnings,
         "errors": errors,
         "benchmark_pattern": benchmark_pattern,
@@ -1828,6 +1893,10 @@ def main() -> int:
                 gpu_auto_recommendation=recommendation,
             ),
         })
+        scale_gate_summary = payload.get("scale_gate_summary")
+        if isinstance(scale_gate_summary, dict):
+            payload.update(_gpu_proof_status_from_summary(scale_gate_summary))
+            payload["gpu_proof_summary"] = build_gpu_proof_summary(scale_gate_summary)
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 
@@ -1844,6 +1913,10 @@ def main() -> int:
         shard_count=args.shards,
     )
     payload.update(result)
+    scale_gate_summary = payload.get("scale_gate_summary")
+    if isinstance(scale_gate_summary, dict):
+        payload.update(_gpu_proof_status_from_summary(scale_gate_summary))
+        payload["gpu_proof_summary"] = build_gpu_proof_summary(scale_gate_summary)
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return 1 if payload.get("errors") else 0
 
