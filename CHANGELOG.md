@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.13.27 (2026-06-01)
+
+### Bug Fixes
+
+- Gate public gpu proof on many-pattern evidence
+  ([`10da234`](https://github.com/oimiragieo/tensor-grep/commit/10da2344983b6d1dd524d79f2f39bebd19f0cc3b))
+
+Gate public managed GPU promotion on managed NVIDIA provenance, direct 1GB/5GB route/correctness
+  evidence, and the advanced many-pattern fair-baseline proof gate. Add machine-readable proof
+  summaries and docs governance for stale sequential-rg claims.
+
+### Continuous Integration
+
+- Add secure issue intake triage
+  ([`89fb315`](https://github.com/oimiragieo/tensor-grep/commit/89fb315b8adeaf4e4dcfe90a65b8c27287064c88))
+
+- Refine performance issue priority
+  ([`af9f2b9`](https://github.com/oimiragieo/tensor-grep/commit/af9f2b916861461aad2463578762c317c35aa738))
+
+- Tighten perf issue triage
+  ([`89b5b93`](https://github.com/oimiragieo/tensor-grep/commit/89b5b93581285aa8616950fe2a208551bb4b31fe))
+
+### Documentation
+
+- Document issue intake in readme
+  ([`ec58420`](https://github.com/oimiragieo/tensor-grep/commit/ec5842099c94e91069195796bc371b8e07a0815e))
+
+
 ## v1.13.26 (2026-05-31)
 
 ### Bug Fixes
