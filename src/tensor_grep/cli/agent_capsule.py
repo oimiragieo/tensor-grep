@@ -480,26 +480,6 @@ def _alternative_targets(
             ])
         alternatives.append(alternative)
 
-    for file_path in _as_list_of_strings(candidate_targets.get("files")):
-        if file_path == primary_file:
-            continue
-        key = (file_path, None)
-        if key in seen or any(item.get("file") == file_path for item in alternatives):
-            continue
-        seen.add(key)
-        match = file_matches.get(file_path, {})
-        score = int(match.get("score", 0) or 0)
-        alternatives.append({
-            "file": file_path,
-            "symbol": None,
-            "kind": "file",
-            "line": 1,
-            "language": repo_map._target_language_for_path(file_path),
-            "confidence": repo_map._confidence_from_score(score),
-            "reasons": list(match.get("reasons") or []),
-            "evidence": list(match.get("provenance") or ["heuristic"]),
-        })
-
     return alternatives[:limit]
 
 

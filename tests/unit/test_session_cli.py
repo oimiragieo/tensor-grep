@@ -291,6 +291,36 @@ def test_session_commands_accept_positional_query_and_symbol_aliases(tmp_path: P
         assert _has_string(payload, expected_service_file)
 
 
+def test_session_edit_plan_auto_corrects_reversed_path_session_order(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            str(project),
+            opened["session_id"],
+            "create invoice",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "interpreting as `tg session edit-plan <SESSION_ID> <PATH> <QUERY>`" in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["routing_reason"] == "session-context-edit-plan"
+    assert payload["files"] == [str(module_path.resolve())]
+
+
 def test_session_commands_warn_for_legacy_query_and_symbol_options(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"

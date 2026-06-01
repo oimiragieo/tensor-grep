@@ -229,9 +229,9 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 | Files with matches | `tg search "pattern" src --files-with-matches` |
 | AST search | `tg run --lang python 'def $NAME($$$ARGS): $$$BODY' src --json` |
 | AST language identifiers | `tg ast-info --json` |
-| Source lookup | `tg source src --symbol someSymbol --json` |
-| Refs lookup | `tg refs src --symbol someSymbol --json` |
-| Blast radius | `tg blast-radius src --symbol someSymbol --json` |
+| Source lookup | `tg source src someSymbol --json` |
+| Refs lookup | `tg refs src someSymbol --json` |
+| Blast radius | `tg blast-radius src someSymbol --json` |
 | Context bundle | `tg context-render src --query "how routing works" --render-profile llm --json` |
 | Device inventory | `tg devices --json` |
 | MCP server | `tg mcp` |

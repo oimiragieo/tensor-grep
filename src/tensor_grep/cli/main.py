@@ -6555,6 +6555,73 @@ def _echo_symbol_location_rows(rows: list[dict[str, Any]]) -> None:
             typer.echo(rendered)
 
 
+def _maybe_swap_reversed_positionals(
+    *,
+    path: str,
+    value: str,
+    command_name: str,
+    value_label: str,
+) -> tuple[str, str]:
+    """Auto-correct a reversed ``<VALUE> <PATH>`` invocation.
+
+    Agents (and grep muscle memory, and older docs) frequently call these
+    commands as ``tg <command> <SYMBOL> <PATH>`` instead of the canonical
+    path-first ``tg <command> <PATH> <SYMBOL>``. When that happens the first
+    positional is not an existing path but the second one is, which previously
+    produced an opaque ``Path not found: <SYMBOL>`` error. Detect that exact
+    case and transparently swap, emitting a hint so the caller can learn the
+    canonical order. The swap only fires when the first arg is definitively not
+    a path AND the second arg definitively is, so a legitimate ``<PATH>
+    <VALUE>`` call (where the value happens to share a name with a real path)
+    is never disturbed.
+    """
+    if Path(path).expanduser().exists():
+        return path, value
+    if not Path(value).expanduser().exists():
+        return path, value
+    typer.echo(
+        f"Warning: '{path}' is not an existing path but '{value}' is; "
+        f"interpreting as `tg {command_name} <PATH> <{value_label}>` "
+        f"(path={value!r}, {value_label.lower()}={path!r}). "
+        f"Pass <PATH> before <{value_label}> to silence this hint.",
+        err=True,
+    )
+    return value, path
+
+
+def _maybe_swap_reversed_session_path(
+    *,
+    session_id: str,
+    path: str,
+    command_name: str,
+) -> tuple[str, str]:
+    """Auto-correct ``tg session <command> <PATH> <SESSION_ID> ...``.
+
+    Session commands are the one user-facing surface where the stable session
+    identifier must lead the path. Agents commonly transpose this after using
+    the path-first top-level commands. Only swap when the first positional is
+    an existing path and the second positional resolves to an existing session
+    under that path, so ordinary session-first calls remain untouched.
+    """
+    if not Path(session_id).expanduser().exists():
+        return session_id, path
+    if Path(path).expanduser().exists():
+        return session_id, path
+    try:
+        from tensor_grep.cli.session_store import get_session
+
+        get_session(path, session_id)
+    except Exception:
+        return session_id, path
+    typer.echo(
+        f"Warning: '{session_id}' is an existing path and '{path}' is an existing "
+        f"session for it; interpreting as `tg session {command_name} <SESSION_ID> "
+        f"<PATH> <QUERY>`. Pass <SESSION_ID> before <PATH> to silence this hint.",
+        err=True,
+    )
+    return path, session_id
+
+
 def _resolve_path_and_symbol(
     *,
     path: str,
@@ -6575,7 +6642,12 @@ def _resolve_path_and_symbol(
         )
         return path, symbol_option
     if symbol_arg is not None:
-        return path, symbol_arg
+        return _maybe_swap_reversed_positionals(
+            path=path,
+            value=symbol_arg,
+            command_name=command_name,
+            value_label="SYMBOL",
+        )
     if path != "." and not Path(path).expanduser().exists():
         return ".", path
     raise ValueError("Missing symbol. Use positional SYMBOL or --symbol SYMBOL.")
@@ -6600,7 +6672,12 @@ def _resolve_path_and_query(
         )
         return path, query_option
     if query_arg is not None:
-        return path, query_arg
+        return _maybe_swap_reversed_positionals(
+            path=path,
+            value=query_arg,
+            command_name=command_name,
+            value_label="QUERY",
+        )
     if path != "." and not Path(path).expanduser().exists():
         return ".", path
     raise ValueError("Missing query. Use positional QUERY or --query QUERY.")
@@ -7397,6 +7474,11 @@ def session_context_cmd(
     from tensor_grep.cli.session_store import session_context
 
     try:
+        session_id, path = _maybe_swap_reversed_session_path(
+            session_id=session_id,
+            path=path,
+            command_name="context",
+        )
         resolved_path, resolved_query = _resolve_path_and_query(
             path=path,
             query_arg=query_arg,
@@ -7498,6 +7580,11 @@ def session_context_render_cmd(
     from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
     try:
+        session_id, path = _maybe_swap_reversed_session_path(
+            session_id=session_id,
+            path=path,
+            command_name="context-render",
+        )
         resolved_path, resolved_query = _resolve_path_and_query(
             path=path,
             query_arg=query_arg,
@@ -7614,6 +7701,11 @@ def session_edit_plan_cmd(
     from tensor_grep.cli.session_store import session_context_edit_plan
 
     try:
+        session_id, path = _maybe_swap_reversed_session_path(
+            session_id=session_id,
+            path=path,
+            command_name="edit-plan",
+        )
         resolved_path, resolved_query = _resolve_path_and_query(
             path=path,
             query_arg=query_arg,

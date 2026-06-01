@@ -121,8 +121,9 @@ mode is 487 ms because it only checks current scope.
 | `tg session edit-plan` | **SESSION_ID** | `--query "..."` (PATH is 2nd positional) |
 | `tg run` | PATTERN_OR_PATH (positional, ambiguous) | `--pattern` flag alternative |
 
-Agents fail this constantly. `tg defs SYMBOL PATH` (intuitive) errors; `tg session edit-plan PATH ...`
-(intuitive after using non-session form) errors.
+Agents historically failed this constantly. `tg defs SYMBOL PATH` (intuitive) errored; `tg session edit-plan PATH ...`
+(intuitive after using non-session form) errored. The current hardening branch accepts those reversed forms
+conservatively and emits a canonical-order hint.
 
 **Proposed implementation (breaking change requires deprecation cycle)**
 

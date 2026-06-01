@@ -26,13 +26,13 @@ Use this skill when you need to locate code precisely, understand likely edit im
    - `tg agent REPO_PATH --query "change invoice tax" --json`
    - `tg edit-plan REPO_PATH --query "change invoice tax" --json`
    - `tg context-render REPO_PATH --query "invoice flow" --json`
-4. Use symbol commands with explicit `--symbol`:
-   - `tg defs --symbol SYMBOL REPO_PATH --json`
-   - `tg source --symbol SYMBOL REPO_PATH --json`
-   - `tg refs --symbol SYMBOL REPO_PATH --json`
-   - `tg callers --symbol SYMBOL REPO_PATH --json`
-   - `tg blast-radius --symbol SYMBOL REPO_PATH --json`
-   - `tg blast-radius-plan --symbol SYMBOL REPO_PATH --json`
+4. Use symbol commands in path-first order:
+   - `tg defs REPO_PATH SYMBOL --json`
+   - `tg source REPO_PATH SYMBOL --json`
+   - `tg refs REPO_PATH SYMBOL --json`
+   - `tg callers REPO_PATH SYMBOL --json`
+   - `tg blast-radius REPO_PATH SYMBOL --json`
+   - `tg blast-radius-plan REPO_PATH SYMBOL --json`
 5. Use cached sessions for repeated edit loops:
    - `tg session open REPO_PATH --json`
    - `tg session edit-plan SESSION_ID REPO_PATH --query "change behavior" --json`
@@ -63,8 +63,8 @@ Use this skill when you need to locate code precisely, understand likely edit im
 
 - Default: `native`
 - Optional:
-  - `tg defs --symbol SYMBOL REPO_PATH --provider lsp --json`
-  - `tg blast-radius --symbol SYMBOL REPO_PATH --provider hybrid --json`
+  - `tg defs REPO_PATH SYMBOL --provider lsp --json`
+  - `tg blast-radius REPO_PATH SYMBOL --provider hybrid --json`
 
 Use `lsp` or `hybrid` only if native lookup seems ambiguous or incomplete. Provider availability is not semantic proof; check `health_status`, `lsp_proof`, and fallback fields.
 

@@ -6866,8 +6866,10 @@ def test_gemini_project_context_and_skill_should_exist():
 
     assert "Use the `tensor-grep` skill" in context_text
     assert "Do not ask what task to perform" in context_text
-    assert "tg source --symbol SYMBOL REPO_PATH" in skill_text
-    assert "tg source --symbol SYMBOL REPO_PATH" in reference_text
+    assert "tg source REPO_PATH SYMBOL" in skill_text
+    assert "tg source REPO_PATH SYMBOL" in reference_text
+    assert "tg source --symbol SYMBOL REPO_PATH" not in skill_text
+    assert "tg source --symbol SYMBOL REPO_PATH" not in reference_text
     assert "tg source SYMBOL REPO_PATH" not in skill_text
     assert "tg source SYMBOL REPO_PATH" not in reference_text
 
