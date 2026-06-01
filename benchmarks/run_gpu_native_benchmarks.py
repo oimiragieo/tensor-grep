@@ -1824,12 +1824,135 @@ def _gpu_proof_status_from_native_summary(summary: dict[str, object]) -> dict[st
     }
 
 
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def build_gpu_proof_summary(
+    *,
+    scale_gate_summary: dict[str, object],
+    public_managed_gpu_proof_gate: dict[str, object],
+) -> dict[str, object]:
+    proof_status = _gpu_proof_status_from_native_summary(scale_gate_summary)
+    runtime_gate = scale_gate_summary.get("native_cuda_runtime_gate")
+    correctness_gate = scale_gate_summary.get("correctness_gate")
+    speed_gate = scale_gate_summary.get("speed_gate")
+    runtime_gate = runtime_gate if isinstance(runtime_gate, dict) else {}
+    correctness_gate = correctness_gate if isinstance(correctness_gate, dict) else {}
+    speed_gate = speed_gate if isinstance(speed_gate, dict) else {}
+
+    public_status = str(public_managed_gpu_proof_gate.get("status") or "NOT_REQUESTED")
+    public_requested = public_status != "NOT_REQUESTED"
+    local_gpu_proof = bool(proof_status.get("gpu_proof", False))
+    public_gpu_proof = bool(public_managed_gpu_proof_gate.get("public_gpu_proof", False))
+    public_managed_ready = bool(
+        public_managed_gpu_proof_gate.get("public_managed_promotion_ready", False)
+    )
+    scale_blockers = _string_list(scale_gate_summary.get("promotion_blockers"))
+    public_blockers = _string_list(public_managed_gpu_proof_gate.get("blockers"))
+    blockers = (
+        public_blockers
+        if public_requested
+        else list(dict.fromkeys([*scale_blockers, *public_blockers]))
+    )
+
+    if public_gpu_proof and public_managed_ready:
+        status = "public_promotion_ready"
+        summary = "Public managed NVIDIA GPU proof passed for the declared workload class."
+        next_action = "promotion-ready"
+    elif public_requested:
+        status = "public_promotion_blocked"
+        summary = (
+            "Public managed GPU proof is blocked; inspect blocker codes before making "
+            "public GPU promotion claims."
+        )
+        next_action = "fix-public-managed-nvidia-proof-blockers"
+    elif local_gpu_proof:
+        status = "local_promotion_ready"
+        summary = (
+            "Local native CUDA proof passed, but public managed release proof was not requested."
+        )
+        next_action = "run-public-managed-proof-before-public-promotion"
+    elif proof_status.get("gpu_evidence_status") == "unsupported":
+        status = "unsupported"
+        summary = "Native CUDA route is unsupported; CPU or sidecar fallback is not GPU proof."
+        next_action = "fix-native-cuda-routing-before-benchmarking-speed"
+    else:
+        status = "experimental"
+        summary = (
+            "Native CUDA route produced evidence, but correctness or speed gates still block "
+            "promotion."
+        )
+        next_action = "fix-correctness-or-speed-gates"
+
+    public_reason = None
+    if not public_gpu_proof:
+        public_reason = str(public_managed_gpu_proof_gate.get("summary") or "")
+    effective_gpu_evidence_status = proof_status.get("gpu_evidence_status")
+    effective_native_gpu_unavailable = proof_status.get("native_gpu_unavailable")
+    effective_not_gpu_proof_reason = proof_status.get("not_gpu_proof_reason")
+    if public_gpu_proof and public_managed_ready:
+        effective_gpu_evidence_status = "promotion_ready"
+        effective_native_gpu_unavailable = False
+        effective_not_gpu_proof_reason = None
+
+    return {
+        "status": status,
+        "summary": summary,
+        "gpu_evidence_status": effective_gpu_evidence_status,
+        "local_native_gpu_proof": local_gpu_proof,
+        "public_gpu_proof": public_gpu_proof,
+        "public_managed_promotion_ready": public_managed_ready,
+        "native_gpu_unavailable": effective_native_gpu_unavailable,
+        "not_gpu_proof_reason": effective_not_gpu_proof_reason,
+        "not_public_gpu_proof_reason": public_reason,
+        "workload_class": scale_gate_summary.get("workload_class"),
+        "public_workload_class": (
+            public_managed_gpu_proof_gate.get("observed", {}).get("many_pattern_workload_class")
+            if isinstance(public_managed_gpu_proof_gate.get("observed"), dict)
+            else None
+        ),
+        "scale_gate_promotion_ready": bool(scale_gate_summary.get("promotion_ready", False)),
+        "public_managed_proof_gate_status": public_status,
+        "blockers": blockers,
+        "scale_gate_blockers": scale_blockers,
+        "public_managed_blockers": public_blockers,
+        "next_action": next_action,
+        "observed": {
+            "runtime_gate_status": runtime_gate.get("status"),
+            "correctness_gate_status": correctness_gate.get("status"),
+            "speed_gate_status": speed_gate.get("status"),
+            "runtime_observed_backends": runtime_gate.get("observed_backends"),
+            "runtime_sidecar_observed": runtime_gate.get("sidecar_observed"),
+            "public_managed_gpu_proof_gate_status": public_status,
+        },
+    }
+
+
+def _many_pattern_proof_gate_from_advanced(
+    advanced_payload: dict[str, object] | None,
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    if not isinstance(advanced_payload, dict):
+        return None, None
+    multi_pattern = advanced_payload.get("multi_pattern")
+    if not isinstance(multi_pattern, dict):
+        return None, None
+    proof_gate = multi_pattern.get("proof_gate")
+    if not isinstance(proof_gate, dict):
+        return multi_pattern, None
+    return multi_pattern, proof_gate
+
+
 def build_public_managed_gpu_proof_gate(
     *,
     tg_binary_metadata: dict[str, object],
     scale_gate_summary: dict[str, object],
+    advanced_payload: dict[str, object] | None = None,
     requested: bool = True,
 ) -> dict[str, object]:
+    required_sizes = ["1GB", "5GB"]
     contract = {
         "required_binary_kind": "managed-native",
         "required_native_frontdoor_flavor": "nvidia",
@@ -1838,14 +1961,15 @@ def build_public_managed_gpu_proof_gate(
         "required_metadata_version": "matches_expected_version",
         "required_native_frontdoor_asset_name": "nonempty_nvidia_release_asset",
         "required_benchmark_surface": "native-cuda-scale",
-        "required_workload_class": NATIVE_SCALE_WORKLOAD_CLASS,
+        "required_scale_route_workload_class": NATIVE_SCALE_WORKLOAD_CLASS,
+        "required_public_workload_class": NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
         "required_runtime_gate_status": "PASS",
         "required_correctness_gate_status": "PASS",
-        "required_speed_gate_status": "PASS",
-        "required_correctness_sizes": ["1GB", "5GB"],
+        "required_scale_correctness_sizes": required_sizes,
         "required_direct_rg_match_identity": True,
-        "required_promotion_blockers": [],
-        "required_scale_gate_promotion_ready": True,
+        "required_many_pattern_proof_gate_status": "PASS",
+        "required_many_pattern_fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
+        "required_many_pattern_speed_baselines": ["tg_cpu_sequential", "rg_multi_pattern"],
     }
     if not requested:
         return {
@@ -1861,12 +1985,10 @@ def build_public_managed_gpu_proof_gate(
         }
 
     blockers: list[str] = []
-    if scale_gate_summary.get("promotion_ready") is not True:
-        blockers.append("native_cuda_scale_not_promotion_ready")
     if scale_gate_summary.get("benchmark_surface") != "native-cuda-scale":
         blockers.append("native_cuda_scale_surface_missing")
     if scale_gate_summary.get("workload_class") != NATIVE_SCALE_WORKLOAD_CLASS:
-        blockers.append("native_cuda_workload_class_missing")
+        blockers.append("native_cuda_scale_workload_class_missing")
     runtime_gate = scale_gate_summary.get("native_cuda_runtime_gate")
     correctness_gate = scale_gate_summary.get("correctness_gate")
     speed_gate = scale_gate_summary.get("speed_gate")
@@ -1878,7 +2000,6 @@ def build_public_managed_gpu_proof_gate(
         observed_backends = runtime_gate.get("observed_backends")
         if observed_backends != ["NativeGpuBackend"]:
             blockers.append("native_cuda_runtime_backend_not_exclusive")
-    required_sizes = ["1GB", "5GB"]
     if not isinstance(correctness_gate, dict) or correctness_gate.get("status") != "PASS":
         blockers.append("native_cuda_correctness_gate_not_passed")
     else:
@@ -1890,16 +2011,19 @@ def build_public_managed_gpu_proof_gate(
             blockers.append("native_cuda_rg_identity_sizes_missing")
         if correctness_gate.get("requires_direct_rg_match_identity") is not True:
             blockers.append("native_cuda_direct_rg_identity_not_required")
-    if not isinstance(speed_gate, dict) or speed_gate.get("status") != "PASS":
-        blockers.append("native_cuda_speed_gate_not_passed")
-    else:
-        if speed_gate.get("winning_sizes") != required_sizes:
-            blockers.append("native_cuda_speed_winning_sizes_missing")
     promotion_blockers = scale_gate_summary.get("promotion_blockers")
-    if promotion_blockers != []:
-        blockers.append("native_cuda_promotion_blockers_present")
-    if scale_gate_summary.get("workload_evidence_status") != "promotion_ready":
-        blockers.append("native_cuda_workload_not_promotion_ready")
+    multi_pattern, many_pattern_gate = _many_pattern_proof_gate_from_advanced(advanced_payload)
+    if not isinstance(many_pattern_gate, dict):
+        blockers.append("many_pattern_proof_gate_missing")
+    else:
+        if many_pattern_gate.get("status") != "PASS":
+            blockers.append("many_pattern_proof_gate_not_passed")
+        if many_pattern_gate.get("workload_class") != NATIVE_MANY_PATTERN_WORKLOAD_CLASS:
+            blockers.append("many_pattern_workload_class_missing")
+        if many_pattern_gate.get("many_pattern_gpu_proof") is not True:
+            blockers.append("many_pattern_gpu_proof_missing")
+        if many_pattern_gate.get("promotion_evidence") is not True:
+            blockers.append("many_pattern_promotion_evidence_missing")
     if tg_binary_metadata.get("kind") != "managed-native":
         blockers.append("not_managed_native_frontdoor")
     if tg_binary_metadata.get("version_status") != "matches":
@@ -1955,15 +2079,37 @@ def build_public_managed_gpu_proof_gate(
             "scale_gate_speed_status": (
                 speed_gate.get("status") if isinstance(speed_gate, dict) else None
             ),
+            "scale_gate_speed_winning_sizes": (
+                speed_gate.get("winning_sizes") if isinstance(speed_gate, dict) else None
+            ),
             "scale_gate_rg_passing_sizes": (
                 correctness_gate.get("rg_passing_sizes")
                 if isinstance(correctness_gate, dict)
                 else None
             ),
             "scale_gate_promotion_blockers": promotion_blockers,
+            "many_pattern_proof_gate_status": (
+                many_pattern_gate.get("status") if isinstance(many_pattern_gate, dict) else None
+            ),
+            "many_pattern_workload_class": (
+                many_pattern_gate.get("workload_class")
+                if isinstance(many_pattern_gate, dict)
+                else None
+            ),
+            "many_pattern_fair_rg_baseline": (
+                multi_pattern.get("fair_rg_baseline") if isinstance(multi_pattern, dict) else None
+            ),
+            "many_pattern_speedup_vs_cpu": (
+                multi_pattern.get("speedup_vs_cpu") if isinstance(multi_pattern, dict) else None
+            ),
+            "many_pattern_speedup_vs_rg_multi_pattern": (
+                multi_pattern.get("speedup_vs_rg_multi_pattern")
+                if isinstance(multi_pattern, dict)
+                else None
+            ),
         },
         "summary": (
-            "Public managed NVIDIA native front door and native CUDA scale proof passed."
+            "Public managed NVIDIA native front door and many-pattern native CUDA proof passed."
             if passed
             else "Public managed GPU proof is blocked; do not promote public GPU acceleration."
         ),
@@ -2313,7 +2459,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Require public managed NVIDIA native-front-door provenance in addition to "
-            "native CUDA 1GB/5GB correctness and speed gates."
+            "native CUDA 1GB/5GB route/correctness and advanced many-pattern proof gates."
         ),
     )
     return parser
@@ -3034,11 +3180,23 @@ def main() -> int:
             scale_gate_summary=payload["scale_gate_summary"]
             if isinstance(payload["scale_gate_summary"], dict)
             else {},
+            advanced_payload=payload.get("advanced")
+            if isinstance(payload.get("advanced"), dict)
+            else None,
             requested=args.public_managed_proof,
         )
+        scale_gate_summary = payload["scale_gate_summary"]
+        proof_status = _gpu_proof_status_from_native_summary(
+            scale_gate_summary if isinstance(scale_gate_summary, dict) else {}
+        )
+        payload.update(proof_status)
         payload["public_managed_gpu_proof_gate"] = public_gate
         payload["public_managed_promotion_ready"] = public_gate["public_managed_promotion_ready"]
         payload["public_gpu_proof"] = public_gate["public_gpu_proof"]
+        payload["gpu_proof_summary"] = build_gpu_proof_summary(
+            scale_gate_summary=scale_gate_summary if isinstance(scale_gate_summary, dict) else {},
+            public_managed_gpu_proof_gate=public_gate,
+        )
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 
@@ -3058,14 +3216,26 @@ def main() -> int:
     )
     payload.update(result)
     scale_gate_summary = payload.get("scale_gate_summary")
+    payload.update(
+        _gpu_proof_status_from_native_summary(
+            scale_gate_summary if isinstance(scale_gate_summary, dict) else {}
+        )
+    )
     public_gate = build_public_managed_gpu_proof_gate(
         tg_binary_metadata=tg_binary_metadata,
         scale_gate_summary=scale_gate_summary if isinstance(scale_gate_summary, dict) else {},
+        advanced_payload=payload.get("advanced")
+        if isinstance(payload.get("advanced"), dict)
+        else None,
         requested=args.public_managed_proof,
     )
     payload["public_managed_gpu_proof_gate"] = public_gate
     payload["public_managed_promotion_ready"] = public_gate["public_managed_promotion_ready"]
     payload["public_gpu_proof"] = public_gate["public_gpu_proof"]
+    payload["gpu_proof_summary"] = build_gpu_proof_summary(
+        scale_gate_summary=scale_gate_summary if isinstance(scale_gate_summary, dict) else {},
+        public_managed_gpu_proof_gate=public_gate,
+    )
     if args.public_managed_proof and public_gate["status"] != "PASS":
         errors = payload.setdefault("errors", [])
         if isinstance(errors, list):

@@ -106,6 +106,157 @@ def _passing_native_gpu_scale_summary(module):
     )
 
 
+def _native_gpu_scale_summary_with_speed_failure(module):
+    rows = [
+        {
+            "size_label": "1GB",
+            "size_bytes": module.GB,
+            "rg": {"status": "PASS", "median_s": 1.0},
+            "tg_cpu": {"status": "PASS", "median_s": 1.1},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 2.0,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+        {
+            "size_label": "5GB",
+            "size_bytes": 5 * module.GB,
+            "rg": {"status": "PASS", "median_s": 1.2},
+            "tg_cpu": {"status": "PASS", "median_s": 1.3},
+            "tg_gpu": {
+                "status": "PASS",
+                "median_s": 2.4,
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+            },
+        },
+    ]
+    correctness_checks = [
+        {
+            "size_label": size_label,
+            "status": "PASS",
+            "matches_equal": True,
+            "files_equal": True,
+            "rg_matches_equal": True,
+            "rg_files_equal": True,
+            "rg_match_identity_equal": True,
+        }
+        for size_label in ("1GB", "5GB")
+    ]
+    return module.build_native_scale_gate_summary(
+        rows,
+        correctness_checks=correctness_checks,
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+
+
+def _passing_many_pattern_payload(module):
+    patterns = list(module.DEFAULT_CORRECTNESS_PATTERNS)
+    correctness_check = {
+        "status": "PASS",
+        "matches_equal": True,
+        "files_equal": True,
+        "rg_matches_equal": True,
+        "rg_files_equal": True,
+        "rg_match_identity_equal": True,
+    }
+    payload = {
+        "status": "PASS",
+        "workload_class": module.NATIVE_MANY_PATTERN_WORKLOAD_CLASS,
+        "fair_rg_baseline": "single_invocation_rg_fixed_multi_pattern",
+        "patterns": patterns,
+        "speedup_vs_cpu": 2.0,
+        "speedup_vs_rg_multi_pattern": 1.5,
+        "gpu_stats": {
+            "pipeline": {
+                "pattern_count": len(patterns),
+                "single_dispatch": True,
+            }
+        },
+        "correctness_check": correctness_check,
+    }
+    payload["proof_gate"] = module.build_many_pattern_proof_gate(
+        multi_pattern=payload,
+        correctness_check=correctness_check,
+    )
+    return payload
+
+
+def test_run_gpu_native_benchmarks_gpu_proof_summary_reports_unsupported_route():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_gpu_proof_summary",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    scale_summary = module.build_native_scale_gate_summary(
+        [
+            {
+                "size_label": "1GB",
+                "tg_gpu": {
+                    "status": "UNSUPPORTED",
+                    "routing_backend": "NativeCpuBackend",
+                    "sidecar_used": False,
+                },
+            }
+        ],
+        correctness_checks=[],
+        required_corpus_sizes=(module.GB, 5 * module.GB),
+    )
+
+    summary = module.build_gpu_proof_summary(
+        scale_gate_summary=scale_summary,
+        public_managed_gpu_proof_gate=module.build_public_managed_gpu_proof_gate(
+            tg_binary_metadata={},
+            scale_gate_summary=scale_summary,
+            requested=False,
+        ),
+    )
+
+    assert summary["status"] == "unsupported"
+    assert summary["local_native_gpu_proof"] is False
+    assert summary["public_gpu_proof"] is False
+    assert summary["native_gpu_unavailable"] is True
+    assert "native_cuda_runtime_unsupported" in summary["blockers"]
+    assert summary["next_action"] == "fix-native-cuda-routing-before-benchmarking-speed"
+
+
+def test_run_gpu_native_benchmarks_public_summary_uses_many_pattern_public_proof():
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_public_many_pattern_summary",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    scale_summary = _native_gpu_scale_summary_with_speed_failure(module)
+    public_gate = module.build_public_managed_gpu_proof_gate(
+        tg_binary_metadata={
+            "kind": "managed-native",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+            "expected_version": "1.12.34",
+            "version_status": "matches",
+        },
+        scale_gate_summary=scale_summary,
+        advanced_payload={"multi_pattern": _passing_many_pattern_payload(module)},
+    )
+
+    summary = module.build_gpu_proof_summary(
+        scale_gate_summary=scale_summary,
+        public_managed_gpu_proof_gate=public_gate,
+    )
+
+    assert scale_summary["promotion_ready"] is False
+    assert public_gate["status"] == "PASS"
+    assert summary["status"] == "public_promotion_ready"
+    assert summary["gpu_evidence_status"] == "promotion_ready"
+    assert summary["native_gpu_unavailable"] is False
+    assert summary["not_gpu_proof_reason"] is None
+    assert summary["scale_gate_promotion_ready"] is False
+    assert summary["public_workload_class"] == module.NATIVE_MANY_PATTERN_WORKLOAD_CLASS
+
+
 def test_run_pytest_stable_should_build_windows_friendly_default_command():
     module = _load_script_module("run_pytest_stable_script", "scripts/run_pytest_stable.py")
 
@@ -3141,6 +3292,41 @@ def test_run_gpu_benchmarks_should_parse_corpus_sizes_with_units():
     assert sizes == (1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024, 1024 * 1024 * 1024)
 
 
+def test_run_gpu_benchmarks_missing_binary_should_emit_gpu_proof_summary(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gpu_benchmarks_script_missing_binary", "benchmarks/run_gpu_benchmarks.py"
+    )
+    output_path = tmp_path / "bench_gpu_scale_missing.json"
+    missing_tg = tmp_path / "missing" / "tg.exe"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_benchmarks.py",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: missing_tg)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_gpu_sidecar_python", lambda raw=None: None)
+    monkeypatch.setattr(module, "resolve_gpu_bench_data_dir", lambda: tmp_path / "gpu_bench_data")
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["gpu_evidence_status"] == "unsupported"
+    assert payload["gpu_proof"] is False
+    assert payload["native_gpu_unavailable"] is True
+    assert payload["gpu_proof_summary"]["status"] == "unsupported"
+    assert payload["gpu_proof_summary"]["public_gpu_proof"] is False
+    assert payload["gpu_proof_summary"]["public_managed_promotion_ready"] is False
+    assert "public_managed_gpu_proof_gate" not in payload
+    assert "public_gpu_proof" not in payload
+    assert "public_managed_promotion_ready" not in payload
+
+
 def test_run_gpu_benchmarks_should_skip_before_corpus_generation_without_operational_gpu(
     monkeypatch, tmp_path
 ):
@@ -3200,6 +3386,52 @@ def test_run_gpu_benchmarks_should_skip_before_corpus_generation_without_operati
     recommendation = payload["gpu_auto_recommendation"]
     assert recommendation["should_add_flag"] is False
     assert "no operational GPU" in recommendation["reason"]
+    assert payload["gpu_evidence_status"] == "unsupported"
+    assert payload["gpu_proof"] is False
+    assert payload["gpu_proof_summary"]["status"] == "unsupported"
+    assert payload["gpu_proof_summary"]["public_gpu_proof"] is False
+    assert "native_cuda_runtime_unsupported" in payload["gpu_proof_summary"]["blockers"]
+
+
+def test_run_gpu_benchmarks_gpu_proof_summary_reports_local_promotion_ready():
+    module = _load_script_module(
+        "run_gpu_benchmarks_script_gpu_proof_summary", "benchmarks/run_gpu_benchmarks.py"
+    )
+    scale_summary = module.build_scale_gate_summary(
+        devices=[
+            {
+                "device_id": 0,
+                "operational": True,
+                "tg_runtime_backend": "NativeGpuBackend",
+                "tg_runtime_sidecar_used": False,
+            }
+        ],
+        correctness_checks=[
+            {
+                "device_id": 0,
+                "status": "PASS",
+                "pattern": pattern,
+                "corpus_size_label": size_label,
+                "matches_equal": True,
+                "files_equal": True,
+            }
+            for size_label in ("1GB", "5GB")
+            for pattern in module.DEFAULT_CORRECTNESS_PATTERNS
+        ],
+        gpu_auto_recommendation={
+            "should_add_flag": True,
+            "reason": "GPU beat both baselines at every required scale.",
+            "winning_rows": [],
+        },
+    )
+
+    summary = module.build_gpu_proof_summary(scale_summary)
+
+    assert summary["status"] == "local_promotion_ready"
+    assert summary["local_native_gpu_proof"] is True
+    assert summary["public_gpu_proof"] is False
+    assert summary["blockers"] == []
+    assert summary["next_action"] == "run-native-public-managed-proof-before-public-promotion"
 
 
 def test_run_gpu_benchmarks_should_emit_scale_rows_and_correctness(monkeypatch, tmp_path):
@@ -3523,6 +3755,9 @@ def test_run_gpu_native_benchmarks_should_emit_rows_correctness_and_error_tests(
     assert payload["public_managed_gpu_proof_gate"]["status"] == "NOT_REQUESTED"
     assert payload["public_managed_promotion_ready"] is False
     assert payload["public_gpu_proof"] is False
+    assert payload["gpu_proof_summary"]["status"] == "unsupported"
+    assert payload["gpu_proof_summary"]["public_managed_proof_gate_status"] == "NOT_REQUESTED"
+    assert payload["gpu_proof_summary"]["public_gpu_proof"] is False
 
 
 def test_run_gpu_native_benchmarks_public_managed_proof_requires_metadata(monkeypatch, tmp_path):
@@ -3578,6 +3813,10 @@ def test_run_gpu_native_benchmarks_public_managed_proof_requires_metadata(monkey
                 **_passing_native_gpu_scale_summary(module),
                 "summary": "Native CUDA correctness and speed gates passed.",
             },
+            "advanced": {
+                "enabled": True,
+                "multi_pattern": _passing_many_pattern_payload(module),
+            },
             "warnings": [],
             "errors": [],
         },
@@ -3590,6 +3829,82 @@ def test_run_gpu_native_benchmarks_public_managed_proof_requires_metadata(monkey
     assert payload["public_managed_gpu_proof_gate"]["status"] == "PASS"
     assert payload["public_managed_promotion_ready"] is True
     assert payload["public_gpu_proof"] is True
+    assert payload["gpu_proof_summary"]["status"] == "public_promotion_ready"
+    assert payload["gpu_proof_summary"]["blockers"] == []
+    assert payload["gpu_proof_summary"]["public_gpu_proof"] is True
+
+
+def test_run_gpu_native_benchmarks_public_managed_proof_requires_many_pattern_gate(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_public_many_pattern_required",
+        "benchmarks/run_gpu_native_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_gpu_native_public_many_pattern_required.json"
+    tg_binary = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    tg_binary.parent.mkdir(parents=True)
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_native_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--public-managed-proof",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "inspect_native_tg_binary",
+        lambda _binary: {
+            "kind": "managed-native",
+            "version_status": "matches",
+            "expected_version": "1.12.34",
+            "native_frontdoor_flavor": "nvidia",
+            "native_frontdoor_requested_flavor": "nvidia",
+            "native_frontdoor_asset_name": "tg-windows-amd64-nvidia.exe",
+            "native_frontdoor_metadata_status": "present",
+            "native_frontdoor_metadata_version": "1.12.34",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_gpu_native_benchmarks",
+        lambda **_kwargs: {
+            "bench_dir": str(tmp_path / "gpu_native_bench_data"),
+            "corpus_sizes": [],
+            "rows": [],
+            "correctness_checks": [],
+            "error_tests": {},
+            "crossover": {
+                "exists": False,
+                "first_gpu_faster_than_rg": None,
+                "summary": "not relevant",
+            },
+            "scale_gate_summary": {
+                **_passing_native_gpu_scale_summary(module),
+                "summary": "Native CUDA route and correctness gates passed.",
+            },
+            "advanced": {"enabled": False},
+            "warnings": [],
+            "errors": [],
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    gate = payload["public_managed_gpu_proof_gate"]
+    assert gate["status"] == "FAIL"
+    assert "many_pattern_proof_gate_missing" in gate["blockers"]
+    assert payload["public_managed_promotion_ready"] is False
+    assert payload["public_gpu_proof"] is False
+    assert "many_pattern_proof_gate_missing" in payload["gpu_proof_summary"]["blockers"]
 
 
 def test_run_gpu_native_benchmarks_public_managed_proof_fails_without_managed_metadata(
@@ -3644,6 +3959,10 @@ def test_run_gpu_native_benchmarks_public_managed_proof_fails_without_managed_me
                 **_passing_native_gpu_scale_summary(module),
                 "summary": "Native CUDA correctness and speed gates passed.",
             },
+            "advanced": {
+                "enabled": True,
+                "multi_pattern": _passing_many_pattern_payload(module),
+            },
             "warnings": [],
             "errors": [],
         },
@@ -3657,6 +3976,10 @@ def test_run_gpu_native_benchmarks_public_managed_proof_fails_without_managed_me
     assert "not_managed_native_frontdoor" in payload["public_managed_gpu_proof_gate"]["blockers"]
     assert payload["public_managed_promotion_ready"] is False
     assert payload["public_gpu_proof"] is False
+    assert payload["gpu_proof_summary"]["status"] == "public_promotion_blocked"
+    assert "not_managed_native_frontdoor" in payload["gpu_proof_summary"]["blockers"]
+    assert payload["gpu_proof_summary"]["local_native_gpu_proof"] is True
+    assert payload["gpu_proof_summary"]["public_gpu_proof"] is False
 
 
 def test_run_gpu_native_benchmarks_should_emit_advanced_sections_when_enabled(

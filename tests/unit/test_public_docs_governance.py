@@ -440,6 +440,22 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
         assert "not_gpu_proof_reason" in doc
         assert "fallback_or_sidecar_counts_as_gpu_proof" in doc
 
+    native_gpu_section = benchmarks.split(
+        "### Native GPU crossover / throughput (`run_gpu_native_benchmarks.py`)",
+        maxsplit=1,
+    )[1].split("### Python GPU/NLP sidecar benchmark", maxsplit=1)[0]
+    assert "`rg -F -e ... = 0.169s`" in native_gpu_section
+    assert "`rg -F -e ... = 0.105s`" in native_gpu_section
+    assert "GPU request fell back to `NativeCpuBackend`" in native_gpu_section
+    assert "not promotion-ready" in native_gpu_section
+    for stale_sequential_claim in (
+        "7222.304ms",
+        "6676.904ms",
+        "`5.55x` speedup",
+        "`2.68x` speedup",
+    ):
+        assert stale_sequential_claim not in native_gpu_section
+
     assert "diagnostic probes" in benchmarks
     assert "tg_binary_version_status" in benchmarks
     assert "stale in-tree native tg binary" in benchmarks
@@ -469,6 +485,22 @@ def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogf
         assert "rg -F -e" in doc
         assert "single-invocation" in doc
         assert "sequential `rg`" in doc
+        assert "many-pattern proof gate" in doc or "many fixed-string proof gate" in doc
+
+
+def test_python_gpu_benchmark_docs_should_not_claim_native_public_proof_fields() -> None:
+    benchmarks = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
+    section = benchmarks.split("### Python GPU/NLP sidecar benchmark", maxsplit=1)[1]
+    section = section.split("### Repeated Fixed-String Microbenchmark", maxsplit=1)[0]
+
+    assert "gpu_proof_summary" in section
+    assert "correctness_gate.required_sizes" in section
+    assert "correctness_gate.passing_device_ids" in section
+    assert "gpu_proof_summary.public_gpu_proof" in section
+    assert "benchmarks/run_gpu_native_benchmarks.py --public-managed-proof" in section
+    assert "correctness_gate.requires_direct_rg_match_identity" not in section
+    assert "correctness_gate.rg_passing_sizes" not in section
+    assert "top-level `public_managed_promotion_ready` and `public_gpu_proof`" not in section
 
 
 def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process() -> None:
