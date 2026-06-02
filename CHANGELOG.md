@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.13.29 (2026-06-02)
+
+### Bug Fixes
+
+- Harden upgrade PyPI version probe
+  ([`e1d2e23`](https://github.com/oimiragieo/tensor-grep/commit/e1d2e2317095334878c7bd3a53cf7289ff69bb1b))
+
+Add a pip-index no-cache fallback to latest-version discovery so tg upgrade is less exposed to stale
+  PyPI JSON/simple metadata immediately after release publication.
+
+
 ## v1.13.28 (2026-06-01)
 
 ### Bug Fixes
