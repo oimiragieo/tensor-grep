@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 from tensor_grep.cli import agent_capsule, repo_map
 from tensor_grep.cli import main as cli_main
 from tensor_grep.cli.main import (
+    _candidate_versions_from_pip_index_output,
     _candidate_versions_from_pypi_json,
     _candidate_versions_from_pypi_simple_index,
     _highest_tensor_grep_version,
@@ -7972,6 +7973,76 @@ def test_upgrade_latest_version_candidates_skip_yanked_pypi_releases():
     ]
 
     assert _highest_tensor_grep_version(candidates) == "0.33.0"
+
+
+def test_upgrade_latest_version_candidates_include_pip_index_output():
+    pip_output = """
+    tensor-grep (0.34.0)
+    Available versions: 0.34.0, 0.33.0, 0.32.0
+      INSTALLED: 0.32.0
+      LATEST:    0.34.0
+    """
+
+    assert (
+        _highest_tensor_grep_version(_candidate_versions_from_pip_index_output(pip_output))
+        == "0.34.0"
+    )
+
+
+def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeypatch):
+    class _FakeResponse:
+        def __init__(self, body: str) -> None:
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return self.body.encode("utf-8")
+
+    stale_json = json.dumps({
+        "info": {"version": "0.33.0"},
+        "releases": {
+            "0.32.0": [{"yanked": False}],
+            "0.33.0": [{"yanked": False}],
+        },
+    })
+    stale_simple = """
+    <a href="tensor_grep-0.33.0-py3-none-any.whl">tensor_grep-0.33.0-py3-none-any.whl</a>
+    """
+    calls: list[list[str]] = []
+
+    def _fake_urlopen(request, timeout=None):
+        url = request.get_full_url()
+        if url.endswith("/json"):
+            return _FakeResponse(stale_json)
+        if url.endswith("/simple/tensor-grep/"):
+            return _FakeResponse(stale_simple)
+        raise AssertionError(f"unexpected url: {url}")
+
+    def _fake_run(cmd, **_kwargs):
+        calls.append([str(part) for part in cmd])
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "tensor-grep (0.34.0)\n"
+                "Available versions: 0.34.0, 0.33.0, 0.32.0\n"
+                "  LATEST:    0.34.0\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+
+    assert cli_main._latest_pypi_tensor_grep_version(timeout_seconds=1.0) == "0.34.0"
+    assert calls
+    assert calls[0][1:5] == ["-m", "pip", "index", "versions"]
+    assert "--no-cache-dir" in calls[0]
 
 
 def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_latest(monkeypatch):
