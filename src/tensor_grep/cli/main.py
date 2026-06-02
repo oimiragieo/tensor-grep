@@ -39,6 +39,7 @@ from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
+from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
@@ -4318,6 +4319,10 @@ def _run_ast_scan_payload(
     candidate_files: list[str] | None = None,
     project_scan_fast_path: bool = False,
     ruleset_name: str | None = None,
+    scan_globs: list[str] | None = None,
+    scan_types: list[str] | None = None,
+    scan_max_depth: int | None = None,
+    allow_broad_generated_scan: bool = False,
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
@@ -4343,6 +4348,9 @@ def _run_ast_scan_payload(
         ast=True,
         ast_prefer_native=True,
         lang=project_language,
+        glob=list(scan_globs or []) or None,
+        file_type=list(scan_types or []) or None,
+        max_depth=scan_max_depth,
     )
     root_dir = cast(Path, project_cfg["root_dir"])
     include_scan_paths_in_payload = bool(scan_paths)
@@ -4351,9 +4359,21 @@ def _run_ast_scan_payload(
         if scan_paths
         else [str(root_dir)]
     )
+    ensure_scan_not_broad(
+        resolved_scan_paths,
+        globs=list(scan_globs or []),
+        file_types=list(scan_types or []),
+        max_depth=scan_max_depth,
+        allow_broad_generated_scan=allow_broad_generated_scan,
+    )
+    scan_has_discovery_filter = bool(scan_globs or scan_types or scan_max_depth is not None)
     scanner: DirectoryScanner | None = None
     resolved_candidate_files = (
-        None if scan_paths else list(candidate_files) if candidate_files is not None else None
+        None
+        if scan_paths or scan_has_discovery_filter
+        else list(candidate_files)
+        if candidate_files is not None
+        else None
     )
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
@@ -4414,6 +4434,14 @@ def _run_ast_scan_payload(
                 )
             ]
 
+    def _candidate_files_for_filtered_scan() -> list[str]:
+        nonlocal scanner, resolved_candidate_files
+        if scanner is None:
+            scanner = DirectoryScanner(cfg)
+        if resolved_candidate_files is None:
+            resolved_candidate_files, _ = _collect_candidate_files(scanner, resolved_scan_paths)
+        return resolved_candidate_files
+
     wrapper_rules: list[tuple[dict[str, str], SearchConfig]] = []
     regex_rules: list[dict[str, str]] = []
     other_resolved: list[tuple[dict[str, str], SearchConfig, ComputeBackend]] = []
@@ -4426,6 +4454,7 @@ def _run_ast_scan_payload(
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
         if (
             project_scan_fast_path
+            and not scan_has_discovery_filter
             and type(backend).__name__ == "AstGrepWrapperBackend"
             and hasattr(backend, "search_project")
         ):
@@ -4489,32 +4518,42 @@ def _run_ast_scan_payload(
         resolved_snippets_by_file: dict[str, list[dict[str, object]]] = {}
         resolved_rule_occurrences: list[dict[str, object]] = []
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = backend.search_many(resolved_scan_paths, rule["pattern"], config=rule_cfg)
-            rule_matches = result.total_matches
-            resolved_matched_files.update(result.matched_file_paths)
-            for file_path, count in result.match_counts_by_file.items():
-                resolved_match_counts_by_file[file_path] = (
-                    resolved_match_counts_by_file.get(file_path, 0) + count
-                )
-            for match in result.matches:
-                if match.file:
-                    resolved_match_counts_by_file[match.file] = (
-                        resolved_match_counts_by_file.get(match.file, 0) + 1
+            backend_scan_paths = (
+                _candidate_files_for_filtered_scan()
+                if scan_has_discovery_filter
+                else resolved_scan_paths
+            )
+            if backend_scan_paths:
+                result = backend.search_many(backend_scan_paths, rule["pattern"], config=rule_cfg)
+                rule_matches = result.total_matches
+                resolved_matched_files.update(result.matched_file_paths)
+                for file_path, count in result.match_counts_by_file.items():
+                    resolved_match_counts_by_file[file_path] = (
+                        resolved_match_counts_by_file.get(file_path, 0) + count
                     )
-                    resolved_rule_occurrences.append({
-                        "file": match.file,
-                        "line": match.line_number,
-                    })
-                    if (
-                        include_evidence_snippets
-                        and len(resolved_snippets_by_file.get(match.file, []))
-                        < max_evidence_snippets_per_file
-                    ):
-                        resolved_snippets_by_file.setdefault(match.file, []).append(
-                            _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                for match in result.matches:
+                    if match.file:
+                        resolved_match_counts_by_file[match.file] = (
+                            resolved_match_counts_by_file.get(match.file, 0) + 1
                         )
-            if not resolved_matched_files and result.total_files > 0:
-                resolved_matched_files.update(match.file for match in result.matches if match.file)
+                        resolved_rule_occurrences.append({
+                            "file": match.file,
+                            "line": match.line_number,
+                        })
+                        if (
+                            include_evidence_snippets
+                            and len(resolved_snippets_by_file.get(match.file, []))
+                            < max_evidence_snippets_per_file
+                        ):
+                            resolved_snippets_by_file.setdefault(match.file, []).append(
+                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                            )
+                if not resolved_matched_files and result.total_files > 0:
+                    resolved_matched_files.update(
+                        match.file for match in result.matches if match.file
+                    )
+            else:
+                rule_matches = 0
         else:
             if scanner is None:
                 scanner = DirectoryScanner(cfg)
@@ -8570,6 +8609,32 @@ def scan(
         min=1,
         help="Maximum characters to keep per evidence snippet when snippet evidence is enabled.",
     ),
+    glob: list[str] | None = typer.Option(
+        None,
+        "--glob",
+        "-g",
+        help="Include/exclude files matching a glob before executing scan rules.",
+    ),
+    type_filter: list[str] | None = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help="Scan only files with this extension/type name. May be repeated.",
+    ),
+    max_depth: int | None = typer.Option(
+        None,
+        "--max-depth",
+        min=0,
+        help="Limit directory traversal depth for broad scan roots.",
+    ),
+    allow_broad_generated_scan: bool = typer.Option(
+        False,
+        "--allow-broad-generated-scan",
+        help=(
+            "Permit broad AST scans through temp, cache, dependency, system, or "
+            "multi-project workspace roots. Prefer scoped --path or --max-depth."
+        ),
+    ),
 ) -> None:
     """Scan code with tensor-grep's bounded AST rule/config surface."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
@@ -8694,6 +8759,10 @@ def scan(
             candidate_files=candidate_files,
             project_scan_fast_path=project_scan_fast_path,
             ruleset_name=ruleset_meta["name"] if ruleset else None,
+            scan_globs=glob,
+            scan_types=type_filter,
+            scan_max_depth=max_depth,
+            allow_broad_generated_scan=allow_broad_generated_scan,
             baseline_path=baseline,
             write_baseline_path=write_baseline,
             suppressions_path=suppressions,
@@ -8703,6 +8772,9 @@ def scan(
             max_evidence_snippets_per_file=max_evidence_snippets_per_file,
             max_evidence_snippet_chars=max_evidence_snippet_chars,
         )
+    except BroadScanRefusedError as exc:
+        typer.echo(str(exc), err=True)
+        sys.exit(2)
     except (ValueError, RuntimeError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         sys.exit(1)

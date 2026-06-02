@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
+from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 
 if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
@@ -930,6 +931,10 @@ def scan_command(
     include_evidence: bool = False,
     max_evidence_snippets_per_file: int = 1,
     max_evidence_snippet_chars: int = 120,
+    glob: list[str] | None = None,
+    file_type: list[str] | None = None,
+    max_depth: int | None = None,
+    allow_broad_generated_scan: bool = False,
 ) -> int:
     from dataclasses import replace
 
@@ -945,15 +950,28 @@ def scan_command(
             for rule in rules:
                 if isinstance(rule, dict):
                     rule["language"] = normalize_ast_language(rule.get("language") or "python")
+            root_dir = Path(path or ".").resolve()
+            ensure_scan_not_broad(
+                [str(root_dir)],
+                globs=list(glob or []),
+                file_types=list(file_type or []),
+                max_depth=max_depth,
+                allow_broad_generated_scan=allow_broad_generated_scan,
+            )
             project_cfg = {
                 "language": normalize_ast_language(rules[0].get("language", "python")),
-                "root_dir": Path(path or ".").resolve(),
+                "root_dir": root_dir,
             }
             hints: dict[str, Any] = {}
             from tensor_grep.io.directory_scanner import DirectoryScanner
 
             cfg = SearchConfig(
-                ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"])
+                ast=True,
+                ast_prefer_native=True,
+                lang=cast(str, project_cfg["language"]),
+                glob=list(glob or []) or None,
+                file_type=list(file_type or []) or None,
+                max_depth=max_depth,
             )
             scanner = DirectoryScanner(cfg)
             candidate_files, _, _ = _collect_candidate_files(
@@ -965,6 +983,9 @@ def scan_command(
             detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
             print(f"Error: Invalid inline rules YAML: {detail}", file=sys.stderr)
             return 1
+        except BroadScanRefusedError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         except (AttributeError, ValueError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
@@ -973,9 +994,17 @@ def scan_command(
 
         try:
             ruleset_meta, rules = resolve_rule_pack(ruleset, None)
+            root_dir = Path(path or ".").resolve()
+            ensure_scan_not_broad(
+                [str(root_dir)],
+                globs=list(glob or []),
+                file_types=list(file_type or []),
+                max_depth=max_depth,
+                allow_broad_generated_scan=allow_broad_generated_scan,
+            )
             project_cfg = {
                 "config_path": f"builtin:{ruleset_meta['name']}",
-                "root_dir": Path(path or ".").resolve(),
+                "root_dir": root_dir,
                 "rule_dirs": [],
                 "test_dirs": [],
                 "language": ruleset_meta["language"],
@@ -984,7 +1013,12 @@ def scan_command(
             from tensor_grep.io.directory_scanner import DirectoryScanner
 
             cfg = SearchConfig(
-                ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"])
+                ast=True,
+                ast_prefer_native=True,
+                lang=cast(str, project_cfg["language"]),
+                glob=list(glob or []) or None,
+                file_type=list(file_type or []) or None,
+                max_depth=max_depth,
             )
             scanner = DirectoryScanner(cfg)
             candidate_files, _, _ = _collect_candidate_files(
@@ -994,6 +1028,9 @@ def scan_command(
                 print(
                     f"Scanning project using built-in ruleset {ruleset_meta['name']} ({ruleset_meta['language']})..."
                 )
+        except BroadScanRefusedError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
@@ -1013,8 +1050,15 @@ def scan_command(
         print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
         return 1
 
-    cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
-    root_dir = project_cfg["root_dir"]
+    cfg = SearchConfig(
+        ast=True,
+        ast_prefer_native=True,
+        lang=cast(str, project_cfg["language"]),
+        glob=list(glob or []) or None,
+        file_type=list(file_type or []) or None,
+        max_depth=max_depth,
+    )
+    root_dir = cast(Path, project_cfg["root_dir"])
     backend_names_used: set[str] = set()
     backend_hints = hints.get("backend_hints", {})
 
@@ -1466,6 +1510,10 @@ def main_entry(argv: list[str] | None = None) -> None:
     scan_parser.add_argument("--include-evidence-snippets", action="store_true")
     scan_parser.add_argument("--max-evidence-snippets-per-file", type=int, default=1)
     scan_parser.add_argument("--max-evidence-snippet-chars", type=int, default=120)
+    scan_parser.add_argument("--glob", "-g", action="append", default=None)
+    scan_parser.add_argument("--type", "-t", dest="file_type", action="append", default=None)
+    scan_parser.add_argument("--max-depth", type=int, default=None)
+    scan_parser.add_argument("--allow-broad-generated-scan", action="store_true")
 
     test_parser = subparsers.add_parser("test")
     test_parser.add_argument("--config", "-c", default="sgconfig.yml")
@@ -1521,6 +1569,10 @@ def main_entry(argv: list[str] | None = None) -> None:
                 include_evidence=getattr(args, "include_evidence_snippets", False),
                 max_evidence_snippets_per_file=getattr(args, "max_evidence_snippets_per_file", 1),
                 max_evidence_snippet_chars=getattr(args, "max_evidence_snippet_chars", 120),
+                glob=getattr(args, "glob", None),
+                file_type=getattr(args, "file_type", None),
+                max_depth=getattr(args, "max_depth", None),
+                allow_broad_generated_scan=getattr(args, "allow_broad_generated_scan", False),
             )
         )
     if args.command == "test":
