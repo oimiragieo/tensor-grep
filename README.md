@@ -49,10 +49,10 @@ Public issues are labeled by a deterministic triage workflow that classifies are
 
 ## Current Release State
 
-release_docs_current_tag: v1.13.30
+release_docs_current_tag: v1.13.31
 
-Latest tagged GitHub release: [`v1.13.30`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.30). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
-Latest complete PyPI release: [`v1.13.30`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.30). This is also the latest complete release-asset distribution.
+Latest tagged GitHub release: [`v1.13.31`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.31). GitHub assets and PyPI publication are verified by main CI before `publish-success-gate` passes.
+Latest complete PyPI release: [`v1.13.31`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.13.31). This is also the latest complete release-asset distribution.
 Latest verified release proof: `v1.13.23` shipped from PR #236, merge commit `3c0c213`, release commit `bd7035c`, main CI run `26513809791`, and main dynamic/CodeQL run `26513808787`.
 
 Current positioning:
@@ -356,7 +356,7 @@ What `v1.9.8` closed:
 What `v1.9.7` closed:
 
 - Python GPU scale rows are unsupported for native CUDA promotion, and benchmark artifacts now separate them from native CUDA rows where correctness passed but speed/promotion failed
-- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates. Single-pattern cold grep still has no crossover, but post-`v1.13.30` local CUDA-native measurements show 100 fixed-string 1GB probes beating sequential `rg` end-to-end.
+- Native CUDA correctness passed on the local 1GB/5GB RTX 4070 and RTX 5070 dogfood gates. Single-pattern cold grep still has no crossover, but post-`v1.13.31` local CUDA-native measurements show 100 fixed-string 1GB probes beating sequential `rg` end-to-end.
 - public benchmark and README positioning now say `tg` is an agent-native code intelligence layer with rg-compatible search; `rg` remains the cold exact text baseline
 
 What `v1.9.6` closed:
@@ -419,7 +419,7 @@ What `v1.9.0` closed:
 - stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
 - deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
 
-Active post-`v1.13.30` follow-up:
+Active post-`v1.13.31` follow-up:
 
 - keep Windows public launcher routes contract-equivalent: `tg repair-launcher` removes verified tensor-grep-owned Python Scripts entrypoints and backs up self-identifying orphaned tensor-grep Python Scripts entrypoints ahead of the managed native front door, and Python/bootstrap `tg run` delegates to the managed native front door when present so advertised rewrite flags such as `--diff` do not drift by route
 - keep MCP `tg_search` bounded for agent use: callers may pass either `pattern` or `query`, cap output with `max_results` / `max_files`, and request `structured_json` when they need machine-readable bounded rows instead of text
@@ -444,7 +444,7 @@ Active post-`v1.13.30` follow-up:
 - keep GPU benchmark auto-recommendation disabled unless required 1GB/5GB correctness passes and a selected GPU beats both `rg` and `tg_cpu` at that required scale. Unsupported-device inventory warnings must stay top-level or on the unsupported device row, not on unrelated selected-GPU timings. Sidecar-routed GPU requests must be recorded and excluded from native CUDA scale-gate timings.
 - keep `tg doctor --json` foreign-launcher diagnostics explicit. A foreign `tg.exe` such as another product's console launcher ahead of `~/.tensor-grep/bin` should produce `*_is_foreign`, warning, and remediation fields; this is an environment blocker, not an installer cleanup target unless tensor-grep owns that launcher.
 - keep GPU experimental until the required 1GB/5GB correctness rows pass and a selected GPU beats both `rg` and `tg_cpu`; current RTX 4070/RTX 5070 smoke proof is correctness/compatibility evidence, not a speed claim
-- post-`v1.13.30` dogfood keeps the near-term performance story on large-file CPU search, not GPU: public managed GPU remains `GpuSidecar` / unsupported, while CPU large-file rows are the strongest current win signal
+- post-`v1.13.31` dogfood keeps the near-term performance story on large-file CPU search, not GPU: public managed GPU remains `GpuSidecar` / unsupported, while CPU large-file rows are the strongest current win signal
 
 Managed native-upgrade dogfood:
 
@@ -550,7 +550,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This checks the current `v1.13.30` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs; with `--output artifacts/dogfood_readiness.json`, the nested readiness report is written beside it as `artifacts/dogfood_readiness.agent-readiness.json`.
+This checks the current `v1.13.31` shell/version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, foreign launcher diagnostics, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer. `tg dogfood` wraps the same gate with a release-readiness verdict for agent and CI logs; with `--output artifacts/dogfood_readiness.json`, the nested readiness report is written beside it as `artifacts/dogfood_readiness.agent-readiness.json`.
 It also tracks the managed native-upgrade contract so sidecar and release-native front-door versions stay aligned after `tg upgrade`.
 It also covers the broad generated-root scan and workspace-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories, and unbounded searches against a parent containing multiple child project roots, must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
@@ -1039,7 +1039,7 @@ $ cargo build --release --features cuda
 $ cargo test --features cuda
 ```
 
-The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles GPU kernels via NVRTC JIT, and caches PTX by architecture and kernel hash across CLI invocations. The post-`v1.13.30` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`). Single-pattern cold grep still has no crossover; the measured CUDA speed lane is many fixed strings over large corpora. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
+The `cuda` feature links against `cudarc` (Rust-native CUDA bindings), compiles GPU kernels via NVRTC JIT, and caches PTX by architecture and kernel hash across CLI invocations. The post-`v1.13.31` native CUDA scale dogfood covers 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`). Single-pattern cold grep still has no crossover; the measured CUDA speed lane is many fixed strings over large corpora. RTX 50-series / `sm_120` hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery or correctness alone. Managed NVIDIA installs now use PyTorch `cu128` wheels so Ada and Blackwell hosts have a compatible sidecar baseline before benchmark gates run.
 
 ## Hardware & Software Requirements
 

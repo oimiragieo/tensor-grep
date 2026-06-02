@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.31 (2026-06-02)
+
+### Bug Fixes
+
+- Tolerate ast scan access warnings
+  ([`11b1e6c`](https://github.com/oimiragieo/tensor-grep/commit/11b1e6c8d3ea31103a001084130762fecc0078e1))
+
+
 ## v1.13.30 (2026-06-02)
 
 ### Bug Fixes
