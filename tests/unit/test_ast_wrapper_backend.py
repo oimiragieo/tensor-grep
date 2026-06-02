@@ -1,3 +1,4 @@
+import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -441,3 +442,34 @@ def test_ast_wrapper_backend_should_surface_nonzero_project_scan_errors():
         pytest.raises(RuntimeError, match="failed to parse config"),
     ):
         backend.search_project("project", "sgconfig.yml")
+
+
+def test_ast_wrapper_backend_tolerates_per_path_access_warnings_with_findings(capsys):
+    # Regression: a single permission-denied / unreadable path in the scan tree
+    # makes ast-grep exit nonzero with a warning on stderr while still emitting
+    # findings on stdout. tensor-grep must keep the findings (not abort) and
+    # forward the warning to stderr, the way ripgrep does.
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = json.dumps([
+        {"file": "example.py", "text": "print(x)", "range": {"start": {"line": 0}}}
+    ])
+    mock_result.stderr = (
+        "ERROR: C:\\Users\\me\\AppData\\Local\\Temp\\WinSAT: Access is denied. (os error 5)"
+    )
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search_many(
+            ["example.py"],
+            "print($A)",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    assert result.total_matches == 1
+    assert "skipped unreadable paths" in capsys.readouterr().err

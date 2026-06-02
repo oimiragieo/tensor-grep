@@ -1,6 +1,8 @@
 import json
 import os
+import re
 import subprocess
+import sys
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,6 +12,38 @@ from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+
+# Per-path I/O problems ast-grep reports while still scanning the rest of the
+# tree (a permission-denied system directory, a locked or vanished file, etc.).
+# These are non-fatal warnings, NOT a failed run; ripgrep logs them and keeps
+# going with a successful exit, and tensor-grep must do the same so one
+# unreadable path cannot abort an otherwise-complete scan.
+_PATH_ACCESS_WARNING_PATTERN = re.compile(
+    r"access is denied"
+    r"|permission denied"
+    r"|os error (?:5|13)"
+    r"|no such file or directory"
+    r"|cannot (?:open|read|access)"
+    r"|the system cannot find",
+    re.IGNORECASE,
+)
+
+
+def _stderr_is_only_path_access_warnings(stderr: str) -> bool:
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    if not lines:
+        return False
+    return all(_PATH_ACCESS_WARNING_PATTERN.search(line) for line in lines)
+
+
+def _stdout_is_json_payload(stdout: str) -> bool:
+    if not stdout:
+        return False
+    try:
+        return isinstance(json.loads(stdout), list)
+    except json.JSONDecodeError:
+        return False
+
 
 _DEFAULT_AST_GREP_COMMAND_TIMEOUT_SECONDS = 60.0
 _AST_GREP_COMMAND_TIMEOUT_ENV = "TG_AST_GREP_TIMEOUT_SECONDS"
@@ -124,6 +158,20 @@ class AstGrepWrapperBackend(ComputeBackend):
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
         if not stderr and stdout.startswith("["):
+            return
+
+        # ast-grep exits nonzero when it cannot read an individual path (a
+        # permission-denied directory, a locked/vanished file) even though it
+        # successfully scanned everything else and emitted findings on stdout.
+        # Treat that as a non-fatal partial scan: keep the results and forward
+        # the warning to stderr instead of aborting. A genuine failure (bad
+        # config/rule, invalid language) does not match the access-warning
+        # shape, so it still raises below.
+        if _stdout_is_json_payload(stdout) and _stderr_is_only_path_access_warnings(stderr):
+            print(
+                f"tg: warning: skipped unreadable paths during ast scan: {stderr.splitlines()[0]}",
+                file=sys.stderr,
+            )
             return
 
         detail = stderr or stdout or "no error output"
