@@ -12,7 +12,7 @@ use std::env;
 use std::ffi::OsString;
 #[cfg(feature = "cuda")]
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -37,7 +37,7 @@ use tensor_grep_rs::native_search::{
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
-    execute_sidecar_command, SidecarError,
+    execute_python_passthrough_command_with_stdin, execute_sidecar_command, SidecarError,
 };
 use tensor_grep_rs::rg_passthrough::{
     execute_ripgrep_pcre2_version, execute_ripgrep_search, execute_ripgrep_type_list,
@@ -6654,7 +6654,13 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
     }
     validate_run_args(&args)?;
     if ast_run_requires_python_passthrough(&args) {
-        return handle_python_passthrough("run", ast_run_python_passthrough_args(&args)?);
+        let passthrough_args = ast_run_python_passthrough_args(&args)?;
+        if args.stdin_flag {
+            let mut stdin_bytes = Vec::new();
+            io::stdin().read_to_end(&mut stdin_bytes)?;
+            return handle_python_passthrough_with_stdin("run", passthrough_args, stdin_bytes);
+        }
+        return handle_python_passthrough("run", passthrough_args);
     }
     let backend = AstBackend::new();
 
@@ -8048,6 +8054,22 @@ fn handle_sidecar_command(command: &str, args: Vec<String>) -> anyhow::Result<()
 
 fn handle_python_passthrough(command: &str, args: Vec<String>) -> anyhow::Result<()> {
     match execute_python_passthrough_command(command, args) {
+        Ok(exit_code) => {
+            if exit_code != 0 {
+                std::process::exit(exit_code.max(1));
+            }
+            Ok(())
+        }
+        Err(err) => exit_with_sidecar_error(err),
+    }
+}
+
+fn handle_python_passthrough_with_stdin(
+    command: &str,
+    args: Vec<String>,
+    stdin_bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    match execute_python_passthrough_command_with_stdin(command, args, stdin_bytes) {
         Ok(exit_code) => {
             if exit_code != 0 {
                 std::process::exit(exit_code.max(1));

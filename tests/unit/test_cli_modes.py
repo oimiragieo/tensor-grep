@@ -1111,6 +1111,7 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert "provider availability is not navigation proof" in normalized_help.lower()
     assert "health_status" in normalized_help
     assert "health_check" in normalized_help
+    assert "AST" in normalized_help
     assert "PowerShell" in normalized_help
     assert "cmd.exe" in normalized_help
     assert "literal patterns" in normalized_help
@@ -1171,6 +1172,19 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
             }
         ],
     )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_ast_grep_status",
+        lambda: {
+            "schema_version": 1,
+            "available": True,
+            "binary": "ast-grep",
+            "wrapper_backend": "AstGrepWrapperBackend",
+            "required_for": "tg run ast-grep semantic options",
+            "semantic_run_options": ["--selector", "--strictness", "--stdin", "--globs"],
+            "timeout_env": "TG_AST_GREP_TIMEOUT_SECONDS",
+            "timeout_seconds": 60.0,
+        },
+    )
     monkeypatch.setenv("TG_RUST_EARLY_RG", "1")
     monkeypatch.setenv("TG_RUST_EARLY_POSITIONAL_RG", "1")
     monkeypatch.setenv("TG_FORCE_CPU", "1")
@@ -1212,6 +1226,14 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert guidance["powershell"]["literal_pattern_example"] == "tg search '$NAME' ."
     assert "|" in guidance["cmd"]["metacharacters"]
     assert "^" in guidance["cmd"]["recommendation"]
+    assert payload["ast_grep"]["available"] is True
+    assert payload["ast_grep"]["semantic_run_options"] == [
+        "--selector",
+        "--strictness",
+        "--stdin",
+        "--globs",
+    ]
+    assert payload["ast_grep"]["timeout_env"] == "TG_AST_GREP_TIMEOUT_SECONDS"
 
 
 def test_doctor_json_no_lsp_keeps_empty_schema_compatibility(monkeypatch, tmp_path: Path) -> None:
@@ -1234,6 +1256,34 @@ def test_doctor_json_no_lsp_keeps_empty_schema_compatibility(monkeypatch, tmp_pa
     assert payload["lsp"]["providers_by_language"] == {}
     assert payload["lsp_provider_items"] == []
     assert payload["lsp_providers"] == {}
+
+
+def test_doctor_text_reports_ast_grep_availability(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_ast_grep_status",
+        lambda: {
+            "schema_version": 1,
+            "available": True,
+            "binary": "ast-grep",
+            "wrapper_backend": "AstGrepWrapperBackend",
+            "required_for": "tg run ast-grep semantic options",
+            "semantic_run_options": ["--selector", "--strictness", "--stdin", "--globs"],
+            "timeout_env": "TG_AST_GREP_TIMEOUT_SECONDS",
+            "timeout_seconds": 60.0,
+        },
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--no-lsp"])
+
+    assert result.exit_code == 0
+    assert "ast_grep: available=True binary=ast-grep" in result.stdout
+    assert "semantic_run_options=--selector/--strictness/--stdin/--globs" in result.stdout
 
 
 def test_doctor_json_includes_gpu_search_runtime_probe(monkeypatch, tmp_path: Path) -> None:

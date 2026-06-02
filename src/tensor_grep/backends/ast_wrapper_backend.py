@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
@@ -9,6 +10,9 @@ from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+
+_DEFAULT_AST_GREP_COMMAND_TIMEOUT_SECONDS = 60.0
+_AST_GREP_COMMAND_TIMEOUT_ENV = "TG_AST_GREP_TIMEOUT_SECONDS"
 
 
 def _is_ast_grep_sg_binary(binary: str) -> bool:
@@ -24,6 +28,18 @@ def _is_ast_grep_sg_binary(binary: str) -> bool:
         return False
     version_text = f"{result.stdout}\n{result.stderr}".lower()
     return "ast-grep" in version_text
+
+
+def _ast_grep_command_timeout_seconds() -> float:
+    raw_timeout = os.environ.get(_AST_GREP_COMMAND_TIMEOUT_ENV)
+    if raw_timeout:
+        try:
+            parsed_timeout = float(raw_timeout)
+        except ValueError:
+            parsed_timeout = 0.0
+        if parsed_timeout > 0:
+            return parsed_timeout
+    return _DEFAULT_AST_GREP_COMMAND_TIMEOUT_SECONDS
 
 
 class AstGrepWrapperBackend(ComputeBackend):
@@ -170,6 +186,29 @@ class AstGrepWrapperBackend(ComputeBackend):
             return []
         return [item for item in loaded if isinstance(item, dict)]
 
+    def _run_ast_grep_command(
+        self,
+        cmd: list[str],
+        *,
+        input_text: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        timeout_seconds = _ast_grep_command_timeout_seconds()
+        try:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                input=input_text,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "ast-grep command timed out after "
+                f"{timeout_seconds:g}s; set {_AST_GREP_COMMAND_TIMEOUT_ENV} to adjust."
+            ) from exc
+
     def search_project(self, root_path: str, config_path: str) -> dict[str, SearchResult]:
         if not self.is_available():
             raise RuntimeError(
@@ -177,20 +216,14 @@ class AstGrepWrapperBackend(ComputeBackend):
             )
 
         try:
-            result = subprocess.run(
-                [
-                    self._get_binary_name(),
-                    "scan",
-                    "--json",
-                    "--config",
-                    config_path,
-                    root_path,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                encoding="utf-8",
-            )
+            result = self._run_ast_grep_command([
+                self._get_binary_name(),
+                "scan",
+                "--json",
+                "--config",
+                config_path,
+                root_path,
+            ])
         except Exception as e:
             raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
 
@@ -218,13 +251,9 @@ class AstGrepWrapperBackend(ComputeBackend):
         try:
             cmd, context = self._build_command(pattern, file_paths, config=config)
             with context:
-                result = subprocess.run(
+                result = self._run_ast_grep_command(
                     cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    encoding="utf-8",
-                    input=config.ast_stdin_input if config and config.ast_stdin else None,
+                    input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
                 self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout)
@@ -242,13 +271,9 @@ class AstGrepWrapperBackend(ComputeBackend):
         try:
             cmd, context = self._build_command(pattern, [file_path], config=config)
             with context:
-                result = subprocess.run(
+                result = self._run_ast_grep_command(
                     cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    encoding="utf-8",
-                    input=config.ast_stdin_input if config and config.ast_stdin else None,
+                    input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
                 self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout, fallback_file=file_path)

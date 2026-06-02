@@ -591,6 +591,24 @@ def _scan_requires_full_cli(scan_args: list[str]) -> bool:
     )
 
 
+# ast-grep semantic options that the native `run` handler cannot serve itself and
+# bounces to the Python sidecar. These MUST be handled by the in-process Python AST
+# workflow rather than re-delegated to the native binary: the native binary spawns
+# `python -m tensor_grep run ...` for these options, and if bootstrap delegated that
+# spawn straight back to native we would ping-pong native<->python forever (the
+# `tg run --strictness/--selector/--stdin/--globs` hang). Keep this list in sync with
+# `ast_run_requires_python_passthrough` in rust_core/src/main.rs.
+_RUN_AST_WORKFLOW_FLAGS = ("--selector", "--strictness", "--stdin", "--globs")
+_RUN_AST_WORKFLOW_FLAG_PREFIXES = ("--selector=", "--strictness=", "--globs=")
+
+
+def _run_requires_ast_workflow(run_args: list[str]) -> bool:
+    return any(
+        arg in _RUN_AST_WORKFLOW_FLAGS or arg.startswith(_RUN_AST_WORKFLOW_FLAG_PREFIXES)
+        for arg in run_args
+    )
+
+
 def main_entry() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:
@@ -602,6 +620,13 @@ def main_entry() -> None:
 
     if argv and argv[0] in {"run", "scan", "test", "ast-info"}:
         if argv[0] == "run":
+            # ast-grep semantic options (--selector/--strictness/--stdin/--globs) are
+            # served by the Python AST workflow. Routing them to the native binary would
+            # bounce right back here (native spawns `python -m tensor_grep run ...`) and
+            # ping-pong forever, so handle them directly in Python.
+            if _run_requires_ast_workflow(argv[1:]):
+                _run_ast_workflow_cli(argv)
+                return
             native_binary_path = resolve_native_tg_binary()
             native_binary = str(native_binary_path) if native_binary_path else None
             if native_binary is not None:
