@@ -1,3 +1,4 @@
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -167,8 +168,9 @@ def test_ast_wrapper_backend_should_forward_ast_grep_run_semantic_options():
     ]
 
 
-def test_ast_wrapper_backend_should_forward_stdin_to_ast_grep_run():
+def test_ast_wrapper_backend_should_forward_stdin_to_ast_grep_run(monkeypatch):
     backend = AstGrepWrapperBackend()
+    monkeypatch.delenv("TG_AST_GREP_TIMEOUT_SECONDS", raising=False)
 
     mock_result = MagicMock()
     mock_result.returncode = 0
@@ -204,6 +206,51 @@ def test_ast_wrapper_backend_should_forward_stdin_to_ast_grep_run():
         "--stdin",
     ]
     assert run.call_args.kwargs["input"] == "print('hello')\n"
+    assert run.call_args.kwargs["timeout"] == 60.0
+
+
+def test_ast_wrapper_backend_should_allow_timeout_env_override(monkeypatch):
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    monkeypatch.setenv("TG_AST_GREP_TIMEOUT_SECONDS", "2.5")
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search_many(
+            ["src"],
+            "print($A)",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    assert run.call_args.kwargs["timeout"] == 2.5
+
+
+def test_ast_wrapper_backend_should_surface_ast_grep_timeout():
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["sg"], timeout=60),
+        ),
+        pytest.raises(RuntimeError, match="ast-grep command timed out after 60s"),
+    ):
+        backend.search_many(
+            ["src"],
+            "print($A)",
+            config=SearchConfig(ast=True, lang="python"),
+        )
 
 
 def test_ast_wrapper_backend_should_treat_empty_json_nonzero_as_no_match():

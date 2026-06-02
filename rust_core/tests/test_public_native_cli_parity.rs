@@ -21,6 +21,17 @@ fn run_tg(args: &[&str], cwd: &Path) -> Output {
     tg().current_dir(cwd).args(args).output().unwrap()
 }
 
+fn run_command_with_stdin(mut command: Command, stdin_bytes: &[u8]) -> Output {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(stdin_bytes).unwrap();
+    child.wait_with_output().unwrap()
+}
+
 fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let script = dir.join(name);
     fs::write(&script, body).unwrap();
@@ -148,6 +159,51 @@ sys.stdout.write(json.loads({stdout_text_json:?}))
         write_executable_script(
             dir,
             "fake-python-passthrough-assert",
+            &format!("#!/bin/sh\npython \"{}\" \"$@\"\n", script.display()),
+        )
+    }
+}
+
+fn fake_python_passthrough_asserting_stdin_script(
+    dir: &Path,
+    required_args: &[&str],
+    expected_stdin: &str,
+    stdout_text: &str,
+) -> PathBuf {
+    let script = dir.join("fake-python-passthrough-stdin.py");
+    let required_args_json = serde_json::to_string(required_args).unwrap();
+    let expected_stdin_json = serde_json::to_string(expected_stdin).unwrap();
+    let stdout_text_json = serde_json::to_string(stdout_text).unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"import json, sys
+required = json.loads({required_args_json:?})
+missing = [arg for arg in required if arg not in sys.argv[1:]]
+if missing:
+    sys.stderr.write("missing required python passthrough args: " + ", ".join(missing) + "\n")
+    raise SystemExit(2)
+expected = json.loads({expected_stdin_json:?})
+actual = sys.stdin.read()
+if actual != expected:
+    sys.stderr.write("stdin mismatch: " + repr(actual) + "\n")
+    raise SystemExit(3)
+sys.stdout.write(json.loads({stdout_text_json:?}))
+"#,
+        ),
+    )
+    .unwrap();
+
+    if cfg!(windows) {
+        write_executable_script(
+            dir,
+            "fake-python-passthrough-stdin.cmd",
+            &format!("@echo off\r\npython \"{}\" %*\r\n", script.display()),
+        )
+    } else {
+        write_executable_script(
+            dir,
+            "fake-python-passthrough-stdin",
             &format!("#!/bin/sh\npython \"{}\" \"$@\"\n", script.display()),
         )
     }
@@ -1621,6 +1677,40 @@ fn test_ast_compatibility_flags_route_or_fail_explicitly_on_public_native_frontd
         String::from_utf8_lossy(&selector_output.stdout).contains("python-route-ok"),
         "stdout={}",
         String::from_utf8_lossy(&selector_output.stdout)
+    );
+
+    let stdin_python = fake_python_passthrough_asserting_stdin_script(
+        dir.path(),
+        &[
+            "-m",
+            "tensor_grep",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "print($A)",
+            "--stdin",
+        ],
+        "print('hello')\n",
+        "stdin-forward-ok",
+    );
+    let mut stdin_command = tg();
+    stdin_command
+        .current_dir(dir.path())
+        .args(["run", "--pattern", "print($A)", "--stdin"])
+        .env("TG_SIDECAR_PYTHON", &stdin_python);
+    let stdin_output = run_command_with_stdin(stdin_command, b"print('hello')\n");
+    assert!(
+        stdin_output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        stdin_output.status.code(),
+        String::from_utf8_lossy(&stdin_output.stdout),
+        String::from_utf8_lossy(&stdin_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&stdin_output.stdout).contains("stdin-forward-ok"),
+        "stdout={}",
+        String::from_utf8_lossy(&stdin_output.stdout)
     );
 }
 

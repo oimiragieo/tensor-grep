@@ -43,6 +43,58 @@ def test_rust_core_uses_source_of_truth() -> None:
     )
 
 
+def test_main_entry_run_with_semantic_options_uses_ast_workflow_not_native(monkeypatch):
+    # Regression: `tg run` with ast-grep semantic options must be served by the
+    # in-process Python AST workflow. Delegating to the native binary causes an
+    # infinite native<->python delegation loop (the historical
+    # `tg run --strictness/--selector/--stdin/--globs` hang), because the native
+    # handler bounces these options back to `python -m tensor_grep run ...`.
+    for option in (
+        ["--selector", "function_definition"],
+        ["--selector=call"],
+        ["--strictness", "ast"],
+        ["--strictness=ast"],
+        ["--stdin"],
+        ["--globs", "*.py"],
+        ["--globs=*.py"],
+    ):
+        seen: dict[str, object] = {}
+
+        def record_workflow(argv: list[str], *, current_seen: dict[str, object] = seen) -> None:
+            current_seen["argv"] = list(argv)
+
+        monkeypatch.setattr(sys, "argv", ["tg", "run", "--pattern", "def $N($$$A): $$$B", *option])
+        monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+        monkeypatch.setattr(
+            bootstrap,
+            "_run_native_tg_command",
+            lambda *_a, **_k: pytest.fail("semantic run must not delegate to native"),
+        )
+        monkeypatch.setattr(bootstrap, "_run_ast_workflow_cli", record_workflow)
+        bootstrap.main_entry()
+        assert seen.get("argv", [None])[0] == "run", option
+
+
+def test_main_entry_plain_run_still_uses_native_fast_path(monkeypatch):
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(sys, "argv", ["tg", "run", "def $N($$$A): $$$B", "."])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_ast_workflow_cli",
+        lambda *_a, **_k: pytest.fail("plain run should use the native fast path"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_command",
+        lambda binary_name, argv: seen.update({"argv": list(argv)}) or 0,
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+    assert excinfo.value.code == 0
+    assert seen["argv"] == ["run", "def $N($$$A): $$$B", "."]
+
+
 def test_main_entry_should_passthrough_search_subcommand_to_rg(monkeypatch):
     seen: dict[str, object] = {}
 

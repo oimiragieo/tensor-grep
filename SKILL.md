@@ -227,7 +227,7 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 | JSON aggregate | `tg search --json "pattern" src` |
 | NDJSON stream | `tg search --ndjson "pattern" src tests docs` |
 | Files with matches | `tg search "pattern" src --files-with-matches` |
-| AST search | `tg run --lang python 'def $NAME($$$ARGS): $$$BODY' src --json` |
+| AST search | `tg run --lang python function_definition src --json` |
 | AST language identifiers | `tg ast-info --json` |
 | Source lookup | `tg source src someSymbol --json` |
 | Refs lookup | `tg refs src someSymbol --json` |
@@ -243,6 +243,11 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 | **Create Checkpoint (Rewind)** | `tg checkpoint create [PATH] --json` |
 | **List Checkpoints** | `tg checkpoint list [PATH] --json` |
 | **Rollback / Rewind to checkpoint** | `tg checkpoint undo <checkpoint_id> [PATH] --json` |
+
+AST structural patterns are exact. A pattern such as `'def $NAME($$$ARGS): $$$BODY'`
+does not match Python functions with return annotations; use node-kind search such as
+`function_definition` or a `tg scan` rule with `kind: function_definition` when the
+task is to enumerate all functions regardless of signature shape.
 
 ## Advanced Features: LSP, Editing, and Checkpoints (Rewind)
 

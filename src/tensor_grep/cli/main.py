@@ -1831,6 +1831,39 @@ def _doctor_lsp_providers_by_language(
     return keyed
 
 
+def _doctor_ast_grep_status() -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "schema_version": 1,
+        "available": False,
+        "binary": None,
+        "wrapper_backend": "AstGrepWrapperBackend",
+        "required_for": "tg run ast-grep semantic options",
+        "semantic_run_options": ["--selector", "--strictness", "--stdin", "--globs"],
+        "timeout_env": "TG_AST_GREP_TIMEOUT_SECONDS",
+        "timeout_seconds": None,
+    }
+    try:
+        from tensor_grep.backends.ast_wrapper_backend import (
+            AstGrepWrapperBackend,
+            _ast_grep_command_timeout_seconds,
+        )
+
+        backend = AstGrepWrapperBackend()
+        binary = backend._get_binary_name()
+        available = backend.is_available()
+        status["available"] = available
+        status["binary"] = binary if available else None
+        status["timeout_seconds"] = _ast_grep_command_timeout_seconds()
+        if not available:
+            status["install_hint"] = (
+                "Install ast-grep or put an ast-grep/sg binary on PATH to use "
+                "tg run --selector, --strictness, --stdin, or --globs."
+            )
+    except Exception as exc:
+        status["error"] = str(exc)
+    return status
+
+
 def _doctor_rust_core_extension_available() -> bool:
     try:
         from tensor_grep.backends.rust_backend import HAVE_RUST
@@ -2731,6 +2764,7 @@ def _build_doctor_payload(
         ),
         "shell_escaping_guidance": _doctor_shell_escaping_guidance(),
         "gpu": gpu_status,
+        "ast_grep": _doctor_ast_grep_status(),
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
         "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
@@ -2882,6 +2916,22 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         lines.append(f"  size: {ast_payload.get('size_bytes')} bytes")
         lines.append(f"  mtime: {ast_payload.get('mtime')}")
         lines.append(f"  stale: {ast_payload.get('stale')}")
+
+    ast_grep_payload = cast(dict[str, Any], payload.get("ast_grep", {}))
+    ast_grep_options = "/".join(
+        str(option) for option in ast_grep_payload.get("semantic_run_options", [])
+    )
+    lines.append(
+        "ast_grep: "
+        f"available={ast_grep_payload.get('available', False)} "
+        f"binary={ast_grep_payload.get('binary') or 'missing'} "
+        f"semantic_run_options={ast_grep_options or 'unknown'} "
+        f"timeout_seconds={ast_grep_payload.get('timeout_seconds') or 'unknown'}"
+    )
+    if ast_grep_payload.get("install_hint"):
+        lines.append(f"  install_hint: {ast_grep_payload['install_hint']}")
+    if ast_grep_payload.get("error"):
+        lines.append(f"  error: {ast_grep_payload['error']}")
 
     worker_payload = cast(dict[str, Any], payload.get("resident_worker", {}))
     lines.append(
@@ -9108,7 +9158,7 @@ def doctor(
         ),
     ),
 ) -> None:
-    """Print system, GPU, cache, daemon, shell-escaping, and provider-proof diagnostics.
+    """Print system, GPU, cache, AST, daemon, shell-escaping, and provider-proof diagnostics.
 
     Reports Windows shell guidance for PowerShell literal patterns and cmd.exe metacharacters.
     """

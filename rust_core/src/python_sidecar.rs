@@ -86,22 +86,73 @@ pub fn execute_python_passthrough_command(
     command: &str,
     args: Vec<String>,
 ) -> Result<i32, SidecarError> {
+    execute_python_passthrough_command_inner(command, args, None)
+}
+
+pub fn execute_python_passthrough_command_with_stdin(
+    command: &str,
+    args: Vec<String>,
+    stdin_bytes: Vec<u8>,
+) -> Result<i32, SidecarError> {
+    execute_python_passthrough_command_inner(command, args, Some(stdin_bytes))
+}
+
+fn execute_python_passthrough_command_inner(
+    command: &str,
+    args: Vec<String>,
+    stdin_bytes: Option<Vec<u8>>,
+) -> Result<i32, SidecarError> {
     let python = resolve_python_command();
 
     let mut child = command_for_executable(&python);
     configure_python_child_environment(&mut child);
+    let pipe_stdin = stdin_bytes.is_some();
     child
         .arg("-m")
         .arg(DEFAULT_TENSOR_GREP_MODULE)
         .arg(command)
         .args(args)
-        .stdin(Stdio::inherit())
+        .stdin(if pipe_stdin {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        })
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let status = child
-        .status()
+    let mut child = child
+        .spawn()
         .map_err(|err| map_python_spawn_error(&python, err))?;
+
+    if let Some(stdin_bytes) = stdin_bytes {
+        let mut stdin = child.stdin.take().ok_or_else(|| SidecarError {
+            exit_code: 1,
+            message: "Python passthrough stdin pipe was unavailable".to_string(),
+            stderr: String::new(),
+        })?;
+        if let Err(err) = stdin.write_all(&stdin_bytes) {
+            if err.kind() != io::ErrorKind::BrokenPipe {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SidecarError {
+                    exit_code: 1,
+                    message: format!("Failed to forward stdin to Python passthrough: {err}"),
+                    stderr: String::new(),
+                });
+            }
+        }
+        let _ = stdin.flush();
+        drop(stdin);
+    }
+
+    let status = child.wait().map_err(|err| SidecarError {
+        exit_code: 1,
+        message: format!(
+            "Failed while waiting for Python passthrough with `{}`: {err}",
+            python.to_string_lossy()
+        ),
+        stderr: String::new(),
+    })?;
 
     Ok(status.code().unwrap_or(1))
 }
