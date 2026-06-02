@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.30 (2026-06-02)
+
+### Bug Fixes
+
+- Harden ast run semantic routing
+  ([`05e0a2a`](https://github.com/oimiragieo/tensor-grep/commit/05e0a2ade9bf4f7d99b54dcb8dbf65d6fcdc5837))
+
+
 ## v1.13.29 (2026-06-02)
 
 ### Bug Fixes
