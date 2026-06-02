@@ -237,6 +237,29 @@ function Test-TensorGrepLauncher {
     }
 }
 
+function Remove-StaleShimLauncherWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            return $true
+        } catch {
+            if ($attempt -eq 5) {
+                Write-Warning (
+                    "Unable to remove stale tg launcher shadowing managed shim after retry: " +
+                    "$Path. Error: $_"
+                )
+                return $false
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    return $false
+}
+
 function Remove-StalePathLauncher {
     param(
         [Parameter(Mandatory = $true)][string[]]$effectivePathParts,
@@ -700,8 +723,9 @@ exec "`$TG_FRONTDOOR" "`$@"
                         continue
                     }
                 }
-                Remove-Item -LiteralPath $staleShimPath -Force
-                Write-Host "Removed stale tg launcher shadowing managed shim: $staleShimPath"
+                if (Remove-StaleShimLauncherWithRetry -Path $staleShimPath) {
+                    Write-Host "Removed stale tg launcher shadowing managed shim: $staleShimPath"
+                }
             }
         }
         $cmdShimPath = "$shimDir\tg.cmd"
@@ -711,10 +735,14 @@ exec "`$TG_FRONTDOOR" "`$@"
         $bashShimPath = "$shimDir\tg"
         Write-AsciiFile -Path $cmdShimPath -Value $cmdShimContent
         if ((Test-Path -LiteralPath $nativeFrontdoorPath) -and !$foreignExeInShimDir) {
-            Copy-Item -LiteralPath $nativeFrontdoorPath -Destination $exeShimPath -Force
-            Write-AsciiFile -Path $exeShimMarkerPath -Value "tensor-grep managed tg.exe bridge`r`n"
-            Write-Host "Installed Python subprocess tg.exe bridge: $exeShimPath"
-            $installedShimPaths += $exeShimPath
+            try {
+                Copy-Item -LiteralPath $nativeFrontdoorPath -Destination $exeShimPath -Force -ErrorAction Stop
+                Write-AsciiFile -Path $exeShimMarkerPath -Value "tensor-grep managed tg.exe bridge`r`n"
+                Write-Host "Installed Python subprocess tg.exe bridge: $exeShimPath"
+                $installedShimPaths += $exeShimPath
+            } catch {
+                Write-Warning "Python subprocess tg.exe bridge could not be refreshed: $exeShimPath. Error: $_"
+            }
         } elseif ($foreignExeInShimDir) {
             Write-Warning "Python subprocess tg.exe bridge was not installed because a foreign tg.exe already exists: $exeShimPath"
         }

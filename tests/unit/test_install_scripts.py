@@ -204,6 +204,7 @@ def test_install_ps1_should_skip_inaccessible_path_entries_when_scanning_launche
 
 def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim():
     content = _read_script("scripts/install.ps1")
+    shim_loop = content[content.index("$installedShimPaths = @()") :]
 
     assert '"tg.com", "tg.exe", "tg.bat", "tg.ps1"' in content
     assert 'if ($staleShimName -eq "tg.exe") {' in content
@@ -213,9 +214,13 @@ def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim()
         "Python subprocess tg.exe bridge was not installed because a foreign tg.exe already exists"
         in content
     )
-    assert "Remove-Item -LiteralPath $staleShimPath -Force" in content
+    assert "function Remove-StaleShimLauncherWithRetry" in content
+    assert "Start-Sleep -Milliseconds 250" in content
+    assert "Unable to remove stale tg launcher shadowing managed shim after retry" in content
+    assert "Remove-StaleShimLauncherWithRetry -Path $staleShimPath" in shim_loop
+    assert "Remove-Item -LiteralPath $staleShimPath -Force" not in shim_loop
     assert "Removed stale tg launcher shadowing managed shim" in content
-    assert content.index("Remove-Item -LiteralPath $staleShimPath -Force") < content.index(
+    assert content.index("Remove-StaleShimLauncherWithRetry -Path $staleShimPath") < content.index(
         "Write-AsciiFile -Path $cmdShimPath"
     )
 
@@ -225,13 +230,17 @@ def test_install_ps1_should_write_exe_bridge_for_python_subprocess_in_shim_dirs(
 
     assert '$exeShimPath = "$shimDir\\tg.exe"' in content
     assert '$exeShimMarkerPath = "$shimDir\\tg.exe.tensor-grep-bridge"' in content
-    assert "Copy-Item -LiteralPath $nativeFrontdoorPath -Destination $exeShimPath -Force" in content
+    assert (
+        "Copy-Item -LiteralPath $nativeFrontdoorPath -Destination $exeShimPath -Force -ErrorAction Stop"
+        in content
+    )
     assert (
         'Write-AsciiFile -Path $exeShimMarkerPath -Value "tensor-grep managed tg.exe bridge`r`n"'
         in content
     )
     assert "$installedShimPaths += $exeShimPath" in content
     assert "Python subprocess tg.exe bridge" in content
+    assert "Python subprocess tg.exe bridge could not be refreshed" in content
 
 
 def test_install_ps1_should_create_argv_safe_utf8_powershell_shims():
