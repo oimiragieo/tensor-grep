@@ -930,6 +930,25 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
+def test_tg_ruleset_scan_refuses_direct_temp_root_before_walking(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _ExplodingAstScanner
+
+    temp_root = tmp_path / "Temp"
+    temp_root.mkdir()
+    (temp_root / "a.py").write_text("API_KEY = 'secret'\n", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _ExplodingAstScanner)
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=str(temp_root), language="python")
+    )
+
+    assert payload["routing_reason"] == "builtin-ruleset-scan"
+    assert payload["error"]["code"] == "broad_scan_refused"
+    assert "broad AST scan refused" in payload["error"]["message"]
+    assert "--allow-broad-generated-scan" in payload["error"]["message"]
+
+
 def test_tg_ruleset_scan_can_emit_evidence_snippets(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
     from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner

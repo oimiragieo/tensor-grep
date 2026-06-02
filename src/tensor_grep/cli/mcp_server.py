@@ -34,6 +34,7 @@ from tensor_grep.cli.repo_map import (
 )
 from tensor_grep.cli.rule_packs import resolve_rule_pack
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
+from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
@@ -1007,6 +1008,10 @@ def tg_ruleset_scan(
     ruleset: str,
     path: str = ".",
     language: str | None = None,
+    glob: str | None = None,
+    file_type: str | None = None,
+    max_depth: int | None = None,
+    allow_broad_generated_scan: bool = False,
     baseline_path: str | None = None,
     write_baseline: str | None = None,
     suppressions_path: str | None = None,
@@ -1023,6 +1028,10 @@ def tg_ruleset_scan(
         ruleset: Built-in ruleset name to execute.
         path: Root path to scan.
         language: Optional language override for the ruleset.
+        glob: Optional include/exclude glob for bounded scans.
+        file_type: Optional extension/type filter for bounded scans.
+        max_depth: Optional traversal depth limit for broad roots.
+        allow_broad_generated_scan: Explicit opt-in for broad temp/cache/system roots.
     """
     try:
         ruleset_meta, rules = resolve_rule_pack(ruleset, language)
@@ -1047,6 +1056,10 @@ def tg_ruleset_scan(
             rules,
             routing_reason="builtin-ruleset-scan",
             ruleset_name=ruleset_meta["name"],
+            scan_globs=[glob] if glob else None,
+            scan_types=[file_type] if file_type else None,
+            scan_max_depth=max_depth,
+            allow_broad_generated_scan=allow_broad_generated_scan,
             baseline_path=baseline_path,
             write_baseline_path=write_baseline,
             suppressions_path=suppressions_path,
@@ -1055,6 +1068,13 @@ def tg_ruleset_scan(
             include_evidence_snippets=include_evidence_snippets,
             max_evidence_snippets_per_file=max_evidence_snippets_per_file,
             max_evidence_snippet_chars=max_evidence_snippet_chars,
+        )
+    except BroadScanRefusedError as exc:
+        return _ruleset_scan_error(
+            str(exc),
+            code="broad_scan_refused",
+            ruleset=ruleset,
+            path=path,
         )
     except ValueError as exc:
         return _ruleset_scan_error(

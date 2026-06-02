@@ -10930,6 +10930,14 @@ class _FakeAstScanner:
         yield "b.py"
 
 
+class _ExplodingAstScanner:
+    def __init__(self, config=None):
+        pass
+
+    def walk(self, path):
+        raise AssertionError(f"scan guard should run before walking {path}")
+
+
 _NO_GPU_INVENTORY = DeviceInventory(
     platform="windows",
     has_gpu=False,
@@ -11019,6 +11027,67 @@ def test_scan_executes_builtin_ruleset(monkeypatch):
     assert "[scan] rule=python-hashlib-md5 lang=python matches=1 files=1" in result.output
     assert "[scan] rule=python-hashlib-sha1 lang=python matches=0 files=0" in result.output
     assert "Scan completed. rules=2 matched_rules=1 total_matches=1" in result.output
+
+
+def test_scan_ruleset_refuses_direct_temp_root_before_walking(monkeypatch, tmp_path: Path):
+    temp_root = tmp_path / "Temp"
+    temp_root.mkdir()
+    (temp_root / "a.py").write_text("API_KEY = 'secret'\n", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _ExplodingAstScanner)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "secrets-basic",
+            "--language",
+            "python",
+            "--path",
+            str(temp_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "broad AST scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert "Temp" in result.output
+    assert "--max-depth" in result.output
+    assert "--allow-broad-generated-scan" in result.output
+
+
+def test_scan_ruleset_allows_depth_bounded_temp_root(monkeypatch, tmp_path: Path):
+    temp_root = tmp_path / "Temp"
+    temp_root.mkdir()
+    monkeypatch.chdir(temp_root)
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    Path("a.py").write_text('password = "$SECRET"\n', encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "secrets-basic",
+            "--language",
+            "python",
+            "--path",
+            str(temp_root),
+            "--max-depth",
+            "1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "builtin-ruleset-scan"
+    assert payload["ruleset"] == "secrets-basic"
+    assert payload["total_matches"] >= 1
 
 
 def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
