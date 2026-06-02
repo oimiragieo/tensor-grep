@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.32 (2026-06-02)
+
+### Bug Fixes
+
+- Guard broad ast scan roots
+  ([`7767b45`](https://github.com/oimiragieo/tensor-grep/commit/7767b456e1ecf8e5c364028c1d8e9aa107ca45ac))
+
+
 ## v1.13.31 (2026-06-02)
 
 ### Bug Fixes
