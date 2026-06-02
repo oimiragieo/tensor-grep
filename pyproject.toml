@@ -251,9 +251,10 @@ version_variables = [
 
 
 
+
 [project]
 name = "tensor-grep"
-version = "1.13.32"
+version = "1.13.33"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"

@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.13.33 (2026-06-02)
+
+### Bug Fixes
+
+- Harden installer stale bridge refresh
+  ([`b47c7b0`](https://github.com/oimiragieo/tensor-grep/commit/b47c7b0ccebc1349cd9ff5aea047d2c7326443e5))
+
+Harden Windows installer cleanup so transient stale tensor-grep bridge locks do not abort after the
+  staged managed install succeeds.
+
+
 ## v1.13.32 (2026-06-02)
 
 ### Bug Fixes
