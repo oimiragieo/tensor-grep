@@ -346,6 +346,48 @@ def _candidate_versions_from_pypi_simple_index(simple_index: str) -> list[str]:
     return candidates
 
 
+def _candidate_versions_from_pip_index_output(output: str) -> list[str]:
+    candidates: list[str] = []
+    version_pattern = r"[0-9]+(?:\.[0-9]+)*(?:(?:a|b|rc|dev|post)[0-9]+)?"
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        package_match = re.search(rf"\btensor-grep\s+\(({version_pattern})\)", line, re.IGNORECASE)
+        if package_match:
+            candidates.append(package_match.group(1))
+        if re.match(r"(?i)^(?:available versions|latest)\s*:", line):
+            candidates.extend(re.findall(version_pattern, line))
+    return candidates
+
+
+def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
+    env = os.environ.copy()
+    env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "index",
+                "versions",
+                "tensor-grep",
+                "--no-cache-dir",
+                "--index-url",
+                "https://pypi.org/simple",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+            env=env,
+        )
+    except Exception:
+        return []
+    return _candidate_versions_from_pip_index_output(
+        "\n".join(part for part in (result.stdout, result.stderr) if part)
+    )
+
+
 def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | None:
     """Best-effort latest-version probe that avoids trusting one stale PyPI cache surface."""
     import urllib.request
@@ -373,6 +415,8 @@ def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | Non
         candidates.extend(_candidate_versions_from_pypi_simple_index(simple_index))
     except Exception:
         pass
+
+    candidates.extend(_candidate_versions_from_pip_index(timeout_seconds))
 
     return _highest_tensor_grep_version(candidates)
 
