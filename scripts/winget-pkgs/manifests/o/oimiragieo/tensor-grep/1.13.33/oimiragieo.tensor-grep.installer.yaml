@@ -7,7 +7,7 @@ Commands:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.13.33/tg-windows-amd64-cpu.exe
-    InstallerSha256: 2D9CD666A2140162CF640B385DCFC97A96DEFE93D1665C929229D185793C1589
+    InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589
     Scope: user
 ManifestType: installer
 ManifestVersion: 1.6.0

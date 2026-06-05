@@ -243,11 +243,23 @@ jobs:
             throw "winget validate is required for Windows package-manager readiness"
           }
 
-          $version = uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
-          winget validate --manifest "scripts\winget-pkgs\manifests\o\oimiragieo\tensor-grep\$version"
+          $versionMatch = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"(?<version>[^"]+)"'
+          if (-not $versionMatch) {
+            throw "Unable to resolve project version from pyproject.toml"
+          }
+          $version = $versionMatch.Matches[0].Groups['version'].Value
+          $manifestPath = "scripts\winget-pkgs\manifests\o\oimiragieo\tensor-grep\$version"
+          if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "Winget manifest directory not found: $manifestPath"
+          }
+          winget validate --manifest $manifestPath
           if ($LASTEXITCODE -ne 0) {
+<<<<<<< HEAD
             throw "winget validate failed with exit code $LASTEXITCODE"
 >>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
+=======
+            throw "winget validate failed with exit code $LASTEXITCODE for $manifestPath"
+>>>>>>> 6013c48 (fix: harden winget validate path resolution on Windows CI)
           }
 
       - name: Validate package-manager publish bundle source state
