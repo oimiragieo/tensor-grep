@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import sys
+import threading
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -30,6 +32,8 @@ from tensor_grep.cli.repo_map import (
     build_symbol_impact_from_map,
     build_symbol_refs_from_map,
 )
+
+logger = logging.getLogger(__name__)
 
 _SESSION_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
@@ -76,6 +80,7 @@ class SessionRefreshResult:
     refresh_type: str
     changeset: dict[str, list[str]]
     scan_limit: dict[str, Any] | None = None
+    refresh_fallback_reason: str | None = None
 
 
 class SessionStaleError(RuntimeError):
@@ -117,38 +122,41 @@ class _SessionServeCache:
         self._hits = 0
         self._misses = 0
         self._refreshes = 0
+        self._lock = threading.RLock()
 
     def _key(self, session_id: str, path: str) -> tuple[str, str]:
         return (str(_session_root_for_payload(session_id, path)), session_id)
 
     def get(self, session_id: str, path: str) -> dict[str, Any] | None:
         key = self._key(session_id, path)
-        entry = self._entries.pop(key, None)
-        if entry is None:
-            self._misses += 1
-            return None
-        self._hits += 1
-        self._entries[key] = entry
-        return entry.payload
+        with self._lock:
+            entry = self._entries.pop(key, None)
+            if entry is None:
+                self._misses += 1
+                return None
+            self._hits += 1
+            self._entries[key] = entry
+            return entry.payload
 
     def put(self, session_id: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         key = self._key(session_id, path)
-        previous = self._entries.pop(key, None)
-        if previous is not None:
-            self._size_bytes -= previous.size_bytes
+        with self._lock:
+            previous = self._entries.pop(key, None)
+            if previous is not None:
+                self._size_bytes -= previous.size_bytes
 
-        entry = _SessionServeCacheEntry(
-            payload=payload,
-            size_bytes=_json_size_bytes(payload),
-        )
-        self._entries[key] = entry
-        self._size_bytes += entry.size_bytes
+            entry = _SessionServeCacheEntry(
+                payload=payload,
+                size_bytes=_json_size_bytes(payload),
+            )
+            self._entries[key] = entry
+            self._size_bytes += entry.size_bytes
 
-        while len(self._entries) > self._max_entries:
-            _, evicted = self._entries.popitem(last=False)
-            self._size_bytes -= evicted.size_bytes
+            while len(self._entries) > self._max_entries:
+                _, evicted = self._entries.popitem(last=False)
+                self._size_bytes -= evicted.size_bytes
 
-        return payload
+            return payload
 
     def load(self, session_id: str, path: str) -> dict[str, Any]:
         cached = self.get(session_id, path)
@@ -163,37 +171,46 @@ class _SessionServeCache:
         return self.put(session_id, path, get_session(session_id, path)), "miss"
 
     def record_refresh(self) -> None:
-        self._refreshes += 1
+        with self._lock:
+            self._refreshes += 1
 
     @property
     def session_count(self) -> int:
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
 
     @property
     def size_bytes(self) -> int:
-        return self._size_bytes
+        with self._lock:
+            return self._size_bytes
 
     @property
     def hits(self) -> int:
-        return self._hits
+        with self._lock:
+            return self._hits
 
     @property
     def misses(self) -> int:
-        return self._misses
+        with self._lock:
+            return self._misses
 
     @property
     def refreshes(self) -> int:
-        return self._refreshes
+        with self._lock:
+            return self._refreshes
 
     @property
     def root_count(self) -> int:
-        return len({root for root, _ in self._entries})
+        with self._lock:
+            return len({root for root, _ in self._entries})
 
     @property
     def sessions(self) -> list[dict[str, str]]:
-        return [
-            {"root": root, "session_id": session_id} for root, session_id in self._entries.keys()
-        ]
+        with self._lock:
+            return [
+                {"root": root, "session_id": session_id}
+                for root, session_id in self._entries.keys()
+            ]
 
 
 class _SessionServeResponseCache:
@@ -337,10 +354,15 @@ def _load_index(root: Path) -> list[SessionRecord]:
     return [SessionRecord(**entry) for entry in payload]
 
 
-def _write_index(root: Path, records: list[SessionRecord]) -> None:
-    path = _index_path(root)
+def _write_json_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([asdict(record) for record in records], indent=2), encoding="utf-8")
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _write_index(root: Path, records: list[SessionRecord]) -> None:
+    _write_json_atomic(_index_path(root), [asdict(record) for record in records])
 
 
 def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
@@ -492,8 +514,7 @@ def open_session(
         "build_seconds": max(0.0, built_at - started_at),
     }
     session_path = _session_payload_path(root, session_id)
-    session_path.parent.mkdir(parents=True, exist_ok=True)
-    session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_json_atomic(session_path, payload)
 
     record = SessionRecord(
         version=_SESSION_VERSION,
@@ -531,6 +552,7 @@ def refresh_session(
     effective_max_repo_files = _effective_session_max_repo_files(max_repo_files, existing)
     changeset = _stale_changeset(existing, detect_added_files=True)
     refresh_type = "full"
+    refresh_fallback_reason: str | None = None
     if changeset is not None:
         try:
             repo_map = build_repo_map_incremental(
@@ -539,9 +561,15 @@ def refresh_session(
                 max_repo_files=effective_max_repo_files,
             )
             refresh_type = "incremental"
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Incremental session refresh failed for %s, falling back to full rebuild: %s",
+                session_id,
+                exc,
+            )
             repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
             refresh_type = "full"
+            refresh_fallback_reason = "incremental_failed"
     else:
         repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
         changeset = _empty_changeset()
@@ -559,9 +587,10 @@ def refresh_session(
         "changeset": changeset,
         "scan_limit": cast(dict[str, Any] | None, repo_map.get("scan_limit")),
     }
+    if refresh_fallback_reason is not None:
+        payload["refresh_fallback_reason"] = refresh_fallback_reason
     session_path = _session_payload_path(root, session_id)
-    session_path.parent.mkdir(parents=True, exist_ok=True)
-    session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_json_atomic(session_path, payload)
     if payload_cache is not None:
         payload_cache.put(session_id, str(root), payload)
 
@@ -600,6 +629,7 @@ def refresh_session(
         refresh_type=refresh_type,
         changeset=changeset,
         scan_limit=cast(dict[str, Any] | None, repo_map.get("scan_limit")),
+        refresh_fallback_reason=refresh_fallback_reason,
     )
 
 
@@ -1165,6 +1195,12 @@ def serve_session_stream(
                     "response_cache_size_bytes": response_cache.size_bytes,
                     "response_cache_max_size_bytes": response_cache.max_size_bytes,
                     "response_cache_oversized_skips": response_cache.oversized_skips,
+                    "response_cache_stale_detection": "snapshot_mtime_only",
+                    "response_cache_added_file_detection": False,
+                    "response_cache_refresh_hint": (
+                        "Use tg session refresh or request refresh_on_stale when new files must "
+                        "invalidate daemon response-cache hits."
+                    ),
                     "uptime_seconds": max(0.0, monotonic() - started_at),
                     "request_count": request_count,
                 }

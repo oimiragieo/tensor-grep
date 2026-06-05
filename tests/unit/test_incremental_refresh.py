@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -345,7 +346,7 @@ def test_refresh_session_uses_incremental_builder_when_changeset_available(
 
 
 def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
@@ -377,10 +378,20 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
     monkeypatch.setattr(session_store, "build_repo_map_incremental", failing_incremental)
     monkeypatch.setattr(session_store, "build_repo_map", tracking_full_build)
 
-    refreshed = session_store.refresh_session(session_id, str(paths["project"]))
+    with caplog.at_level(logging.WARNING, logger="tensor_grep.cli.session_store"):
+        refreshed = session_store.refresh_session(session_id, str(paths["project"]))
 
     assert refreshed.refresh_type == "full"
+    assert refreshed.refresh_fallback_reason == "incremental_failed"
     assert full_calls["count"] == 1
+    assert any(
+        "falling back to full rebuild" in record.message and "boom" in record.message
+        for record in caplog.records
+    )
+
+    payload = _session_payload(paths["project"], session_id)
+    assert payload["refresh_type"] == "full"
+    assert payload.get("refresh_fallback_reason") == "incremental_failed"
 
 
 def test_refresh_session_persists_changeset_and_refresh_type_in_payload(tmp_path: Path) -> None:

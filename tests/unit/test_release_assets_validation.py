@@ -407,13 +407,24 @@ def test_should_validate_winget_manifest_structure():
     spec.loader.exec_module(module)
 
     winget = (
+        "# yaml-language-server: "
+        "$schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json\n"
         "PackageIdentifier: oimiragieo.tensor-grep\n"
         "PackageVersion: 1.2.3\n"
+        "PackageLocale: en-US\n"
+        "PackageName: tensor-grep\n"
+        "Publisher: oimiragieo\n"
+        "License: MIT\n"
+        "ShortDescription: Fast search for agent workflows\n"
         "Installers:\n"
         "  - Architecture: x64\n"
         "    InstallerType: portable\n"
         "    InstallerUrl: "
         "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
+        "    InstallerSha256: "
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        "ManifestType: singleton\n"
+        "ManifestVersion: 1.12.0\n"
     )
     errors = module.validate_winget_manifest(winget_content=winget, py_version="1.2.3")
     assert errors == []
@@ -429,13 +440,24 @@ def test_should_fail_winget_manifest_when_installer_url_not_nested():
     spec.loader.exec_module(module)
 
     winget = (
+        "# yaml-language-server: "
+        "$schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json\n"
         "PackageIdentifier: oimiragieo.tensor-grep\n"
         "PackageVersion: 1.2.3\n"
+        "PackageLocale: en-US\n"
+        "PackageName: tensor-grep\n"
+        "Publisher: oimiragieo\n"
+        "License: MIT\n"
+        "ShortDescription: Fast search for agent workflows\n"
         "Installers:\n"
         "  - Architecture: x64\n"
         "    InstallerType: portable\n"
+        "    InstallerSha256: "
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
         "InstallerUrl: "
         "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
+        "ManifestType: singleton\n"
+        "ManifestVersion: 1.12.0\n"
     )
     errors = module.validate_winget_manifest(winget_content=winget, py_version="1.2.3")
     assert any("InstallerUrl must be nested under first installer mapping" in err for err in errors)
@@ -903,7 +925,8 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     assert "pygments>=2.20.0" in joined_errors
     assert "python-multipart>=0.0.27" in joined_errors
     assert "python-dotenv>=1.2.2" in joined_errors
-    assert "aiohttp>=3.13.4" in joined_errors
+    assert "aiohttp>=3.14.0" in joined_errors
+    assert "pyjwt>=2.13.0" in joined_errors
 
 
 def test_should_accept_uv_security_floor_constraints_when_all_required_entries_present():
@@ -927,7 +950,8 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
       "python-multipart>=0.0.27",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.13.4",
+      "aiohttp>=3.14.0",
+      "pyjwt>=2.13.0",
     ]
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
@@ -1957,11 +1981,44 @@ def test_should_require_ci_macos_native_frontdoor_to_use_intel_runner_label():
     spec.loader.exec_module(module)
 
     ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    ci_workflow = ci_workflow.replace("macos-15-intel", "macos-latest", 1)
+    ci_workflow = ci_workflow.replace(
+        "- os: macos-15-intel\n"
+        "            acceleration: cpu\n"
+        "            cargo_args: --no-default-features\n"
+        "            asset_name: tg-macos-amd64-cpu",
+        "- os: macos-latest\n"
+        "            acceleration: cpu\n"
+        "            cargo_args: --no-default-features\n"
+        "            asset_name: tg-macos-amd64-cpu",
+        1,
+    )
 
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any(
         "CI workflow build-release-native-assets matrix must use an Intel macOS runner label" in err
+        for err in errors
+    )
+
+
+def test_should_require_ci_native_build_smoke_to_use_intel_runner_label():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace(
+        "os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]",
+        "os: [ubuntu-latest, windows-latest, macos-latest]",
+        1,
+    )
+
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "CI workflow native-build-smoke matrix must include Intel macOS runner label" in err
         for err in errors
     )
 
@@ -4656,6 +4713,30 @@ def test_should_validate_public_gpu_proof_workflow_contract():
     workflow = (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(encoding="utf-8")
 
     assert module.validate_public_gpu_proof_workflow_content(workflow_content=workflow) == []
+
+
+def test_should_reject_public_gpu_proof_workflow_without_environment_gate():
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow_path = root / ".github" / "workflows" / "public-gpu-proof.yml"
+    parsed = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    job = parsed["jobs"]["public-managed-gpu-proof"]
+    job.pop("environment", None)
+    workflow = yaml.safe_dump(parsed, sort_keys=False)
+
+    errors = module.validate_public_gpu_proof_workflow_content(workflow_content=workflow)
+    assert any(
+        "Public GPU proof workflow must target `environment: public-gpu-proof`" in err
+        for err in errors
+    )
 
 
 def test_should_reject_public_gpu_proof_workflow_without_dispatch_only_fixed_runner():

@@ -25,6 +25,10 @@ fn repo_python() -> PathBuf {
         return candidate;
     }
 
+    if cfg!(windows) {
+        return PathBuf::from("python");
+    }
+
     let unix_candidate = repo_root().join(".venv").join("bin").join("python");
     if unix_candidate.exists() {
         return unix_candidate;
@@ -385,21 +389,35 @@ fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
         .arg(&corpus_dir)
         .env("TG_SIDECAR_PYTHON", repo_python());
     configure_repo_python_env(&mut tg);
+    if !cfg!(feature = "cuda") {
+        tg.arg("--json");
+    }
 
     let output = run_with_timeout(tg, sidecar_test_timeout());
 
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("99"), "stderr={stderr}");
     if cfg!(feature = "cuda") {
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("99"), "stderr={stderr}");
         assert!(stderr.contains("invalid CUDA device id"), "stderr={stderr}");
     } else {
         assert!(
-            stderr.contains("Requested GPU device ID"),
-            "stderr={stderr}"
+            output.status.success(),
+            "status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
-        assert!(stderr.contains("Available device IDs"), "stderr={stderr}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("native GPU unavailable"), "stderr={stderr}");
+        let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["routing_backend"], "NativeCpuBackend");
+        assert_eq!(payload["gpu_evidence_status"], "unsupported");
+        assert_eq!(payload["gpu_proof"], false);
+        assert_eq!(payload["native_gpu_unavailable"], true);
+        assert_eq!(payload["requested_gpu_device_ids"], json!([99]));
     }
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("Traceback"), "stderr={stderr}");
 }
 
@@ -418,17 +436,29 @@ fn test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceb
         .arg("0")
         .arg("ERROR")
         .arg(&corpus_dir)
+        .arg("--json")
         .env("TG_SIDECAR_PYTHON", repo_python())
         .env("CUDA_VISIBLE_DEVICES", "");
     configure_repo_python_env(&mut tg);
 
     let output = run_with_timeout(tg, sidecar_test_timeout());
 
-    assert!(!output.status.success());
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("CUDA_VISIBLE_DEVICES"), "stderr={stderr}");
-    assert!(stderr.contains("GPU device IDs [0]"), "stderr={stderr}");
+    assert!(stderr.contains("native GPU unavailable"), "stderr={stderr}");
     assert!(!stderr.contains("Traceback"), "stderr={stderr}");
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "NativeCpuBackend");
+    assert_eq!(payload["gpu_evidence_status"], "unsupported");
+    assert_eq!(payload["gpu_proof"], false);
+    assert_eq!(payload["native_gpu_unavailable"], true);
+    assert_eq!(payload["requested_gpu_device_ids"], json!([0]));
 }
 
 #[cfg(not(feature = "cuda"))]

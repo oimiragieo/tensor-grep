@@ -15,8 +15,8 @@ def test_npm_lock_should_keep_wrapper_dependency_free() -> None:
     assert set(package_lock["packages"]) == {""}
 
 
-def test_uv_lock_should_pin_pyjwt_above_unknown_crit_header_fix_floor() -> None:
+def test_uv_lock_should_pin_pyjwt_above_security_release_floor() -> None:
     uv_lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     pyjwt_package = next(pkg for pkg in uv_lock["package"] if pkg["name"] == "pyjwt")
 
-    assert Version(pyjwt_package["version"]) >= Version("2.12.0")
+    assert Version(pyjwt_package["version"]) >= Version("2.13.0")

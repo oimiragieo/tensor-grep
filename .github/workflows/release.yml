@@ -43,26 +43,44 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+          $wingetCanValidate = $false
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            $wingetHelp = winget --help
+            $wingetCanValidate = $wingetHelp -match "validate"
+          } else {
             Write-Warning "winget not found; falling back to python validator"
-            uv python install 3.12
-            uv run python scripts/validate_release_assets.py
-            exit 0
           }
 
-          $wingetHelp = winget --help
-          if ($wingetHelp -notmatch "validate") {
+          if ($wingetCanValidate) {
+            $wingetOutput = @(winget validate --manifest scripts\oimiragieo.tensor-grep.yaml 2>&1)
+            $wingetExitCode = $LASTEXITCODE
+            $wingetOutput | ForEach-Object { Write-Host $_ }
+            if ($wingetExitCode -ne 0) {
+              $wingetOutputText = ($wingetOutput | Out-String)
+              $wingetWarningLines = @($wingetOutput | ForEach-Object { "$_" } | Where-Object { $_ -match "Manifest Warning:" })
+              $knownSchemaHeaderWarning = (
+                $wingetOutputText -match "Manifest validation succeeded with warnings\." -and
+                $wingetWarningLines.Count -eq 1 -and
+                $wingetWarningLines[0] -match "The schema header URL does not match the expected pattern"
+              )
+              if ($knownSchemaHeaderWarning) {
+                Write-Warning "winget validate reported only the hosted-runner schema-header warning; verifying strict manifest contract with Python validator"
+                uv python install 3.12
+                uv run python scripts/validate_release_assets.py
+                if ($LASTEXITCODE -ne 0) {
+                  throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
+                }
+              } else {
+                throw "winget validate failed with exit code $wingetExitCode"
+              }
+            }
+          } else {
             Write-Warning "winget validate is unavailable in this runner version; falling back to python validator"
             uv python install 3.12
             uv run python scripts/validate_release_assets.py
-            exit 0
-          }
-
-          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "winget validate failed with exit code $LASTEXITCODE; falling back to python validator"
-            uv python install 3.12
-            uv run python scripts/validate_release_assets.py
+            if ($LASTEXITCODE -ne 0) {
+              throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
+            }
           }
 
       - name: Validate package-manager publish bundle source state
@@ -74,7 +92,8 @@ jobs:
         run: |
           uv python install 3.12
           uv run python scripts/prepare_package_manager_release.py \
-            --output-dir artifacts/package-manager-bundle
+            --output-dir artifacts/package-manager-bundle \
+            --release-checksums artifacts/CHECKSUMS.txt
 
       - name: Preflight verify package-manager bundle checksums
         run: |
@@ -195,7 +214,8 @@ jobs:
       - name: Build package-manager publish bundle
         run: |
           uv run python scripts/prepare_package_manager_release.py \
-            --output-dir artifacts/package-manager-bundle
+            --output-dir artifacts/package-manager-bundle \
+            --release-checksums artifacts/CHECKSUMS.txt
 
       - name: Verify package-manager bundle checksums
         run: |

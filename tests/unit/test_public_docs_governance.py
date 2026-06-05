@@ -1101,6 +1101,8 @@ def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
         assert "discover nearby" in doc
 
     assert "must not walk the full repository" in contracts
+    assert "response_cache_stale_detection" in contracts
+    assert "snapshot_mtime_only" in contracts
     assert "should not walk the full repo" in skill
 
 

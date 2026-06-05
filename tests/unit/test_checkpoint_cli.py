@@ -208,7 +208,11 @@ def test_checkpoint_undo_git_scope_uses_git_entries_instead_of_filesystem_walk(
     assert source_file.read_text(encoding="utf-8") == "print('before')\n"
 
 
-def test_checkpoint_list_explains_empty_scope(tmp_path: Path) -> None:
+def test_checkpoint_list_explains_empty_scope(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import checkpoint_store
+
+    monkeypatch.setattr(checkpoint_store, "discover_nearby_checkpoint_scopes", lambda _path=".": [])
+
     runner = CliRunner()
     result = runner.invoke(app, ["checkpoint", "list", str(tmp_path)])
 

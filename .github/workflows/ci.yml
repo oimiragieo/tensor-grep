@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -101,6 +101,72 @@ jobs:
       - name: Validate release/package asset consistency
         run: uv run python scripts/validate_release_assets.py
 
+  agent-readiness:
+    name: agent-readiness
+    needs: smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dev Dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+
+      - name: Run agent-readiness contract gate
+        run: |
+          uv run python scripts/agent_readiness.py \
+            --no-shell-probes \
+            --no-wsl-probe \
+            --json \
+            --output artifacts/agent_readiness_ci.json
+
+  windows-agent-readiness:
+    name: windows-agent-readiness
+    needs: smoke
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dev Dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+
+      - name: Stage Windows public launcher shims for shell probes
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/stage_windows_ci_launchers.ps1 -RepoRoot $env:GITHUB_WORKSPACE
+
+      - name: Run Windows agent-readiness shell probes
+        shell: pwsh
+        run: |
+          uv run python scripts/agent_readiness.py `
+            --only-shell-probes `
+            --no-wsl-probe `
+            --json `
+            --output artifacts/agent_readiness_windows_ci.json
+
   package-manager-readiness:
     name: package-manager-readiness (${{ matrix.os }})
     needs: smoke
@@ -130,23 +196,42 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Write-Warning "winget not found; falling back to python validator"
-            uv run python scripts/validate_release_assets.py
-            exit 0
+          $wingetCanValidate = $false
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            $wingetHelp = winget --help
+            $wingetCanValidate = $wingetHelp -match "validate"
+          } else {
+            Write-Warning "winget is unavailable on this runner; using Python release asset validator fallback"
           }
 
-          $wingetHelp = winget --help
-          if ($wingetHelp -notmatch "validate") {
-            Write-Warning "winget validate is unavailable in this runner version; falling back to python validator"
+          if ($wingetCanValidate) {
+            $wingetOutput = @(winget validate --manifest scripts\oimiragieo.tensor-grep.yaml 2>&1)
+            $wingetExitCode = $LASTEXITCODE
+            $wingetOutput | ForEach-Object { Write-Host $_ }
+            if ($wingetExitCode -ne 0) {
+              $wingetOutputText = ($wingetOutput | Out-String)
+              $wingetWarningLines = @($wingetOutput | ForEach-Object { "$_" } | Where-Object { $_ -match "Manifest Warning:" })
+              $knownSchemaHeaderWarning = (
+                $wingetOutputText -match "Manifest validation succeeded with warnings\." -and
+                $wingetWarningLines.Count -eq 1 -and
+                $wingetWarningLines[0] -match "The schema header URL does not match the expected pattern"
+              )
+              if ($knownSchemaHeaderWarning) {
+                Write-Warning "winget validate reported only the hosted-runner schema-header warning; verifying strict manifest contract with Python validator"
+                uv run python scripts/validate_release_assets.py
+                if ($LASTEXITCODE -ne 0) {
+                  throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
+                }
+              } else {
+                throw "winget validate failed with exit code $wingetExitCode"
+              }
+            }
+          } else {
+            Write-Warning "winget validate is unavailable on this runner; using Python release asset validator fallback"
             uv run python scripts/validate_release_assets.py
-            exit 0
-          }
-
-          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "winget validate failed with exit code $LASTEXITCODE; falling back to python validator"
-            uv run python scripts/validate_release_assets.py
+            if ($LASTEXITCODE -ne 0) {
+              throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
+            }
           }
 
       - name: Validate package-manager publish bundle source state
@@ -371,7 +456,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v6
 
@@ -565,7 +650,133 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run python benchmarks/run_hot_query_benchmarks.py | tee artifacts/bench_hot_query_benchmarks.txt
+          uv run python benchmarks/run_hot_query_benchmarks.py \
+            --output artifacts/bench_hot_query_benchmarks.head.json \
+            | tee artifacts/bench_hot_query_benchmarks.txt
+
+      - name: Run base hot-query benchmark suite
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p base-revision/artifacts
+          (
+            cd base-revision
+            uv run python benchmarks/run_hot_query_benchmarks.py \
+              --output artifacts/bench_hot_query_benchmarks.base.json
+          ) | tee base-revision/artifacts/bench_hot_query_benchmarks.base.txt
+
+      - name: Enforce hot-query benchmark regression gate
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          current = json.loads(
+              Path("artifacts/bench_hot_query_benchmarks.head.json").read_text(encoding="utf-8")
+          )
+          baseline = json.loads(
+              Path("base-revision/artifacts/bench_hot_query_benchmarks.base.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if not current.get("no_regressions", False):
+              raise SystemExit("current hot-query benchmark reported regressions")
+          if not baseline.get("no_regressions", False):
+              raise SystemExit("baseline hot-query benchmark reported regressions")
+          PY
+
+      - name: Run agent workflow benchmark suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          uv run python benchmarks/run_agent_workflow_benchmarks.py \
+            --iterations 1 \
+            --files 50 \
+            --loc 2500 \
+            --output artifacts/bench_agent_workflow.head.json \
+            | tee artifacts/bench_agent_workflow.head.txt
+
+      - name: Run base agent workflow benchmark suite
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p base-revision/artifacts
+          (
+            cd base-revision
+            TENSOR_GREP_AGENT_WORKFLOW_BENCH_DIR="$PWD/artifacts/bench_agent_workflow" \
+            uv run python ../benchmarks/run_agent_workflow_benchmarks.py \
+              --binary rust_core/target/release/tg \
+              --iterations 1 \
+              --files 50 \
+              --loc 2500 \
+              --output artifacts/bench_agent_workflow.base.json
+          ) | tee base-revision/artifacts/bench_agent_workflow.base.txt
+
+      - name: Run agent success harness suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python benchmarks/run_agent_success_harness.py \
+            --iterations 1 \
+            --output artifacts/bench_agent_success_harness.head.json \
+            | tee artifacts/bench_agent_success_harness.head.txt
+
+      - name: Run base agent success harness suite
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p base-revision/artifacts
+          (
+            cd base-revision
+            uv run python benchmarks/run_agent_success_harness.py \
+              --iterations 1 \
+              --output artifacts/bench_agent_success_harness.base.json
+          ) | tee base-revision/artifacts/bench_agent_success_harness.base.txt
+
+      - name: Enforce agent workflow benchmark regression gate
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+
+          def _load(path: str) -> dict:
+              return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+          def _workflow_passed(payload: dict) -> bool:
+              return bool(payload.get("all_passed", payload.get("passed", False)))
+
+
+          def _success_passed(payload: dict) -> bool:
+              summary = payload.get("summary")
+              return isinstance(summary, dict) and bool(summary.get("all_passed"))
+
+
+          current_workflow = _load("artifacts/bench_agent_workflow.head.json")
+          baseline_workflow = _load("base-revision/artifacts/bench_agent_workflow.base.json")
+          current_success = _load("artifacts/bench_agent_success_harness.head.json")
+          baseline_success = _load("base-revision/artifacts/bench_agent_success_harness.base.json")
+
+          if not _workflow_passed(current_workflow):
+              raise SystemExit("current agent workflow benchmark reported contract failures")
+          if not _workflow_passed(baseline_workflow):
+              raise SystemExit("baseline agent workflow benchmark reported contract failures")
+          if not _success_passed(current_success):
+              raise SystemExit("current agent success harness reported contract failures")
+          if not _success_passed(baseline_success):
+              raise SystemExit("baseline agent success harness reported contract failures")
+          PY
 
       - name: Enforce benchmark regression gate
         if: github.event_name != 'schedule'
@@ -630,7 +841,7 @@ jobs:
 
   release:
     name: Semantic Release
-    needs: [smoke, release-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
+    needs: [smoke, release-readiness, agent-readiness, windows-agent-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:
@@ -951,7 +1162,8 @@ jobs:
       - name: Build package-manager publish bundle
         run: |
           uv run python scripts/prepare_package_manager_release.py \
-            --output-dir artifacts/package-manager-bundle
+            --output-dir artifacts/package-manager-bundle \
+            --release-checksums artifacts/CHECKSUMS.txt
 
       - name: Verify package-manager bundle checksums
         run: |
@@ -1105,3 +1317,39 @@ jobs:
             PARITY_ARGS+=(--dist-dir dist)
           fi
           python scripts/validate_release_version_parity.py "${PARITY_ARGS[@]}"
+
+  release-tag-smoke:
+    name: release-tag-smoke
+    needs: [release, publish-success-gate]
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dev Dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+
+      - name: Validate stamped release assets on release tag
+        run: uv run python scripts/validate_release_assets.py
+
+      - name: Run release-tag contract smoke
+        run: |
+          uv run python scripts/agent_readiness.py \
+            --no-shell-probes \
+            --no-wsl-probe \
+            --json \
+            --output artifacts/agent_readiness_release_tag.json

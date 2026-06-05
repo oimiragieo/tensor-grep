@@ -534,9 +534,11 @@ def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
 def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
     import sys
 
+    from tensor_grep.cli.subprocess_policy import run_subprocess
+
     env = os.environ.copy()
     env["TG_SIDECAR_PYTHON"] = sys.executable
-    return subprocess.run(
+    return run_subprocess(
         command,
         capture_output=True,
         stdin=subprocess.DEVNULL,

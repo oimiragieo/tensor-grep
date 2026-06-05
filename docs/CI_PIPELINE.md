@@ -18,7 +18,7 @@ Primary responsibilities:
 - `test-python`: cross-platform Python test matrix
 - `test-rust-core`: cross-platform Rust test matrix
 - `search-golden-parity`: Windows routing parity guard
-- `native-build-smoke`: native binary smoke tests across platforms
+- `native-build-smoke`: native binary smoke tests across platforms, including both `macos-latest` (arm64) and `macos-15-intel` (x86_64) so PR CI matches the Intel release asset built for `tg-macos-amd64-cpu`
 - `package-manager-readiness`: Homebrew/Winget/package-manager bundle validation
 - `benchmark-regression`: blocking same-runner base-vs-head regression gate plus accepted-baseline drift reporting
 - `Semantic Release`: semantic-release on `main`
@@ -66,7 +66,9 @@ This workflow is not the release-blocking same-runner regression gate from `ci.y
 
 Manual-only workflow for public managed NVIDIA GPU promotion proof. It is intentionally not part of
 normal PR, push, or scheduled CI because it requires a fixed GPU-capable runner label:
-`self-hosted`, `linux`, `x64`, `gpu`, and `tensor-grep-public-gpu-proof`.
+`self-hosted`, `linux`, `x64`, `gpu`, and `tensor-grep-public-gpu-proof`. The job targets
+`environment: public-gpu-proof` so repository maintainers can require explicit approval before
+dispatching unattended promotion proof on the self-hosted GPU runner.
 
 The workflow validates a `vX.Y.Z` release tag, checks out that tag, verifies GitHub release assets
 with `--expected-profile native-frontdoor-gpu`, installs the requested public release with

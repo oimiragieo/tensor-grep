@@ -837,17 +837,42 @@ class ExternalLSPProviderManager:
             else max(1, int(max_clients))
         )
         self._clients: OrderedDict[tuple[str, str], ExternalLSPClient] = OrderedDict()
+        self._clients_lock = threading.Lock()
 
     def get_client(self, *, language: str, workspace_root: Path) -> ExternalLSPClient:
         key = (language.lower(), str(workspace_root.resolve()))
-        current = self._clients.pop(key, None)
-        if current is None:
-            current = ExternalLSPClient(language=language, workspace_root=workspace_root)
-        self._clients[key] = current
-        while len(self._clients) > self._max_clients:
-            _, evicted = self._clients.popitem(last=False)
+        with self._clients_lock:
+            current = self._clients.pop(key, None)
+            if current is not None:
+                self._clients[key] = current
+                return current
+
+        current = ExternalLSPClient(language=language, workspace_root=workspace_root)
+        evicted_clients: list[ExternalLSPClient] = []
+        with self._clients_lock:
+            cached = self._clients.pop(key, None)
+            if cached is not None:
+                current = cached
+            self._clients[key] = current
+            while len(self._clients) > self._max_clients:
+                _, evicted = self._clients.popitem(last=False)
+                evicted_clients.append(evicted)
+        for evicted in evicted_clients:
             evicted.stop()
         return current
+
+    def _cached_client(self, key: tuple[str, str]) -> ExternalLSPClient | None:
+        with self._clients_lock:
+            current = self._clients.pop(key, None)
+            if current is not None:
+                self._clients[key] = current
+            return current
+
+    def _pop_all_clients(self) -> list[ExternalLSPClient]:
+        with self._clients_lock:
+            clients = list(self._clients.values())
+            self._clients.clear()
+        return clients
 
     def provider_status(
         self,
@@ -858,9 +883,8 @@ class ExternalLSPProviderManager:
         probe_timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         key = (language.lower(), str(workspace_root.resolve()))
-        current = self._clients.pop(key, None)
+        current = self._cached_client(key)
         if current is not None:
-            self._clients[key] = current
             if verify_health:
                 return self._verified_provider_status(
                     client=current,
@@ -1060,15 +1084,14 @@ class ExternalLSPProviderManager:
                 client.stop()
 
     def stop_all(self) -> None:
-        clients = list(self._clients.values())
-        self._clients.clear()
+        clients = self._pop_all_clients()
         for client in clients:
             client.stop()
 
     def close_all(self) -> None:
-        for current in self._clients.values():
+        clients = self._pop_all_clients()
+        for current in clients:
             current.stop()
-        self._clients.clear()
 
 
 def _command_source(command: list[str]) -> str:

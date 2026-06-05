@@ -1,5 +1,8 @@
 import json
+import os
 import socket
+import threading
+import time
 from io import BytesIO, StringIO
 from pathlib import Path
 
@@ -28,6 +31,130 @@ def _build_project(root: Path, module_name: str, symbol_name: str) -> Path:
         f"from src.{module_name} import {symbol_name}\n",
     )
     return project
+
+
+def test_daemon_response_cache_handles_concurrent_access() -> None:
+    cache = session_daemon_module._SessionResponseCache(max_entries=4, max_size_bytes=1024 * 1024)
+    errors: list[BaseException] = []
+
+    def _worker(worker_index: int) -> None:
+        try:
+            for iteration in range(100):
+                key = ("context_render", f"session-{worker_index}", str(iteration % 8))
+                if iteration % 2 == 0:
+                    cache.put(
+                        key,
+                        {
+                            "ok": True,
+                            "session_id": f"session-{worker_index}",
+                            "iteration": iteration,
+                        },
+                    )
+                else:
+                    cache.get(key)
+                _ = cache.hits
+                _ = cache.misses
+                _ = cache.puts
+                _ = cache.entry_count
+                _ = cache.size_bytes
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_worker, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert cache.entry_count <= 4
+
+
+def test_daemon_start_lock_prevents_duplicate_exclusive_creation(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    assert session_daemon_module._try_acquire_daemon_start_lock(root) is True
+    assert session_daemon_module._try_acquire_daemon_start_lock(root) is False
+    session_daemon_module._release_daemon_start_lock(root)
+    assert session_daemon_module._try_acquire_daemon_start_lock(root) is True
+    session_daemon_module._release_daemon_start_lock(root)
+
+
+def test_daemon_start_lock_recovers_stale_lock_file(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    lock_path = session_daemon_module._daemon_start_lock_path(root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text("stale\n", encoding="utf-8")
+    stale_time = time.time() - session_daemon_module._DAEMON_START_LOCK_STALE_SECONDS - 1
+    os.utime(lock_path, (stale_time, stale_time))
+
+    assert session_daemon_module._try_acquire_daemon_start_lock(root) is True
+
+    session_daemon_module._release_daemon_start_lock(root)
+
+
+def test_session_store_writes_index_atomically(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    records = [
+        session_store.SessionRecord(
+            version=session_store._SESSION_VERSION,
+            session_id="session-1",
+            root=str(root),
+            created_at="2026-01-01T00:00:00+00:00",
+            file_count=1,
+            symbol_count=1,
+        )
+    ]
+    session_store._write_index(root, records)
+    index_path = session_store._index_path(root)
+    assert index_path.exists()
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    assert payload[0]["session_id"] == "session-1"
+    assert not list(index_path.parent.glob(f".{index_path.name}.*.tmp"))
+
+
+def test_session_serve_cache_handles_concurrent_lru_and_stats_reads(tmp_path: Path) -> None:
+    cache = session_store._SessionServeCache(max_entries=4)
+    roots = []
+    for index in range(3):
+        root = tmp_path / f"repo_{index}"
+        root.mkdir()
+        roots.append(root)
+    errors: list[BaseException] = []
+
+    def _worker(worker_index: int) -> None:
+        try:
+            for iteration in range(100):
+                root = roots[(worker_index + iteration) % len(roots)]
+                session_id = f"session-{worker_index}-{iteration % 8}"
+                payload = {
+                    "session_id": session_id,
+                    "root": str(root),
+                    "repo_map": {"files": [str(root / "sample.py")], "symbols": []},
+                }
+                cache.put(session_id, str(root), payload)
+                cache.get(session_id, str(root))
+                cache.record_refresh()
+                _ = cache.sessions
+                _ = cache.root_count
+                _ = cache.size_bytes
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_worker, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert cache.session_count <= 4
+    assert cache.size_bytes >= 0
+    assert cache.hits >= 0
+    assert cache.misses >= 0
+    assert cache.refreshes == 800
 
 
 class _MutatingRequestStream:
@@ -112,6 +239,9 @@ def test_session_serve_stats_reports_cache_size_uptime_and_request_count(tmp_pat
     assert stats["request_count"] == 2
     assert isinstance(stats["uptime_seconds"], float)
     assert stats["uptime_seconds"] >= 0
+    assert stats["response_cache_stale_detection"] == "snapshot_mtime_only"
+    assert stats["response_cache_added_file_detection"] is False
+    assert "refresh_on_stale" in stats["response_cache_refresh_hint"]
 
 
 def test_session_serve_can_hold_sessions_from_multiple_roots(tmp_path: Path) -> None:

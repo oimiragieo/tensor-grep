@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
+from tensor_grep.cli.subprocess_policy import run_subprocess
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",
@@ -568,17 +568,21 @@ def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
 
 
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
-    result = subprocess.run([binary_name, "search", *search_args], check=False)
+    result = run_subprocess([binary_name, "search", *search_args], check=False)
     return int(result.returncode)
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    result = subprocess.run([binary_name, *argv], check=False)
+    result = run_subprocess([binary_name, *argv], check=False)
     return int(result.returncode)
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
-    result = subprocess.run([binary_name, *search_args], check=False)
+    result = run_subprocess(
+        [binary_name, *search_args],
+        check=False,
+        timeout_env_var="TG_RG_TIMEOUT_SECONDS",
+    )
     return int(result.returncode)
 
 

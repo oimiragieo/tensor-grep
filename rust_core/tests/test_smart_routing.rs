@@ -13,6 +13,7 @@ fn base_config() -> SearchRoutingConfig {
         ndjson: false,
         rg_available: true,
         corpus_bytes: 0,
+        corpus_bytes_known: true,
         gpu_auto_supported: true,
         prefer_rg_passthrough: false,
         pcre2: false,
@@ -198,6 +199,21 @@ fn test_route_search_auto_routes_to_gpu_only_with_positive_calibration_above_thr
         true,
     );
     assert_eq!(negative.selection, BackendSelection::Ripgrep);
+
+    let unknown_corpus_size = route_search(
+        &SearchRoutingConfig {
+            corpus_bytes: 64 * 1024 * 1024,
+            corpus_bytes_known: false,
+            ..config
+        },
+        Some(&SearchRoutingCalibration {
+            threshold_bytes: 32 * 1024 * 1024,
+            gpu_positive: true,
+        }),
+        IndexRoutingState::default(),
+        true,
+    );
+    assert_eq!(unknown_corpus_size.selection, BackendSelection::Ripgrep);
 
     let below_threshold = route_search(
         &SearchRoutingConfig {

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,13 @@ def _write_policy(tmp_path: Path, payload: dict[str, object]) -> Path:
     path = tmp_path / "apply-policy.json"
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
+
+
+def _policy_command(*args: object) -> str:
+    argv = [str(arg) for arg in args]
+    if sys.platform == "win32":
+        return subprocess.list2cmdline(argv)
+    return " ".join(shlex.quote(arg) for arg in argv)
 
 
 def _base_rewrite_payload(*, checkpoint: dict[str, object] | None = None) -> dict[str, object]:
@@ -504,6 +514,55 @@ def test_evaluate_apply_policy_marks_timed_out_command_as_failure(tmp_path: Path
     assert exit_code == 1
     assert payload["lint_result"]["timed_out"] is True
     assert payload["policy_result"]["checks"][0]["timed_out"] is True
+
+
+def test_run_policy_command_does_not_interpret_shell_metacharacters(tmp_path: Path) -> None:
+    from tensor_grep.cli.apply_policy import _run_policy_command
+
+    first_code = "from pathlib import Path; Path('first.txt').write_text('ok', encoding='utf-8')"
+    second_code = "from pathlib import Path; Path('second.txt').write_text('bad', encoding='utf-8')"
+    command = (
+        f"{_policy_command(sys.executable, '-c', first_code)} && "
+        f"{_policy_command(sys.executable, '-c', second_code)}"
+    )
+
+    result = _run_policy_command("lint", command, tmp_path, timeout=10)
+
+    assert result["passed"] is False
+    assert "shell control operator" in str(result["detail"])
+    assert not (tmp_path / "first.txt").exists()
+    assert not (tmp_path / "second.txt").exists()
+
+
+def test_run_policy_command_preserves_quoted_paths_and_arguments(tmp_path: Path) -> None:
+    from tensor_grep.cli.apply_policy import _run_policy_command
+
+    script_dir = tmp_path / "scripts with spaces"
+    script_dir.mkdir()
+    script_path = script_dir / "write argument.py"
+    script_path.write_text(
+        "\n".join([
+            "import sys",
+            "from pathlib import Path",
+            "Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')",
+        ]),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "output with spaces"
+    output_dir.mkdir()
+    output_path = output_dir / "result file.txt"
+
+    command = _policy_command(
+        sys.executable,
+        script_path,
+        output_path,
+        "argument with spaces && literal",
+    )
+
+    result = _run_policy_command("test", command, tmp_path, timeout=10)
+
+    assert result == {"passed": True, "detail": "test command succeeded.", "exit_code": 0}
+    assert output_path.read_text(encoding="utf-8") == "argument with spaces && literal"
 
 
 def test_evaluate_apply_policy_rollback_restores_checkpointed_files(tmp_path: Path) -> None:

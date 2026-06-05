@@ -131,8 +131,9 @@ Detailed operational steps live in `docs/package_manager_publish.md`.
    - CI runs `ruby -c scripts/tensor-grep.rb`.
    - Ensure formula URL points at `https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/...`.
 2. Winget manifest readiness:
-   - CI runs `winget validate` on Windows when available and falls back to Python validator.
-   - Ensure `PackageVersion` and nested `Installers[0].InstallerUrl` in `scripts/oimiragieo.tensor-grep.yaml` match release version.
+   - CI runs `winget validate` on Windows when available and falls back to Python validator only when validation is unavailable, or when hosted-runner `winget` reports only the known schema-header URL warning and the stricter Python release-asset validator also passes.
+   - Ensure `PackageLocale`, `PackageVersion`, nested `Installers[0].InstallerUrl`, and `Installers[0].InstallerSha256` in `scripts/oimiragieo.tensor-grep.yaml` are schema-valid for the current release.
+   - Release bundle generation stamps `Installers[0].InstallerSha256` from generated `artifacts/CHECKSUMS.txt` before upload.
    - CI also builds `artifacts/package-manager-bundle` and verifies `BUNDLE_CHECKSUMS.txt` parity in `package-manager-readiness`.
    - CI uploads `package-manager-bundle-<os>` artifacts for operator inspection/download from each green run.
    - Main CI preflights package-manager bundle generation/verification/smoke checks in `package-manager-readiness` before semantic-release starts.

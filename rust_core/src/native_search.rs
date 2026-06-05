@@ -223,7 +223,11 @@ fn render_output_text<'a>(config: &NativeSearchConfig, text: &'a str) -> Result<
     }
 
     let regex = OutputRegexBuilder::new(&pattern)
-        .case_insensitive(config.ignore_case)
+        .case_insensitive(effective_ignore_case(
+            &config.pattern,
+            config.ignore_case,
+            config.smart_case,
+        ))
         .build()
         .with_context(|| {
             format!(
@@ -545,8 +549,19 @@ impl Drop for ParallelWalkWorker {
             return;
         }
 
-        if let Ok(mut shared_stats) = self.shared_stats.lock() {
-            merge_search_stats(&mut shared_stats, std::mem::take(&mut self.local_stats));
+        match self.shared_stats.lock() {
+            Ok(mut shared_stats) => {
+                merge_search_stats(&mut shared_stats, std::mem::take(&mut self.local_stats));
+            }
+            Err(poisoned) => {
+                eprintln!(
+                    "warning: parallel native search stats lock poisoned; recovering partial worker stats"
+                );
+                merge_search_stats(
+                    &mut poisoned.into_inner(),
+                    std::mem::take(&mut self.local_stats),
+                );
+            }
         }
     }
 }
@@ -737,20 +752,23 @@ pub fn run_native_fixed_multi_pattern_search(
         .context("failed to build native fixed multi-pattern matcher")?;
     let mut matches = Vec::new();
     for file_path in files {
-        let contents = fs::read(&file_path).with_context(|| {
-            format!("failed to read native search path {}", file_path.display())
+        let file = fs::File::open(&file_path).with_context(|| {
+            format!("failed to open native search path {}", file_path.display())
         })?;
-        if !config.text && memchr(0, &contents).is_some() {
+        let mmap = unsafe { MmapOptions::new().map(&file) }.with_context(|| {
+            format!("failed to mmap native search path {}", file_path.display())
+        })?;
+        if !config.text && memchr(0, &mmap).is_some() {
             return Ok(None);
         }
-        if !matcher.is_match(&contents) {
+        if !matcher.is_match(&mmap) {
             continue;
         }
         collect_fixed_multi_pattern_file_matches(
             &matcher,
             patterns,
             &file_path,
-            &contents,
+            &mmap,
             &mut matches,
         );
     }
@@ -1766,12 +1784,24 @@ fn binary_file_matches_pattern(
         return Ok(false);
     }
 
-    let contents = fs::read(path)
+    use std::io::Read;
+
+    const MAX_BINARY_PROBE_BYTES: u64 = 64 * 1024 * 1024;
+
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open binary candidate {}", path.display()))?;
+    let max_read = file
+        .metadata()
+        .with_context(|| format!("failed to stat binary candidate {}", path.display()))?
+        .len()
+        .min(MAX_BINARY_PROBE_BYTES);
+    let mut contents = Vec::new();
+    file.take(max_read)
+        .read_to_end(&mut contents)
         .with_context(|| format!("failed to read binary candidate {}", path.display()))?;
-    match matcher.is_match(&contents) {
-        Ok(matched) => Ok(matched),
-        Err(_) => unreachable!("grep_regex::RegexMatcher::is_match returned NoError"),
-    }
+    matcher
+        .is_match(&contents)
+        .with_context(|| format!("failed to match binary candidate {}", path.display()))
 }
 
 fn emit_binary_match_warning(

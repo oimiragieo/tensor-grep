@@ -16,8 +16,9 @@ cache-keys = [
     { file = "rust_core/src/**/*.rs" },
 ]
 constraint-dependencies = [
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.0",
     "cryptography>=46.0.7",
+    "pyjwt>=2.13.0",
     "pygments>=2.20.0",
     "python-multipart>=0.0.27",
     "python-dotenv>=1.2.2",

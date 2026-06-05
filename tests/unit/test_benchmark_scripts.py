@@ -2419,6 +2419,27 @@ def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkey
     }
 
 
+def test_run_harness_loop_json_command_should_accept_exit_one_json(monkeypatch):
+    module = _load_script_module(
+        "run_harness_loop_benchmark_no_match",
+        "benchmarks/run_harness_loop_benchmark.py",
+    )
+
+    def _fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["tg"],
+            returncode=1,
+            stdout=json.dumps({"total_matches": 0, "matches": []}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", _fake_run)
+
+    _elapsed_s, payload = module.run_json_command(["tg", "run", "--json", "pattern"])
+
+    assert payload == {"total_matches": 0, "matches": []}
+
+
 def test_run_harness_loop_benchmark_should_emit_iteration_breakdown(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_harness_loop_benchmark_rows",

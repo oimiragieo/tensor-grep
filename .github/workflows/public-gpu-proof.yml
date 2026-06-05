@@ -20,6 +20,7 @@ jobs:
   public-managed-gpu-proof:
     name: public-managed-gpu-proof
     runs-on: [self-hosted, linux, x64, gpu, tensor-grep-public-gpu-proof]
+    environment: public-gpu-proof
     timeout-minutes: 360
     env:
       TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR: nvidia

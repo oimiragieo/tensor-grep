@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
+
 _CHECKPOINT_VERSION = 1
 _CHECKPOINT_DIRNAME = ".tensor-grep"
 _CHECKPOINTS_SUBDIR = "checkpoints"
@@ -129,11 +131,12 @@ def _detect_checkpoint_scope(path: Path) -> _CheckpointScope:
 
     probe_root = resolved if resolved.is_dir() else resolved.parent
     try:
-        completed = subprocess.run(
+        completed = run_subprocess(
             ["git", "-C", str(probe_root), "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
             check=True,
+            timeout_seconds=configured_git_timeout_seconds(),
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return _CheckpointScope(
@@ -445,17 +448,20 @@ def _write_index(root: Path, records: list[CheckpointRecord]) -> None:
 
 
 def _git_snapshot_entries(root: Path) -> dict[str, bool]:
-    tracked = subprocess.run(
+    git_timeout = configured_git_timeout_seconds()
+    tracked = run_subprocess(
         ["git", "-C", str(root), "ls-files", "-z"],
         capture_output=True,
         text=False,
         check=True,
+        timeout_seconds=git_timeout,
     ).stdout.split(b"\x00")
-    untracked = subprocess.run(
+    untracked = run_subprocess(
         ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"],
         capture_output=True,
         text=False,
         check=True,
+        timeout_seconds=git_timeout,
     ).stdout.split(b"\x00")
 
     entries: dict[str, bool] = {}
@@ -782,7 +788,12 @@ def discover_checkpoint_scopes_result(
 def discover_nearby_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
     resolved = Path(path).expanduser().resolve()
     search_root = resolved if resolved.is_dir() else resolved.parent
-    return _scopes_from_index_paths(_nearby_checkpoint_index_paths(search_root))
+    scopes = _scopes_from_index_paths(_nearby_checkpoint_index_paths(search_root))
+    return [
+        scope
+        for scope in scopes
+        if _path_is_relative_to(Path(scope.root).expanduser().resolve(), search_root)
+    ]
 
 
 def discover_cached_checkpoint_scopes(path: str = ".") -> list[CheckpointScopeResult]:
@@ -809,6 +820,8 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
             mode=scope.mode,
         )
 
+    resolved = Path(path).expanduser().resolve()
+    search_root = resolved if resolved.is_dir() else resolved.parent
     discovered = [
         child_scope
         for child_scope in [
@@ -816,6 +829,7 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
             *discover_cached_checkpoint_scopes(path),
         ]
         if child_scope.checkpoints
+        and _path_is_relative_to(Path(child_scope.root).expanduser().resolve(), search_root)
     ]
     deduped: list[CheckpointScopeResult] = []
     seen_roots: set[str] = set()
@@ -827,7 +841,6 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
         deduped.append(child_scope)
     discovered = deduped
     if not discovered:
-        resolved = Path(path).expanduser().resolve()
         raise FileNotFoundError(f"No checkpoints found under {resolved}.")
     if len(discovered) > 1:
         roots = ", ".join(scope.root for scope in discovered[:5])
