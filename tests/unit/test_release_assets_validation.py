@@ -421,13 +421,39 @@ def test_should_validate_winget_manifest_structure():
         "    InstallerType: portable\n"
         "    InstallerUrl: "
         "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
+<<<<<<< HEAD
         "    InstallerSha256: "
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
         "ManifestType: singleton\n"
         "ManifestVersion: 1.12.0\n"
+=======
+        "    InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589\n"
+>>>>>>> 0ff564d (fix: require winget InstallerSha256 for CI validation)
     )
     errors = module.validate_winget_manifest(winget_content=winget, py_version="1.2.3")
     assert errors == []
+
+
+def test_should_fail_winget_manifest_when_installer_sha256_missing():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    winget = (
+        "PackageIdentifier: oimiragieo.tensor-grep\n"
+        "PackageVersion: 1.2.3\n"
+        "Installers:\n"
+        "  - Architecture: x64\n"
+        "    InstallerType: portable\n"
+        "    InstallerUrl: "
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
+    )
+    errors = module.validate_winget_manifest(winget_content=winget, py_version="1.2.3")
+    assert any("InstallerSha256" in err for err in errors)
 
 
 def test_should_fail_winget_manifest_when_installer_url_not_nested():

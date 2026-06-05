@@ -132,10 +132,15 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
     if installer_url != expected_windows_url:
         errors.append("Winget manifest InstallerUrl must be nested under first installer mapping")
     installer_sha256 = first.get("InstallerSha256")
+<<<<<<< HEAD
     if not isinstance(installer_sha256, str) or not re.fullmatch(
         r"[0-9a-fA-F]{64}", installer_sha256
     ):
         errors.append("Winget manifest first installer must define 64-hex InstallerSha256")
+=======
+    if not isinstance(installer_sha256, str) or len(installer_sha256) != 64:
+        errors.append("Winget manifest must include a 64-character InstallerSha256 for the first installer")
+>>>>>>> 0ff564d (fix: require winget InstallerSha256 for CI validation)
     return errors
 
 
