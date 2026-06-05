@@ -1495,6 +1495,9 @@ def test_session_daemon_lifecycle(tmp_path: Path) -> None:
         status["response_cache_scope"]
         == "daemon-routed top-level/session context-render/edit-plan requests"
     )
+    assert status["response_cache_stale_detection"] == "snapshot_mtime_only"
+    assert status["response_cache_added_file_detection"] is False
+    assert "refresh_on_stale" in status["response_cache_refresh_hint"]
 
     stopped_payload = session_daemon.stop_session_daemon(str(project))
     assert stopped_payload["stopped"] is True

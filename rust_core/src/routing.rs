@@ -48,6 +48,7 @@ pub struct SearchRoutingConfig {
     pub ndjson: bool,
     pub rg_available: bool,
     pub corpus_bytes: u64,
+    pub corpus_bytes_known: bool,
     pub gpu_auto_supported: bool,
     pub prefer_rg_passthrough: bool,
     pub pcre2: bool,
@@ -254,6 +255,7 @@ pub const fn route_search(
     }
 
     let auto_gpu_candidate = config.gpu_auto_supported
+        && config.corpus_bytes_known
         && matches!(
             calibration_data,
             Some(calibration) if calibration.should_route_to_gpu(config.corpus_bytes)

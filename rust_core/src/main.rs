@@ -3505,14 +3505,19 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     }
 
     #[cfg(feature = "cuda")]
-    let corpus_bytes = count_search_corpus_bytes(
+    let (corpus_bytes, corpus_bytes_known) = match count_search_corpus_bytes(
         &paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
         true,
         &[],
-    )
-    .unwrap_or(0);
+    ) {
+        Ok(bytes) => (bytes, true),
+        Err(err) => {
+            eprintln!("warning: corpus size probe failed: {err}");
+            (0, false)
+        }
+    };
     #[cfg(not(feature = "cuda"))]
-    let corpus_bytes = 0u64;
+    let (corpus_bytes, corpus_bytes_known) = (0u64, false);
 
     #[cfg(feature = "cuda")]
     let gpu_auto_supported = paths.len() == 1
@@ -3564,6 +3569,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             ndjson: cli.ndjson,
             rg_available,
             corpus_bytes,
+            corpus_bytes_known,
             gpu_auto_supported,
             prefer_rg_passthrough: false,
             pcre2: cli.pcre2,
@@ -3720,6 +3726,32 @@ fn exit_search_error_json(error: &str, detail: impl Into<String>) -> ! {
     std::process::exit(2);
 }
 
+fn exit_structured_search_error_if_needed(
+    json: bool,
+    ndjson: bool,
+    error: &str,
+    detail: impl Into<String>,
+) -> ! {
+    let detail = detail.into();
+    if json && !ndjson {
+        exit_search_error_json(error, detail);
+    }
+    if ndjson {
+        println!(
+            "{}",
+            serde_json::json!({
+                "version": JSON_OUTPUT_VERSION,
+                "type": "error",
+                "error": error,
+                "detail": detail,
+            })
+        );
+        std::process::exit(2);
+    }
+    eprintln!("{detail}");
+    std::process::exit(2);
+}
+
 fn first_missing_search_path(paths: &[String]) -> Option<String> {
     paths
         .iter()
@@ -3733,14 +3765,21 @@ fn exit_json_search_input_error_if_needed(
     patterns: &[String],
     paths: &[String],
 ) {
-    if !json || ndjson {
+    if !json && !ndjson {
         return;
     }
     if patterns.iter().any(|pattern| pattern.is_empty()) {
-        exit_search_error_json("empty_pattern", "PATTERN must not be empty.");
+        exit_structured_search_error_if_needed(
+            json,
+            ndjson,
+            "empty_pattern",
+            "PATTERN must not be empty.",
+        );
     }
     if let Some(missing_path) = first_missing_search_path(paths) {
-        exit_search_error_json(
+        exit_structured_search_error_if_needed(
+            json,
+            ndjson,
             "path_not_found",
             format!("search path does not exist: {missing_path}"),
         );
@@ -3773,12 +3812,17 @@ fn normalize_search_error_detail(error: &str, detail: &str) -> String {
 }
 
 fn exit_json_search_runtime_error_if_needed(json: bool, ndjson: bool, err: &anyhow::Error) {
-    if !json || ndjson {
+    if !json && !ndjson {
         return;
     }
     let detail = err.to_string();
     if let Some(code) = search_error_code_for_message(&detail) {
-        exit_search_error_json(code, normalize_search_error_detail(code, &detail));
+        exit_structured_search_error_if_needed(
+            json,
+            ndjson,
+            code,
+            normalize_search_error_detail(code, &detail),
+        );
     }
 }
 
@@ -4547,10 +4591,16 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     }
 
     #[cfg(feature = "cuda")]
-    let corpus_bytes =
-        count_search_corpus_bytes(&request.path_bufs(), args.no_ignore, &args.globs).unwrap_or(0);
+    let (corpus_bytes, corpus_bytes_known) =
+        match count_search_corpus_bytes(&request.path_bufs(), args.no_ignore, &args.globs) {
+            Ok(bytes) => (bytes, true),
+            Err(err) => {
+                eprintln!("warning: corpus size probe failed: {err}");
+                (0, false)
+            }
+        };
     #[cfg(not(feature = "cuda"))]
-    let corpus_bytes = 0u64;
+    let (corpus_bytes, corpus_bytes_known) = (0u64, false);
 
     let index_state = detect_warm_index_state(&args, &request);
 
@@ -4604,6 +4654,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             ndjson: args.ndjson,
             rg_available,
             corpus_bytes,
+            corpus_bytes_known,
             gpu_auto_supported,
             prefer_rg_passthrough: search_has_context(&args) && !args.json && !args.ndjson,
             pcre2: args.pcre2,
@@ -7326,14 +7377,13 @@ fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
         return handle_gpu_sidecar_search(params);
     }
 
-    handle_native_gpu_unavailable_cpu_fallback(
+    handle_gpu_unavailable_cpu_fallback(
         params,
         "native GPU unavailable in this binary; no CUDA-native front door is available",
     )
 }
 
-#[cfg(not(feature = "cuda"))]
-fn handle_native_gpu_unavailable_cpu_fallback(
+fn handle_gpu_unavailable_cpu_fallback(
     params: GpuSearchParams<'_>,
     warning: &str,
 ) -> anyhow::Result<()> {
@@ -7798,8 +7848,12 @@ fn handle_auto_gpu_search(
                     run_native_search_with_optional_rg_fallback(cpu_fallback_config, rg_fallback)
                 }
                 GpuRouteFailureKind::Fatal => {
-                    eprintln!("{}", failure.message);
-                    std::process::exit(2);
+                    exit_structured_search_error_if_needed(
+                        params.json,
+                        params.ndjson,
+                        "gpu_fatal",
+                        failure.message,
+                    );
                 }
             }
         }
@@ -7955,8 +8009,12 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                     run_native_search_with_optional_rg_fallback(cpu_config, rg_fallback)
                 }
                 GpuRouteFailureKind::Fatal => {
-                    eprintln!("{}", failure.message);
-                    std::process::exit(2);
+                    exit_structured_search_error_if_needed(
+                        params.json,
+                        params.ndjson,
+                        "gpu_fatal",
+                        failure.message,
+                    );
                 }
             }
         }
@@ -7991,6 +8049,21 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
 
     match execute_sidecar_command("gpu_search", vec![], Some(payload)) {
         Ok(result) => {
+            if result.exit_code != 0 {
+                if let Some(reason) =
+                    classify_gpu_sidecar_unavailable(&result.stderr, "Python sidecar exited")
+                {
+                    let warning = format!("native GPU unavailable: {reason}");
+                    return handle_gpu_unavailable_cpu_fallback(params, &warning);
+                }
+                if !result.stdout.is_empty() {
+                    print!("{}", result.stdout);
+                }
+                if !result.stderr.is_empty() {
+                    eprint!("{}", result.stderr);
+                }
+                std::process::exit(result.exit_code.max(1));
+            }
             if !result.stdout.is_empty() {
                 if params.ndjson {
                     let matches = parse_gpu_sidecar_search_payload(&result.stdout)?
@@ -8024,12 +8097,45 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
             if !result.stderr.is_empty() {
                 eprint!("{}", result.stderr);
             }
-            if result.exit_code != 0 {
-                std::process::exit(result.exit_code.max(1));
-            }
             Ok(())
         }
-        Err(err) => exit_with_sidecar_error(err),
+        Err(err) => {
+            if let Some(reason) = classify_gpu_sidecar_unavailable(&err.stderr, &err.message) {
+                let warning = format!("native GPU unavailable: {reason}");
+                return handle_gpu_unavailable_cpu_fallback(params, &warning);
+            }
+            exit_with_sidecar_error(err)
+        }
+    }
+}
+
+fn classify_gpu_sidecar_unavailable(stderr: &str, message: &str) -> Option<String> {
+    let mut raw = String::new();
+    if !stderr.trim().is_empty() {
+        raw.push_str(stderr.trim());
+    }
+    if !message.trim().is_empty() {
+        if !raw.is_empty() {
+            raw.push(' ');
+        }
+        raw.push_str(message.trim());
+    }
+    let lower = raw.to_ascii_lowercase();
+    let unavailable = lower.contains("cuda_visible_devices is empty")
+        || lower.contains("no gpus are visible")
+        || lower.contains("cuda is unavailable")
+        || lower.contains("no usable gpu devices")
+        || lower.contains("no cuda devices")
+        || lower.contains("available device ids: none")
+        || (lower.contains("requested gpu device ids") && lower.contains("not available"));
+    if unavailable {
+        Some(if raw.is_empty() {
+            "sidecar reported no usable GPU devices".to_string()
+        } else {
+            raw
+        })
+    } else {
+        None
     }
 }
 

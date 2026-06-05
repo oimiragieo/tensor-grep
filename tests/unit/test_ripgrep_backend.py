@@ -18,7 +18,7 @@ def test_should_include_before_and_after_context_flags():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         backend.search("test.log", "ERROR", config=config)
@@ -40,7 +40,7 @@ def test_should_forward_no_ignore_flag():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         backend.search("test.log", "ERROR", config=config)
@@ -66,7 +66,7 @@ def test_json_context_events_do_not_inflate_match_totals():
 
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
-        patch("tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result),
+        patch("tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result),
     ):
         result = backend.search("app.log", "ERROR", config=config)
 
@@ -239,7 +239,7 @@ def test_should_forward_advertised_ignore_and_config_flags():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         backend.search("test.log", "ERROR", config=config)
@@ -282,7 +282,7 @@ def test_should_forward_glob_flags():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         backend.search("test.log", "ERROR", config=config)
@@ -330,7 +330,7 @@ def test_should_raise_on_rg_fatal_error():
 
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
-        patch("tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result),
+        patch("tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result),
     ):
         with pytest.raises(RuntimeError, match="exit code 2"):
             backend.search("test.log", "(")
@@ -346,7 +346,7 @@ def test_passthrough_should_forward_count_flag_and_exit_code():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         exit_code = backend.search_passthrough(["bench_data"], "ERROR", config=config)
@@ -384,7 +384,7 @@ def test_passthrough_should_forward_editor_output_flags():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
@@ -419,7 +419,7 @@ def test_passthrough_should_forward_multiline_flags():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         exit_code = backend.search_passthrough(
@@ -442,7 +442,7 @@ def test_passthrough_should_forward_advertised_regex_mode_flags():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
@@ -463,7 +463,7 @@ def test_passthrough_should_forward_passthru_flag():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
@@ -486,7 +486,7 @@ def test_search_should_emit_runtime_routing_metadata():
 
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
-        patch("tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result),
+        patch("tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result),
     ):
         result = backend.search("a.log", "ERROR", config=SearchConfig())
 
@@ -512,7 +512,7 @@ def test_search_should_keep_line_numbers_in_json_mode():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search("a.log", "ERROR", config=config)
@@ -535,7 +535,7 @@ def test_search_should_parse_plain_count_output_without_json():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search(["a.log", "b.log"], "ERROR", config=config)
@@ -563,7 +563,7 @@ def test_search_should_parse_plain_count_matches_output_without_json():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search("a.log", "ERROR", config=config)
@@ -591,7 +591,7 @@ def test_search_should_parse_nul_count_output_without_json():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search(["C:\\repo\\a.log", "C:\\repo\\b.log"], "ERROR", config=config)
@@ -617,7 +617,7 @@ def test_search_should_parse_files_with_matches_without_json():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search(["a.log", "b.log"], "ERROR", config=config)
@@ -645,7 +645,7 @@ def test_search_should_parse_nul_files_with_matches_without_json():
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search(["a.log", "b.log"], "ERROR", config=config)
@@ -669,7 +669,7 @@ def test_search_should_parse_files_with_matches_from_count_without_rg_list_flag(
     with (
         patch.object(backend, "_get_binary_name", return_value="rg"),
         patch(
-            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
         ) as run,
     ):
         result = backend.search(["a.log", "b.log"], "ERROR", config=config)

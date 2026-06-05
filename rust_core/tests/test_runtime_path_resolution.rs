@@ -22,6 +22,10 @@ fn repo_python() -> PathBuf {
         return candidate;
     }
 
+    if cfg!(windows) {
+        return PathBuf::from("python");
+    }
+
     repo_root().join(".venv").join("bin").join("python")
 }
 

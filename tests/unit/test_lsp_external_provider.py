@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import time
+from collections import OrderedDict
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
@@ -223,6 +224,81 @@ def test_provider_manager_evicts_lru_clients_and_stops_evicted_client(
     assert ("python", str(roots[0])) not in manager._clients
     assert ("python", str(roots[1])) in manager._clients
     assert ("python", str(roots[2])) in manager._clients
+
+
+def test_provider_manager_guards_client_cache_operations_with_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+
+    class _RecordingLock:
+        def __init__(self) -> None:
+            self.depth = 0
+
+        def __enter__(self) -> _RecordingLock:
+            self.depth += 1
+            return self
+
+        def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+            self.depth -= 1
+
+        def locked(self) -> bool:
+            return self.depth > 0
+
+    class _LockCheckingClientCache(OrderedDict[tuple[str, str], ExternalLSPClient]):
+        def __init__(self, lock: _RecordingLock) -> None:
+            super().__init__()
+            self._lock = lock
+
+        def _assert_locked(self) -> None:
+            assert self._lock.locked()
+
+        def pop(self, *args: Any, **kwargs: Any) -> Any:
+            self._assert_locked()
+            return super().pop(*args, **kwargs)
+
+        def __setitem__(self, key: tuple[str, str], value: ExternalLSPClient) -> None:
+            self._assert_locked()
+            super().__setitem__(key, value)
+
+        def popitem(self, *args: Any, **kwargs: Any) -> tuple[tuple[str, str], ExternalLSPClient]:
+            self._assert_locked()
+            return super().popitem(*args, **kwargs)
+
+        def values(self) -> Any:
+            self._assert_locked()
+            return super().values()
+
+        def clear(self) -> None:
+            self._assert_locked()
+            super().clear()
+
+    manager = ExternalLSPProviderManager(max_clients=1)
+    lock = _RecordingLock()
+    manager._clients_lock = lock  # type: ignore[assignment]
+    manager._clients = _LockCheckingClientCache(lock)
+    stopped_while_locked: list[bool] = []
+
+    def _fake_stop(self: ExternalLSPClient) -> None:
+        stopped_while_locked.append(lock.locked())
+
+    monkeypatch.setattr(ExternalLSPClient, "stop", _fake_stop)
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+
+    manager.get_client(language="python", workspace_root=first_root)
+    manager.provider_status(language="python", workspace_root=first_root)
+    manager.get_client(language="python", workspace_root=second_root)
+    manager.stop_all()
+
+    assert stopped_while_locked == [False, False]
 
 
 def test_lsp_cache_cap_invalid_env_values_use_defaults(

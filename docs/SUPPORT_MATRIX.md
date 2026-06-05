@@ -7,7 +7,8 @@ This document distinguishes CI-tested environments from best-effort compatibilit
 ### Tier 1: CI-tested and release-validated
 - **Linux amd64:** `ubuntu-latest` CI, published CPU/NVIDIA release binaries, package-manager bundle validation.
 - **Windows amd64:** `windows-latest` CI, published CPU/NVIDIA release binaries, Winget manifest validation.
-- **macOS amd64:** `macos-latest` CI, published CPU release binary, Homebrew formula validation.
+- **macOS amd64:** `macos-15-intel` native-build-smoke and release-native asset CI, published CPU release binary (`tg-macos-amd64-cpu`), Homebrew formula validation.
+- **macOS arm64:** `macos-latest` native-build-smoke CI for Apple Silicon build coverage.
 
 ### Best-effort / operator-validated
 - **Other glibc-compatible Linux distributions:** expected to work when they remain compatible with the published release binaries and Python dependency set.

@@ -130,14 +130,15 @@ def run_json_command(command: list[str]) -> tuple[float, dict[str, object]]:
         check=False,
     )
     elapsed = round(time.perf_counter() - start, 6)
-    if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()
-        raise RuntimeError(
-            f"command failed with exit code {completed.returncode}: {' '.join(command)}\n{stderr}"
-        )
 
     stdout = (completed.stdout or "").strip()
     if not stdout:
+        if completed.returncode != 0:
+            stderr = (completed.stderr or "").strip()
+            raise RuntimeError(
+                f"command failed with exit code {completed.returncode}: "
+                f"{' '.join(command)}\n{stderr}"
+            )
         raise RuntimeError(f"command produced no JSON output: {' '.join(command)}")
 
     try:
@@ -147,6 +148,15 @@ def run_json_command(command: list[str]) -> tuple[float, dict[str, object]]:
 
     if not isinstance(payload, dict):
         raise RuntimeError(f"command produced non-object JSON: {' '.join(command)}")
+
+    if completed.returncode == 1 and isinstance(payload.get("total_matches"), int):
+        return elapsed, payload
+
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        raise RuntimeError(
+            f"command failed with exit code {completed.returncode}: {' '.join(command)}\n{stderr}"
+        )
 
     return elapsed, payload
 

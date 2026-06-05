@@ -126,7 +126,7 @@ tg --version
 
 ### Winget Flow
 
-1. Keep `scripts/oimiragieo.tensor-grep.yaml` aligned with the tagged version and Windows artifact URL.
+1. Keep `scripts/oimiragieo.tensor-grep.yaml` aligned with the tagged version, Windows artifact URL, `PackageLocale`, and Windows artifact SHA256.
 2. Validate manifest locally on Windows:
 
 ```powershell
@@ -143,9 +143,9 @@ tg --version
 CI coverage:
 - `ci.yml` includes `package-manager-readiness` on Linux + Windows.
 - `ci.yml` builds release-native CPU front-door assets from the semantic-release tag and uploads them to the GitHub release before PyPI publish is allowed.
-- On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`.
+- On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`. If hosted-runner `winget validate` reports only the known schema-header URL warning from embedded schema-version skew, CI also requires `scripts/validate_release_assets.py` to pass before continuing; other `winget` failures remain blocking.
 - CI/release package-manager jobs also run `scripts/prepare_package_manager_release.py --check` to ensure manifests are ready for tap/winget-pkgs publication.
-- `publish-github-release-assets` builds `artifacts/package-manager-bundle`, verifies `BUNDLE_CHECKSUMS.txt`, and runs `scripts/smoke_test_package_manager_bundle.py` before publishing release assets.
+- `publish-github-release-assets` builds `artifacts/package-manager-bundle`, stamps Winget `InstallerSha256` from generated `CHECKSUMS.txt`, verifies `BUNDLE_CHECKSUMS.txt`, and runs `scripts/smoke_test_package_manager_bundle.py` before publishing release assets.
 
 Release automation notes:
 - The normal release path is main CI after semantic-release. Tags created by the default `GITHUB_TOKEN` do not trigger a separate tag-push workflow run, so `release.yml` is a manual/backfill path rather than the authoritative asset publisher.

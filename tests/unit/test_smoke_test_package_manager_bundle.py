@@ -42,13 +42,24 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
         encoding="utf-8",
     )
     winget.write_text(
+        "# yaml-language-server: "
+        "$schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json\n"
         "PackageIdentifier: oimiragieo.tensor-grep\n"
         "PackageVersion: 1.2.3\n"
+        "PackageLocale: en-US\n"
+        "PackageName: tensor-grep\n"
+        "Publisher: oimiragieo\n"
+        "License: MIT\n"
+        "ShortDescription: Fast search for agent workflows\n"
         "Installers:\n"
         "  - Architecture: x64\n"
         "    InstallerType: portable\n"
         "    InstallerUrl: "
-        "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n",
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
+        "    InstallerSha256: "
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        "ManifestType: singleton\n"
+        "ManifestVersion: 1.12.0\n",
         encoding="utf-8",
     )
     summary.write_text(

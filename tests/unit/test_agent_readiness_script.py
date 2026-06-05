@@ -89,6 +89,11 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         assert "public-doctor-cmd" in names
         assert "public-doctor-pwsh-noprofile" in names
         assert "public-version-python-subprocess" in names
+        git_bash_check = next(check for check in checks if check.name == "public-version-git-bash")
+        assert any(
+            "Windows Subsystem for Linux" in pattern
+            for pattern in git_bash_check.skip_error_patterns
+        )
     assert "public-search-advertised-flag-sweep" in names
     assert "repo-cli-build-warmup" in names
     assert "repo-doctor" in names
@@ -136,12 +141,13 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "tg",
         "run",
         "--pattern",
-        "calculateTotal($$$)",
+        "calculateTotal",
         "tests/fixtures/ast_smoke",
         "--lang",
         "js",
         "--json",
     ]
+    assert "Explicit AST search requires AST dependencies" in ast_run_check.skip_error_patterns
 
     warmup_check = next(check for check in checks if check.name == "repo-cli-build-warmup")
     assert warmup_check.command == ["uv", "run", "tg", "--version"]
@@ -323,6 +329,45 @@ def test_agent_readiness_docs_claims_reject_stale_gpu_dogfood_label(tmp_path) ->
         raise AssertionError("expected stale GPU dogfood label to fail")
 
 
+def test_agent_readiness_only_shell_probes_should_skip_repo_checks() -> None:
+    module = _load_script_module()
+
+    checks = module.build_check_plan(
+        repo_root=Path("C:/repo"),
+        expected_version="1.8.22",
+        include_shell_probes=True,
+        include_wsl_probe=False,
+        only_shell_probes=True,
+    )
+
+    names = {check.name for check in checks}
+    assert "public-search-advertised-flag-sweep" in names
+    assert "repo-doctor" not in names
+    assert "docs-claim-check" not in names
+    assert "agent-capsule" not in names
+
+
+def test_agent_readiness_only_shell_probes_should_include_windows_launcher_checks(
+    monkeypatch,
+) -> None:
+    module = _load_script_module()
+    monkeypatch.setattr(module, "IS_WINDOWS", True)
+
+    checks = module.build_check_plan(
+        repo_root=Path("C:/repo"),
+        expected_version="1.8.22",
+        include_shell_probes=True,
+        include_wsl_probe=False,
+        only_shell_probes=True,
+    )
+
+    names = {check.name for check in checks}
+    assert "public-windows-launcher-quoted-patterns" in names
+    assert "public-version-python-subprocess" in names
+    assert "public-doctor-cmd" in names
+    assert "repo-doctor" not in names
+
+
 def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypatch) -> None:
     module = _load_script_module()
     monkeypatch.setattr(module, "IS_WINDOWS", True)
@@ -339,13 +384,14 @@ def test_agent_readiness_should_avoid_bare_tg_createprocess_on_windows(monkeypat
     assert "tg --version" in powershell_probe.command
     public_doctor = next(check for check in checks if check.name == "public-doctor-cmd")
     assert public_doctor.command == ["cmd", "/c", "tg doctor --json --no-lsp"]
-    assert public_doctor.validator is module.validate_doctor_payload
+    assert public_doctor.validator is module.validate_public_doctor_payload
 
     quoted_probe = next(
         check for check in checks if check.name == "public-windows-launcher-quoted-patterns"
     )
     assert quoted_probe.command == []
     assert quoted_probe.validator is module.validate_windows_launcher_quoted_patterns
+    assert quoted_probe.required is True
 
     python_subprocess_probe = next(
         check for check in checks if check.name == "public-version-python-subprocess"
@@ -420,6 +466,90 @@ def test_agent_readiness_should_accept_current_doctor_backend_name() -> None:
     }
 
     module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.8.22")
+
+
+def test_agent_readiness_repo_doctor_should_allow_missing_fresh_shell_when_unprobed() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.13.33",
+        "path_tg_first_version_matches": True,
+        "path_tg_first_launcher_kind": "python-entrypoint",
+        "fresh_shell_path_tg_candidates": [],
+        "fresh_shell_path_tg_first_launcher_kind": None,
+        "python_subprocess_path_tg_first_launcher_kind": "python-entrypoint",
+        "python_subprocess_path_tg_first_version_matches": True,
+        "search_acceleration_backend": "rust-core-extension",
+        "rust_binary_version_matches": None,
+        "rust_binary_version_status": "stale-skipped",
+    }
+
+    module.validate_repo_doctor_payload(json.dumps(payload), Path("/repo"), "1.13.33")
+
+
+def test_agent_readiness_public_doctor_should_allow_missing_self_probe_routes() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.13.33",
+        "path_tg_first_version_matches": True,
+        "search_acceleration_backend": "standalone-native-tg",
+        "rust_binary_version_matches": True,
+        "rust_binary_version_status": "matches",
+    }
+
+    module.validate_public_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.13.33")
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.13.33")
+    except module.ReadinessError as exc:
+        assert "launcher route diagnostics" in str(exc)
+    else:
+        raise AssertionError("expected strict doctor validation to require launcher diagnostics")
+
+
+def test_agent_readiness_public_doctor_should_allow_extension_backed_missing_native() -> None:
+    module = _load_script_module()
+    payload = {
+        "version": "1.13.33",
+        "path_tg_first_version_matches": True,
+        "search_acceleration_backend": "rust-core-extension",
+        "rust_binary_version_matches": None,
+        "rust_binary_version_status": "missing",
+    }
+
+    module.validate_public_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.13.33")
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.13.33")
+    except module.ReadinessError as exc:
+        assert "launcher route diagnostics" in str(exc)
+    else:
+        raise AssertionError("expected strict doctor validation to require launcher diagnostics")
+
+
+def test_agent_readiness_repo_doctor_should_allow_missing_native_binary_when_extension_backed() -> (
+    None
+):
+    module = _load_script_module()
+    payload = {
+        "version": "1.13.33",
+        "path_tg_first_version_matches": True,
+        "path_tg_first_launcher_kind": "python-entrypoint",
+        "fresh_shell_path_tg_candidates": [],
+        "python_subprocess_path_tg_first_launcher_kind": "python-entrypoint",
+        "python_subprocess_path_tg_first_version_matches": True,
+        "search_acceleration_backend": "rust-core-extension",
+        "rust_binary_version_matches": None,
+        "rust_binary_version_status": "missing",
+    }
+
+    module.validate_repo_doctor_payload(json.dumps(payload), Path("/repo"), "1.13.33")
+
+    try:
+        module.validate_doctor_payload(json.dumps(payload), Path("/repo"), "1.13.33")
+    except module.ReadinessError as exc:
+        assert "managed native-upgrade contract" in str(exc)
+    else:
+        raise AssertionError("expected strict doctor validation to require native version parity")
 
 
 def test_agent_readiness_should_reject_doctor_without_launcher_diagnostics() -> None:
@@ -1114,6 +1244,75 @@ def test_agent_readiness_run_check_caps_single_line_stdout_stderr(monkeypatch, t
     assert len(result["stderr_tail"][0]) <= module.ARTIFACT_TAIL_LINE_CHAR_LIMIT + 80
     assert "truncated" in result["stdout_tail"][0]
     assert "truncated" in result["stderr_tail"][0]
+
+
+def test_agent_readiness_run_check_can_skip_known_optional_runtime_error(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script_module()
+
+    monkeypatch.setattr(module, "_command_available", lambda _command: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["demo"],
+            returncode=1,
+            stdout="",
+            stderr="ConfigurationError: Explicit AST search requires AST dependencies",
+        ),
+    )
+
+    result = module.run_check(
+        module.Check(
+            name="ast-run-smoke",
+            command=["demo"],
+            description="demo",
+            skip_error_patterns=("Explicit AST search requires AST dependencies",),
+        ),
+        repo_root=tmp_path,
+        expected_version="1.13.33",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["returncode"] == 1
+    assert "optional runtime unavailable" in result["message"]
+
+
+def test_agent_readiness_run_check_skip_patterns_ignore_nul_bytes(monkeypatch, tmp_path) -> None:
+    module = _load_script_module()
+
+    monkeypatch.setattr(module, "_command_available", lambda _command: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["bash"],
+            returncode=1,
+            stdout=(
+                "W\x00i\x00n\x00d\x00o\x00w\x00s\x00 "
+                "S\x00u\x00b\x00s\x00y\x00s\x00t\x00e\x00m\x00 "
+                "f\x00o\x00r\x00 L\x00i\x00n\x00u\x00x\x00 "
+                "h\x00a\x00s\x00 n\x00o\x00 i\x00n\x00s\x00t\x00a\x00l\x00l\x00e\x00d\x00 "
+                "d\x00i\x00s\x00t\x00r\x00i\x00b\x00u\x00t\x00i\x00o\x00n\x00s\x00."
+            ),
+            stderr="",
+        ),
+    )
+
+    result = module.run_check(
+        module.Check(
+            name="public-version-git-bash",
+            command=["bash", "-lc", "command -v tg && tg --version"],
+            description="demo",
+            skip_error_patterns=("Windows Subsystem for Linux has no installed distributions",),
+        ),
+        repo_root=tmp_path,
+        expected_version="1.13.33",
+    )
+
+    assert result["status"] == "skipped"
+    assert "Windows Subsystem for Linux" in result["message"]
 
 
 def test_progress_reporter_emits_phase_heartbeat_to_configured_stream() -> None:

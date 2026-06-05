@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -243,11 +245,84 @@ def _summarize_command_output(name: str, stdout: str, stderr: str, exit_code: in
     return f"{name} command failed with exit code {exit_code}."
 
 
+def _split_windows_command(command: str) -> list[str]:
+    import ctypes
+    from ctypes import wintypes
+
+    argc = ctypes.c_int()
+    shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    argv = shell32.CommandLineToArgvW(command, ctypes.byref(argc))
+    if not argv:
+        raise ValueError("unable to parse command line")
+    try:
+        return [argv[index] for index in range(argc.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)  # type: ignore[attr-defined]
+
+
+def _unquoted_shell_operator(command: str) -> str | None:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote and os.name != "nt":
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if not in_single_quote and not in_double_quote:
+            two_char = command[index : index + 2]
+            if two_char in {"&&", "||"}:
+                return two_char
+            if char in {"|", ";", "&", "<", ">"}:
+                return char
+        index += 1
+    return None
+
+
+def _parse_policy_command(command: str) -> list[str]:
+    stripped = command.strip()
+    if not stripped:
+        raise ValueError("command must not be empty")
+    shell_operator = _unquoted_shell_operator(stripped)
+    if shell_operator is not None:
+        raise ValueError(
+            f"shell control operator {shell_operator!r} is not supported; "
+            "provide a single argv-style command"
+        )
+    if os.name == "nt":
+        return _split_windows_command(stripped)
+    return shlex.split(stripped, posix=True)
+
+
 def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dict[str, object]:
     try:
+        argv = _parse_policy_command(command)
+    except ValueError as exc:
+        return _command_result(
+            passed=False,
+            detail=f"{name} command could not be parsed: {exc}.",
+        )
+
+    try:
         completed = subprocess.run(
-            command,
-            shell=True,
+            argv,
+            shell=False,
             cwd=str(cwd),
             capture_output=True,
             text=True,
@@ -261,6 +336,11 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
             passed=False,
             detail=f"Command timed out after {timeout}s.",
             timed_out=True,
+        )
+    except OSError as exc:
+        return _command_result(
+            passed=False,
+            detail=f"{name} command failed to start: {exc}",
         )
 
     if completed.returncode == 0:

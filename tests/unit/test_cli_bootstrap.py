@@ -973,7 +973,7 @@ def test_main_entry_should_delegate_run_to_managed_native_when_available(monkeyp
         seen["check"] = check
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run)
+    monkeypatch.setattr(bootstrap, "run_subprocess", _fake_run)
 
     with pytest.raises(SystemExit) as excinfo:
         bootstrap.main_entry()

@@ -40,6 +40,7 @@ from tensor_grep.cli.session_store import (
 )
 
 _DAEMON_METADATA_FILE = "daemon.json"
+_DAEMON_START_LOCK_FILE = ".daemon-start.lock"
 _DAEMON_HOST = "127.0.0.1"
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
@@ -48,6 +49,9 @@ _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 _DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
 _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES = 16
 _DAEMON_RESPONSE_CACHE_SCOPE = "daemon-routed top-level/session context-render/edit-plan requests"
+_DAEMON_RESPONSE_CACHE_STALE_DETECTION = "snapshot_mtime_only"
+_DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION = False
+_DAEMON_START_LOCK_STALE_SECONDS = _DAEMON_START_TIMEOUT_SECONDS * 2
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -90,9 +94,43 @@ def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
 
 
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
-    metadata_path = _daemon_metadata_path(root)
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    from tensor_grep.cli.session_store import _write_json_atomic
+
+    _write_json_atomic(_daemon_metadata_path(root), payload)
+
+
+def _daemon_start_lock_path(root: Path) -> Path:
+    return _sessions_dir(root) / _DAEMON_START_LOCK_FILE
+
+
+def _try_acquire_daemon_start_lock(root: Path) -> bool:
+    lock_path = _daemon_start_lock_path(root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    for _attempt in range(2):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                lock_age = time.time() - lock_path.stat().st_mtime
+                if lock_age > _DAEMON_START_LOCK_STALE_SECONDS:
+                    lock_path.unlink()
+                    continue
+            except OSError:
+                pass
+            return False
+        try:
+            os.write(fd, f"{os.getpid()}\n".encode())
+        finally:
+            os.close(fd)
+        return True
+    return False
+
+
+def _release_daemon_start_lock(root: Path) -> None:
+    try:
+        _daemon_start_lock_path(root).unlink()
+    except OSError:
+        pass
 
 
 def _remove_daemon_metadata(root: Path) -> None:
@@ -176,6 +214,9 @@ def _merge_live_daemon_stats(status: dict[str, Any]) -> dict[str, Any]:
         "response_cache_entries",
         "response_cache_oversized_skips",
         "response_cache_scope",
+        "response_cache_stale_detection",
+        "response_cache_added_file_detection",
+        "response_cache_refresh_hint",
         "uptime_seconds",
         "inflight_requests",
         "skipped_requests",
@@ -262,50 +303,73 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
             "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
         }
 
-    _remove_daemon_metadata(root)
-    creationflags = 0
-    repo_root = Path(__file__).resolve().parents[3]
-    repo_src = repo_root / "src"
-    env = os.environ.copy()
-    python_path_parts = [str(repo_src)]
-    if env.get("PYTHONPATH"):
-        python_path_parts.append(env["PYTHONPATH"])
-    env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "tensor_grep.cli.session_daemon",
-            "--root",
-            str(root),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        creationflags=creationflags,
-        cwd=str(repo_root),
-        env=env,
-    )
+    acquired_lock = _try_acquire_daemon_start_lock(root)
+    if not acquired_lock:
+        deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            metadata = _probe_daemon(root)
+            if metadata is not None:
+                return {
+                    "version": _SESSION_VERSION,
+                    "root": str(root),
+                    "running": True,
+                    "host": str(metadata.get("host", _DAEMON_HOST)),
+                    "port": int(metadata["port"]),
+                    "pid": int(metadata["pid"]),
+                    "started_at": str(metadata["started_at"]),
+                    "auto_started": False,
+                    "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
+                }
+            time.sleep(0.05)
+        raise RuntimeError(f"session daemon did not start for {root}")
 
-    deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
-    while time.time() < deadline:
-        metadata = _probe_daemon(root)
-        if metadata is not None:
-            return {
-                "version": _SESSION_VERSION,
-                "root": str(root),
-                "running": True,
-                "host": str(metadata.get("host", _DAEMON_HOST)),
-                "port": int(metadata["port"]),
-                "pid": int(metadata["pid"]),
-                "started_at": str(metadata["started_at"]),
-                "auto_started": True,
-                "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
-            }
-        time.sleep(0.05)
-    raise RuntimeError(f"session daemon did not start for {root}")
+    try:
+        _remove_daemon_metadata(root)
+        creationflags = 0
+        repo_root = Path(__file__).resolve().parents[3]
+        repo_src = repo_root / "src"
+        env = os.environ.copy()
+        python_path_parts = [str(repo_src)]
+        if env.get("PYTHONPATH"):
+            python_path_parts.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "tensor_grep.cli.session_daemon",
+                "--root",
+                str(root),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+            cwd=str(repo_root),
+            env=env,
+        )
+
+        deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            metadata = _probe_daemon(root)
+            if metadata is not None:
+                return {
+                    "version": _SESSION_VERSION,
+                    "root": str(root),
+                    "running": True,
+                    "host": str(metadata.get("host", _DAEMON_HOST)),
+                    "port": int(metadata["port"]),
+                    "pid": int(metadata["pid"]),
+                    "started_at": str(metadata["started_at"]),
+                    "auto_started": True,
+                    "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
+                }
+            time.sleep(0.05)
+        raise RuntimeError(f"session daemon did not start for {root}")
+    finally:
+        _release_daemon_start_lock(root)
 
 
 def stop_session_daemon(path: str = ".") -> dict[str, Any]:
@@ -588,54 +652,62 @@ class _SessionResponseCache:
         self._misses = 0
         self._puts = 0
         self._oversized_skips = 0
+        self._lock = threading.RLock()
 
     def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
-        entry = self._entries.pop(key, None)
-        if entry is None:
-            self._misses += 1
-            return None
-        self._hits += 1
-        self._entries[key] = entry
-        return copy.deepcopy(entry.payload)
+        with self._lock:
+            entry = self._entries.pop(key, None)
+            if entry is None:
+                self._misses += 1
+                return None
+            self._hits += 1
+            self._entries[key] = entry
+            return copy.deepcopy(entry.payload)
 
     def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
-        self._puts += 1
-        size_bytes = _json_size_bytes(response)
-        if size_bytes > self._max_size_bytes:
-            self._oversized_skips += 1
-            return
-        previous = self._entries.pop(key, None)
-        if previous is not None:
-            self._size_bytes -= previous.size_bytes
-        entry = _SessionServeResponseCacheEntry(
-            payload=copy.deepcopy(response),
-            size_bytes=size_bytes,
-        )
-        self._entries[key] = entry
-        self._size_bytes += entry.size_bytes
-        while len(self._entries) > self._max_entries or self._size_bytes > self._max_size_bytes:
-            _, evicted = self._entries.popitem(last=False)
-            self._size_bytes -= evicted.size_bytes
+        with self._lock:
+            self._puts += 1
+            size_bytes = _json_size_bytes(response)
+            if size_bytes > self._max_size_bytes:
+                self._oversized_skips += 1
+                return
+            previous = self._entries.pop(key, None)
+            if previous is not None:
+                self._size_bytes -= previous.size_bytes
+            entry = _SessionServeResponseCacheEntry(
+                payload=copy.deepcopy(response),
+                size_bytes=size_bytes,
+            )
+            self._entries[key] = entry
+            self._size_bytes += entry.size_bytes
+            while len(self._entries) > self._max_entries or self._size_bytes > self._max_size_bytes:
+                _, evicted = self._entries.popitem(last=False)
+                self._size_bytes -= evicted.size_bytes
 
     @property
     def hits(self) -> int:
-        return self._hits
+        with self._lock:
+            return self._hits
 
     @property
     def misses(self) -> int:
-        return self._misses
+        with self._lock:
+            return self._misses
 
     @property
     def puts(self) -> int:
-        return self._puts
+        with self._lock:
+            return self._puts
 
     @property
     def entry_count(self) -> int:
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
 
     @property
     def size_bytes(self) -> int:
-        return self._size_bytes
+        with self._lock:
+            return self._size_bytes
 
     @property
     def max_size_bytes(self) -> int:
@@ -643,7 +715,8 @@ class _SessionResponseCache:
 
     @property
     def oversized_skips(self) -> int:
-        return self._oversized_skips
+        with self._lock:
+            return self._oversized_skips
 
 
 class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -729,6 +802,12 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "response_cache_max_size_bytes": server.response_cache.max_size_bytes,
                     "response_cache_oversized_skips": server.response_cache.oversized_skips,
                     "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
+                    "response_cache_stale_detection": _DAEMON_RESPONSE_CACHE_STALE_DETECTION,
+                    "response_cache_added_file_detection": _DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION,
+                    "response_cache_refresh_hint": (
+                        "Use tg session refresh or request refresh_on_stale when new files must "
+                        "invalidate daemon response-cache hits."
+                    ),
                     "uptime_seconds": max(0.0, monotonic() - server.started_at),
                     "request_count": server.request_count,
                 }

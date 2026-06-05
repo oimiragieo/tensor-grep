@@ -9,6 +9,9 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+WINGET_SINGLETON_SCHEMA_HEADER = (
+    "# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json"
+)
 RELEASE_DOC_PATHS = (
     "AGENTS.md",
     "README.md",
@@ -77,6 +80,8 @@ def _version_from_uv_lock() -> str:
 
 def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[str]:
     errors: list[str] = []
+    if not winget_content.startswith(f"{WINGET_SINGLETON_SCHEMA_HEADER}\n"):
+        errors.append("Winget manifest must start with the singleton 1.12.0 schema header")
     if f"PackageVersion: {py_version}" not in winget_content:
         errors.append("Winget manifest PackageVersion does not match pyproject version")
     expected_windows_url = (
@@ -96,6 +101,23 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
         errors.append("Winget manifest must deserialize to a mapping")
         return errors
 
+    expected_top_level = {
+        "PackageIdentifier": "oimiragieo.tensor-grep",
+        "PackageLocale": "en-US",
+        "PackageName": "tensor-grep",
+        "Publisher": "oimiragieo",
+        "License": "MIT",
+        "ManifestType": "singleton",
+        "ManifestVersion": "1.12.0",
+    }
+    for field_name, expected_value in expected_top_level.items():
+        if parsed_winget.get(field_name) != expected_value:
+            errors.append(f"Winget manifest {field_name} must be {expected_value!r}")
+
+    for field_name in ("ShortDescription",):
+        if not parsed_winget.get(field_name):
+            errors.append(f"Winget manifest must define non-empty {field_name}")
+
     installers = parsed_winget.get("Installers")
     if not isinstance(installers, list) or not installers:
         errors.append("Winget manifest must contain a non-empty Installers list")
@@ -109,6 +131,11 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
     installer_url = first.get("InstallerUrl")
     if installer_url != expected_windows_url:
         errors.append("Winget manifest InstallerUrl must be nested under first installer mapping")
+    installer_sha256 = first.get("InstallerSha256")
+    if not isinstance(installer_sha256, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{64}", installer_sha256
+    ):
+        errors.append("Winget manifest first installer must define 64-hex InstallerSha256")
     return errors
 
 
@@ -871,6 +898,28 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "CI workflow build-release-native-assets must use Rust native front doors, not the old Nuitka builder"
                     )
 
+            native_smoke_job = jobs.get("native-build-smoke")
+            if isinstance(native_smoke_job, dict):
+                smoke_strategy = native_smoke_job.get("strategy", {})
+                smoke_matrix = (
+                    smoke_strategy.get("matrix", {}) if isinstance(smoke_strategy, dict) else {}
+                )
+                smoke_matrix_os = (
+                    smoke_matrix.get("os", []) if isinstance(smoke_matrix, dict) else []
+                )
+                smoke_matrix_os_list = (
+                    [str(smoke_matrix_os)]
+                    if isinstance(smoke_matrix_os, str)
+                    else [str(item) for item in smoke_matrix_os]
+                    if isinstance(smoke_matrix_os, list)
+                    else []
+                )
+                if "macos-15-intel" not in smoke_matrix_os_list:
+                    errors.append(
+                        "CI workflow native-build-smoke matrix must include Intel macOS runner "
+                        "label (`macos-15-intel`) so PR smoke matches `tg-macos-amd64-cpu`"
+                    )
+
             github_assets_job = jobs.get("publish-github-release-assets")
             if not isinstance(github_assets_job, dict):
                 errors.append(
@@ -1354,6 +1403,11 @@ def validate_public_gpu_proof_workflow_content(*, workflow_content: str) -> list
     if not isinstance(job, dict):
         errors.append("Public GPU proof workflow must define public-managed-gpu-proof job")
         return errors
+
+    if job.get("environment") != "public-gpu-proof":
+        errors.append(
+            "Public GPU proof workflow must target `environment: public-gpu-proof` for reviewer gating"
+        )
 
     runs_on = job.get("runs-on")
     if not isinstance(runs_on, list) or any("${{" in str(item) for item in runs_on):
@@ -3156,8 +3210,9 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
 
     expected_constraints = {
-        "aiohttp>=3.13.4",
+        "aiohttp>=3.14.0",
         "cryptography>=46.0.7",
+        "pyjwt>=2.13.0",
         "pygments>=2.20.0",
         "python-multipart>=0.0.27",
         "python-dotenv>=1.2.2",

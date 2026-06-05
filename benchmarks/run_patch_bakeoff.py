@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -213,6 +214,13 @@ def load_patch_predictions(path: str | Path) -> list[Prediction]:
     return validated
 
 
+def _validation_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    return env
+
+
 def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow:
     repo_root = Path(str(scenario["repo_fixture"])).resolve()
     patch_text = normalize_model_patch_text(str(prediction.get("model_patch") or ""))
@@ -265,6 +273,7 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
                     completed = subprocess.run(
                         command,
                         cwd=worktree,
+                        env=_validation_subprocess_env(),
                         shell=True,
                         capture_output=True,
                         text=True,

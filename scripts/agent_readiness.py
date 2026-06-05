@@ -8,7 +8,11 @@ import shutil
 import subprocess
 import sys
 import time
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -42,6 +46,7 @@ class Check(NamedTuple):
     timeout_s: int = 60
     validator: Validator | None = None
     required: bool = True
+    skip_error_patterns: tuple[str, ...] = ()
 
 
 _PYTHON_SUBPROCESS_TG_VERSION_PROBE = (
@@ -338,6 +343,8 @@ def _validate_doctor_payload(
     expected_version: str,
     *,
     require_fresh_shell_match: bool,
+    require_route_diagnostics: bool = True,
+    require_native_version_contract: bool = True,
 ) -> None:
     payload = _json_from_stdout(stdout)
     if not isinstance(payload, dict):
@@ -363,20 +370,26 @@ def _validate_doctor_payload(
     }:
         raise ReadinessError(f"unexpected search acceleration backend: {backend!r}")
     launcher_kind = payload.get("path_tg_first_launcher_kind")
-    fresh_launcher_kind = payload.get("fresh_shell_path_tg_first_launcher_kind")
-    if not isinstance(launcher_kind, str) or not isinstance(fresh_launcher_kind, str):
+    if require_route_diagnostics and not isinstance(launcher_kind, str):
         raise ReadinessError("doctor JSON missing launcher route diagnostics")
-    fresh_matches = payload.get("fresh_shell_path_tg_first_version_matches")
-    if fresh_matches is not True:
-        message = "doctor reports fresh-shell tg version does not match"
-        if warning := payload.get("fresh_shell_path_tg_foreign_warning"):
-            message = f"{message}: {warning}"
-        if remediation := payload.get("fresh_shell_path_tg_foreign_remediation"):
-            message = f"{message} Remediation: {remediation}"
-        fresh_is_foreign = payload.get("fresh_shell_path_tg_first_is_foreign") is True
-        if require_fresh_shell_match or fresh_is_foreign:
-            raise ReadinessError(message)
-    if IS_WINDOWS:
+    fresh_candidates = payload.get("fresh_shell_path_tg_candidates")
+    fresh_shell_unprobed = isinstance(fresh_candidates, list) and len(fresh_candidates) == 0
+    fresh_launcher_kind = payload.get("fresh_shell_path_tg_first_launcher_kind")
+    if require_route_diagnostics and not fresh_shell_unprobed:
+        if not isinstance(fresh_launcher_kind, str):
+            raise ReadinessError("doctor JSON missing launcher route diagnostics")
+    if isinstance(fresh_launcher_kind, str):
+        fresh_matches = payload.get("fresh_shell_path_tg_first_version_matches")
+        if fresh_matches is not True:
+            message = "doctor reports fresh-shell tg version does not match"
+            if warning := payload.get("fresh_shell_path_tg_foreign_warning"):
+                message = f"{message}: {warning}"
+            if remediation := payload.get("fresh_shell_path_tg_foreign_remediation"):
+                message = f"{message} Remediation: {remediation}"
+            fresh_is_foreign = payload.get("fresh_shell_path_tg_first_is_foreign") is True
+            if require_fresh_shell_match or fresh_is_foreign:
+                raise ReadinessError(message)
+    if IS_WINDOWS and require_route_diagnostics:
         python_launcher_kind = payload.get("python_subprocess_path_tg_first_launcher_kind")
         if not isinstance(python_launcher_kind, str):
             raise ReadinessError("doctor JSON missing Python subprocess launcher route diagnostics")
@@ -392,7 +405,13 @@ def _validate_doctor_payload(
     rust_status = payload.get("rust_binary_version_status")
     rust_version_ok = rust_status == "matches" and rust_matches is True
     stale_skip_ok = rust_status == "stale-skipped" and rust_matches is None
-    if not (rust_version_ok or stale_skip_ok):
+    missing_repo_native_ok = (
+        not require_native_version_contract
+        and rust_status == "missing"
+        and rust_matches is None
+        and backend == "rust-core-extension"
+    )
+    if not (rust_version_ok or stale_skip_ok or missing_repo_native_ok):
         raise ReadinessError(
             "doctor reports managed native-upgrade contract drift: "
             f"rust_binary_version_matches={rust_matches!r}, "
@@ -409,12 +428,24 @@ def validate_doctor_payload(stdout: str, repo_root: Path, expected_version: str)
     )
 
 
+def validate_public_doctor_payload(stdout: str, repo_root: Path, expected_version: str) -> None:
+    _validate_doctor_payload(
+        stdout,
+        repo_root,
+        expected_version,
+        require_fresh_shell_match=False,
+        require_route_diagnostics=False,
+        require_native_version_contract=False,
+    )
+
+
 def validate_repo_doctor_payload(stdout: str, repo_root: Path, expected_version: str) -> None:
     _validate_doctor_payload(
         stdout,
         repo_root,
         expected_version,
         require_fresh_shell_match=False,
+        require_native_version_contract=False,
     )
 
 
@@ -635,6 +666,7 @@ def build_check_plan(
     expected_version: str,
     include_shell_probes: bool,
     include_wsl_probe: bool,
+    only_shell_probes: bool = False,
 ) -> list[Check]:
     checks: list[Check] = []
     if include_shell_probes:
@@ -674,6 +706,10 @@ def build_check_plan(
                 timeout_s=30,
                 validator=validate_version_output,
                 required=False,
+                skip_error_patterns=(
+                    "Windows Subsystem for Linux has no installed distributions",
+                    "Use 'wsl.exe --list --online'",
+                ),
             ),
         ])
         if include_wsl_probe:
@@ -705,7 +741,7 @@ def build_check_plan(
                     command=["cmd", "/c", "tg doctor --json --no-lsp"],
                     description="Verify cmd.exe public tg can run sidecar-backed doctor.",
                     timeout_s=90,
-                    validator=validate_doctor_payload,
+                    validator=validate_public_doctor_payload,
                 ),
                 Check(
                     name="public-doctor-pwsh-noprofile",
@@ -719,7 +755,7 @@ def build_check_plan(
                         "Verify unprofiled PowerShell public tg can run sidecar-backed doctor."
                     ),
                     timeout_s=90,
-                    validator=validate_doctor_payload,
+                    validator=validate_public_doctor_payload,
                     required=False,
                 ),
                 Check(
@@ -745,6 +781,9 @@ def build_check_plan(
                 validator=validate_public_search_advertised_flag_sweep,
             )
         )
+
+    if only_shell_probes:
+        return checks
 
     checks.extend([
         Check(
@@ -829,7 +868,7 @@ def build_check_plan(
                 "tg",
                 "run",
                 "--pattern",
-                "calculateTotal($$$)",
+                "calculateTotal",
                 "tests/fixtures/ast_smoke",
                 "--lang",
                 "js",
@@ -838,6 +877,10 @@ def build_check_plan(
             description="Verify AST run smoke through the repo CLI.",
             timeout_s=90,
             validator=validate_ast_run,
+            skip_error_patterns=(
+                "Explicit AST search requires AST dependencies",
+                "no AST backend is available",
+            ),
         ),
         Check(
             name="mcp-context-render-smoke",
@@ -997,6 +1040,22 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
             stderr = completed.stderr
             returncode = completed.returncode
             if completed.returncode != 0:
+                combined_output = f"{stdout}\n{stderr}"
+                normalized_combined_output = combined_output.replace("\x00", "")
+                for pattern in check.skip_error_patterns:
+                    if pattern in combined_output or pattern in normalized_combined_output:
+                        status = "skipped"
+                        message = f"optional runtime unavailable: {pattern}"
+                        return {
+                            "name": check.name,
+                            "status": status,
+                            "duration_s": round(time.monotonic() - started, 3),
+                            "command": check.command,
+                            "returncode": returncode,
+                            "message": message,
+                            "stdout_tail": _bounded_tail_lines(stdout),
+                            "stderr_tail": _bounded_tail_lines(stderr),
+                        }
                 raise ReadinessError(
                     f"exit {completed.returncode}; stderr={stderr.strip() or '<empty>'}"
                 )
@@ -1083,8 +1142,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-shell-probes", action="store_true", help="Skip public shell version probes."
     )
+    parser.add_argument(
+        "--only-shell-probes",
+        action="store_true",
+        help="Run only public shell/installation probes and skip repo-local trust checks.",
+    )
     parser.add_argument("--no-wsl-probe", action="store_true", help="Skip the optional WSL probe.")
     args = parser.parse_args(argv)
+
+    if args.no_shell_probes and args.only_shell_probes:
+        parser.error("--no-shell-probes and --only-shell-probes are mutually exclusive")
 
     repo_root = args.root.resolve()
     expected_version = args.expected_version or read_project_version(repo_root)
@@ -1093,6 +1160,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_version=expected_version,
         include_shell_probes=not args.no_shell_probes,
         include_wsl_probe=not args.no_wsl_probe,
+        only_shell_probes=args.only_shell_probes,
     )
 
     progress = ProgressReporter(

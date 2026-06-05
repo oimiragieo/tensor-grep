@@ -1,7 +1,7 @@
-import subprocess
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -29,11 +29,19 @@ class RipgrepBackend(ComputeBackend):
             return False
         try:
             # Check help output or version info for PCRE2 support
-            result = subprocess.run([binary, "--help"], capture_output=True, text=True)
+            result = run_subprocess(
+                [binary, "--help"],
+                capture_output=True,
+                text=True,
+                timeout_seconds=configured_ripgrep_timeout_seconds(),
+            )
             if "--pcre2" in result.stdout or "PCRE2" in result.stdout:
                 # Also do a quick smoke test to be sure
-                test_proc = subprocess.run(
-                    [binary, "-P", "a(?=b)", "-V"], capture_output=True, text=True
+                test_proc = run_subprocess(
+                    [binary, "-P", "a(?=b)", "-V"],
+                    capture_output=True,
+                    text=True,
+                    timeout_seconds=configured_ripgrep_timeout_seconds(),
                 )
                 return test_proc.returncode == 0
             return False
@@ -53,8 +61,13 @@ class RipgrepBackend(ComputeBackend):
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)
         try:
             # We use check=False because rg exits with 1 if no matches are found
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+            result = run_subprocess(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             if result.returncode > 1:
                 stderr = result.stderr.strip()
@@ -124,8 +137,13 @@ class RipgrepBackend(ComputeBackend):
     ) -> SearchResult:
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=False)
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+            result = run_subprocess(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             if result.returncode > 1:
                 stderr = result.stderr.strip()
@@ -154,8 +172,13 @@ class RipgrepBackend(ComputeBackend):
     ) -> SearchResult:
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=False)
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+            result = run_subprocess(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             if result.returncode > 1:
                 stderr = result.stderr.strip()
@@ -228,7 +251,11 @@ class RipgrepBackend(ComputeBackend):
             config=config,
             json_mode=bool(config and config.json_mode),
         )
-        result = subprocess.run(cmd, check=False)
+        result = run_subprocess(
+            cmd,
+            check=False,
+            timeout_seconds=configured_ripgrep_timeout_seconds(),
+        )
         return int(result.returncode)
 
     def _build_cmd(
