@@ -1,6 +1,68 @@
 # CHANGELOG
 
 
+## v1.13.35 (2026-06-05)
+
+### Bug Fixes
+
+- Harden audit remediation CI and session daemon contracts
+  ([`ede947f`](https://github.com/oimiragieo/tensor-grep/commit/ede947facfdcdd3ca83006a642a95381a576509a))
+
+* fix: harden audit remediation CI and session daemon contracts
+
+Add subprocess timeouts, daemon cache locking and observability, mmap UTF-8 safety, macOS Intel
+  native-build-smoke, Windows agent-readiness CI, and public GPU proof environment gating with
+  validator-backed workflow contracts.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+* fix: require winget InstallerSha256 for CI validation
+
+Add the published v1.13.33 Windows native front-door hash to the winget manifest and enforce the
+  field in validate_winget_manifest so hard-fail package-manager readiness passes winget validate on
+  Windows runners.
+
+* fix: unblock package-manager and dependency audit CI gates
+
+Bump aiohttp and pyjwt security floors in uv.lock and align the winget singleton manifest with
+  schema 1.7.0 portable requirements so Windows winget validate passes without Python fallback.
+
+* fix: repair GPU sidecar fallback and winget multi-file validation
+
+Fall back to native CPU JSON when the Python GPU sidecar reports unavailable devices on CPU-only
+  builds, and publish winget manifests in the multi-file layout required by current winget validate
+  on Windows CI runners.
+
+* fix: harden winget validate path resolution on Windows CI
+
+Resolve the manifest directory from pyproject version via PowerShell and fail fast when the winget
+  multi-file directory is missing before validate.
+
+* chore: apply ruff preview formatting to release asset validator
+
+* fix: unblock CI gates for winget, security floors, and agent readiness
+
+Align winget validation with multi-file manifests, update audited dependency floors, and relax
+  repo-doctor fresh-shell checks on unprobed Linux CI hosts.
+
+* fix: resolve rebase conflict markers in release contract files
+
+Clean up pyproject, winget singleton, and workflow validator tests after rebasing audit remediation
+  onto current main.
+
+* fix: add required winget multi-file version and defaultLocale fields
+
+Winget validate requires ManifestType/ManifestVersion on the version file and defaultLocale on the
+  en-US locale manifest for multi-file layouts.
+
+* fix: satisfy winget portable validation and ruff preview format
+
+Drop unsupported Scope from portable installer manifests and collapse the winget readiness workflow
+  test assert to match preview formatting.
+
+---------
+
+
 ## v1.13.34 (2026-06-05)
 
 ### Bug Fixes

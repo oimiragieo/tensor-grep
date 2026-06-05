@@ -1,8 +1,8 @@
 # Native GPU Crossover Benchmark
 
-## Current post-`v1.13.34` GPU dogfood Read
+## Current post-`v1.13.35` GPU dogfood Read
 
-The post-`v1.13.34` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus a single-invocation fair `rg -F -e ... -e ...` multi-pattern search for the declared workload class.
+The post-`v1.13.35` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus a single-invocation fair `rg -F -e ... -e ...` multi-pattern search for the declared workload class.
 
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
 - There is still no crossover for single-pattern literal search: GPU remains slower than `rg` and `tg_cpu` after CUDA startup, file I/O, H2D transfer, and output materialization are counted.
@@ -98,4 +98,4 @@ Historical per-size data:
 | 500MB | 0.126s | 0.131s | timeout | n/a | FAIL |
 | 1GB | 0.144s | 0.150s | timeout | n/a | FAIL |
 
-The historical artifact remains useful optimization history, but the post-`v1.13.34` decision above is the current contract.
+The historical artifact remains useful optimization history, but the post-`v1.13.35` decision above is the current contract.
