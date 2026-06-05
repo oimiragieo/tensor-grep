@@ -215,6 +215,7 @@ def test_ci_workflow_should_not_cancel_in_progress_main_pushes() -> None:
     assert "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}" in workflow
 
 
+<<<<<<< HEAD
 def test_ci_package_manager_readiness_should_fail_through_validator_fallback() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     package_manager_section = _job_section(workflow, "package-manager-readiness")
@@ -244,6 +245,8 @@ def test_release_workflow_should_not_hide_real_winget_validation_failure() -> No
     assert "exit 0" not in validate_section
 
 
+=======
+>>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
 def test_ci_workflow_should_gate_hot_query_benchmark_regressions() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     benchmark_section = _job_section(workflow, "benchmark-regression")
@@ -259,9 +262,12 @@ def test_ci_workflow_should_gate_agent_workflow_benchmark_regressions() -> None:
     assert "Enforce agent workflow benchmark regression gate" in benchmark_section
     assert "bench_agent_workflow.head.json" in benchmark_section
     assert "bench_agent_success_harness.head.json" in benchmark_section
+<<<<<<< HEAD
     assert "TENSOR_GREP_AGENT_WORKFLOW_BENCH_DIR" in benchmark_section
     assert "uv run python ../benchmarks/run_agent_workflow_benchmarks.py" in benchmark_section
     assert "--binary rust_core/target/release/tg" in benchmark_section
+=======
+>>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
     assert "--iterations 1" in benchmark_section
     assert "--files 50" in benchmark_section
     assert "--loc 2500" in benchmark_section

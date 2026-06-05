@@ -196,6 +196,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+<<<<<<< HEAD
           $wingetCanValidate = $false
           if (Get-Command winget -ErrorAction SilentlyContinue) {
             $wingetHelp = winget --help
@@ -232,6 +233,20 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
             }
+=======
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "winget is required for Windows package-manager readiness"
+          }
+
+          $wingetHelp = winget --help
+          if ($wingetHelp -notmatch "validate") {
+            throw "winget validate is required for Windows package-manager readiness"
+          }
+
+          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+          if ($LASTEXITCODE -ne 0) {
+            throw "winget validate failed with exit code $LASTEXITCODE"
+>>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
           }
 
       - name: Validate package-manager publish bundle source state
@@ -709,9 +724,13 @@ jobs:
           mkdir -p base-revision/artifacts
           (
             cd base-revision
+<<<<<<< HEAD
             TENSOR_GREP_AGENT_WORKFLOW_BENCH_DIR="$PWD/artifacts/bench_agent_workflow" \
             uv run python ../benchmarks/run_agent_workflow_benchmarks.py \
               --binary rust_core/target/release/tg \
+=======
+            uv run python benchmarks/run_agent_workflow_benchmarks.py \
+>>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
               --iterations 1 \
               --files 50 \
               --loc 2500 \
