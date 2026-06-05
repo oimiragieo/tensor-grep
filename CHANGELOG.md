@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.13.34 (2026-06-05)
+
+### Bug Fixes
+
+- Harden daemon subprocess and release gates
+  ([`8a28d3e`](https://github.com/oimiragieo/tensor-grep/commit/8a28d3e792da956871be7aabf29d641e5b49c4db))
+
+
 ## v1.13.33 (2026-06-02)
 
 ### Bug Fixes
