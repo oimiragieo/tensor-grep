@@ -1,0 +1,10 @@
+PackageIdentifier: oimiragieo.tensor-grep
+PackageVersion: 1.13.33
+PackageLocale: en-US
+Publisher: oimiragieo
+PackageName: tensor-grep
+License: MIT
+ShortDescription: Fast native code-search CLI with optional GPU and agent context workflows
+Moniker: tg
+ManifestType: locale
+ManifestVersion: 1.6.0

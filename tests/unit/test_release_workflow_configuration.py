@@ -146,6 +146,8 @@ def test_ci_workflow_should_include_native_build_smoke_matrix() -> None:
     native_smoke_section = _job_section(workflow, "native-build-smoke")
     assert "macos-latest" in native_smoke_section
     assert "macos-15-intel" in native_smoke_section
+    package_manager_section = _job_section(workflow, "package-manager-readiness")
+    assert "winget-pkgs" in package_manager_section
 
 
 def test_benchmark_workflow_should_prepare_ast_benchmark_tools_before_running() -> None:

@@ -243,7 +243,8 @@ jobs:
             throw "winget validate is required for Windows package-manager readiness"
           }
 
-          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+          $version = uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          winget validate --manifest "scripts\winget-pkgs\manifests\o\oimiragieo\tensor-grep\$version"
           if ($LASTEXITCODE -ne 0) {
             throw "winget validate failed with exit code $LASTEXITCODE"
 >>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)

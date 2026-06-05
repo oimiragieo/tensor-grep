@@ -3,12 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import re
 import shutil
 import tomllib
 from pathlib import Path
-
-WINDOWS_NATIVE_ASSET = "tg-windows-amd64-cpu.exe"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parents[0]
@@ -115,40 +112,7 @@ def _write_bundle_checksums(*, output_dir: Path, checksums_path: Path) -> None:
     checksums_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
-def _windows_installer_sha_from_checksums(checksums_path: Path | None) -> str | None:
-    if checksums_path is None or not checksums_path.exists():
-        return None
-
-    for raw_line in checksums_path.read_text(encoding="utf-8").splitlines():
-        parts = raw_line.split()
-        if len(parts) == 2 and parts[1] == WINDOWS_NATIVE_ASSET:
-            digest = parts[0]
-            if re.fullmatch(r"[0-9a-fA-F]{64}", digest):
-                return digest.lower()
-            raise ValueError(f"Invalid SHA256 digest for {WINDOWS_NATIVE_ASSET}")
-    raise ValueError(f"Missing {WINDOWS_NATIVE_ASSET} entry in {checksums_path}")
-
-
-def _stamp_winget_installer_sha(*, winget_content: str, installer_sha256: str) -> str:
-    replacement = rf"\g<1>{installer_sha256}"
-    if re.search(r"(?m)^(\s*InstallerSha256:\s*)[0-9a-fA-F]{64}\s*$", winget_content):
-        return re.sub(
-            r"(?m)^(\s*InstallerSha256:\s*)[0-9a-fA-F]{64}\s*$",
-            replacement,
-            winget_content,
-            count=1,
-        )
-    return re.sub(
-        r"(?m)^(\s*InstallerUrl:\s*https://github\.com/oimiragieo/tensor-grep/releases/download/v[^/]+/tg-windows-amd64-cpu\.exe\s*)$",
-        lambda match: f"{match.group(1)}\n    InstallerSha256: {installer_sha256}",
-        winget_content,
-        count=1,
-    )
-
-
-def prepare_bundle(
-    *, output_dir: Path, check_only: bool, release_checksums: Path | None = None
-) -> int:
+def prepare_bundle(*, output_dir: Path, check_only: bool) -> int:
     version = _version_from_pyproject()
     errors = _validate_sources(version)
     if errors:
@@ -160,31 +124,34 @@ def prepare_bundle(
         print(f"Package manager sources validated for v{version}.")
         return 0
 
-    try:
-        windows_installer_sha = _windows_installer_sha_from_checksums(release_checksums)
-    except ValueError as exc:
-        print(f"ERROR: {exc}")
-        return 1
-
     brew_src = ROOT / "scripts" / "tensor-grep.rb"
-    winget_src = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
+    winget_src_dir = (
+        ROOT
+        / "scripts"
+        / "winget-pkgs"
+        / "manifests"
+        / "o"
+        / "oimiragieo"
+        / "tensor-grep"
+        / version
+    )
     brew_dest, winget_dest, summary, checksums = _bundle_paths(
         output_dir=output_dir, version=version
     )
+    winget_dest_dir = winget_dest.parent
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
 
     brew_dest.parent.mkdir(parents=True, exist_ok=True)
-    winget_dest.parent.mkdir(parents=True, exist_ok=True)
+    winget_dest_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(brew_src, brew_dest)
-    winget_content = _read(winget_src)
-    if windows_installer_sha is not None:
-        winget_content = _stamp_winget_installer_sha(
-            winget_content=winget_content,
-            installer_sha256=windows_installer_sha,
-        )
-    winget_dest.write_text(winget_content, encoding="utf-8")
+    if not winget_src_dir.is_dir():
+        print(f"ERROR: Missing winget manifest directory for v{version}: {winget_src_dir}")
+        return 1
+    for manifest_path in sorted(winget_src_dir.iterdir()):
+        if manifest_path.is_file():
+            shutil.copy2(manifest_path, winget_dest_dir / manifest_path.name)
     _write_summary(summary=summary, version=version)
     _write_bundle_checksums(output_dir=output_dir, checksums_path=checksums)
 
@@ -207,18 +174,8 @@ def main() -> int:
         action="store_true",
         help="Validate package-manager source manifests only",
     )
-    parser.add_argument(
-        "--release-checksums",
-        type=Path,
-        default=Path("artifacts") / "CHECKSUMS.txt",
-        help="Optional release CHECKSUMS.txt used to stamp winget InstallerSha256 in output bundles",
-    )
     args = parser.parse_args()
-    return prepare_bundle(
-        output_dir=args.output_dir,
-        check_only=args.check,
-        release_checksums=args.release_checksums,
-    )
+    return prepare_bundle(output_dir=args.output_dir, check_only=args.check)
 
 
 if __name__ == "__main__":
