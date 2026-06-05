@@ -196,42 +196,24 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $wingetCanValidate = $false
-          if (Get-Command winget -ErrorAction SilentlyContinue) {
-            $wingetHelp = winget --help
-            $wingetCanValidate = $wingetHelp -match "validate"
-          } else {
-            Write-Warning "winget is unavailable on this runner; using Python release asset validator fallback"
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "winget is required for Windows package-manager readiness"
           }
 
-          if ($wingetCanValidate) {
-            $wingetOutput = @(winget validate --manifest scripts\oimiragieo.tensor-grep.yaml 2>&1)
-            $wingetExitCode = $LASTEXITCODE
-            $wingetOutput | ForEach-Object { Write-Host $_ }
-            if ($wingetExitCode -ne 0) {
-              $wingetOutputText = ($wingetOutput | Out-String)
-              $wingetWarningLines = @($wingetOutput | ForEach-Object { "$_" } | Where-Object { $_ -match "Manifest Warning:" })
-              $knownSchemaHeaderWarning = (
-                $wingetOutputText -match "Manifest validation succeeded with warnings\." -and
-                $wingetWarningLines.Count -eq 1 -and
-                $wingetWarningLines[0] -match "The schema header URL does not match the expected pattern"
-              )
-              if ($knownSchemaHeaderWarning) {
-                Write-Warning "winget validate reported only the hosted-runner schema-header warning; verifying strict manifest contract with Python validator"
-                uv run python scripts/validate_release_assets.py
-                if ($LASTEXITCODE -ne 0) {
-                  throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
-                }
-              } else {
-                throw "winget validate failed with exit code $wingetExitCode"
-              }
-            }
-          } else {
-            Write-Warning "winget validate is unavailable on this runner; using Python release asset validator fallback"
-            uv run python scripts/validate_release_assets.py
-            if ($LASTEXITCODE -ne 0) {
-              throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
-            }
+          $versionMatch = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"(?<version>[^"]+)"'
+          if (-not $versionMatch) {
+            throw "Unable to resolve project version from pyproject.toml"
+          }
+          $version = $versionMatch.Matches[0].Groups['version'].Value
+          $manifestPath = "scripts\winget-pkgs\manifests\o\oimiragieo\tensor-grep\$version"
+          if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "Winget manifest directory not found: $manifestPath"
+          }
+          $wingetOutput = @(winget validate --manifest $manifestPath 2>&1)
+          $wingetExitCode = $LASTEXITCODE
+          $wingetOutput | ForEach-Object { Write-Host $_ }
+          if ($wingetExitCode -ne 0) {
+            throw "winget validate failed with exit code $wingetExitCode for $manifestPath"
           }
 
       - name: Validate package-manager publish bundle source state

@@ -5,7 +5,11 @@ import hashlib
 import importlib.util
 import re
 import shutil
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 from pathlib import Path
 
 WINDOWS_NATIVE_ASSET = "tg-windows-amd64-cpu.exe"
@@ -33,14 +37,29 @@ def _version_from_pyproject() -> str:
     return str(data["project"]["version"])
 
 
+def _winget_source_manifest_content(*, version: str) -> str:
+    installer_path = (
+        ROOT
+        / "scripts"
+        / "winget-pkgs"
+        / "manifests"
+        / "o"
+        / "oimiragieo"
+        / "tensor-grep"
+        / version
+        / "oimiragieo.tensor-grep.installer.yaml"
+    )
+    if installer_path.is_file():
+        return _read(installer_path)
+    return _read(ROOT / "scripts" / "oimiragieo.tensor-grep.yaml")
+
+
 def _validate_sources(version: str) -> list[str]:
     validators = _load_release_assets_module()
     errors: list[str] = []
     brew_path = ROOT / "scripts" / "tensor-grep.rb"
-    winget_path = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
-
     brew = _read(brew_path)
-    winget = _read(winget_path)
+    winget = _winget_source_manifest_content(version=version)
 
     errors.extend(
         validators.validate_homebrew_formula_contract(brew_content=brew, py_version=version)
@@ -168,6 +187,16 @@ def prepare_bundle(
 
     brew_src = ROOT / "scripts" / "tensor-grep.rb"
     winget_src = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
+    winget_src_dir = (
+        ROOT
+        / "scripts"
+        / "winget-pkgs"
+        / "manifests"
+        / "o"
+        / "oimiragieo"
+        / "tensor-grep"
+        / version
+    )
     brew_dest, winget_dest, summary, checksums = _bundle_paths(
         output_dir=output_dir, version=version
     )
@@ -178,13 +207,18 @@ def prepare_bundle(
     brew_dest.parent.mkdir(parents=True, exist_ok=True)
     winget_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(brew_src, brew_dest)
-    winget_content = _read(winget_src)
-    if windows_installer_sha is not None:
-        winget_content = _stamp_winget_installer_sha(
-            winget_content=winget_content,
-            installer_sha256=windows_installer_sha,
-        )
-    winget_dest.write_text(winget_content, encoding="utf-8")
+    if winget_src_dir.is_dir():
+        for manifest_path in sorted(winget_src_dir.iterdir()):
+            if manifest_path.is_file():
+                shutil.copy2(manifest_path, winget_dest.parent / manifest_path.name)
+    else:
+        winget_content = _read(winget_src)
+        if windows_installer_sha is not None:
+            winget_content = _stamp_winget_installer_sha(
+                winget_content=winget_content,
+                installer_sha256=windows_installer_sha,
+            )
+        winget_dest.write_text(winget_content, encoding="utf-8")
     _write_summary(summary=summary, version=version)
     _write_bundle_checksums(output_dir=output_dir, checksums_path=checksums)
 

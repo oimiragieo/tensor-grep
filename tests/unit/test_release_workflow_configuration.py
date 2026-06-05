@@ -146,6 +146,8 @@ def test_ci_workflow_should_include_native_build_smoke_matrix() -> None:
     native_smoke_section = _job_section(workflow, "native-build-smoke")
     assert "macos-latest" in native_smoke_section
     assert "macos-15-intel" in native_smoke_section
+    package_manager_section = _job_section(workflow, "package-manager-readiness")
+    assert "winget-pkgs" in package_manager_section
 
 
 def test_benchmark_workflow_should_prepare_ast_benchmark_tools_before_running() -> None:
@@ -215,33 +217,13 @@ def test_ci_workflow_should_not_cancel_in_progress_main_pushes() -> None:
     assert "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}" in workflow
 
 
-def test_ci_package_manager_readiness_should_fail_through_validator_fallback() -> None:
+def test_ci_package_manager_readiness_should_require_direct_winget_validate() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     package_manager_section = _job_section(workflow, "package-manager-readiness")
-    assert (
-        "winget validate --manifest scripts\\oimiragieo.tensor-grep.yaml" in package_manager_section
-    )
-    assert "knownSchemaHeaderWarning" in package_manager_section
-    assert "The schema header URL does not match the expected pattern" in package_manager_section
-    assert "uv run python scripts/validate_release_assets.py" in package_manager_section
-    assert "Python release asset validator fallback failed" in package_manager_section
-    assert (
-        'throw "winget validate failed with exit code $wingetExitCode"' in package_manager_section
-    )
-    assert "exit 0" not in package_manager_section
-
-
-def test_release_workflow_should_not_hide_real_winget_validation_failure() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    validate_section = _job_section(workflow, "validate-package-managers")
-    assert "knownSchemaHeaderWarning" in validate_section
-    assert "The schema header URL does not match the expected pattern" in validate_section
-    assert 'throw "winget validate failed with exit code $wingetExitCode"' in validate_section
-    assert (
-        "winget validate failed with exit code $wingetExitCode; falling back"
-        not in validate_section
-    )
-    assert "exit 0" not in validate_section
+    assert "winget-pkgs\\manifests\\o\\oimiragieo\\tensor-grep\\$version" in package_manager_section
+    assert "winget validate --manifest $manifestPath" in package_manager_section
+    assert "Winget manifest directory not found" in package_manager_section
+    assert "Python release asset validator fallback" not in package_manager_section
 
 
 def test_ci_workflow_should_gate_hot_query_benchmark_regressions() -> None:

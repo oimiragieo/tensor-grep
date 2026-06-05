@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -59,7 +63,8 @@ def smoke_test_package_manager_bundle(*, bundle_dir: Path, expected_version: str
         return errors
 
     brew_content = _read(brew_path)
-    winget_content = _read(winget_path)
+    winget_installer_path = winget_path.parent / "oimiragieo.tensor-grep.installer.yaml"
+    winget_content = _read(winget_installer_path if winget_installer_path.exists() else winget_path)
     summary_content = _read(summary_path)
 
     errors.extend(
