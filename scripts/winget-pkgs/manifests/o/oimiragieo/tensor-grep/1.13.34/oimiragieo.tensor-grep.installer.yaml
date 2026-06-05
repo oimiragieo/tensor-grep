@@ -1,0 +1,13 @@
+PackageIdentifier: oimiragieo.tensor-grep
+PackageVersion: 1.13.34
+InstallerType: portable
+UpgradeBehavior: install
+Commands:
+  - tg
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.13.34/tg-windows-amd64-cpu.exe
+    InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589
+    Scope: user
+ManifestType: installer
+ManifestVersion: 1.6.0

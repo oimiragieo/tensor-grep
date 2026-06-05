@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +64,23 @@ def _version_from_npm() -> str:
     return str(data["version"])
 
 
+def _winget_installer_manifest_content(*, py_version: str) -> str:
+    installer_path = (
+        ROOT
+        / "scripts"
+        / "winget-pkgs"
+        / "manifests"
+        / "o"
+        / "oimiragieo"
+        / "tensor-grep"
+        / py_version
+        / "oimiragieo.tensor-grep.installer.yaml"
+    )
+    if installer_path.is_file():
+        return _read(installer_path)
+    return _read(ROOT / "scripts" / "oimiragieo.tensor-grep.yaml")
+
+
 def _version_from_uv_lock() -> str:
     data = tomllib.loads(_read(ROOT / "uv.lock"))
     packages = data.get("package", [])
@@ -80,43 +101,57 @@ def _version_from_uv_lock() -> str:
 
 def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[str]:
     errors: list[str] = []
-    if not winget_content.startswith(f"{WINGET_SINGLETON_SCHEMA_HEADER}\n"):
-        errors.append("Winget manifest must start with the singleton 1.12.0 schema header")
-    if f"PackageVersion: {py_version}" not in winget_content:
-        errors.append("Winget manifest PackageVersion does not match pyproject version")
-    expected_windows_url = (
-        f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/"
-        "tg-windows-amd64-cpu.exe"
-    )
-    if expected_windows_url not in winget_content:
-        errors.append("Winget manifest InstallerUrl does not match expected release artifact URL")
     if "PLACEHOLDER" in winget_content:
         errors.append("Winget manifest contains unresolved PLACEHOLDER text")
     try:
         parsed_winget = yaml.safe_load(winget_content) or {}
     except yaml.YAMLError as exc:
         errors.append(f"Winget manifest is not valid YAML: {exc}")
-        parsed_winget = {}
+        return errors
     if not isinstance(parsed_winget, dict):
         errors.append("Winget manifest must deserialize to a mapping")
         return errors
 
-    expected_top_level = {
-        "PackageIdentifier": "oimiragieo.tensor-grep",
-        "PackageLocale": "en-US",
-        "PackageName": "tensor-grep",
-        "Publisher": "oimiragieo",
-        "License": "MIT",
-        "ManifestType": "singleton",
-        "ManifestVersion": "1.12.0",
-    }
-    for field_name, expected_value in expected_top_level.items():
-        if parsed_winget.get(field_name) != expected_value:
-            errors.append(f"Winget manifest {field_name} must be {expected_value!r}")
+    package_version = parsed_winget.get("PackageVersion")
+    if str(package_version) != py_version:
+        errors.append("Winget manifest PackageVersion does not match pyproject version")
 
-    for field_name in ("ShortDescription",):
-        if not parsed_winget.get(field_name):
-            errors.append(f"Winget manifest must define non-empty {field_name}")
+    expected_windows_url = (
+        f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/"
+        "tg-windows-amd64-cpu.exe"
+    )
+    if expected_windows_url not in winget_content:
+        errors.append("Winget manifest InstallerUrl does not match expected release artifact URL")
+
+    manifest_type = parsed_winget.get("ManifestType")
+    is_singleton = manifest_type == "singleton" or winget_content.startswith(
+        f"{WINGET_SINGLETON_SCHEMA_HEADER}\n"
+    )
+    if is_singleton:
+        if not winget_content.startswith(f"{WINGET_SINGLETON_SCHEMA_HEADER}\n"):
+            errors.append("Winget manifest must start with the singleton 1.12.0 schema header")
+
+        expected_top_level = {
+            "PackageIdentifier": "oimiragieo.tensor-grep",
+            "PackageLocale": "en-US",
+            "PackageName": "tensor-grep",
+            "Publisher": "oimiragieo",
+            "License": "MIT",
+            "ManifestType": "singleton",
+            "ManifestVersion": "1.12.0",
+        }
+        for field_name, expected_value in expected_top_level.items():
+            if parsed_winget.get(field_name) != expected_value:
+                errors.append(f"Winget manifest {field_name} must be {expected_value!r}")
+
+        for field_name in ("ShortDescription",):
+            if not parsed_winget.get(field_name):
+                errors.append(f"Winget manifest must define non-empty {field_name}")
+    elif manifest_type == "installer":
+        if parsed_winget.get("PackageIdentifier") != "oimiragieo.tensor-grep":
+            errors.append("Winget manifest PackageIdentifier must be 'oimiragieo.tensor-grep'")
+        if parsed_winget.get("ManifestVersion") != "1.6.0":
+            errors.append("Winget manifest ManifestVersion must be '1.6.0'")
 
     installers = parsed_winget.get("Installers")
     if not isinstance(installers, list) or not installers:
@@ -132,21 +167,10 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
     if installer_url != expected_windows_url:
         errors.append("Winget manifest InstallerUrl must be nested under first installer mapping")
     installer_sha256 = first.get("InstallerSha256")
-<<<<<<< HEAD
     if not isinstance(installer_sha256, str) or not re.fullmatch(
         r"[0-9a-fA-F]{64}", installer_sha256
     ):
         errors.append("Winget manifest first installer must define 64-hex InstallerSha256")
-=======
-    if not isinstance(installer_sha256, str) or len(installer_sha256) != 64:
-<<<<<<< HEAD
-        errors.append("Winget manifest must include a 64-character InstallerSha256 for the first installer")
->>>>>>> 0ff564d (fix: require winget InstallerSha256 for CI validation)
-=======
-        errors.append(
-            "Winget manifest must include a 64-character InstallerSha256 for the first installer"
-        )
->>>>>>> 912a88e (chore: apply ruff preview formatting to release asset validator)
     return errors
 
 
@@ -3412,8 +3436,7 @@ def validate_all() -> list[str]:
             f"{expected_npm_repo_url}, got {npm_repository_url or '<empty>'}"
         )
 
-    winget_path = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
-    winget = _read(winget_path)
+    winget = _winget_installer_manifest_content(py_version=py_version)
     errors.extend(validate_winget_manifest(winget_content=winget, py_version=py_version))
 
     brew = _read(ROOT / "scripts" / "tensor-grep.rb")

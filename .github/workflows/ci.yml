@@ -196,51 +196,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-<<<<<<< HEAD
-          $wingetCanValidate = $false
-          if (Get-Command winget -ErrorAction SilentlyContinue) {
-            $wingetHelp = winget --help
-            $wingetCanValidate = $wingetHelp -match "validate"
-          } else {
-            Write-Warning "winget is unavailable on this runner; using Python release asset validator fallback"
-          }
-
-          if ($wingetCanValidate) {
-            $wingetOutput = @(winget validate --manifest scripts\oimiragieo.tensor-grep.yaml 2>&1)
-            $wingetExitCode = $LASTEXITCODE
-            $wingetOutput | ForEach-Object { Write-Host $_ }
-            if ($wingetExitCode -ne 0) {
-              $wingetOutputText = ($wingetOutput | Out-String)
-              $wingetWarningLines = @($wingetOutput | ForEach-Object { "$_" } | Where-Object { $_ -match "Manifest Warning:" })
-              $knownSchemaHeaderWarning = (
-                $wingetOutputText -match "Manifest validation succeeded with warnings\." -and
-                $wingetWarningLines.Count -eq 1 -and
-                $wingetWarningLines[0] -match "The schema header URL does not match the expected pattern"
-              )
-              if ($knownSchemaHeaderWarning) {
-                Write-Warning "winget validate reported only the hosted-runner schema-header warning; verifying strict manifest contract with Python validator"
-                uv run python scripts/validate_release_assets.py
-                if ($LASTEXITCODE -ne 0) {
-                  throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
-                }
-              } else {
-                throw "winget validate failed with exit code $wingetExitCode"
-              }
-            }
-          } else {
-            Write-Warning "winget validate is unavailable on this runner; using Python release asset validator fallback"
-            uv run python scripts/validate_release_assets.py
-            if ($LASTEXITCODE -ne 0) {
-              throw "Python release asset validator fallback failed with exit code $LASTEXITCODE"
-            }
-=======
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             throw "winget is required for Windows package-manager readiness"
-          }
-
-          $wingetHelp = winget --help
-          if ($wingetHelp -notmatch "validate") {
-            throw "winget validate is required for Windows package-manager readiness"
           }
 
           $versionMatch = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"(?<version>[^"]+)"'
@@ -252,14 +209,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $manifestPath)) {
             throw "Winget manifest directory not found: $manifestPath"
           }
-          winget validate --manifest $manifestPath
-          if ($LASTEXITCODE -ne 0) {
-<<<<<<< HEAD
-            throw "winget validate failed with exit code $LASTEXITCODE"
->>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
-=======
-            throw "winget validate failed with exit code $LASTEXITCODE for $manifestPath"
->>>>>>> 6013c48 (fix: harden winget validate path resolution on Windows CI)
+          $wingetOutput = @(winget validate --manifest $manifestPath 2>&1)
+          $wingetExitCode = $LASTEXITCODE
+          $wingetOutput | ForEach-Object { Write-Host $_ }
+          if ($wingetExitCode -ne 0) {
+            throw "winget validate failed with exit code $wingetExitCode for $manifestPath"
           }
 
       - name: Validate package-manager publish bundle source state
@@ -737,13 +691,9 @@ jobs:
           mkdir -p base-revision/artifacts
           (
             cd base-revision
-<<<<<<< HEAD
             TENSOR_GREP_AGENT_WORKFLOW_BENCH_DIR="$PWD/artifacts/bench_agent_workflow" \
             uv run python ../benchmarks/run_agent_workflow_benchmarks.py \
               --binary rust_core/target/release/tg \
-=======
-            uv run python benchmarks/run_agent_workflow_benchmarks.py \
->>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
               --iterations 1 \
               --files 50 \
               --loc 2500 \
