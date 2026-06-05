@@ -139,8 +139,14 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
         errors.append("Winget manifest first installer must define 64-hex InstallerSha256")
 =======
     if not isinstance(installer_sha256, str) or len(installer_sha256) != 64:
+<<<<<<< HEAD
         errors.append("Winget manifest must include a 64-character InstallerSha256 for the first installer")
 >>>>>>> 0ff564d (fix: require winget InstallerSha256 for CI validation)
+=======
+        errors.append(
+            "Winget manifest must include a 64-character InstallerSha256 for the first installer"
+        )
+>>>>>>> 912a88e (chore: apply ruff preview formatting to release asset validator)
     return errors
 
 
