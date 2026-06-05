@@ -6,5 +6,5 @@ PackageName: tensor-grep
 License: MIT
 ShortDescription: Fast native code-search CLI with optional GPU and agent context workflows
 Moniker: tg
-ManifestType: locale
+ManifestType: defaultLocale
 ManifestVersion: 1.6.0
