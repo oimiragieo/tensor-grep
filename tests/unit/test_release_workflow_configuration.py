@@ -217,38 +217,17 @@ def test_ci_workflow_should_not_cancel_in_progress_main_pushes() -> None:
     assert "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}" in workflow
 
 
-<<<<<<< HEAD
-def test_ci_package_manager_readiness_should_fail_through_validator_fallback() -> None:
+def test_ci_package_manager_readiness_should_require_direct_winget_validate() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     package_manager_section = _job_section(workflow, "package-manager-readiness")
     assert (
-        "winget validate --manifest scripts\\oimiragieo.tensor-grep.yaml" in package_manager_section
+        "winget-pkgs\\manifests\\o\\oimiragieo\\tensor-grep\\$version" in package_manager_section
     )
-    assert "knownSchemaHeaderWarning" in package_manager_section
-    assert "The schema header URL does not match the expected pattern" in package_manager_section
-    assert "uv run python scripts/validate_release_assets.py" in package_manager_section
-    assert "Python release asset validator fallback failed" in package_manager_section
-    assert (
-        'throw "winget validate failed with exit code $wingetExitCode"' in package_manager_section
-    )
-    assert "exit 0" not in package_manager_section
+    assert "winget validate --manifest $manifestPath" in package_manager_section
+    assert "Winget manifest directory not found" in package_manager_section
+    assert "Python release asset validator fallback" not in package_manager_section
 
 
-def test_release_workflow_should_not_hide_real_winget_validation_failure() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    validate_section = _job_section(workflow, "validate-package-managers")
-    assert "knownSchemaHeaderWarning" in validate_section
-    assert "The schema header URL does not match the expected pattern" in validate_section
-    assert 'throw "winget validate failed with exit code $wingetExitCode"' in validate_section
-    assert (
-        "winget validate failed with exit code $wingetExitCode; falling back"
-        not in validate_section
-    )
-    assert "exit 0" not in validate_section
-
-
-=======
->>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
 def test_ci_workflow_should_gate_hot_query_benchmark_regressions() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     benchmark_section = _job_section(workflow, "benchmark-regression")
@@ -264,12 +243,9 @@ def test_ci_workflow_should_gate_agent_workflow_benchmark_regressions() -> None:
     assert "Enforce agent workflow benchmark regression gate" in benchmark_section
     assert "bench_agent_workflow.head.json" in benchmark_section
     assert "bench_agent_success_harness.head.json" in benchmark_section
-<<<<<<< HEAD
     assert "TENSOR_GREP_AGENT_WORKFLOW_BENCH_DIR" in benchmark_section
     assert "uv run python ../benchmarks/run_agent_workflow_benchmarks.py" in benchmark_section
     assert "--binary rust_core/target/release/tg" in benchmark_section
-=======
->>>>>>> fbeb40a (fix: harden audit remediation CI and session daemon contracts)
     assert "--iterations 1" in benchmark_section
     assert "--files 50" in benchmark_section
     assert "--loc 2500" in benchmark_section

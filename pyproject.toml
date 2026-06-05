@@ -17,10 +17,6 @@ cache-keys = [
 ]
 constraint-dependencies = [
     "aiohttp>=3.14.0",
-<<<<<<< HEAD
-=======
-    "pyjwt>=2.13.0",
->>>>>>> fc10f1b (fix: unblock package-manager and dependency audit CI gates)
     "cryptography>=46.0.7",
     "pyjwt>=2.13.0",
     "pygments>=2.20.0",

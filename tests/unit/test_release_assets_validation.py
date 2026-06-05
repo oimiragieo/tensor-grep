@@ -421,14 +421,10 @@ def test_should_validate_winget_manifest_structure():
         "    InstallerType: portable\n"
         "    InstallerUrl: "
         "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
-<<<<<<< HEAD
         "    InstallerSha256: "
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
         "ManifestType: singleton\n"
         "ManifestVersion: 1.12.0\n"
-=======
-        "    InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589\n"
->>>>>>> 0ff564d (fix: require winget InstallerSha256 for CI validation)
     )
     errors = module.validate_winget_manifest(winget_content=winget, py_version="1.2.3")
     assert errors == []

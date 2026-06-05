@@ -3,26 +3,16 @@
 # Submit this to the microsoft/winget-pkgs repository
 
 PackageIdentifier: oimiragieo.tensor-grep
-<<<<<<< HEAD
 PackageVersion: 1.13.34
 PackageLocale: en-US
 PackageName: tensor-grep
-=======
-PackageVersion: 1.13.33
-PackageLocale: en-US
->>>>>>> fc10f1b (fix: unblock package-manager and dependency audit CI gates)
 Publisher: oimiragieo
-PackageName: tensor-grep
 License: MIT
-ShortDescription: Fast native code-search CLI with optional GPU and agent context workflows
+ShortDescription: GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT
 Moniker: tg
-InstallerType: portable
-UpgradeBehavior: install
-Commands:
-  - tg
+
 Installers:
   - Architecture: x64
-<<<<<<< HEAD
     InstallerType: portable
     InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.13.34/tg-windows-amd64-cpu.exe
     InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589
@@ -31,10 +21,3 @@ Installers:
 
 ManifestType: singleton
 ManifestVersion: 1.12.0
-=======
-    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.13.33/tg-windows-amd64-cpu.exe
-    InstallerSha256: 2D9CD666A2140162CF640B385DCFC97A96DEFE93D1665C929229D185793C1589
-    Scope: user
-ManifestType: singleton
-ManifestVersion: 1.7.0
->>>>>>> fc10f1b (fix: unblock package-manager and dependency audit CI gates)
