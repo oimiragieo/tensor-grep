@@ -23,6 +23,12 @@ const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
 const WINDOWS_EXE_BRIDGE_MARKER: &str = "tg.exe.tensor-grep-bridge";
 const WINDOWS_EXE_BRIDGE_MARKER_CONTENT: &str = "tensor-grep managed tg.exe bridge";
 
+// audit I4: cap captured child output to prevent a runaway child process from
+// OOM-ing the parent. Sidecar responses are JSON blobs; passthrough captures are
+// only used for the short --help probe. 64 MiB is a generous upper bound for
+// either use-case; anything larger is treated as a protocol error.
+const MAX_CAPTURED_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SidecarRequest {
     pub command: String,
@@ -272,6 +278,18 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         }
     }
 
+    // audit I8: place the sidecar child in its own process group on Unix so
+    // that terminate_sidecar_process can kill descendants via killpg.
+    #[cfg(unix)]
+    unsafe {
+        child.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
     child
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -445,14 +463,54 @@ fn wait_for_passthrough_or_kill(
     }
 }
 
+// audit I8: use a tree-kill to ensure the entire descendant process group is
+// reaped on timeout, matching the strategy already used by
+// terminate_passthrough_process.  The sidecar may spawn sub-processes (e.g.
+// GPU workers) that would otherwise become orphans.
 fn terminate_sidecar_process(child: &mut Child) -> Result<(), SidecarError> {
-    if let Err(err) = child.kill() {
-        if err.kind() != io::ErrorKind::InvalidInput {
-            return Err(SidecarError {
-                exit_code: 1,
-                message: format!("Failed to terminate timed-out Python sidecar: {err}"),
-                stderr: String::new(),
-            });
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(_) | Err(_) => {
+                if let Err(err) = child.kill() {
+                    if err.kind() != io::ErrorKind::InvalidInput {
+                        return Err(SidecarError {
+                            exit_code: 1,
+                            message: format!(
+                                "Failed to terminate timed-out Python sidecar tree: {err}"
+                            ),
+                            stderr: String::new(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let pid = child.id() as i32;
+        let kill_status = unsafe { libc::killpg(pid, libc::SIGKILL) };
+        if kill_status != 0 {
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ESRCH) && err.kind() != io::ErrorKind::InvalidInput
+            {
+                return Err(SidecarError {
+                    exit_code: 1,
+                    message: format!(
+                        "Failed to terminate timed-out Python sidecar process group: {err}"
+                    ),
+                    stderr: String::new(),
+                });
+            }
         }
     }
 
@@ -521,13 +579,26 @@ fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> 
     Ok(())
 }
 
+// audit I4: read at most MAX_CAPTURED_OUTPUT_BYTES from the child stream.
+// If the child produces more, return an io::Error so callers surface a clear
+// truncation error rather than silently growing without bound.
 fn read_all_thread<R>(mut reader: R) -> thread::JoinHandle<io::Result<Vec<u8>>>
 where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
+        // Read up to the cap + 1 so we can detect whether the limit was hit.
+        let n = reader
+            .by_ref()
+            .take(MAX_CAPTURED_OUTPUT_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if n as u64 > MAX_CAPTURED_OUTPUT_BYTES {
+            return Err(io::Error::other(format!(
+                "child process output exceeded the {} MiB capture limit",
+                MAX_CAPTURED_OUTPUT_BYTES / (1024 * 1024)
+            )));
+        }
         Ok(bytes)
     })
 }
@@ -875,14 +946,16 @@ mod tests {
     use super::{
         gpu_device_ids_env_value, managed_install_native_binary_from_home,
         managed_install_python_from_home, merged_pythonpath, native_tg_binary_env_override,
-        native_tg_binary_env_override_for_context, resolve_python_command_for_context,
-        resolve_repo_source_root_relative_to_exe, SidecarRequest, WINDOWS_EXE_BRIDGE_MARKER,
+        native_tg_binary_env_override_for_context, read_all_thread,
+        resolve_python_command_for_context, resolve_repo_source_root_relative_to_exe,
+        SidecarRequest, MAX_CAPTURED_OUTPUT_BYTES, WINDOWS_EXE_BRIDGE_MARKER,
         WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
     };
     use serde_json::json;
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::fs;
+    use std::io::Cursor;
     use std::path::Path;
     use tempfile::tempdir;
 
@@ -1125,5 +1198,59 @@ mod tests {
                 .as_deref(),
             Some(local_exe.as_os_str())
         );
+    }
+
+    // --- audit I4: output capture cap tests ---
+
+    /// Exact-limit data (one byte under cap + 1) must succeed.
+    #[test]
+    fn read_all_thread_accepts_output_at_or_below_cap() {
+        let data = vec![0u8; MAX_CAPTURED_OUTPUT_BYTES as usize];
+        let cursor = Cursor::new(data.clone());
+        let handle = read_all_thread(cursor);
+        let result = handle.join().expect("thread should not panic");
+        assert!(result.is_ok(), "output at cap should succeed");
+        assert_eq!(result.unwrap().len(), data.len());
+    }
+
+    /// Output one byte over the cap must return an error.
+    #[test]
+    fn read_all_thread_rejects_output_exceeding_cap() {
+        // Use a tiny synthetic cap by feeding cap+1 bytes via a Cursor.
+        // We test the exact edge using the real constant but with a small
+        // slice that exceeds it by one byte — we fake exceeding MAX by
+        // wrapping a reader that reports exactly cap+1 bytes.
+        let over_cap = vec![0u8; MAX_CAPTURED_OUTPUT_BYTES as usize + 1];
+        let cursor = Cursor::new(over_cap);
+        let handle = read_all_thread(cursor);
+        let result = handle.join().expect("thread should not panic");
+        assert!(
+            result.is_err(),
+            "output exceeding cap should return an error"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("capture limit"),
+            "error message should mention capture limit, got: {err}"
+        );
+    }
+
+    /// Small output well under the cap must pass through unchanged.
+    #[test]
+    fn read_all_thread_passes_through_small_output() {
+        let payload = b"hello sidecar\n".to_vec();
+        let cursor = Cursor::new(payload.clone());
+        let handle = read_all_thread(cursor);
+        let result = handle.join().expect("thread should not panic").unwrap();
+        assert_eq!(result, payload);
+    }
+
+    /// Empty output must succeed and return an empty vec.
+    #[test]
+    fn read_all_thread_handles_empty_output() {
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let handle = read_all_thread(cursor);
+        let result = handle.join().expect("thread should not panic").unwrap();
+        assert!(result.is_empty());
     }
 }

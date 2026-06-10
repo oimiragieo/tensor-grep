@@ -166,7 +166,8 @@ class TestFormatters:
 
         fmt = RipgrepFormatter(config=SearchConfig())
 
-        assert fmt.format(result) == 'binary file matches (found "/0" byte around offset 16)'
+        # audit B19: ripgrep prints the NUL escape as "\0", not "/0".
+        assert fmt.format(result) == 'binary file matches (found "\\0" byte around offset 16)'
 
     def test_binary_notice_sentinel_formats_clean_text_and_json(self):
         result = SearchResult(

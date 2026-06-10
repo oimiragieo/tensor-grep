@@ -24,6 +24,7 @@ if sys.platform.startswith("win") and not sys.stdout.isatty():
 import typer
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.lsp_provider_setup import (
@@ -47,6 +48,7 @@ from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
@@ -3057,6 +3059,10 @@ def _build_native_tg_search_command(
     if ndjson:
         command.append("--ndjson")
 
+    # The native binary's `search` positionals use clap allow_hyphen_values, so it
+    # already accepts dash-leading patterns/paths without an -e/-- shim; the end-of-
+    # options hardening (audit B4/#8) is applied to the external ripgrep builder, which
+    # needs it. Keep the native delegation argv stable for the parity contract.
     command.extend([pattern, *paths])
     return command
 
@@ -3168,6 +3174,28 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     ):
         return True
     return exc.__class__.__name__ == "InvalidRegexError"
+
+
+def _search_with_cpu_fallback(
+    current_file: str,
+    pattern: str,
+    config: "SearchConfig",
+    exc: Exception,
+) -> "SearchResult":
+    """Retry a failed native-backend search on the always-available CPU backend.
+
+    A runtime backend failure (native panic, IO/encoding error, version skew, GPU/OOM
+    fault) must never surface to the user as a clean no-match. The CPU backend is pure
+    Python and always available, so it is the safe last-resort engine; the override is
+    announced on stderr so it is observable rather than silent (audit B2/I1).
+    """
+    from tensor_grep.backends.cpu_backend import CPUBackend
+
+    sys.stderr.write(
+        f"tensor-grep: search backend failed on {current_file} ({exc}); "
+        "retried on the CPU backend.\n"
+    )
+    return CPUBackend().search(current_file, pattern, config=config)
 
 
 def _search_error_payload(error: str, detail: str) -> dict[str, object]:
@@ -5833,6 +5861,11 @@ def search_command(
                     span.set_attribute("path", current_file)
                 try:
                     result = backend.search(current_file, pattern, config=config)
+                except BackendExecutionError as exc:
+                    # A native backend failed at runtime; retry once on the always-
+                    # available CPU backend so the search returns correct results instead
+                    # of a false no-match or a crash (audit B2/I1).
+                    result = _search_with_cpu_fallback(current_file, pattern, config, exc)
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
                         _exit_invalid_regex(exc, json_mode=json)

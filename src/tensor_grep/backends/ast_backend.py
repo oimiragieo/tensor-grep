@@ -395,14 +395,15 @@ class AstBackend(ComputeBackend):
             logger.debug("Failed to write AST persistent cache for %s", file_path, exc_info=True)
 
     def _build_node_type_index(self, root_node: Any) -> dict[str, list[int]]:
+        # audit B3: convert recursive DFS to explicit stack to avoid RecursionError on
+        # deeply-nested ASTs (e.g. long chained expressions or auto-generated code).
         node_type_index: dict[str, set[int]] = {}
-
-        def traverse(node: Any) -> None:
+        stack = [root_node]
+        while stack:
+            node = stack.pop()
             node_type_index.setdefault(node.type, set()).add(node.start_point[0] + 1)
-            for child in node.children:
-                traverse(child)
-
-        traverse(root_node)
+            # Push children in reverse order so leftmost child is processed first.
+            stack.extend(reversed(node.children))
         return {
             node_type: sorted(line_numbers) for node_type, line_numbers in node_type_index.items()
         }
@@ -606,9 +607,14 @@ class AstBackend(ComputeBackend):
         features: list[list[float]] = []
         line_numbers = []
 
-        node_type_map = {}  # In a real model, this would be a loaded embedding dictionary
+        # In a real model, this would be a loaded embedding dictionary
+        node_type_map: dict[str, float] = {}
 
-        def traverse(node: "Any", parent_idx: int = -1) -> None:
+        # audit B3: convert recursive DFS to explicit stack to avoid RecursionError on
+        # deeply-nested ASTs.  Stack entries are (node, parent_idx).
+        stack: list[tuple[Any, int]] = [(root_node, -1)]
+        while stack:
+            node, parent_idx = stack.pop()
             current_idx = len(features)
 
             # Simple feature representation: Hash the node type string to a pseudo-embedding
@@ -624,10 +630,9 @@ class AstBackend(ComputeBackend):
                 edges.append([parent_idx, current_idx])
                 edges.append([current_idx, parent_idx])  # Bidirectional for GNNs
 
-            for child in node.children:
-                traverse(child, current_idx)
-
-        traverse(root_node)
+            # Push children in reverse order so leftmost child is processed first.
+            for child in reversed(node.children):
+                stack.append((child, current_idx))
 
         import torch
 

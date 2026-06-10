@@ -52,15 +52,25 @@ _GENERATED_CACHE_EXCLUDES = [
     "venv",
 ]
 
+# audit B12: sentinel used as "process closed" marker in per-id response slots.
+# Identity-checked (``is``), never equal to a real JSON-RPC response dict.
+_CLOSED_SENTINEL: dict[str, Any] = {}
+# Bound on buffered responses whose request slot is not yet registered (audit B12).
+_MAX_ORPHAN_RESPONSES = 64
+
 
 def _configured_timeout_seconds(env_var: str, default: float) -> float:
+    # audit B17: treat 0 and negative values as invalid -> use default rather
+    # than instantly-timing-out every request.  None (unbounded) is expressed
+    # by callers passing float("inf") explicitly; env vars cannot select that.
     raw_value = os.environ.get(env_var)
     if raw_value is None:
         return default
     try:
-        return max(float(raw_value), 0.0)
+        parsed = float(raw_value)
     except (TypeError, ValueError):
         return default
+    return parsed if parsed > 0.0 else default
 
 
 def _configured_positive_int(env_var: str, default: int) -> int:
@@ -308,6 +318,18 @@ class ExternalLSPClient:
         )
         self._opened_documents: OrderedDict[str, None] = OrderedDict()
         self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        # audit B12: per-request-id response slots for correct demultiplexing.
+        # Maps request_id -> Queue that receives exactly one response dict (or
+        # _CLOSED_SENTINEL on EOF).  Guarded by _lock.
+        self._pending_requests: dict[int, queue.Queue[dict[str, Any]]] = {}
+        # audit B12: responses whose slot is not yet registered (a pre-queued/early
+        # response that the reader dispatched before request() registered its slot).
+        # A bounded buffer so request() can still claim it; without this the demux
+        # would silently drop such responses where the old shared queue buffered them.
+        self._orphan_responses: dict[int, dict[str, Any]] = {}
+        # audit B15: monotonically-incrementing per-URI document version counter.
+        # Keyed by URI; never decremented.  Guarded by _lock.
+        self._doc_versions: dict[str, int] = {}
         self._reader_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._stderr_tail: list[str] = []
@@ -391,6 +413,8 @@ class ExternalLSPClient:
             detail={"command": list(self.command), "cwd": str(self.workspace_root)},
         )
         self._message_queue = queue.Queue()
+        self._pending_requests = {}
+        self._orphan_responses = {}
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
         self._stderr_tail = []
@@ -492,46 +516,49 @@ class ExternalLSPClient:
             if self._stderr_thread is stderr_thread:
                 self._stderr_thread = None
             self._message_queue = queue.Queue()
+            # audit B12: unblock any callers still waiting in request().
+            for slot in self._pending_requests.values():
+                slot.put_nowait(_CLOSED_SENTINEL)
+            self._pending_requests = {}
+            self._orphan_responses = {}
+            self._doc_versions = {}
 
     def _request_shutdown_for_stop(self) -> None:
+        # audit B12: use a per-id slot so the shutdown request cannot race with
+        # any concurrent request() calls that are still in flight.
         process = self.process
         if process is None or process.stdin is None:
             return
+        slot: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
         try:
             with self._lock:
                 self._request_id += 1
                 request_id = self._request_id
+                self._pending_requests[request_id] = slot
                 self._write_request(request_id, "shutdown", None)
+                buffered = self._orphan_responses.pop(request_id, None)
+            if buffered is not None:
+                try:
+                    slot.put_nowait(buffered)
+                except queue.Full:
+                    pass
         except Exception:
             return
-
         timeout_seconds = min(
             max(float(self.request_timeout_seconds), 0.0),
             _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
         )
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            remaining = max(0.0, deadline - time.monotonic())
-            try:
-                message = self._message_queue.get(timeout=remaining)
-            except queue.Empty:
-                return
-            if message is None:
-                return
-            if "id" not in message:
-                if remaining <= 0:
-                    return
-                continue
-            try:
-                message_id = int(message["id"])
-            except (TypeError, ValueError):
-                continue
-            if message_id == request_id:
-                return
-            if remaining <= 0:
-                return
+        try:
+            slot.get(timeout=timeout_seconds)
+        except queue.Empty:
+            pass
+        finally:
+            with self._lock:
+                self._pending_requests.pop(request_id, None)
 
     def request(self, method: str, params: dict[str, Any]) -> Any:
+        # audit B12: each in-flight request gets its own one-shot Queue so that
+        # concurrent calls cannot steal each other's responses.
         self.start()
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
             raise LSPTransportError("LSP process is not available")
@@ -540,15 +567,22 @@ class ExternalLSPClient:
             if method == "initialize"
             else self.request_timeout_seconds
         )
+        slot: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
         with self._lock:
             self._request_id += 1
             request_id = self._request_id
+            self._pending_requests[request_id] = slot
             self._write_request(request_id, method, params)
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            remaining = max(0.0, deadline - time.monotonic())
+            # Claim a response that the reader dispatched before this slot existed.
+            buffered = self._orphan_responses.pop(request_id, None)
+        if buffered is not None:
             try:
-                message = self._message_queue.get(timeout=remaining)
+                slot.put_nowait(buffered)
+            except queue.Full:
+                pass
+        try:
+            try:
+                message = slot.get(timeout=timeout_seconds)
             except queue.Empty as exc:
                 self.last_error = f"timeout waiting for LSP response: {method}"
                 self._record_debug_trace(
@@ -558,18 +592,14 @@ class ExternalLSPClient:
                     detail={"timeout_seconds": timeout_seconds},
                 )
                 raise LSPTransportError(self.last_error) from exc
-            if message is None:
+            if message is _CLOSED_SENTINEL:
                 self.last_error = f"LSP process closed during request: {method}"
                 self._record_debug_trace(
                     event="request_closed",
                     method=method,
                     request_id=request_id,
                 )
-                raise LSPTransportError(f"LSP process closed during request: {method}")
-            if "id" not in message:
-                continue
-            if int(message["id"]) != request_id:
-                continue
+                raise LSPTransportError(self.last_error)
             if "error" in message:
                 self.last_error = str(message["error"])
                 self._record_debug_trace(
@@ -587,6 +617,9 @@ class ExternalLSPClient:
                 detail={"result_type": type(message.get("result")).__name__},
             )
             return message.get("result")
+        finally:
+            with self._lock:
+                self._pending_requests.pop(request_id, None)
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.start()
@@ -604,6 +637,10 @@ class ExternalLSPClient:
             if len(self._opened_documents) >= self._max_open_documents
             else None
         )
+        # audit B15: record the initial version so did_change can monotonically
+        # increment from it.
+        with self._lock:
+            self._doc_versions[uri] = 1
         self.notify(
             "textDocument/didOpen",
             {
@@ -637,12 +674,18 @@ class ExternalLSPClient:
         self._notify_document_closed(uri)
 
     def did_change(self, *, uri: str, text: str, version: int = 1) -> None:
+        # audit B15: ignore the caller-supplied version (which can be non-monotonic
+        # when multiple editors send version=1) and use an internal counter instead.
         if uri not in self._opened_documents:
             return
+        with self._lock:
+            current_version = self._doc_versions.get(uri, 1)
+            next_version = max(current_version + 1, version + 1)
+            self._doc_versions[uri] = next_version
         self.notify(
             "textDocument/didChange",
             {
-                "textDocument": {"uri": uri, "version": version},
+                "textDocument": {"uri": uri, "version": next_version},
                 "contentChanges": [{"text": text}],
             },
         )
@@ -779,16 +822,17 @@ class ExternalLSPClient:
             return True
 
     def _reader_loop(self) -> None:
+        # audit B12: route each response to the per-id slot registered by request().
         process = self.process
         if process is None or process.stdout is None:
-            self._message_queue.put(None)
+            self._broadcast_closed()
             return
         try:
             while True:
                 message = _read_message(process.stdout)
                 if message is None:
                     self._record_debug_trace(event="process_stdout_closed")
-                    self._message_queue.put(None)
+                    self._broadcast_closed()
                     return
                 if self._handle_server_request(message):
                     continue
@@ -801,11 +845,47 @@ class ExternalLSPClient:
                         "has_error": "error" in message,
                     },
                 )
-                self._message_queue.put(message)
+                self._dispatch_response(message)
         except Exception as exc:
             self.last_error = str(exc)
             self._record_debug_trace(event="reader_error", detail={"message": str(exc)})
-            self._message_queue.put(None)
+            self._broadcast_closed()
+
+    def _dispatch_response(self, message: dict[str, Any]) -> None:
+        """Route a response message to the correct per-id slot (audit B12)."""
+        raw_id = message.get("id")
+        if raw_id is None:
+            # Notification from server with no id — drop (already handled upstream).
+            return
+        try:
+            request_id = int(raw_id)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            slot = self._pending_requests.get(request_id)
+            if slot is None:
+                # The response arrived before request() registered its slot (e.g. a
+                # pre-queued response). Buffer it so request() can claim it on
+                # registration; bound the buffer so late/duplicate responses for
+                # ids that will never be requested cannot leak.
+                self._orphan_responses[request_id] = message
+                while len(self._orphan_responses) > _MAX_ORPHAN_RESPONSES:
+                    self._orphan_responses.pop(next(iter(self._orphan_responses)))
+                return
+        try:
+            slot.put_nowait(message)
+        except queue.Full:
+            pass  # duplicate response; ignore
+
+    def _broadcast_closed(self) -> None:
+        """Signal all pending request slots that the process has closed (audit B12)."""
+        with self._lock:
+            pending = list(self._pending_requests.values())
+        for slot in pending:
+            try:
+                slot.put_nowait(_CLOSED_SENTINEL)
+            except queue.Full:
+                pass
 
     def _stderr_loop(self) -> None:
         process = self.process

@@ -202,8 +202,9 @@ def test_rust_backend_unavailable_should_report_routing_metadata(monkeypatch, tm
     assert result.routing_worker_count == 1
 
 
-def test_rust_backend_exception_should_report_routing_metadata(monkeypatch, tmp_path: Path):
+def test_rust_backend_exception_should_raise_backend_execution_error(monkeypatch, tmp_path: Path):
     from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.backends.base import BackendExecutionError
 
     class FailingNativeRustBackend:
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
@@ -215,10 +216,8 @@ def test_rust_backend_exception_should_report_routing_metadata(monkeypatch, tmp_
     backend = rb.RustCoreBackend()
     log_file = tmp_path / "rust_fail.log"
     log_file.write_text("ERROR\n")
-    result = backend.search(str(log_file), "ERROR")
 
-    assert result.total_matches == 0
-    assert result.routing_backend == "RustCoreBackend"
-    assert result.routing_reason == "rust_exception"
-    assert result.routing_distributed is False
-    assert result.routing_worker_count == 1
+    # audit B2: a native failure must surface as an error the caller can fall back on,
+    # never as a silent, empty success-shaped result indistinguishable from no-match.
+    with pytest.raises(BackendExecutionError):
+        backend.search(str(log_file), "ERROR")

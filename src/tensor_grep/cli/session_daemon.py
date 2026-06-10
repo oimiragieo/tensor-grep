@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hmac
 import json
 import os
+import secrets
 import socket
 import socketserver
 import subprocess
@@ -52,6 +54,18 @@ _DAEMON_RESPONSE_CACHE_SCOPE = "daemon-routed top-level/session context-render/e
 _DAEMON_RESPONSE_CACHE_STALE_DETECTION = "snapshot_mtime_only"
 _DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION = False
 _DAEMON_START_LOCK_STALE_SECONDS = _DAEMON_START_TIMEOUT_SECONDS * 2
+# audit S3: per-daemon shared secret guarding the loopback IPC socket. The token is generated
+# at startup and written to daemon.json with 0600 perms; clients echo it back on every request.
+_DAEMON_TOKEN_FIELD = "token"
+_DAEMON_METADATA_MODE = 0o600
+# audit I7: bound daemon lifetime so a forgotten daemon does not linger forever. Either an idle
+# stretch (no requests) or a hard max uptime triggers a cooperative self-shutdown. Both are
+# env-configurable; non-positive values disable the corresponding limit.
+_DAEMON_IDLE_SHUTDOWN_SECONDS_ENV = "TG_SESSION_DAEMON_IDLE_SECONDS"
+_DAEMON_MAX_UPTIME_SECONDS_ENV = "TG_SESSION_DAEMON_MAX_UPTIME_SECONDS"
+_DEFAULT_DAEMON_IDLE_SHUTDOWN_SECONDS = 900.0
+_DEFAULT_DAEMON_MAX_UPTIME_SECONDS = 86400.0
+_DAEMON_LIFECYCLE_POLL_SECONDS = 5.0
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -96,7 +110,41 @@ def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
     from tensor_grep.cli.session_store import _write_json_atomic
 
-    _write_json_atomic(_daemon_metadata_path(root), payload)
+    # audit S3: daemon.json carries the IPC token; write it 0600 so the secret is not exposed.
+    _write_json_atomic(_daemon_metadata_path(root), payload, mode=_DAEMON_METADATA_MODE)
+
+
+def _daemon_token(metadata: dict[str, Any] | None) -> str:
+    if not metadata:
+        return ""
+    token = metadata.get(_DAEMON_TOKEN_FIELD)
+    return str(token) if token else ""
+
+
+def _configured_lifecycle_seconds(env_var: str, default: float) -> float:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _confine_path_to_root(root: Path, candidate: Path) -> Path:
+    """Reject a resolved request path that escapes ``root`` (audit S3).
+
+    Returns ``candidate`` when it is ``root`` itself or a descendant; otherwise falls back to
+    ``root`` so a crafted absolute ``path``/``root`` cannot point the daemon outside the
+    directory it was started for.
+    """
+    if candidate == root:
+        return candidate
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return root
+    return candidate
 
 
 def _daemon_start_lock_path(root: Path) -> Path:
@@ -141,13 +189,64 @@ def _remove_daemon_metadata(root: Path) -> None:
         pass
 
 
+def _pid_looks_like_tg_daemon(pid: int) -> bool:
+    """Best-effort check that ``pid`` is a tensor-grep session daemon (audit I7).
+
+    Uses psutil (a dev/optional dependency) to inspect the command line so the PID-kill
+    fallback never terminates an unrelated process that happens to reuse the recorded pid. If
+    psutil is unavailable we cannot prove identity and return ``False`` (skip the kill).
+    """
+    if pid <= 0:
+        return False
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except Exception:
+        return False
+    try:
+        cmdline = " ".join(psutil.Process(pid).cmdline())
+    except Exception:
+        return False
+    return "tensor_grep.cli.session_daemon" in cmdline
+
+
+def _terminate_daemon_by_pid(metadata: dict[str, Any] | None) -> bool:
+    """Terminate the daemon process recorded in ``metadata`` (audit I7).
+
+    Only fires when the pid can be validated as a tensor-grep daemon. Returns True if a
+    terminate signal was delivered.
+    """
+    if not metadata:
+        return False
+    try:
+        pid = int(metadata["pid"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if pid <= 0 or pid == os.getpid() or not _pid_looks_like_tg_daemon(pid):
+        return False
+    try:
+        if os.name == "nt":
+            import signal
+
+            os.kill(pid, signal.SIGTERM)
+        else:
+            os.kill(pid, 15)
+    except OSError:
+        return False
+    return True
+
+
 def _daemon_request(
     host: str,
     port: int,
     request: dict[str, Any],
     *,
     response_timeout: float | None = _DAEMON_RESPONSE_TIMEOUT_SECONDS,
+    token: str = "",
 ) -> dict[str, Any]:
+    # audit S3: every request must carry the per-daemon token. Inject it here so the in-process
+    # client (which read the token from the 0600 daemon.json) authenticates transparently.
+    if token:
+        request = {**request, _DAEMON_TOKEN_FIELD: token}
     with socket.create_connection(
         (host, int(port)),
         timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
@@ -169,9 +268,14 @@ def _resolve_daemon_request_path(root: Path, requested_path: object) -> str:
     if not candidate.is_absolute():
         candidate = root / candidate
     try:
-        return str(candidate.resolve())
+        resolved = candidate.resolve()
     except OSError:
-        return str(candidate)
+        # audit S3: cannot resolve (e.g. missing path) — fall back to the daemon root rather
+        # than trusting an unresolved, potentially-escaping request path.
+        return str(root)
+    # audit S3: confine the resolved request path to the daemon's root so a crafted absolute
+    # path cannot drive the daemon to read/serve sessions outside the directory it owns.
+    return str(_confine_path_to_root(root, resolved))
 
 
 def _probe_daemon(root: Path) -> dict[str, Any] | None:
@@ -184,6 +288,7 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
             int(metadata["port"]),
             {"command": "ping"},
             response_timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
+            token=_daemon_token(metadata),
         )
     except Exception:
         return None
@@ -192,7 +297,7 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     return metadata
 
 
-def _merge_live_daemon_stats(status: dict[str, Any]) -> dict[str, Any]:
+def _merge_live_daemon_stats(status: dict[str, Any], *, token: str = "") -> dict[str, Any]:
     status.setdefault("response_cache_scope", _DAEMON_RESPONSE_CACHE_SCOPE)
     if not status.get("running"):
         return status
@@ -228,6 +333,7 @@ def _merge_live_daemon_stats(status: dict[str, Any]) -> dict[str, Any]:
             int(status["port"]),
             {"command": "stats"},
             response_timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
+            token=token,
         )
     except Exception as exc:
         status["stats_unavailable"] = str(exc)
@@ -249,17 +355,20 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
             live = _probe_daemon(discovered_root)
             if live is None:
                 continue
-            return _merge_live_daemon_stats({
-                "version": _SESSION_VERSION,
-                "root": str(discovered_root),
-                "requested_root": str(root),
-                "discovered": True,
-                "running": True,
-                "host": str(live.get("host", _DAEMON_HOST)),
-                "port": int(live["port"]),
-                "pid": int(live["pid"]),
-                "started_at": str(live["started_at"]),
-            })
+            return _merge_live_daemon_stats(
+                {
+                    "version": _SESSION_VERSION,
+                    "root": str(discovered_root),
+                    "requested_root": str(root),
+                    "discovered": True,
+                    "running": True,
+                    "host": str(live.get("host", _DAEMON_HOST)),
+                    "port": int(live["port"]),
+                    "pid": int(live["pid"]),
+                    "started_at": str(live["started_at"]),
+                },
+                token=_daemon_token(live),
+            )
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
@@ -275,16 +384,19 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
             "running": False,
             "stale_metadata": True,
         }
-    return _merge_live_daemon_stats({
-        "version": _SESSION_VERSION,
-        "root": str(root),
-        "discovered": False,
-        "running": True,
-        "host": str(live.get("host", _DAEMON_HOST)),
-        "port": int(live["port"]),
-        "pid": int(live["pid"]),
-        "started_at": str(live["started_at"]),
-    })
+    return _merge_live_daemon_stats(
+        {
+            "version": _SESSION_VERSION,
+            "root": str(root),
+            "discovered": False,
+            "running": True,
+            "host": str(live.get("host", _DAEMON_HOST)),
+            "port": int(live["port"]),
+            "pid": int(live["pid"]),
+            "started_at": str(live["started_at"]),
+        },
+        token=_daemon_token(live),
+    )
 
 
 def start_session_daemon(path: str = ".") -> dict[str, Any]:
@@ -326,15 +438,26 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
     try:
         _remove_daemon_metadata(root)
         creationflags = 0
-        repo_root = Path(__file__).resolve().parents[3]
-        repo_src = repo_root / "src"
         env = os.environ.copy()
-        python_path_parts = [str(repo_src)]
-        if env.get("PYTHONPATH"):
-            python_path_parts.append(env["PYTHONPATH"])
-        env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
+        # audit B20: only inject the editable-checkout 'src' onto PYTHONPATH when it actually
+        # exists (an installed wheel has no sibling src/), and derive cwd from the session root
+        # rather than assuming a fixed Path(__file__).parents[3] repo layout.
+        repo_src = Path(__file__).resolve().parents[3] / "src"
+        if repo_src.exists():
+            python_path_parts = [str(repo_src)]
+            if env.get("PYTHONPATH"):
+                python_path_parts.append(env["PYTHONPATH"])
+            env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
+        spawn_cwd = root if root.is_dir() else root.parent
+        # audit I7: detach the daemon from the launching process group/console so it is not
+        # killed by signals delivered to the parent and survives the CLI invocation.
+        popen_kwargs: dict[str, Any] = {}
         if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
         subprocess.Popen(
             [
                 sys.executable,
@@ -347,8 +470,9 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             creationflags=creationflags,
-            cwd=str(repo_root),
+            cwd=str(spawn_cwd),
             env=env,
+            **popen_kwargs,
         )
 
         deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
@@ -376,36 +500,59 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
     metadata = _probe_daemon(root)
     if metadata is None:
+        # audit I7: cooperative probe failed, but a stale daemon may still be running (e.g. its
+        # socket is wedged). Fall back to terminating the recorded pid if it validates.
+        stale_metadata = _read_daemon_metadata(root)
+        killed = _terminate_daemon_by_pid(stale_metadata)
         _remove_daemon_metadata(root)
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
             "running": False,
-            "stopped": False,
+            "stopped": killed,
+            "stop_method": "pid" if killed else "none",
         }
-    response = _daemon_request(
-        str(metadata.get("host", _DAEMON_HOST)),
-        int(metadata["port"]),
-        {"command": "stop"},
-    )
+    response: dict[str, Any]
+    stop_method = "cooperative"
+    try:
+        response = _daemon_request(
+            str(metadata.get("host", _DAEMON_HOST)),
+            int(metadata["port"]),
+            {"command": "stop"},
+            token=_daemon_token(metadata),
+        )
+    except Exception:
+        response = {"version": _SESSION_VERSION, "ok": False}
+        stop_method = "none"
     deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
     while time.time() < deadline:
         if _probe_daemon(root) is None:
             break
         time.sleep(0.05)
+    else:
+        # audit I7: cooperative stop did not take effect within the deadline; escalate to a
+        # validated pid terminate so a wedged daemon is not left running.
+        if _terminate_daemon_by_pid(metadata):
+            stop_method = "pid"
     _remove_daemon_metadata(root)
     response["running"] = False
     response["root"] = str(root)
     response["stopped"] = True
+    response["stop_method"] = stop_method
     return response
 
 
 def request_session_daemon(path: str, request: dict[str, Any]) -> dict[str, Any]:
     status = start_session_daemon(path)
+    # audit S3: read the token from the (0600) daemon.json the daemon just published so the
+    # authenticated request reaches a daemon that now requires it.
+    root = _resolve_root(Path(str(status.get("root", path))))
+    token = _daemon_token(_read_daemon_metadata(root))
     return _daemon_request(
         str(status.get("host", _DAEMON_HOST)),
         int(status["port"]),
         request,
+        token=token,
     )
 
 
@@ -418,6 +565,7 @@ def request_running_session_daemon(path: str, request: dict[str, Any]) -> dict[s
         str(metadata.get("host", _DAEMON_HOST)),
         int(metadata["port"]),
         request,
+        token=_daemon_token(metadata),
     )
 
 
@@ -723,17 +871,35 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, root: Path, server_address: tuple[str, int]) -> None:
+    def __init__(self, root: Path, server_address: tuple[str, int], *, token: str = "") -> None:
         super().__init__(server_address, _SessionDaemonHandler)
         self.root = root
+        # audit S3: shared secret every client must present before any command is dispatched.
+        self.token = token
         self.payload_cache = _SessionServeCache()
         self.response_cache = _SessionResponseCache()
         self.implicit_session_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.started_at = monotonic()
         self.request_count = 0
+        # audit I7: track last client activity so an idle daemon can shut itself down.
+        self.last_activity_at = monotonic()
         self._request_lock = threading.Lock()
         self._response_cache_lock = threading.Lock()
         self._implicit_session_lock = threading.Lock()
+
+    def note_activity(self) -> None:
+        # audit I7: bump the idle clock on every authenticated request.
+        with self._request_lock:
+            self.last_activity_at = monotonic()
+
+    def is_authorized(self, request: dict[str, Any]) -> bool:
+        # audit S3: constant-time compare to avoid leaking the token via timing.
+        if not self.token:
+            return True
+        provided = request.get(_DAEMON_TOKEN_FIELD)
+        if not isinstance(provided, str) or not provided:
+            return False
+        return hmac.compare_digest(provided, self.token)
 
 
 class _SessionDaemonHandler(socketserver.StreamRequestHandler):
@@ -750,6 +916,17 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
 
         try:
             request = cast(dict[str, Any], json.loads(line))
+            # audit S3: authenticate before dispatching any command or resolving any path.
+            if not server.is_authorized(request):
+                response = {
+                    "version": _SESSION_VERSION,
+                    "session_id": "",
+                    "error": {"code": "unauthorized", "message": "invalid or missing daemon token"},
+                }
+                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
+                self.wfile.flush()
+                return
+            server.note_activity()
             session_id = str(request.get("session_id", "")).strip()
             request_path = _resolve_daemon_request_path(
                 server.root,
@@ -907,9 +1084,34 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
         self.wfile.flush()
 
 
+def _run_daemon_lifecycle_monitor(
+    server: _ThreadedSessionDaemon, stop_event: threading.Event
+) -> None:
+    """Self-shutdown the daemon when it goes idle or exceeds its max uptime (audit I7)."""
+    idle_limit = _configured_lifecycle_seconds(
+        _DAEMON_IDLE_SHUTDOWN_SECONDS_ENV, _DEFAULT_DAEMON_IDLE_SHUTDOWN_SECONDS
+    )
+    max_uptime = _configured_lifecycle_seconds(
+        _DAEMON_MAX_UPTIME_SECONDS_ENV, _DEFAULT_DAEMON_MAX_UPTIME_SECONDS
+    )
+    if idle_limit <= 0 and max_uptime <= 0:
+        return
+    while not stop_event.wait(_DAEMON_LIFECYCLE_POLL_SECONDS):
+        now = monotonic()
+        with server._request_lock:
+            idle_for = now - server.last_activity_at
+        uptime = now - server.started_at
+        if (idle_limit > 0 and idle_for >= idle_limit) or (max_uptime > 0 and uptime >= max_uptime):
+            threading.Thread(target=server.shutdown, daemon=True).start()
+            return
+
+
 def run_session_daemon_server(path: str = ".") -> None:
     root = _resolve_root(Path(path))
-    with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0)) as server:
+    # audit S3: generate a per-daemon token and publish it (0600) so only local clients that can
+    # read daemon.json may issue commands.
+    token = secrets.token_urlsafe(32)
+    with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
         host, port = cast(tuple[str, int], server.server_address)
         _write_daemon_metadata(
             root,
@@ -920,11 +1122,20 @@ def run_session_daemon_server(path: str = ".") -> None:
                 "port": int(port),
                 "pid": os.getpid(),
                 "started_at": datetime.now(UTC).isoformat(),
+                _DAEMON_TOKEN_FIELD: token,
             },
         )
+        stop_event = threading.Event()
+        lifecycle_thread = threading.Thread(
+            target=_run_daemon_lifecycle_monitor,
+            args=(server, stop_event),
+            daemon=True,
+        )
+        lifecycle_thread.start()
         try:
             server.serve_forever(poll_interval=0.1)
         finally:
+            stop_event.set()
             _remove_daemon_metadata(root)
 
 

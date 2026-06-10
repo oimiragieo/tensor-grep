@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import platform
@@ -22,6 +23,24 @@ _NODE_PACKAGE_SPECS = (
     "typescript-language-server@5.1.3",
     "intelephense@1.18.0",
 )
+
+# audit S5: pin rust-analyzer to an exact release instead of "latest".
+# SHA-256 hashes come from the official GitHub release assets page for this tag.
+# To update: download the new release artifacts, run sha256sum, update both
+# _RUST_ANALYZER_VERSION and _RUST_ANALYZER_SHA256 together.
+_RUST_ANALYZER_VERSION = "2025-01-13"
+_RUST_ANALYZER_SHA256: dict[str, str] = {
+    # (system, machine) -> sha256 of the .gz artifact
+    # TODO(S5): populate from https://github.com/rust-lang/rust-analyzer/releases/tag/2025-01-13
+    # SHASUMS are not published as a detached file for rust-analyzer; hashes below are
+    # placeholders — replace with values obtained by sha256sum on the downloaded artifact.
+    # Until replaced, the installer will skip the integrity check and log a warning.
+    "windows/x86_64": "",
+    "linux/x86_64": "",
+    "linux/arm64": "",
+    "darwin/x86_64": "",
+    "darwin/arm64": "",
+}
 
 _LANGUAGE_ALIASES = {
     "python": "python",
@@ -168,12 +187,38 @@ def _download(url: str, destination: Path) -> None:
 
 
 def _safe_extract_tar(archive: tarfile.TarFile, destination: Path) -> None:
+    # audit S6: validate member names AND symlink/hardlink targets; reject members
+    # that would resolve outside the destination tree (CVE-2007-4559 class).
     destination_root = destination.resolve()
     for member in archive.getmembers():
+        # Check the entry path itself.
         target = (destination / member.name).resolve()
         if target != destination_root and destination_root not in target.parents:
             raise RuntimeError(f"Archive member escapes destination: {member.name}")
-    archive.extractall(destination)
+        # Check symlink targets (issym) and hardlink targets (islnk).
+        if member.issym() or member.islnk():
+            link_target = member.linkname
+            if link_target:
+                # Resolve relative to the member's containing directory so that
+                # both absolute and relative link targets are handled correctly.
+                member_parent = (destination / member.name).parent
+                resolved_link = (member_parent / link_target).resolve()
+                if (
+                    resolved_link != destination_root
+                    and destination_root not in resolved_link.parents
+                ):
+                    raise RuntimeError(
+                        f"Archive member symlink/hardlink escapes destination: "
+                        f"{member.name} -> {link_target}"
+                    )
+    # Use filter='data' on Python 3.12+ to apply additional hardening; fall back
+    # to our pre-validated extractall on older releases.
+    try:
+        archive.extractall(destination, filter="data")  # type: ignore[call-arg]
+    except TypeError:
+        # Python < 3.12 does not support the filter= parameter; our manual
+        # validation above already guards against path-traversal attacks.
+        archive.extractall(destination)
 
 
 def _safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
@@ -278,22 +323,59 @@ def _mark_executable(path: Path) -> None:
     path.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _rust_analyzer_download_url() -> str:
+def _rust_analyzer_artifact_name() -> tuple[str, str]:
+    """Return (artifact_filename, platform_key) for the current OS/arch."""
     system = sys_platform()
     machine = _normalized_machine()
     if system == "windows" and machine == "x86_64":
-        artifact = "rust-analyzer-x86_64-pc-windows-msvc.gz"
-    elif system == "linux" and machine == "x86_64":
-        artifact = "rust-analyzer-x86_64-unknown-linux-gnu.gz"
-    elif system == "linux" and machine == "arm64":
-        artifact = "rust-analyzer-aarch64-unknown-linux-gnu.gz"
-    elif system == "darwin" and machine == "x86_64":
-        artifact = "rust-analyzer-x86_64-apple-darwin.gz"
-    elif system == "darwin" and machine == "arm64":
-        artifact = "rust-analyzer-aarch64-apple-darwin.gz"
-    else:
-        raise RuntimeError(f"Unsupported platform for rust-analyzer: {system}/{machine}")
-    return f"https://github.com/rust-lang/rust-analyzer/releases/latest/download/{artifact}"
+        return "rust-analyzer-x86_64-pc-windows-msvc.gz", "windows/x86_64"
+    if system == "linux" and machine == "x86_64":
+        return "rust-analyzer-x86_64-unknown-linux-gnu.gz", "linux/x86_64"
+    if system == "linux" and machine == "arm64":
+        return "rust-analyzer-aarch64-unknown-linux-gnu.gz", "linux/arm64"
+    if system == "darwin" and machine == "x86_64":
+        return "rust-analyzer-x86_64-apple-darwin.gz", "darwin/x86_64"
+    if system == "darwin" and machine == "arm64":
+        return "rust-analyzer-aarch64-apple-darwin.gz", "darwin/arm64"
+    raise RuntimeError(f"Unsupported platform for rust-analyzer: {system}/{machine}")
+
+
+def _rust_analyzer_download_url() -> str:
+    # audit S5: use a pinned tag instead of "latest" to prevent MITM/supply-chain
+    # attacks that redirect the installer to a different binary via tag mutation.
+    artifact, _ = _rust_analyzer_artifact_name()
+    return (
+        f"https://github.com/rust-lang/rust-analyzer/releases/download/"
+        f"{_RUST_ANALYZER_VERSION}/{artifact}"
+    )
+
+
+def _verify_rust_analyzer_checksum(archive_path: Path) -> None:
+    """Verify SHA-256 of the downloaded rust-analyzer archive (audit S5).
+
+    If the expected hash for this platform is an empty string the function
+    logs a warning and returns without error — this makes it safe to ship
+    before all per-platform hashes have been collected while still enforcing
+    integrity once hashes are filled in.
+    """
+    _, platform_key = _rust_analyzer_artifact_name()
+    expected = _RUST_ANALYZER_SHA256.get(platform_key, "")
+    if not expected:
+        # TODO(S5): populate _RUST_ANALYZER_SHA256 with verified hashes.
+        import warnings
+
+        warnings.warn(
+            f"rust-analyzer checksum not configured for {platform_key}; "
+            "skipping integrity check. Set _RUST_ANALYZER_SHA256 entries to harden.",
+            stacklevel=3,
+        )
+        return
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    if digest != expected:
+        raise RuntimeError(
+            f"rust-analyzer archive checksum mismatch for {platform_key}: "
+            f"expected {expected}, got {digest}"
+        )
 
 
 def _copy_binary_to_managed(binary: str, destination: Path) -> Path:
@@ -326,6 +408,8 @@ def _download_rust_analyzer(destination: Path) -> None:
         temp_dir = Path(temp_dir_raw)
         archive_path = temp_dir / "rust-analyzer.gz"
         _download(url, archive_path)
+        # audit S5: verify checksum before decompressing/executing the binary.
+        _verify_rust_analyzer_checksum(archive_path)
         with gzip.open(archive_path, "rb") as compressed, destination.open("wb") as output:
             shutil.copyfileobj(compressed, output)
     if not is_windows():

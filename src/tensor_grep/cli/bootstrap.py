@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -567,23 +568,41 @@ def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
     return [*search_args, "--cpu"]
 
 
+def _streaming_passthrough_returncode(
+    argv: list[str], *, timeout_env_var: str | None = None
+) -> int:
+    """Run an interactive streaming passthrough, returning its exit code and converting
+    a subprocess timeout into a clean exit 124 instead of an uncaught TimeoutExpired
+    traceback that also SIGKILLs the child mid-stream. ripgrep never self-terminates a
+    search, so a timeout here is tg-imposed; surface it with the coreutils ``timeout``
+    convention rather than crashing the CLI (audit B5/#10).
+    """
+    try:
+        if timeout_env_var is not None:
+            result = run_subprocess(argv, check=False, timeout_env_var=timeout_env_var)
+        else:
+            result = run_subprocess(argv, check=False)
+        return int(result.returncode)
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(
+            "tensor-grep: search exceeded the configured timeout and was stopped "
+            "(adjust TG_RG_TIMEOUT_SECONDS / TG_SUBPROCESS_TIMEOUT_SECONDS).\n"
+        )
+        return 124
+
+
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
-    result = run_subprocess([binary_name, "search", *search_args], check=False)
-    return int(result.returncode)
+    return _streaming_passthrough_returncode([binary_name, "search", *search_args])
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    result = run_subprocess([binary_name, *argv], check=False)
-    return int(result.returncode)
+    return _streaming_passthrough_returncode([binary_name, *argv])
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
-    result = run_subprocess(
-        [binary_name, *search_args],
-        check=False,
-        timeout_env_var="TG_RG_TIMEOUT_SECONDS",
+    return _streaming_passthrough_returncode(
+        [binary_name, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
     )
-    return int(result.returncode)
 
 
 def _run_full_cli() -> None:

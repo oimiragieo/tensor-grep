@@ -90,6 +90,24 @@ function Resolve-NativeFrontdoorAssetCandidates {
     return $candidates | Select-Object -Unique
 }
 
+function Get-ExpectedAssetSha256 {
+    # Look up the published sha256 for an asset in a CHECKSUMS.txt ("<sha256>  <asset>").
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$checksumsPath,
+        [Parameter(Mandatory = $true)][string]$assetName
+    )
+    if ([string]::IsNullOrEmpty($checksumsPath) -or -not (Test-Path -LiteralPath $checksumsPath)) {
+        return ""
+    }
+    foreach ($line in Get-Content -LiteralPath $checksumsPath) {
+        $parts = ($line.Trim() -split '\s+')
+        if ($parts.Count -ge 2 -and $parts[-1] -eq $assetName) {
+            return $parts[0].ToLower()
+        }
+    }
+    return ""
+}
+
 function Install-NativeFrontdoorBinary {
     param(
         [Parameter(Mandatory = $true)][string]$frontdoorDir,
@@ -106,6 +124,20 @@ function Install-NativeFrontdoorBinary {
         return $nativeFrontdoorPath
     }
 
+    # Fetch the published CHECKSUMS.txt so every downloaded asset is verified against a
+    # signed digest BEFORE it is made executable or run. Without this, a compromised
+    # release/account or a TLS-intercepting proxy could persist arbitrary code as the
+    # default `tg` (audit S4). Failure to fetch it means the native front door is skipped
+    # (fail closed to the Python wrapper), never executed unverified.
+    $checksumsPath = Join-Path $frontdoorDir "CHECKSUMS.txt"
+    $checksumsUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/CHECKSUMS.txt"
+    try {
+        Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath
+    } catch {
+        $checksumsPath = ""
+        Write-Warning "Could not fetch CHECKSUMS.txt; native front door will be skipped (Python fallback). Error: $_"
+    }
+
     $nativeAssetCandidates = Resolve-NativeFrontdoorAssetCandidates -hardwareFlag $hardwareFlag
     foreach ($nativeAssetName in $nativeAssetCandidates) {
         $nativeDownloadUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/$nativeAssetName"
@@ -114,6 +146,14 @@ function Install-NativeFrontdoorBinary {
         Write-Host "      Downloading native tg front door asset flavor ${nativeFlavor}: $nativeAssetName"
         try {
             Invoke-WebRequest -Uri $nativeDownloadUrl -OutFile $nativeTempPath
+            $expectedSha = Get-ExpectedAssetSha256 -checksumsPath $checksumsPath -assetName $nativeAssetName
+            $actualSha = (Get-FileHash -LiteralPath $nativeTempPath -Algorithm SHA256).Hash.ToLower()
+            if ([string]::IsNullOrEmpty($expectedSha)) {
+                throw "no published checksum for $nativeAssetName; refusing to trust the download"
+            }
+            if ($expectedSha -ne $actualSha) {
+                throw "checksum MISMATCH for $nativeAssetName (expected $expectedSha, got $actualSha)"
+            }
             Move-Item -LiteralPath $nativeTempPath -Destination $nativeFrontdoorPath -Force
             & $nativeFrontdoorPath --version | Out-Host
             if ($LASTEXITCODE -ne 0) {

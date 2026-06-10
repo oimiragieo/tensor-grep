@@ -194,7 +194,7 @@ def test_should_forward_pattern_file_without_treating_path_as_regex():
     with patch.object(backend, "_get_binary_name", return_value="rg"):
         cmd = backend._build_cmd(file_path="test.log", pattern="", config=config, json_mode=False)
 
-    assert cmd[-3:] == ["--file", r"C:\Users\oimir\patterns.txt", "test.log"]
+    assert cmd[-4:] == ["--file", r"C:\Users\oimir\patterns.txt", "--", "test.log"]
     assert "-e" not in cmd
 
 
@@ -316,8 +316,43 @@ def test_files_mode_builds_rg_files_command_without_search_pattern():
     assert "-0" in cmd
     assert ["-g", "*.py"] == cmd[cmd.index("-g") :][:2]
     assert ["--sort", "path"] == cmd[cmd.index("--sort") :][:2]
-    assert cmd[cmd.index("--files") + 1 :] == [".", "./src"]
+    assert cmd[cmd.index("--files") + 1 :] == ["--", ".", "./src"]
     assert "SHOULD_NOT_BE_USED" not in cmd
+
+
+def test_should_separate_dash_prefixed_paths_with_end_of_options():
+    """A search target beginning with '-' must follow a '--' separator so ripgrep
+    treats it as a path, not a flag (audit B4/#8)."""
+    backend = RipgrepBackend()
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=["-foo.txt", "--no-ignore"],
+            pattern="ERROR",
+            config=SearchConfig(),
+            json_mode=False,
+        )
+
+    assert "--" in cmd
+    sep = cmd.index("--")
+    # Every positional path comes after the separator.
+    assert cmd[sep + 1 :] == ["-foo.txt", "--no-ignore"]
+    # The separator comes after the pattern.
+    assert cmd.index("ERROR") < sep
+
+
+def test_should_separate_single_dash_path_with_end_of_options():
+    backend = RipgrepBackend()
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path="-weird-name",
+            pattern="ERROR",
+            config=SearchConfig(),
+            json_mode=False,
+        )
+
+    assert cmd[-2:] == ["--", "-weird-name"]
 
 
 def test_should_raise_on_rg_fatal_error():

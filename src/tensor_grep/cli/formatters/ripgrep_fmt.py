@@ -18,7 +18,9 @@ class RipgrepFormatter(OutputFormatter):
             offset = -1
         if offset < 0:
             offset = 0
-        return f'binary file matches (found "/0" byte around offset {offset})'
+        # ripgrep prints the NUL escape as "\0"; emit the same so byte-for-byte parity
+        # assertions against rg's notice hold (audit B19).
+        return f'binary file matches (found "\\0" byte around offset {offset})'
 
     @staticmethod
     def _is_binary_notice_match(match: MatchLine) -> bool:
