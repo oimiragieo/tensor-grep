@@ -1,6 +1,117 @@
 # CHANGELOG
 
 
+## v1.13.36 (2026-06-10)
+
+### Bug Fixes
+
+- Resolve dogfood CRITICAL+HIGH bugs (audit trail, --json fork-bomb, MCP contracts, safety net)
+  ([#252](https://github.com/oimiragieo/tensor-grep/pull/252),
+  [`5bd3261`](https://github.com/oimiragieo/tensor-grep/commit/5bd326115993c564fc9c418ad8c85f291d3d1fc0))
+
+End-to-end v1.13.35 dogfooding surfaced 45 verified bugs. This fixes all 5 CRITICAL and 10 HIGH,
+  plus several adjacent MEDIUM/LOW, each with regression tests.
+
+CRITICAL - C1/C2: audit manifest now verifies against its own digest/HMAC. Unify the Python verifier
+  canonicalization (sort_keys=True) with the native Rust writer, and emit created_at as ISO-8601
+  (also fixes audit-history time-ordering, M5). - C3: `tg --json` + a render flag
+  (-b/--passthru/-p/--heading/--trim/-M/...) no longer hangs and fork-bombs. The launcher routes the
+  combo to the full CLI, which rejects it with a structured exit 2 (detected from parsed params,
+  robust under in-process invocation); the streaming passthrough no longer re-execs/respawns on
+  abnormal exit and forwards termination (no orphan storm). - C4: symbol lookup no longer crashes on
+  repos containing Rust files (guard the doc-comment-misparsed `use` path before with_suffix); MCP
+  symbol tools wrap unexpected errors in a structured envelope instead of propagating raw
+  exceptions.
+
+HIGH - H1: audit-verify / review-bundle verify --json exit 1 on valid:false (was 0). - H2:
+  checkpoint undo is atomic - pre-flight existence check + temp staging + revert on partial failure;
+  distinct checkpoint_corrupt code; no raw WinError leak. - H3: launcher hardened against rapid
+  sequential invocation (no respawn). - H4: `tg context` defaults --max-repo-files to 512 (no longer
+  hangs). - H5: `tg impact` includes a top-level callers key (reuses the callers pass). - H6: `tg
+  refs` adds string_refs[] (decorator-arg/string-literal/fstring) for renames. - H7: primary_target
+  ranks an exactly-resolvable symbol above graph-centrality. - H8: MCP
+  tg_search/tg_ast_search/tg_classify_logs/tg_devices default to JSON. - H9: mcp_contract_version +
+  schema_version injected into every MCP envelope. - H11: regex-backed ruleset rules honor
+  --language (no cross-extension matches).
+
+Plus M5/M11/M12/M14/L1/L6/L7 and the L8 gitignore-aware repo-map/context walk, which matches paths
+  as-walked without an O(files) per-child resolve() syscall.
+
+Native binary note: the compiled native front-door still has the underlying C3 deadlock when invoked
+  directly (Rust-level follow-up); all `tg`/`python -m` paths are now safe via the launcher/CLI
+  guards.
+
+24 new/updated regression tests. Full gate green locally: ruff check, ruff format --preview, mypy
+  --strict, cargo fmt/clippy -D warnings/test, pytest (2828 passed).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Security/correctness/agentic hardening from deep audit
+  ([`29ac86b`](https://github.com/oimiragieo/tensor-grep/commit/29ac86b7e08811ffc84e6fb98be00eb88faf1837))
+
+Deep multi-agent audit (8 HIGH/27 MED/21 LOW confirmed) plus fixes, each verified against the full
+  CI gate (ruff, ruff format --preview, mypy --strict, pytest 2724-pass, cargo fmt/clippy/test).
+  Comments cite the audit finding id.
+
+Security - S1 checkpoint undo/restore now refuses absolute/.. /symlink-escaping metadata entries
+  before any unlink/copy (was arbitrary file write/delete via MCP/CLI/policy rollback); + fsync
+  durability (I5). - S2 audit-manifest HMAC no longer trusts the key_path embedded in the manifest
+  being verified (Rust main.rs + the live Python verifier); fail closed without an out-of-band
+  --signing-key. - S3 session daemon IPC now requires a per-daemon token (0600 daemon.json,
+  constant-time compare) and confines request paths to the daemon root. - S4 installers + npm
+  postinstall verify SHA-256 against the published CHECKSUMS.txt before chmod/exec; fail closed;
+  install.js host-allowlists redirects and checks status 200. - S5/S6 LSP provider downloads pin
+  versions and reject tar symlink escapes.
+
+Correctness - B2 RustCoreBackend raises BackendExecutionError instead of a silent 0-match result;
+  the CLI retries on the CPU backend. - B1 CuDFBackend honors --max-count; B3 AST traversal is
+  iterative (no RecursionError); B6 real VRAM reclaim; B10 audit history upsert by path; B12 LSP
+  per-id response demux + orphan buffer; B19 binary notice prints "\0"; ripgrep/native command
+  builders add a -- end-of-options separator.
+
+Infra / agentic - I2 bounded session retention; I3 LSP didClose cache eviction; I4/I8 sidecar
+  bounded capture + descendant tree-kill. - A1 plan-bound apply (plan_digest + expected_plan_digest
+  -> plan_drift); A2 richer MCP error codes; A4 mcp_contract_version in envelopes.
+
+Build / deps - Pin typer<0.25: typer 0.26 dropped CliRunner.isolated_filesystem the CLI test suite
+  relies on. Gitignore the maturin .abi3.so build output.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+- **release**: Stop the winget readiness gate freezing every release
+  ([#253](https://github.com/oimiragieo/tensor-grep/pull/253),
+  [`1bd313a`](https://github.com/oimiragieo/tensor-grep/commit/1bd313a3e2142d7e1378eaa29e8e3dcd7ec3e6ef))
+
+* fix(release): stop the winget readiness gate freezing every release
+
+The package-manager-readiness (windows) job hard-failed whenever
+  scripts/winget-pkgs/manifests/.../<pyproject_version>/ was absent. But a valid winget manifest
+  needs the published artifact's InstallerUrl + SHA256, which only exist AFTER the release — so
+  right after semantic-release bumps pyproject, the just-bumped version's manifest cannot exist yet,
+  the gate throws, CI fails, and Semantic Release is skipped. This silently froze all releases since
+  the 1.13.35 bump (2026-06-05): the deep-audit fixes (29ac86b) and the dogfood CRITICAL+HIGH fixes
+  (5bd3261) merged to main but never shipped to PyPI/npm.
+
+Fix: validate the current version's manifest if present (still hard-failing on a malformed committed
+  manifest — the real check), otherwise warn and validate the latest committed manifest for syntax,
+  or skip if none exist. The gate no longer blocks the release that must precede the manifest it was
+  demanding.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* test: update winget-gate assertion to the tolerant-validation contract
+
+The ci.yml winget step no longer hard-fails on a missing current-version manifest (it warns and
+  validates the latest committed manifest). Update the workflow-config test to assert the new
+  contract: the manifest path is built via Join-Path from the version, winget validate runs
+  directly, and the "Winget manifest directory not found" hard-fail is gone in favor of "validating
+  the latest committed manifest".
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.13.35 (2026-06-05)
 
 ### Bug Fixes
