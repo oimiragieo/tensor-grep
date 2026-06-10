@@ -205,15 +205,30 @@ jobs:
             throw "Unable to resolve project version from pyproject.toml"
           }
           $version = $versionMatch.Matches[0].Groups['version'].Value
-          $manifestPath = "scripts\winget-pkgs\manifests\o\oimiragieo\tensor-grep\$version"
+          $manifestRoot = "scripts\winget-pkgs\manifests\o\oimiragieo\tensor-grep"
+          $manifestPath = Join-Path $manifestRoot $version
           if (-not (Test-Path -LiteralPath $manifestPath)) {
-            throw "Winget manifest directory not found: $manifestPath"
+            # A valid winget manifest needs the published release artifact's InstallerUrl
+            # + SHA256, which only exist AFTER the release. Demanding the current
+            # (just-bumped) version's manifest pre-release is unsatisfiable and froze
+            # every release after a version bump, so warn and validate the latest
+            # committed manifest for syntax instead of hard-failing.
+            Write-Host "::warning::Winget manifest for $version not yet generated (created post-release with the published InstallerUrl + SHA256); validating the latest committed manifest for syntax instead."
+            $latest = Get-ChildItem -LiteralPath $manifestRoot -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } |
+              Sort-Object { [version]($_.Name -replace '[^0-9.].*$', '') } |
+              Select-Object -Last 1
+            $manifestPath = if ($latest) { $latest.FullName } else { $null }
           }
-          $wingetOutput = @(winget validate --manifest $manifestPath 2>&1)
-          $wingetExitCode = $LASTEXITCODE
-          $wingetOutput | ForEach-Object { Write-Host $_ }
-          if ($wingetExitCode -ne 0) {
-            throw "winget validate failed with exit code $wingetExitCode for $manifestPath"
+          if ($manifestPath) {
+            $wingetOutput = @(winget validate --manifest $manifestPath 2>&1)
+            $wingetExitCode = $LASTEXITCODE
+            $wingetOutput | ForEach-Object { Write-Host $_ }
+            if ($wingetExitCode -ne 0) {
+              throw "winget validate failed with exit code $wingetExitCode for $manifestPath"
+            }
+          } else {
+            Write-Host "::warning::No committed winget manifests under $manifestRoot; skipping winget syntax validation."
           }
 
       - name: Validate package-manager publish bundle source state
