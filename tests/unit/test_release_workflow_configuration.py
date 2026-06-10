@@ -220,9 +220,17 @@ def test_ci_workflow_should_not_cancel_in_progress_main_pushes() -> None:
 def test_ci_package_manager_readiness_should_require_direct_winget_validate() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     package_manager_section = _job_section(workflow, "package-manager-readiness")
-    assert "winget-pkgs\\manifests\\o\\oimiragieo\\tensor-grep\\$version" in package_manager_section
+    # The manifest path is built from the project version under the winget-pkgs tree and
+    # validated directly with winget.
+    assert "winget-pkgs\\manifests\\o\\oimiragieo\\tensor-grep" in package_manager_section
+    assert "Join-Path $manifestRoot $version" in package_manager_section
     assert "winget validate --manifest $manifestPath" in package_manager_section
-    assert "Winget manifest directory not found" in package_manager_section
+    # A missing current-version manifest must NOT hard-fail the release: a valid manifest
+    # needs the published artifact URL + SHA256, which only exist post-release, so the gate
+    # warns and validates the latest committed manifest for syntax instead of throwing
+    # "Winget manifest directory not found" (which froze every release after a version bump).
+    assert "Winget manifest directory not found" not in package_manager_section
+    assert "validating the latest committed manifest" in package_manager_section
     assert "Python release asset validator fallback" not in package_manager_section
 
 
