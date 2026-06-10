@@ -521,14 +521,12 @@ def _history_entry_identity(
 def _upsert_history_entry(
     entries: list[dict[str, Any]], entry: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    manifest_sha256 = str(entry["manifest_sha256"])
+    # audit B10: the upsert key is the file path — drop any existing entry for that path so
+    # each path has exactly one current entry.  The old AND condition kept a stale entry
+    # whenever the digest changed (sha256 != new AND file_path != new evaluates False only when
+    # BOTH match), leaving duplicate/contradictory chain entries for one path.
     file_path = str(entry["file_path"])
-    filtered = [
-        existing
-        for existing in entries
-        if str(existing.get("manifest_sha256")) != manifest_sha256
-        and str(existing.get("file_path")) != file_path
-    ]
+    filtered = [existing for existing in entries if str(existing.get("file_path")) != file_path]
     filtered.append(entry)
     return filtered
 
@@ -720,6 +718,10 @@ def verify_audit_manifest(
         else:
             signature_kind = str(signature.get("kind") or "")
             signature_value = str(signature.get("value") or "")
+            # signature.key_path is informational only and MUST NOT be used to verify: a
+            # tampered manifest could point it at an attacker-controlled key and forge a
+            # matching HMAC, defeating tamper-evidence. The key must be supplied
+            # out-of-band via `signing_key` (audit S2).
             signature_key_path = (
                 str(Path(signing_key).expanduser().resolve())
                 if signing_key is not None
@@ -728,11 +730,14 @@ def verify_audit_manifest(
             if signature_kind != "hmac-sha256":
                 signature_valid = False
                 signature_error = f"Unsupported signature kind: {signature_kind or '<empty>'}"
-            elif not signature_key_path:
+            elif signing_key is None:
                 signature_valid = False
-                signature_error = "Signed manifest requires a signing key path."
+                signature_error = (
+                    "Manifest is hmac-sha256 signed but no signing key was provided; "
+                    "refusing to trust the key_path embedded in the manifest."
+                )
             else:
-                key_path = Path(signature_key_path).expanduser().resolve()
+                key_path = Path(signing_key).expanduser().resolve()
                 if not key_path.exists():
                     signature_valid = False
                     signature_error = f"Signing key not found: {key_path}"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import gc
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -269,6 +271,25 @@ class CuDFBackend(ComputeBackend):
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
+        result = self._search_uncapped(file_path, pattern, config)
+        return self._cap_to_max_count(result, config)
+
+    @staticmethod
+    def _cap_to_max_count(result: SearchResult, config: SearchConfig | None) -> SearchResult:
+        """Honor ``--max-count``: every other backend caps to N matches, but the GPU
+        paths returned ALL matches, silently inflating totals and breaking ripgrep
+        parity (audit B1). Cap by line order, matching ripgrep ``-m`` (first N per file).
+        """
+        if config is None or config.max_count is None:
+            return result
+        if len(result.matches) <= config.max_count:
+            return result
+        kept = sorted(result.matches, key=lambda match: match.line_number)[: config.max_count]
+        return dataclasses.replace(result, matches=kept, total_matches=len(kept))
+
+    def _search_uncapped(
+        self, file_path: str, pattern: str, config: SearchConfig | None = None
+    ) -> SearchResult:
         import os
         import re
 
@@ -449,11 +470,14 @@ class CuDFBackend(ComputeBackend):
 
                     line_offset += chunk_lines_count
 
-                    # Force VRAM cleanup before loading the next chunk
+                    # audit B6: the old bare acquire-spill-lock call was a no-op (it is a
+                    # context-manager factory whose return value was discarded). Explicit
+                    # del + gc actually releases Python references so cuDF/RMM can reclaim
+                    # VRAM before loading the next chunk.
                     del series
                     del matched
                     del mask
-                    cudf.core.buffer.acquire_spill_lock()
+                    gc.collect()
 
                 chunked_processing_succeeded = True
 

@@ -13,13 +13,80 @@ import tomllib
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
+
+_CacheR = TypeVar("_CacheR")
+
+# ---------------------------------------------------------------------------
+# B7: mtime-aware cache decorator for path-keyed file-content helpers.
+#
+# Plain @lru_cache(key=path_str) returns stale results in the long-lived
+# daemon after a file is edited.  This decorator folds (st_mtime_ns, st_size)
+# into the key so callers automatically see fresh content after a write
+# without needing a manual cache_clear().
+#
+# Convention: the decorated function must accept the file path as its FIRST
+# positional argument (a str).  Additional arguments form the rest of the key.
+# ---------------------------------------------------------------------------
+
+
+def _mtime_key(path_str: str) -> tuple[int, int]:
+    """Return (st_mtime_ns, st_size) for *path_str*, or (-1, -1) on error."""
+    try:
+        st = Path(path_str).stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (-1, -1)
+
+
+def _mtime_aware_cache(
+    maxsize: int = 256,
+) -> Callable[[Callable[..., _CacheR]], Callable[..., _CacheR]]:
+    """Decorator: like @lru_cache but includes file mtime+size in the key.
+
+    The decorated function must take the file path (str) as its first
+    positional argument.  All remaining arguments must be hashable. Generic over the
+    return type so decorated functions keep their precise signature for type-checking.
+    """
+
+    def decorator(fn: Callable[..., _CacheR]) -> Callable[..., _CacheR]:
+        cache: dict[tuple[Any, ...], _CacheR] = {}
+        lock = threading.Lock()
+
+        @wraps(fn)
+        def wrapper(path_str: str, /, *args: Any, **kwargs: Any) -> _CacheR:
+            mtime_key = _mtime_key(path_str)
+            cache_key = (path_str, mtime_key, args, tuple(sorted(kwargs.items())))
+            with lock:
+                if cache_key in cache:
+                    return cache[cache_key]
+            result = fn(path_str, *args, **kwargs)
+            with lock:
+                # Evict oldest entry when the cache is full.
+                if len(cache) >= maxsize:
+                    try:
+                        oldest = next(iter(cache))
+                        del cache[oldest]
+                    except StopIteration:
+                        pass
+                cache[cache_key] = result
+            return result
+
+        def cache_clear() -> None:
+            with lock:
+                cache.clear()
+
+        wrapper.cache_clear = cache_clear  # type: ignore[attr-defined]
+        return cast("Callable[..., _CacheR]", wrapper)
+
+    return decorator
+
 
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
@@ -128,6 +195,11 @@ _SYMBOL_LITERAL_SEED_MAX_BYTES = 2_000_000
 _BLAST_RADIUS_LIMITED_SYMBOLS_PER_FILE = 3
 _REPO_CONTEXT_CACHE_MAX_ROOTS_ENV = "TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS"
 _DEFAULT_REPO_CONTEXT_CACHE_MAX_ROOTS = 32
+# O2: per-file byte cap for AST parsing in build_repo_map.  Files larger than
+# this are skipped (imports/symbols returned empty) to bound RSS spikes from
+# multi-MB bundled/generated files.  Override with env var.
+_MAX_PARSE_BYTES_ENV = "TENSOR_GREP_MAX_PARSE_BYTES"
+_DEFAULT_MAX_PARSE_BYTES = 2_000_000
 _RUST_TEST_FN_PATTERN = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
@@ -153,6 +225,11 @@ def _repo_context_cache_max_roots() -> int:
         _REPO_CONTEXT_CACHE_MAX_ROOTS_ENV,
         _DEFAULT_REPO_CONTEXT_CACHE_MAX_ROOTS,
     )
+
+
+def _max_parse_bytes() -> int:
+    """Return the per-file byte cap for AST parsing (O2)."""
+    return _configured_positive_int(_MAX_PARSE_BYTES_ENV, _DEFAULT_MAX_PARSE_BYTES)
 
 
 def _remember_repo_context(
@@ -1893,7 +1970,7 @@ def _extract_rust_impl_block(source: str, start_index: int) -> str:
     return ""
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_impl_method_candidates(definition_path: str, symbol: str) -> tuple[str, ...]:
     path = Path(definition_path)
     if path.suffix not in _RUST_SUFFIXES:
@@ -1917,7 +1994,7 @@ def _rust_impl_method_candidates(definition_path: str, symbol: str) -> tuple[str
     return tuple(dict.fromkeys(candidates))
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_impl_owner_type(definition_path: str, line_number: int) -> str | None:
     path = Path(definition_path)
     if path.suffix not in _RUST_SUFFIXES:
@@ -1943,7 +2020,7 @@ def _rust_impl_owner_type(definition_path: str, line_number: int) -> str | None:
     return None
 
 
-@lru_cache(maxsize=512)
+@_mtime_aware_cache(maxsize=512)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_symbol_reference_candidates(definition_path: str, symbol: str) -> tuple[str, ...]:
     candidates = [symbol]
     candidates.extend(_rust_impl_method_candidates(definition_path, symbol))
@@ -4037,6 +4114,15 @@ def _imports_and_symbols_for_path(
     *,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
+    # O2: skip files that exceed the per-file byte cap to bound RSS spikes from
+    # multi-MB bundled/generated files.  The cap is configurable via the
+    # TENSOR_GREP_MAX_PARSE_BYTES env var (default 2 MB).
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
+    if file_size > _max_parse_bytes():
+        return [], []
     with _profiling_phase(_profiling_collector, "file_parse"):
         current_imports, current_symbols = _python_imports_and_symbols(path)
         if path.suffix in _JS_TS_SUFFIXES:
@@ -4173,6 +4259,12 @@ def build_repo_map_incremental(
     _prime_rust_repo_context(context_root)
     normalized_changeset = _normalized_changeset_paths(root, changeset)
     changed_files = set(normalized_changeset["added"]) | set(normalized_changeset["modified"])
+    # D2: normalized_changeset["removed"] is computed by _normalized_changeset_paths
+    # but currently unused — explicit pruning of removed paths is handled
+    # implicitly because _iter_repo_files only returns files that still exist.
+    # Future work: use normalized_changeset["removed"] to proactively clean
+    # previous_paths/previous_symbols/previous_imports rather than waiting for
+    # the next full build_repo_map() call.
     previous_paths = {
         str(Path(str(current)).expanduser().resolve())
         for current in (
@@ -6558,7 +6650,7 @@ def _best_test_function_candidate(
     return best_name
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
@@ -6581,7 +6673,7 @@ def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _python_parametrized_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
@@ -6660,7 +6752,7 @@ def _rust_test_function_candidates_from_source(
     return tuple(dict.fromkeys(candidates))
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
@@ -6670,7 +6762,7 @@ def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
     return _rust_test_function_candidates_from_source(source, tokio_only=False)
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_tokio_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
@@ -6680,7 +6772,7 @@ def _rust_tokio_test_function_candidates(test_path: str) -> tuple[str, ...]:
     return _rust_test_function_candidates_from_source(source, tokio_only=True)
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _javascript_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
@@ -6785,7 +6877,7 @@ def _javascript_test_script_uses_node_test(test_script: str | None) -> bool:
     return bool(normalized) and "node" in normalized and "--test" in normalized
 
 
-@lru_cache(maxsize=256)
+@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _javascript_test_file_uses_node_test(test_path: str) -> bool:
     path = Path(test_path)
     try:

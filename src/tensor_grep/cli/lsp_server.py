@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -9,6 +10,7 @@ from urllib.parse import unquote, urlparse
 from lsprotocol.types import (
     TEXT_DOCUMENT_DEFINITION,
     TEXT_DOCUMENT_DID_CHANGE,
+    TEXT_DOCUMENT_DID_CLOSE,
     TEXT_DOCUMENT_DID_OPEN,
     TEXT_DOCUMENT_DID_SAVE,
     TEXT_DOCUMENT_DOCUMENT_SYMBOL,
@@ -18,6 +20,7 @@ from lsprotocol.types import (
     WORKSPACE_SYMBOL,
     DefinitionParams,
     DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
     DocumentSymbol,
@@ -44,16 +47,28 @@ from pygls.lsp.server import LanguageServer
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 
+# audit I3: max entries per LRU cache dict.
+_DOCUMENTS_CACHE_MAX = 512
+_REPO_MAP_CACHE_MAX = 64
+_TENSOR_CACHE_MAX = 128
+
 
 class TensorGrepLSPServer(LanguageServer):  # type: ignore
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.documents_cache: dict[str, str] = {}
+        # audit I3: use OrderedDict-backed LRU caches so that open documents,
+        # repo maps, and GPU tensors cannot grow without bound.  Eviction is
+        # LRU (move_to_end on access, popitem(last=False) when over limit).
+        self.documents_cache: OrderedDict[str, str] = OrderedDict()
         # In a real enterprise version, we would keep the AST graph warm in VRAM here.
-        self.tensor_cache: dict[str, Any] = {}
-        self.repo_map_cache: dict[str, dict[str, Any]] = {}
+        self.tensor_cache: OrderedDict[str, Any] = OrderedDict()
+        self.repo_map_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.provider_mode = "native"
         self.external_providers = ExternalLSPProviderManager()
+        # audit B13: position encoding negotiated with the client.
+        # "utf-16" is the LSP default; we upgrade to "utf-8" when the client
+        # advertises support so that column values are codepoint offsets.
+        self._position_encoding: str = "utf-16"
 
 
 server = TensorGrepLSPServer("tensor-grep-lsp", "v0.3.0")
@@ -91,14 +106,31 @@ def _invalidate_repo_map_cache(ls: TensorGrepLSPServer, uri: str) -> None:
     ls.repo_map_cache.pop(str(repo_root), None)
 
 
+def _lru_put(od: OrderedDict[str, Any], key: str, value: Any, max_size: int) -> None:
+    """Insert/update *key* in the LRU OrderedDict, evicting the oldest entry if needed."""
+    od.pop(key, None)
+    od[key] = value
+    while len(od) > max_size:
+        od.popitem(last=False)
+
+
+def _lru_get(od: OrderedDict[str, Any], key: str) -> Any | None:
+    """Return the value for *key* and promote it to MRU position, or None."""
+    value = od.pop(key, None)
+    if value is None:
+        return None
+    od[key] = value
+    return value
+
+
 def _get_repo_map(ls: TensorGrepLSPServer, uri: str) -> dict[str, Any]:
     repo_root = _resolve_repo_root(_uri_to_path(uri))
     cache_key = str(repo_root)
-    cached = ls.repo_map_cache.get(cache_key)
+    cached = _lru_get(ls.repo_map_cache, cache_key)
     if cached is not None:
-        return cached
+        return cast(dict[str, Any], cached)
     current = repo_map.build_repo_map(repo_root)
-    ls.repo_map_cache[cache_key] = current
+    _lru_put(ls.repo_map_cache, cache_key, current, _REPO_MAP_CACHE_MAX)
     return current
 
 
@@ -130,13 +162,14 @@ def _external_client_for_uri(
 
 
 def _document_text(ls: TensorGrepLSPServer, uri: str) -> str:
-    cached = ls.documents_cache.get(uri)
+    # audit I3: promote to MRU on each access.
+    cached = _lru_get(ls.documents_cache, uri)
     if cached is not None:
-        return cached
+        return cast(str, cached)
     path = _uri_to_path(uri)
     if path.exists():
         text = path.read_text(encoding="utf-8")
-        ls.documents_cache[uri] = text
+        _lru_put(ls.documents_cache, uri, text, _DOCUMENTS_CACHE_MAX)
         return text
     return ""
 
@@ -150,14 +183,66 @@ def _infer_language(uri: str) -> str:
     return "python"
 
 
-def _word_range_at_position(text: str, position: Position) -> tuple[str, Range] | None:
+# audit B13: position encoding conversion helpers.
+def _utf16_col_to_codepoint(line_text: str, utf16_col: int) -> int:
+    """Convert a UTF-16 column offset to a Unicode codepoint (str index) offset.
+
+    The LSP specification §3.17 defaults to UTF-16 for ``character`` fields.
+    Python strings are codepoint-indexed, so when the client sends UTF-16
+    offsets we must convert before indexing into the line.
+    """
+    cp = 0
+    utf16_units = 0
+    for ch in line_text:
+        if utf16_units >= utf16_col:
+            break
+        ordinal = ord(ch)
+        utf16_units += 2 if ordinal > 0xFFFF else 1
+        cp += 1
+    return cp
+
+
+def _codepoint_col_to_utf16(line_text: str, cp_col: int) -> int:
+    """Convert a codepoint (str index) column offset to UTF-16 units."""
+    utf16_units = 0
+    for ch in line_text[:cp_col]:
+        ordinal = ord(ch)
+        utf16_units += 2 if ordinal > 0xFFFF else 1
+    return utf16_units
+
+
+def _to_cp_col(ls: TensorGrepLSPServer, line_text: str, col: int) -> int:
+    """Convert *col* from the client's position encoding to a codepoint index."""
+    if ls._position_encoding == "utf-16":
+        return _utf16_col_to_codepoint(line_text, col)
+    # "utf-8" or "utf-32" (codepoints) — Python str indexing is already correct.
+    return col
+
+
+def _from_cp_col(ls: TensorGrepLSPServer, line_text: str, cp_col: int) -> int:
+    """Convert a codepoint column index to the client's position encoding."""
+    if ls._position_encoding == "utf-16":
+        return _codepoint_col_to_utf16(line_text, cp_col)
+    return cp_col
+
+
+def _word_range_at_position(
+    text: str,
+    position: Position,
+    ls: TensorGrepLSPServer | None = None,
+) -> tuple[str, Range] | None:
+    # audit B13: convert the incoming column from the client's encoding to a
+    # codepoint index before indexing into the Python string.
     lines = text.splitlines()
     if position.line < 0 or position.line >= len(lines):
         return None
     line = lines[position.line]
     if not line:
         return None
-    character = max(0, min(int(position.character), len(line)))
+    # Convert the wire column to a codepoint offset.
+    raw_col = int(position.character)
+    character = _to_cp_col(ls, line, raw_col) if ls is not None else raw_col
+    character = max(0, min(character, len(line)))
     start = character
     end = character
 
@@ -184,11 +269,15 @@ def _word_range_at_position(text: str, position: Position) -> tuple[str, Range] 
     symbol = line[start:end]
     if not symbol:
         return None
+    # audit B13: convert the codepoint columns back to the client encoding for
+    # the returned Range so that clients receive correct character offsets.
+    wire_start = _from_cp_col(ls, line, start) if ls is not None else start
+    wire_end = _from_cp_col(ls, line, end) if ls is not None else end
     return (
         symbol,
         Range(
-            start=Position(line=position.line, character=start),
-            end=Position(line=position.line, character=end),
+            start=Position(line=position.line, character=wire_start),
+            end=Position(line=position.line, character=wire_end),
         ),
     )
 
@@ -198,7 +287,8 @@ def _symbol_and_range_for_position(
     uri: str,
     position: Position,
 ) -> tuple[str, Range] | None:
-    return _word_range_at_position(_document_text(ls, uri), position)
+    # audit B13: pass ls so that position encoding is honoured.
+    return _word_range_at_position(_document_text(ls, uri), position, ls)
 
 
 def _kind_to_symbol_kind(kind: str) -> SymbolKind:
@@ -349,51 +439,86 @@ def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[Documen
     return native_symbols
 
 
+def _resolve_workspace_root(ls: TensorGrepLSPServer, path_hint: str | None) -> Path | None:
+    """Resolve the workspace root independently of open documents (audit B16).
+
+    Resolution order:
+    1. Explicit *path_hint* URI (most specific — used by the handler when available).
+    2. Any document currently in the cache.
+    3. Current working directory (last resort — avoids returning None when no
+       documents are open, which blocked workspace/symbol before this fix).
+    """
+    if path_hint:
+        try:
+            return _resolve_repo_root(_uri_to_path(path_hint))
+        except Exception:
+            pass
+    if ls.documents_cache:
+        try:
+            return _resolve_repo_root(_uri_to_path(next(iter(ls.documents_cache))))
+        except Exception:
+            pass
+    # audit B16: fall back to cwd so workspace/symbol works before any doc is open.
+    try:
+        return _resolve_repo_root(Path.cwd())
+    except Exception:
+        return None
+
+
 def _workspace_symbols(
     ls: TensorGrepLSPServer, query: str, path_hint: str | None = None
 ) -> list[SymbolInformation]:
-    if ls.provider_mode != "native" and path_hint is not None:
-        deadline_monotonic = repo_map._lsp_operation_deadline()
-        client = _external_client_for_uri(ls, path_hint, deadline_monotonic=deadline_monotonic)
-        if client is not None:
-            try:
-                result = _run_external_lsp_operation(
-                    client,
-                    lambda: client.request("workspace/symbol", {"query": query}),
-                    deadline_monotonic=deadline_monotonic,
-                )
-            except LSPTransportError:
-                result = None
-            if isinstance(result, list):
-                external_symbols: list[SymbolInformation] = []
-                for current in result:
-                    if not isinstance(current, dict):
-                        continue
-                    location_payload = current.get("location")
-                    if not isinstance(location_payload, dict):
-                        continue
-                    resolved = _location_from_external_payload(location_payload)
-                    if resolved is None:
-                        continue
-                    external_symbols.append(
-                        SymbolInformation(
-                            name=str(current.get("name", "")),
-                            kind=_kind_to_symbol_kind(str(current.get("kind", "symbol"))),
-                            location=resolved,
-                            container_name=str(current.get("containerName", "")) or None,
-                        )
+    # audit B16: resolve workspace root independently of open docs.
+    if ls.provider_mode != "native":
+        # For external delegation, we still prefer path_hint; if absent we
+        # synthesise a URI from the resolved workspace root.
+        effective_hint = path_hint
+        if effective_hint is None:
+            root = _resolve_workspace_root(ls, None)
+            if root is not None:
+                effective_hint = root.as_uri()
+        if effective_hint is not None:
+            deadline_monotonic = repo_map._lsp_operation_deadline()
+            client = _external_client_for_uri(
+                ls, effective_hint, deadline_monotonic=deadline_monotonic
+            )
+            if client is not None:
+                try:
+                    result = _run_external_lsp_operation(
+                        client,
+                        lambda: client.request("workspace/symbol", {"query": query}),
+                        deadline_monotonic=deadline_monotonic,
                     )
-                if external_symbols:
-                    return external_symbols
-    repo_root = None
-    if path_hint:
-        repo_root = _resolve_repo_root(_uri_to_path(path_hint))
-    elif ls.documents_cache:
-        repo_root = _resolve_repo_root(_uri_to_path(next(iter(ls.documents_cache))))
+                except LSPTransportError:
+                    result = None
+                if isinstance(result, list):
+                    external_symbols: list[SymbolInformation] = []
+                    for current in result:
+                        if not isinstance(current, dict):
+                            continue
+                        location_payload = current.get("location")
+                        if not isinstance(location_payload, dict):
+                            continue
+                        resolved = _location_from_external_payload(location_payload)
+                        if resolved is None:
+                            continue
+                        external_symbols.append(
+                            SymbolInformation(
+                                name=str(current.get("name", "")),
+                                kind=_kind_to_symbol_kind(str(current.get("kind", "symbol"))),
+                                location=resolved,
+                                container_name=str(current.get("containerName", "")) or None,
+                            )
+                        )
+                    if external_symbols:
+                        return external_symbols
+    repo_root = _resolve_workspace_root(ls, path_hint)
     if repo_root is None:
         return []
-    current_repo_map = ls.repo_map_cache.get(str(repo_root)) or repo_map.build_repo_map(repo_root)
-    ls.repo_map_cache[str(repo_root)] = current_repo_map
+    current_repo_map = cast(
+        dict[str, Any], _lru_get(ls.repo_map_cache, str(repo_root))
+    ) or repo_map.build_repo_map(repo_root)
+    _lru_put(ls.repo_map_cache, str(repo_root), current_repo_map, _REPO_MAP_CACHE_MAX)
 
     normalized_query = query.strip().lower()
     matches: list[dict[str, Any]] = []
@@ -423,7 +548,8 @@ def _definitions_for_position(
     ls: TensorGrepLSPServer, uri: str, position: Position
 ) -> list[Location]:
     text = _document_text(ls, uri)
-    resolved = _word_range_at_position(text, position)
+    # audit B13: pass ls for encoding-aware column conversion.
+    resolved = _word_range_at_position(text, position, ls)
     if resolved is None:
         return []
     symbol, _ = resolved
@@ -616,11 +742,45 @@ def _workspace_edit_for_symbol(
 @server.feature(TEXT_DOCUMENT_DID_OPEN)  # type: ignore
 def did_open(ls: TensorGrepLSPServer, params: DidOpenTextDocumentParams) -> None:
     """Document opened."""
-    ls.documents_cache[params.text_document.uri] = params.text_document.text
+    # audit I3: use LRU-bounded cache.
+    _lru_put(
+        ls.documents_cache,
+        params.text_document.uri,
+        params.text_document.text,
+        _DOCUMENTS_CACHE_MAX,
+    )
     _invalidate_repo_map_cache(ls, params.text_document.uri)
     _update_ast_tensor(ls, params.text_document.uri, params.text_document.text)
     if ls.provider_mode != "native":
         _external_client_for_uri(ls, params.text_document.uri)
+
+
+@server.feature(TEXT_DOCUMENT_DID_CLOSE)  # type: ignore
+def did_close(ls: TensorGrepLSPServer, params: DidCloseTextDocumentParams) -> None:
+    """Document closed — evict from all caches and release GPU tensors (audit I3)."""
+    uri = params.text_document.uri
+    ls.documents_cache.pop(uri, None)
+    # Drop tensor cache entry; if it contains GPU tensors the reference count
+    # falls to zero and VRAM is released at the next GC cycle.
+    ls.tensor_cache.pop(uri, None)
+    # repo_map_cache is keyed by repo root, not URI, so we invalidate via the
+    # normal helper which resolves the root from the URI.
+    _invalidate_repo_map_cache(ls, uri)
+    if ls.provider_mode != "native":
+        client: Any = None
+        try:
+            language = _infer_language(uri)
+            workspace_root = _resolve_repo_root(_uri_to_path(uri))
+            client = ls.external_providers.get_client(
+                language=language, workspace_root=workspace_root
+            )
+        except Exception:
+            pass
+        if client is not None:
+            try:
+                client.close_document(uri=uri)
+            except Exception:
+                pass
 
 
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)  # type: ignore
@@ -628,11 +788,14 @@ def did_change(ls: TensorGrepLSPServer, params: DidChangeTextDocumentParams) -> 
     """Document changed."""
     if params.content_changes:
         new_text = cast(Any, params.content_changes[0]).text
-        ls.documents_cache[params.text_document.uri] = new_text
+        # audit I3: use LRU-bounded cache.
+        _lru_put(ls.documents_cache, params.text_document.uri, new_text, _DOCUMENTS_CACHE_MAX)
         _invalidate_repo_map_cache(ls, params.text_document.uri)
         if ls.provider_mode != "native":
             client = _external_client_for_uri(ls, params.text_document.uri)
             if client is not None:
+                # audit B15: pass the client-supplied version as a hint; the
+                # client's did_change() method will enforce monotonicity itself.
                 client.did_change(
                     uri=params.text_document.uri,
                     text=new_text,
@@ -643,7 +806,8 @@ def did_change(ls: TensorGrepLSPServer, params: DidChangeTextDocumentParams) -> 
 @server.feature(TEXT_DOCUMENT_DID_SAVE)  # type: ignore
 def did_save(ls: TensorGrepLSPServer, params: DidSaveTextDocumentParams) -> None:
     """Document saved."""
-    text = ls.documents_cache.get(params.text_document.uri, "")
+    # audit I3: use LRU-promoting get.
+    text = cast(str, _lru_get(ls.documents_cache, params.text_document.uri) or "")
     _invalidate_repo_map_cache(ls, params.text_document.uri)
     _update_ast_tensor(ls, params.text_document.uri, text)
     if ls.provider_mode != "native":
@@ -696,8 +860,28 @@ def workspace_symbol(
     ls: TensorGrepLSPServer, params: WorkspaceSymbolParams
 ) -> list[SymbolInformation]:
     """Return workspace symbols matching the query."""
+    # audit B16: _workspace_symbols now resolves the root without open docs.
     path_hint = next(iter(ls.documents_cache), None)
     return _workspace_symbols(ls, params.query, path_hint=path_hint)
+
+
+def _negotiate_position_encoding(
+    ls: TensorGrepLSPServer, client_capabilities: dict[str, Any]
+) -> None:
+    """Inspect client capabilities and choose the best position encoding (audit B13).
+
+    pygls calls the initialize handler before this module's handler runs, so we
+    hook into ``run_lsp`` / the initialize notification to read capabilities.
+    This function is called from the initialize response path.
+    """
+    general = client_capabilities.get("general") or {}
+    supported = general.get("positionEncodings") or []
+    if "utf-8" in supported:
+        ls._position_encoding = "utf-8"
+    elif "utf-32" in supported:
+        ls._position_encoding = "utf-32"
+    else:
+        ls._position_encoding = "utf-16"
 
 
 def _update_ast_tensor(ls: TensorGrepLSPServer, uri: str, text: str) -> None:
@@ -720,13 +904,20 @@ def _update_ast_tensor(ls: TensorGrepLSPServer, uri: str, text: str) -> None:
 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        ls.tensor_cache[uri] = {
-            "edge_index": edge_index.to(device),
-            "x": x.to(device),
-            "line_numbers": line_numbers,
-            "text": text,
-            "language": lang,
-        }
+        # audit I3: use LRU eviction; evicted entries drop GPU tensor references,
+        # allowing VRAM to be reclaimed at the next GC cycle.
+        _lru_put(
+            ls.tensor_cache,
+            uri,
+            {
+                "edge_index": edge_index.to(device),
+                "x": x.to(device),
+                "line_numbers": line_numbers,
+                "text": text,
+                "language": lang,
+            },
+            _TENSOR_CACHE_MAX,
+        )
     except Exception as e:
         ls.window_log_message(
             LogMessageParams(

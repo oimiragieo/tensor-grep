@@ -51,6 +51,45 @@ restore_previous_install() {
     mv "$BACKUP_INSTALL_DIR" "$INSTALL_DIR"
 }
 
+# Verify a downloaded release asset against the published CHECKSUMS.txt manifest BEFORE
+# it is ever made executable or run. Without this, a compromised release/account or a
+# TLS-intercepting proxy could persist arbitrary code as the default `tg` (audit S4).
+_compute_sha256_hex() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    fi
+    return 0
+}
+
+_expected_asset_sha256() {
+    # $1 = CHECKSUMS.txt path, $2 = asset name. Lines are "<sha256>  <asset>".
+    [ -f "$1" ] || return 0
+    awk -v asset="$2" '$NF == asset { print $1; exit }' "$1"
+    return 0
+}
+
+_verify_native_asset() {
+    # $1 = downloaded file, $2 = CHECKSUMS.txt path, $3 = asset name. 0 = verified.
+    local expected actual
+    expected="$(_expected_asset_sha256 "$2" "$3")"
+    actual="$(_compute_sha256_hex "$1")"
+    if [ -z "$expected" ]; then
+        echo "      No published checksum for $3; refusing to trust the download." >&2
+        return 1
+    fi
+    if [ -z "$actual" ]; then
+        echo "      Cannot compute sha256 (need sha256sum or shasum); refusing the download." >&2
+        return 1
+    fi
+    if [ "$expected" != "$actual" ]; then
+        echo "      Checksum MISMATCH for $3 (expected $expected, got $actual); refusing the download." >&2
+        return 1
+    fi
+    return 0
+}
+
 commit_staged_install() {
     rm -rf "$BACKUP_INSTALL_DIR"
     if [ -d "$INSTALL_DIR" ]; then
@@ -174,6 +213,12 @@ case "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" in
         ;;
 esac
 if [ "$INSTALL_CHANNEL" != "main" ]; then
+    NATIVE_CHECKSUMS_FILE="$STAGING_INSTALL_DIR/bin/CHECKSUMS.txt"
+    NATIVE_CHECKSUMS_URL="https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}/CHECKSUMS.txt"
+    if ! curl -fLsS "$NATIVE_CHECKSUMS_URL" -o "$NATIVE_CHECKSUMS_FILE"; then
+        NATIVE_CHECKSUMS_FILE=""
+        echo "      Could not fetch CHECKSUMS.txt; native front door will be skipped (Python fallback)." >&2
+    fi
     for NATIVE_FLAVOR in $(native_frontdoor_asset_candidates); do
         NATIVE_ASSET=""
         case "$(uname -s):$(uname -m):$NATIVE_FLAVOR" in
@@ -199,6 +244,15 @@ if [ "$INSTALL_CHANNEL" != "main" ]; then
         NATIVE_URL="https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}/${NATIVE_ASSET}"
         echo "      Downloading native tg front door asset flavor ${NATIVE_FLAVOR}: $NATIVE_ASSET"
         if curl -fL "$NATIVE_URL" -o "$STAGING_NATIVE_BINARY.tmp"; then
+            if ! _verify_native_asset "$STAGING_NATIVE_BINARY.tmp" "$NATIVE_CHECKSUMS_FILE" "$NATIVE_ASSET"; then
+                rm -f "$STAGING_NATIVE_BINARY.tmp"
+                if [ "$NATIVE_FLAVOR" = "nvidia" ]; then
+                    echo "      Falling back to CPU native tg front-door asset after NVIDIA checksum verification failed." >&2
+                    continue
+                fi
+                echo "      Native tg front-door checksum verification failed; using Python fallback." >&2
+                continue
+            fi
             mv "$STAGING_NATIVE_BINARY.tmp" "$STAGING_NATIVE_BINARY"
             chmod +x "$STAGING_NATIVE_BINARY"
             if "$STAGING_NATIVE_BINARY" --version; then

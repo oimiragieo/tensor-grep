@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import InvalidRegexError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -274,15 +274,12 @@ class RustCoreBackend(ComputeBackend):
         except Exception as exc:
             if _is_invalid_regex_error(exc):
                 raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
-            return SearchResult(
-                matches=[],
-                total_files=0,
-                total_matches=0,
-                routing_backend="RustCoreBackend",
-                routing_reason="rust_exception",
-                routing_distributed=False,
-                routing_worker_count=1,
-            )
+            # Never return an empty success-shaped result for a real failure: a native
+            # panic / encoding / IO / version-skew error must surface as an error the
+            # caller can fall back on, not as a silent no-match (audit B2).
+            raise BackendExecutionError(
+                f"RustCoreBackend failed to search {file_path}: {exc}"
+            ) from exc
 
         if config and config.max_count is not None:
             results = results[: config.max_count]

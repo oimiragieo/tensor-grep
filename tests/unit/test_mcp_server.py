@@ -1165,7 +1165,13 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
         )
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A1/A4: tg_rewrite_plan now also stamps plan_digest, match_count, and
+    # mcp_contract_version onto the plan output. The original native plan fields
+    # must still be present and unchanged.
+    assert {key: parsed[key] for key in payload} == payload
+    assert isinstance(parsed["plan_digest"], str) and parsed["plan_digest"]
+    assert parsed["match_count"] == payload["total_edits"]
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1285,7 +1291,11 @@ def test_tg_rewrite_plan_uses_embedded_fallback_without_native_binary(monkeypatc
         path=str(tmp_path),
     )
 
-    assert json.loads(out) == expected
+    parsed = json.loads(out)
+    # audit A1: the plan is stamped with a stable plan_digest and match_count.
+    assert {key: parsed[key] for key in expected} == expected
+    assert isinstance(parsed["plan_digest"], str) and parsed["plan_digest"]
+    assert parsed["match_count"] == 0
 
 
 def test_tg_rewrite_plan_reports_unavailable_without_native_or_embedded(monkeypatch, tmp_path):
@@ -1502,7 +1512,10 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
         )
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A4: every tool envelope now carries mcp_contract_version; the native
+    # apply fields are otherwise unchanged.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1575,7 +1588,9 @@ def test_tg_rewrite_apply_supports_optional_validation_commands():
         )
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A4: tolerate the added mcp_contract_version envelope key.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1713,7 +1728,9 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
         )
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A4: tolerate the added mcp_contract_version envelope key.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1771,7 +1788,9 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
         )
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A4: tolerate the added mcp_contract_version envelope key.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1834,7 +1853,10 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
             audit_manifest=str(manifest_path),
         )
 
-    assert json.loads(out) == payload
+    parsed = json.loads(out)
+    # audit A4: tolerate the added mcp_contract_version envelope key.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     index_payload = json.loads((audit_dir / "index.json").read_text(encoding="utf-8"))
     assert index_payload["version"] == 1
     assert index_payload["manifests"] == [
@@ -1891,7 +1913,9 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
         )
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A4: tolerate the added mcp_contract_version envelope key.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -2711,7 +2735,9 @@ def test_tg_index_search_returns_native_index_search_json_shape():
         out = mcp_server.tg_index_search(pattern="ERROR", path="src")
 
     parsed = json.loads(out)
-    assert parsed == payload
+    # audit A4: tolerate the added mcp_contract_version envelope key.
+    assert {key: parsed[key] for key in payload} == payload
+    assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "search",

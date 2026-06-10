@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
@@ -251,11 +253,21 @@ class RipgrepBackend(ComputeBackend):
             config=config,
             json_mode=bool(config and config.json_mode),
         )
-        result = run_subprocess(
-            cmd,
-            check=False,
-            timeout_seconds=configured_ripgrep_timeout_seconds(),
-        )
+        try:
+            result = run_subprocess(
+                cmd,
+                check=False,
+                timeout_seconds=configured_ripgrep_timeout_seconds(),
+            )
+        except subprocess.TimeoutExpired:
+            # ripgrep never self-terminates a search; this timeout is tg-imposed. Exit
+            # with the coreutils `timeout` convention instead of letting an uncaught
+            # TimeoutExpired traceback abort the stream (audit B5/#10).
+            sys.stderr.write(
+                "tensor-grep: ripgrep search exceeded the configured timeout and was "
+                "stopped (adjust TG_RG_TIMEOUT_SECONDS).\n"
+            )
+            return 124
         return int(result.returncode)
 
     def _build_cmd(
@@ -538,10 +550,7 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["-j", str(config.threads)])
             if config.list_files:
                 cmd.append("--files")
-                if isinstance(file_path, list):
-                    cmd.extend(file_path)
-                else:
-                    cmd.append(file_path)
+                self._append_search_paths(cmd, file_path)
                 return cmd
 
         pattern_files = list(config.file_patterns or []) if config else []
@@ -555,8 +564,21 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["-e", current_pattern])
             else:
                 cmd.append(current_pattern)
-        if isinstance(file_path, list):
-            cmd.extend(file_path)
-        else:
-            cmd.append(file_path)
+        self._append_search_paths(cmd, file_path)
         return cmd
+
+    @staticmethod
+    def _append_search_paths(cmd: list[str], file_path: str | list[str]) -> None:
+        """Append positional paths after a literal ``--`` end-of-options separator.
+
+        ripgrep itself disambiguates trailing positionals with ``--``; without it a path
+        beginning with ``-`` (e.g. ``-foo.txt``, ``--no-ignore``, ``--type-add=x:*``)
+        supplied as a search target is parsed as a FLAG, silently searching the wrong
+        files or altering ignore/type behavior (audit B4/#8). The separator is a no-op
+        for normal paths and universally supported by rg.
+        """
+        paths = file_path if isinstance(file_path, list) else [file_path]
+        if not paths:
+            return
+        cmd.append("--")
+        cmd.extend(paths)

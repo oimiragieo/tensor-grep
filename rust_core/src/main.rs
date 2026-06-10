@@ -5165,6 +5165,10 @@ struct RewriteAuditManifestRead {
 #[derive(Debug, Clone, Deserialize)]
 struct AuditManifestSignatureRead {
     kind: String,
+    // Retained for deserialization/forward-compatibility but intentionally NOT used for
+    // verification: the key must be supplied out-of-band via --signing-key, never read
+    // from the manifest being verified (audit S2).
+    #[allow(dead_code)]
     key_path: String,
     value: String,
 }
@@ -6603,10 +6607,7 @@ fn verify_audit_manifest_payload(
         if signature.kind != "hmac-sha256" {
             signature_valid = false;
             errors.push(format!("Unsupported signature kind: {}", signature.kind));
-        } else {
-            let key_path = signing_key_path
-                .as_deref()
-                .unwrap_or_else(|| Path::new(&signature.key_path));
+        } else if let Some(key_path) = signing_key_path.as_deref() {
             let key_bytes = std::fs::read(key_path).with_context(|| {
                 format!("failed to read audit signing key {}", key_path.display())
             })?;
@@ -6624,6 +6625,18 @@ fn verify_audit_manifest_payload(
                     "Manifest signature does not match the supplied signing key.".to_string(),
                 );
             }
+        } else {
+            // Never derive the verification key from inside the manifest being verified:
+            // a tampered manifest could point key_path at an attacker-controlled key and
+            // forge a matching HMAC, defeating tamper-evidence for the default (no
+            // --signing-key) invocation. Require an out-of-band key; treat
+            // signature.key_path as informational only (audit S2).
+            signature_valid = false;
+            errors.push(
+                "Manifest is hmac-sha256 signed but no --signing-key was provided; refusing to \
+                 trust the key_path embedded in the manifest."
+                    .to_string(),
+            );
         }
     } else if signing_key_path.is_some() {
         signature_valid = false;

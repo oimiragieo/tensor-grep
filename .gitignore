@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Compiled native extension (maturin build output)
+*.abi3.so
+*.pyd
+src/tensor_grep/rust_core*.so
+
 # Environments
 .env
 .venv

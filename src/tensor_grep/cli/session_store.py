@@ -45,6 +45,13 @@ _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV = "TENSOR_GREP_SESSION_RESPONSE_CACH
 _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+# audit I2: bound on-disk session retention; keep at most N newest explicit sessions per root
+# so per-open cost and disk usage stay bounded. Configurable via TG_SESSION_MAX.
+_SESSION_MAX_ENV = "TG_SESSION_MAX"
+_DEFAULT_SESSION_MAX = 64
+# audit S9: nearby-root session discovery loads payloads from parent/sibling dirs. Confine
+# resolution to the explicit root by default; opt back in with TG_SESSION_NEARBY_LOOKUP=1.
+_SESSION_NEARBY_LOOKUP_ENV = "TG_SESSION_NEARBY_LOOKUP"
 
 
 @dataclass
@@ -108,6 +115,19 @@ def _configured_positive_int(env_var: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
+
+
+def _configured_session_max() -> int:
+    return _configured_positive_int(_SESSION_MAX_ENV, _DEFAULT_SESSION_MAX)
+
+
+def _nearby_lookup_enabled() -> bool:
+    # audit S9: default to confined (explicit-root) lookups; only widen to parent/sibling
+    # discovery when the operator explicitly opts in.
+    raw_value = os.environ.get(_SESSION_NEARBY_LOOKUP_ENV)
+    if raw_value is None:
+        return False
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _json_size_bytes(payload: dict[str, Any]) -> int:
@@ -313,11 +333,14 @@ def _session_root_for_payload(session_id: str, path: str = ".") -> Path:
     root = _resolve_root(Path(path))
     if _session_payload_path(root, session_id).exists():
         return root
-    for candidate in _nearby_session_roots(path):
-        if candidate == root:
-            continue
-        if _session_payload_path(candidate, session_id).exists():
-            return candidate
+    # audit S9: nearby (parent/sibling) discovery silently loads payloads from outside the
+    # requested root. Keep it off unless explicitly enabled.
+    if _nearby_lookup_enabled():
+        for candidate in _nearby_session_roots(path):
+            if candidate == root:
+                continue
+            if _session_payload_path(candidate, session_id).exists():
+                return candidate
     return root
 
 
@@ -354,15 +377,46 @@ def _load_index(root: Path) -> list[SessionRecord]:
     return [SessionRecord(**entry) for entry in payload]
 
 
-def _write_json_atomic(path: Path, payload: Any) -> None:
+def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if mode is not None:
+        # audit S3: apply restrictive permissions to the temp file before the atomic rename so
+        # the published file never exists world-readable (e.g. 0600 for the daemon token file).
+        try:
+            os.chmod(tmp_path, mode)
+        except OSError:
+            pass
     os.replace(tmp_path, path)
 
 
 def _write_index(root: Path, records: list[SessionRecord]) -> None:
     _write_json_atomic(_index_path(root), [asdict(record) for record in records])
+
+
+def _prune_session_records(
+    root: Path,
+    records: list[SessionRecord],
+    *,
+    max_records: int | None = None,
+) -> list[SessionRecord]:
+    """Bound on-disk session retention (audit I2).
+
+    Keep at most ``max_records`` newest records (``records`` must already be ordered
+    newest-first). Each dropped record's payload file is unlinked before the trimmed list is
+    returned so disk usage stays bounded and the index never references a removed payload.
+    """
+    limit = _configured_session_max() if max_records is None else max(1, int(max_records))
+    if len(records) <= limit:
+        return records
+    retained = records[:limit]
+    for dropped in records[limit:]:
+        try:
+            _session_payload_path(root, dropped.session_id).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return retained
 
 
 def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
@@ -526,6 +580,9 @@ def open_session(
     )
     records = [existing for existing in _load_index(root) if existing.session_id != session_id]
     records.insert(0, record)
+    # audit I2: bound retention so disk and index size do not grow without limit; unlink the
+    # payload files for any records dropped past the configured cap before rewriting the index.
+    records = _prune_session_records(root, records)
     _write_index(root, records)
     return SessionOpenResult(
         session_id=session_id,
@@ -644,6 +701,9 @@ def list_sessions_with_discovery(path: str = ".") -> tuple[list[SessionRecord], 
     if direct:
         return direct, str(root), False
 
+    # audit S9: discovery here only reads index *metadata* (not session payloads), and is a
+    # documented `tg session list` convenience for locating a child scope from a parent cwd.
+    # Payload *loading* confinement is enforced in `_session_root_for_payload`/`get_session`.
     records: list[SessionRecord] = []
     discovered_roots = [candidate for candidate in _nearby_session_roots(path) if candidate != root]
     for discovered_root in discovered_roots:
@@ -662,7 +722,23 @@ def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
     session_path = _session_payload_path(root, session_id)
     if not session_path.exists():
         raise FileNotFoundError(f"Session not found: {session_id}")
-    return cast(dict[str, Any], json.loads(session_path.read_text(encoding="utf-8")))
+    payload = cast(dict[str, Any], json.loads(session_path.read_text(encoding="utf-8")))
+    # audit S9: verify the payload was written for the directory we loaded it from, so a
+    # payload that escaped (or was planted) under a mismatched root is not silently served.
+    recorded_root = payload.get("root")
+    if recorded_root is not None:
+        try:
+            resolved_recorded_root: Path | None = _resolve_root(Path(str(recorded_root)))
+        except OSError:
+            # Cannot resolve the recorded root (e.g. transient FS error); skip the check
+            # rather than failing a payload we loaded from the requested root.
+            resolved_recorded_root = None
+        if resolved_recorded_root is not None and resolved_recorded_root != root:
+            raise FileNotFoundError(
+                f"Session root mismatch for {session_id}: payload root {recorded_root!r} "
+                f"does not match {root}"
+            )
+    return payload
 
 
 def _load_session_payload(

@@ -52,8 +52,44 @@ def _is_generated_discovery_dir(path: Path) -> bool:
 def _write_json_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, indent=2))
+        handle.flush()
+        # fsync the data before the rename so a crash can never publish a truncated
+        # index/metadata that would leave the agent's rollback safety net unable to
+        # find the checkpoint while edits stay applied (audit I5).
+        os.fsync(handle.fileno())
     os.replace(tmp_path, path)
+    # Best-effort durability of the rename itself; directory fsync is a no-op or
+    # unsupported on Windows, so failures here are non-fatal.
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def _resolve_within_root(root: Path, root_resolved: Path, rel_path: str) -> Path:
+    """Resolve a checkpoint metadata entry key under ``root`` and assert containment.
+
+    Checkpoint metadata is read from disk and the undo path is reachable from the MCP
+    ``tg_checkpoint_undo`` tool, the CLI, and policy rollback, so the entry keys are
+    attacker-influenceable. Refuse absolute paths, ``..`` traversal, and symlink
+    escapes before any unlink/copy, so a tampered manifest can never write to or delete
+    a file outside the checkpoint root (audit S1).
+    """
+    candidate = Path(rel_path)
+    if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+        raise ValueError(f"Refusing checkpoint entry outside root: {rel_path!r}")
+    resolved = (root / candidate).resolve()
+    if resolved != root_resolved and root_resolved not in resolved.parents:
+        raise ValueError(f"Refusing checkpoint entry outside root: {rel_path!r}")
+    return resolved
 
 
 @dataclass
@@ -881,6 +917,15 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     entries: dict[str, bool] = metadata["entries"]
     snapshot_dir = _snapshot_path(root, checkpoint_id)
+    root_resolved = root.resolve()
+
+    # Validate every metadata entry stays inside the checkpoint root BEFORE mutating
+    # anything. Failing fast here means a tampered manifest cannot overwrite or delete
+    # files outside the repo, and a single bad entry cannot leave a partially-restored
+    # tree (audit S1).
+    resolved_targets = {
+        rel_path: _resolve_within_root(root, root_resolved, rel_path) for rel_path in entries
+    }
 
     scope_kind = str(metadata.get("scope", "tree"))
     if scope_kind == "file":
@@ -900,7 +945,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
     restored_files = 0
     for rel_path, exists in entries.items():
-        target = root / Path(rel_path)
+        target = resolved_targets[rel_path]
         if exists:
             source = snapshot_dir / Path(rel_path)
             target.parent.mkdir(parents=True, exist_ok=True)
