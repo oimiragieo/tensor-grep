@@ -1221,6 +1221,29 @@ fn main_inner() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // C3: plain `--json` combined with a render-only flag (e.g. -b/--passthru/--heading)
+    // cannot be honored by the aggregate JSON path and must be rejected by the native
+    // binary itself — NEVER delegated to the Python sidecar, which deadlocks/fork-bombs
+    // the native<->python re-exec chain when the resolved Python is a stale tensor-grep
+    // lacking the launcher guard. Fail fast and deterministically before spawning anything.
+    let json_render_conflicts = json_aggregate_render_flag_conflicts(&raw_args);
+    if !json_render_conflicts.is_empty() {
+        let detail = format!(
+            "flag(s) {} not supported with plain --json; use --format rg --json for ripgrep \
+             JSON Lines that carry render metadata, or drop the flag(s).",
+            json_render_conflicts.join(", ")
+        );
+        let payload = serde_json::json!({
+            "version": 1,
+            "schema_version": 1,
+            "ok": false,
+            "error": "unsupported_flag",
+            "detail": detail,
+        });
+        println!("{payload}");
+        std::process::exit(2);
+    }
+
     if let Some(exit_code) = try_early_ripgrep_passthrough(&raw_args)? {
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -1503,6 +1526,68 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
         index += 1;
     }
     None
+}
+
+/// Render-only flags the aggregate plain-`--json` path cannot honor. Mirrors
+/// `_PLAIN_JSON_INCOMPATIBLE_RENDER_FLAGS` / `_JSON_INCOMPATIBLE_RENDER_FLAGS` in the
+/// Python CLI/launcher (canonical spelling first in each group).
+const JSON_INCOMPATIBLE_RENDER_FLAGS: &[&[&str]] = &[
+    &["--passthru", "--passthrough"],
+    &["--heading", "--no-heading"],
+    &["--trim", "--no-trim"],
+    &["-b", "--byte-offset", "--no-byte-offset"],
+    &["-M", "--max-columns"],
+    &["--max-columns-preview", "--no-max-columns-preview"],
+    &["--context-separator", "--no-context-separator"],
+    &["--field-context-separator"],
+    &["--field-match-separator"],
+    &["-p", "--pretty"],
+];
+
+/// Return the canonical spellings of render-only flags the user combined with plain
+/// `--json` (not `--format rg`). Such a combination must be rejected by the NATIVE binary
+/// directly — never delegated to the Python sidecar — because delegating to a stale/older
+/// tensor-grep Python (one lacking the launcher guard) deadlocks and can fork-bomb the
+/// native<->python re-exec chain (audit C3). Mirrors the Python guard so the native front
+/// door is self-sufficient regardless of which Python it resolves.
+fn json_aggregate_render_flag_conflicts(raw_args: &[OsString]) -> Vec<String> {
+    let Some(search_args) = normalize_top_level_search_args(raw_args) else {
+        return Vec::new();
+    };
+    let args = search_args
+        .iter()
+        .skip(2)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    if !args.iter().any(|arg| arg == "--json") {
+        return Vec::new();
+    }
+    // `--format rg` emits ripgrep JSON Lines, which carry render metadata — allowed.
+    let mut index = 0usize;
+    while index < args.len() {
+        if args[index] == "--format" {
+            if args.get(index + 1).map(String::as_str) == Some("rg") {
+                return Vec::new();
+            }
+        } else if args[index] == "--format=rg" {
+            return Vec::new();
+        }
+        index += 1;
+    }
+    let mut flagged: Vec<String> = Vec::new();
+    for arg in &args {
+        if arg == "--" {
+            break;
+        }
+        let base = arg.split('=').next().unwrap_or(arg);
+        for group in JSON_INCOMPATIBLE_RENDER_FLAGS {
+            let canonical = group[0].to_string();
+            if group.contains(&base) && !flagged.contains(&canonical) {
+                flagged.push(canonical);
+            }
+        }
+    }
+    flagged
 }
 
 fn normalize_top_level_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
@@ -2048,6 +2133,60 @@ mod tests {
             Commands::Search(args) => args,
             _ => panic!("expected search command"),
         }
+    }
+
+    fn json_conflicts(tokens: &[&str]) -> Vec<String> {
+        let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+        json_aggregate_render_flag_conflicts(&raw_args)
+    }
+
+    #[test]
+    fn json_aggregate_flags_incompatible_render_flags() {
+        // audit C3: plain --json + a render-only flag must be flagged so the native binary
+        // rejects it directly instead of delegating to (and deadlocking via) a stale Python
+        // sidecar in the native<->python re-exec chain.
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "-b", "foo", "f.py"]),
+            vec!["-b".to_string()]
+        );
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "--heading", "foo", "f.py"]),
+            vec!["--heading".to_string()]
+        );
+        // Option-first form (no explicit `search` subcommand) flags trigger flags too:
+        // `-b` is in SEARCH_PYTHON_PASSTHROUGH_FLAGS so it is recognized as a search.
+        assert_eq!(
+            json_conflicts(&["tg", "--json", "-b", "foo", "f.py"]),
+            vec!["-b".to_string()]
+        );
+        // `tg search --json --passthru` (explicit search) delegates via the --passthru gate,
+        // so the native guard must reject it directly.
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "--passthru", "foo", "f.py"]),
+            vec!["--passthru".to_string()]
+        );
+        // --byte-offset is an alias of -b and normalizes to the canonical spelling.
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "--byte-offset", "foo", "f.py"]),
+            vec!["-b".to_string()]
+        );
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "--passthru", "-b", "foo", "f.py"]),
+            vec!["--passthru".to_string(), "-b".to_string()]
+        );
+    }
+
+    #[test]
+    fn json_aggregate_allows_plain_json_and_rg_format() {
+        // plain --json (no render flag) is the native aggregate path — allowed.
+        assert!(json_conflicts(&["tg", "search", "--json", "foo", "f.py"]).is_empty());
+        // --format rg --json carries render metadata via ripgrep JSON Lines — allowed.
+        assert!(
+            json_conflicts(&["tg", "search", "--format", "rg", "--json", "-b", "foo", "f.py"])
+                .is_empty()
+        );
+        // a literal render-flag-looking pattern after `--` is not a flag.
+        assert!(json_conflicts(&["tg", "search", "--json", "--", "--passthru"]).is_empty());
     }
 
     #[cfg(feature = "cuda")]
