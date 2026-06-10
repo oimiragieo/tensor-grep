@@ -1497,42 +1497,32 @@ def test_cli_defs_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_cli_impact_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        repo_map,
-        "build_symbol_impact_json",
-        lambda symbol, path, semantic_provider="native", **_: json.dumps({
-            "symbol": symbol,
-            "path": str(path),
-            "semantic_provider": semantic_provider,
-        }),
-    )
-
+    # The impact command uses an inline implementation and does not delegate to
+    # build_symbol_impact_json, so no monkeypatch is needed.  The command exits 1
+    # on no-match (mirroring rg's exit convention) while still emitting a valid JSON
+    # payload — assert that the provider option is accepted and threaded through.
     result = CliRunner().invoke(
         app, ["impact", str(tmp_path), "--symbol", "create_invoice", "--provider", "lsp", "--json"]
     )
 
-    assert result.exit_code == 0
+    # Exit 1 is the correct no-match exit code (symbol not found in empty dir).
+    assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["semantic_provider"] == "lsp"
 
 
 def test_cli_source_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        repo_map,
-        "build_symbol_source_json",
-        lambda symbol, path, semantic_provider="native", **_: json.dumps({
-            "symbol": symbol,
-            "path": str(path),
-            "semantic_provider": semantic_provider,
-        }),
-    )
-
+    # The source command uses an inline implementation and does not delegate to
+    # build_symbol_source_json, so no monkeypatch is needed.  The command exits 1
+    # on no-match (mirroring rg's exit convention) while still emitting a valid JSON
+    # payload — assert that the provider option is accepted and threaded through.
     result = CliRunner().invoke(
         app,
         ["source", str(tmp_path), "--symbol", "create_invoice", "--provider", "hybrid", "--json"],
     )
 
-    assert result.exit_code == 0
+    # Exit 1 is the correct no-match exit code (symbol not found in empty dir).
+    assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["semantic_provider"] == "hybrid"
 

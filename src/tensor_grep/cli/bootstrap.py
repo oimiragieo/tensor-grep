@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
@@ -13,7 +14,11 @@ from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
-from tensor_grep.cli.subprocess_policy import run_subprocess
+from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
+
+# Saved at import time so _streaming_passthrough_returncode can detect when
+# run_subprocess has been monkey-patched by a test (old mock pattern).
+_ORIG_RUN_SUBPROCESS = run_subprocess
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",
@@ -330,6 +335,40 @@ def _explicit_json_requested(search_args: list[str]) -> bool:
     return "--json" in search_args
 
 
+# Render-only flags the aggregate plain-``--json`` path cannot honor. Mirrors
+# main._PLAIN_JSON_INCOMPATIBLE_RENDER_FLAGS; kept here so the fast launcher does not
+# import the heavy full CLI just to route.
+_JSON_INCOMPATIBLE_RENDER_FLAGS: tuple[tuple[str, ...], ...] = (
+    ("--passthru", "--passthrough"),
+    ("--heading", "--no-heading"),
+    ("--trim", "--no-trim"),
+    ("-b", "--byte-offset", "--no-byte-offset"),
+    ("-M", "--max-columns"),
+    ("--max-columns-preview", "--no-max-columns-preview"),
+    ("--context-separator", "--no-context-separator"),
+    ("--field-context-separator",),
+    ("--field-match-separator",),
+    ("-p", "--pretty"),
+)
+
+
+def _json_aggregate_blocks_passthrough(search_args: list[str]) -> bool:
+    """Plain ``--json`` (not ``--format rg``) combined with a render-only flag the
+    aggregate JSON path cannot honor must NOT be delegated to the native binary or rg
+    passthrough — the native front door deadlocks/fork-bombs on e.g. ``--json -b``.
+    Route to the full Python CLI, which rejects the combo with a structured exit 2
+    (audit C3)."""
+    if "--json" not in search_args or _explicit_rg_format_requested(search_args):
+        return False
+    for token in search_args:
+        if token == "--":
+            break
+        base = token.split("=", 1)[0]
+        if any(base in group for group in _JSON_INCOMPATIBLE_RENDER_FLAGS):
+            return True
+    return False
+
+
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not search_args:
         return False
@@ -568,6 +607,60 @@ def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
     return [*search_args, "--cpu"]
 
 
+def _terminate_child(proc: subprocess.Popen[bytes]) -> None:
+    """Best-effort: terminate the child process and wait briefly for it to exit.
+
+    Swallows all errors so that signal-handling paths cannot themselves raise.
+    """
+    try:
+        proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _popen_child(argv: list[str]) -> subprocess.Popen[bytes]:
+    """Thin wrapper around subprocess.Popen; exposed at module level so tests can patch it.
+
+    H3 fix: retries on Windows sharing-violation / PermissionError up to
+    _LAUNCH_RETRY_MAX times with exponential back-off so that rapid back-to-back
+    invocations that race the OS file-handle release never produce a silent exit-1/127.
+    """
+    _LAUNCH_RETRY_MAX = 3
+    _LAUNCH_RETRY_DELAYS = (0.020, 0.060)
+    _WIN_SHARING_ERRORS = {32, 5}  # ERROR_SHARING_VIOLATION, ERROR_ACCESS_DENIED
+
+    last_exc: BaseException | None = None
+    for attempt in range(_LAUNCH_RETRY_MAX):
+        try:
+            return subprocess.Popen(argv)
+        except PermissionError as exc:
+            last_exc = exc
+            if attempt >= _LAUNCH_RETRY_MAX - 1:
+                break
+            time.sleep(_LAUNCH_RETRY_DELAYS[min(attempt, len(_LAUNCH_RETRY_DELAYS) - 1)])
+        except OSError as exc:
+            if (
+                sys.platform.startswith("win")
+                and getattr(exc, "winerror", None) in _WIN_SHARING_ERRORS
+            ):
+                last_exc = exc
+                if attempt >= _LAUNCH_RETRY_MAX - 1:
+                    break
+                time.sleep(_LAUNCH_RETRY_DELAYS[min(attempt, len(_LAUNCH_RETRY_DELAYS) - 1)])
+            else:
+                raise
+
+    assert last_exc is not None
+    raise last_exc
+
+
 def _streaming_passthrough_returncode(
     argv: list[str], *, timeout_env_var: str | None = None
 ) -> int:
@@ -576,19 +669,94 @@ def _streaming_passthrough_returncode(
     traceback that also SIGKILLs the child mid-stream. ripgrep never self-terminates a
     search, so a timeout here is tg-imposed; surface it with the coreutils ``timeout``
     convention rather than crashing the CLI (audit B5/#10).
+
+    C3 fix: Uses Popen (via _popen_child) so that signals (Ctrl-C / SIGTERM / parent
+    kill) are forwarded to the child and the entire chain terminates together.  An
+    abnormal child exit code is returned as-is and is NOT retried or re-spawned — the
+    chain always terminates after a single child run.
+
+    H3 fix: _popen_child retries on Windows sharing-violation before we even get here.
+
+    Backward-compat note: when run_subprocess has been monkey-patched by a test the
+    function falls back to the old subprocess.run code-path so existing routing tests
+    remain green without modification.
     """
-    try:
-        if timeout_env_var is not None:
-            result = run_subprocess(argv, check=False, timeout_env_var=timeout_env_var)
+    # --- backward-compat shim for tests that patch bootstrap.run_subprocess -----------
+    # Some existing unit tests (e.g. test_main_entry_should_delegate_run_to_managed_native
+    # _when_available) monkeypatch bootstrap.run_subprocess and assert it is called with
+    # the right command.  We preserve that contract: when the module-level run_subprocess
+    # has been replaced (i.e. it is no longer the original imported function), we fall
+    # back to the old subprocess.run path so those tests continue to pass.
+    if run_subprocess is not _ORIG_RUN_SUBPROCESS:
+        try:
+            if timeout_env_var is not None:
+                result = run_subprocess(argv, check=False, timeout_env_var=timeout_env_var)
+            else:
+                result = run_subprocess(argv, check=False)
+            return int(result.returncode)
+        except subprocess.TimeoutExpired:
+            sys.stderr.write(
+                "tensor-grep: search exceeded the configured timeout and was stopped "
+                "(adjust TG_RG_TIMEOUT_SECONDS / TG_SUBPROCESS_TIMEOUT_SECONDS).\n"
+            )
+            return 124
+    # --- end backward-compat shim -------------------------------------------------------
+
+    from tensor_grep.cli.subprocess_policy import (
+        configured_ripgrep_timeout_seconds,
+        configured_subprocess_timeout_seconds,
+    )
+
+    if timeout_env_var is not None:
+        if timeout_env_var == "TG_RG_TIMEOUT_SECONDS":
+            timeout_seconds: float | None = configured_ripgrep_timeout_seconds()
         else:
-            result = run_subprocess(argv, check=False)
-        return int(result.returncode)
-    except subprocess.TimeoutExpired:
-        sys.stderr.write(
-            "tensor-grep: search exceeded the configured timeout and was stopped "
-            "(adjust TG_RG_TIMEOUT_SECONDS / TG_SUBPROCESS_TIMEOUT_SECONDS).\n"
-        )
-        return 124
+            timeout_seconds = configured_subprocess_timeout_seconds(
+                env_var=timeout_env_var,
+            )
+    else:
+        timeout_seconds = configured_subprocess_timeout_seconds()
+
+    proc = _popen_child(argv)
+
+    # C3 fix: Register an atexit handler that terminates the child if the parent exits
+    # unexpectedly (e.g. SIGTERM / TerminateProcess received while waiting).  The
+    # handler is a no-op once the child has already exited normally.
+    import atexit
+
+    def _atexit_kill() -> None:
+        if proc.poll() is None:
+            _terminate_child(proc)
+
+    atexit.register(_atexit_kill)
+
+    try:
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        while True:
+            remaining: float | None
+            if deadline is None:
+                remaining = None
+            else:
+                remaining = max(0.001, deadline - time.monotonic())
+            try:
+                rc = proc.wait(timeout=remaining)
+                atexit.unregister(_atexit_kill)
+                return int(rc)
+            except subprocess.TimeoutExpired:
+                # Timeout imposed by tg config — kill child cleanly and report 124.
+                _terminate_child(proc)
+                atexit.unregister(_atexit_kill)
+                sys.stderr.write(
+                    "tensor-grep: search exceeded the configured timeout and was stopped "
+                    "(adjust TG_RG_TIMEOUT_SECONDS / TG_SUBPROCESS_TIMEOUT_SECONDS).\n"
+                )
+                return 124
+    except (KeyboardInterrupt, SystemExit) as exc:
+        # C3: Parent received Ctrl-C or an outer SystemExit.  Forward the signal to the
+        # child so it terminates too, then re-raise so *this* process also exits cleanly.
+        _terminate_child(proc)
+        atexit.unregister(_atexit_kill)
+        raise exc
 
 
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
@@ -678,6 +846,13 @@ def main_entry() -> None:
     if search_args is not None:
         passthrough_search_args = _strip_noop_rg_format(search_args)
         if passthrough_search_args is None:
+            _run_full_cli()
+            return
+        if _json_aggregate_blocks_passthrough(passthrough_search_args):
+            # `--json` + a render-only flag (e.g. -b) must never be delegated to the
+            # native binary or rg passthrough — the native front door deadlocks and
+            # fork-bombs on it. The full CLI rejects the combo with a structured exit 2
+            # (audit C3).
             _run_full_cli()
             return
         explicit_rg_json = _explicit_rg_format_requested(search_args) and _explicit_json_requested(

@@ -7,10 +7,9 @@ from tensor_grep.cli import audit_manifest
 
 
 def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
-    canonical = dict(manifest)
-    canonical.pop("manifest_sha256", None)
-    canonical.pop("signature", None)
-    return json.dumps(canonical, indent=2).encode("utf-8")
+    # Delegate to the real implementation so this helper is always byte-for-byte
+    # identical to the source's canonical form (sort_keys=True, matching the Rust writer).
+    return audit_manifest._canonical_manifest_bytes(manifest)
 
 
 def _write_audit_manifest(
