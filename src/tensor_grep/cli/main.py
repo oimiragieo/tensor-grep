@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -3229,6 +3230,32 @@ def _exit_search_error(
     sys.exit(exit_code)
 
 
+def _invalid_regex_remediation(message: str) -> str:
+    """Return a remediation hint that never converts a hard regex error into a silent
+    wrong answer (audit M14).
+
+    The default Rust regex engine rejects inline flag groups that are not at the start
+    of the expression (e.g. ``a(?s).*b``). Suggesting ``-F`` there is actively harmful:
+    ``-F`` searches the literal text ``a(?s).*b`` and returns a silent zero-match
+    success, masking the real problem. For inline-flag / parse errors, point the user at
+    ``-P`` (the PCRE2 engine, which accepts mid-expression inline flags) or at moving the
+    flag to the front of the pattern instead.
+    """
+    lowered = message.lower()
+    inline_flag_error = "global flags not at the start" in lowered or (
+        "flag" in lowered and ("(?" in message or "inline" in lowered)
+    )
+    if inline_flag_error:
+        return (
+            "Use -P (PCRE2) to allow inline flags mid-pattern, or move the inline flag "
+            "group (for example (?s)) to the very start of the pattern."
+        )
+    return (
+        "Use -P (PCRE2) for extended regex syntax, or --fixed-strings (-F) only if you "
+        "intended to search this pattern as a literal string."
+    )
+
+
 def _exit_invalid_regex(exc: Exception, *, json_mode: bool = False) -> None:
     message = str(exc)
     if "invalid regex" not in message.lower():
@@ -3237,7 +3264,7 @@ def _exit_invalid_regex(exc: Exception, *, json_mode: bool = False) -> None:
         "invalid_regex",
         message,
         json_mode=json_mode,
-        stderr_detail=f"{message}. Use --fixed-strings (-F) to search this pattern literally.",
+        stderr_detail=f"{message}. {_invalid_regex_remediation(message)}",
     )
 
 
@@ -3486,6 +3513,50 @@ def _explicit_rg_format_requested(
             return token.split("=", 1)[1] == "rg"
         index += 1
     return False
+
+
+# Render-only ripgrep flags that shape *text* output. The tensor-grep aggregate
+# `--json` object has no place to put them, so `_build_cmd` silently drops them when
+# `json_mode` is set. Worse, the front-door launcher can respawn the search child in
+# text-render mode while expecting JSON, spawning an rg child whose pipe is never
+# drained -> deadlock (audit C3). Detect them up front and fail fast with a structured
+# error instead of either silently ignoring the user's intent or risking the hang.
+# Maps the user-facing flag spelling -> the SearchConfig attribute that records it.
+_PLAIN_JSON_INCOMPATIBLE_RENDER_FLAGS: tuple[tuple[str, ...], ...] = (
+    ("--passthru", "--passthrough"),
+    ("--heading", "--no-heading"),
+    ("--trim", "--no-trim"),
+    ("-b", "--byte-offset", "--no-byte-offset"),
+    ("-M", "--max-columns"),
+    ("--max-columns-preview", "--no-max-columns-preview"),
+    ("--context-separator", "--no-context-separator"),
+    ("--field-context-separator",),
+    ("--field-match-separator",),
+    ("-p", "--pretty"),
+)
+
+
+def _plain_json_incompatible_render_flags(argv: list[str] | None = None) -> list[str]:
+    """Return the render-only flag spellings the user passed that the aggregate
+    plain-``--json`` path cannot honor. Detection is argv-based because some flags
+    (notably ``--heading``) share their default with the SearchConfig default and so
+    cannot be recovered from the parsed config alone."""
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if tokens and tokens[0] == "search":
+        tokens = tokens[1:]
+    # Stop at an explicit end-of-options marker so a literal "--passthru" *pattern*
+    # after "--" is never mistaken for the flag.
+    seen: set[str] = set()
+    flagged: list[str] = []
+    for token in tokens:
+        if token == "--":
+            break
+        base = token.split("=", 1)[0]
+        for group in _PLAIN_JSON_INCOMPATIBLE_RENDER_FLAGS:
+            if base in group and group[0] not in seen:
+                seen.add(group[0])
+                flagged.append(group[0])
+    return flagged
 
 
 def _selected_route_supports_rg_passthrough(
@@ -4338,6 +4409,27 @@ def _apply_ruleset_baseline(
         }
 
 
+def _regex_rule_targets_file(rule_language: str, file_path: str) -> bool:
+    """Whether a regex-engine ruleset rule should scan ``file_path``.
+
+    AST rules are already scoped to their language by the DirectoryScanner (via
+    ``lang=rule["language"]``). The regex engine, by contrast, used to ``finditer``
+    over *every* candidate file, so a ``--ruleset secrets-basic --language python``
+    scan flagged ``.ts``/``.js``/``.rs`` files as python findings (audit H11). Mirror
+    the AST scoping: if the file's language is detectable and differs from the rule's
+    language, skip it. Files whose language is undetectable (extensionless, configs,
+    data files, or a language tg cannot classify) are left to the rule so we never
+    silently drop a finding for a language ``_target_language_for_path`` does not yet
+    recognize.
+    """
+    from tensor_grep.cli.repo_map import _target_language_for_path
+
+    file_language = _target_language_for_path(file_path)
+    if file_language is None:
+        return True
+    return file_language == normalize_ast_language(rule_language, default=file_language)
+
+
 def _run_ast_scan_payload(
     project_cfg: dict[str, object],
     rules: list[dict[str, str]],
@@ -4631,7 +4723,12 @@ def _run_ast_scan_payload(
         regex_snippets_by_file: dict[str, list[dict[str, object]]] = {}
         regex_rule_occurrences: list[dict[str, object]] = []
         rule_matches = 0
+        rule_language = rule["language"]
         for current_file in resolved_candidate_files:
+            # H11: scope the regex scan to the rule's language so a python rule does
+            # not flag .ts/.js/.rs files, matching how AST rules are scoped.
+            if not _regex_rule_targets_file(rule_language, current_file):
+                continue
             try:
                 lines = (
                     Path(current_file).read_text(encoding="utf-8", errors="replace").splitlines()
@@ -5659,6 +5756,41 @@ def search_command(
         raise typer.Exit(2)
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
+    # C3: plain `--json` emits one aggregate object and cannot render ripgrep's
+    # text-shaping flags. Honoring them is impossible and silently dropping them is a
+    # footgun that also lets the front-door launcher spawn an undrained text-render
+    # child (-> deadlock). Fail fast and deterministically before any child is spawned.
+    if json and not explicit_rg_format:
+        # Detect from PARSED typer params (not sys.argv): reading sys.argv mis-fires when
+        # the typer app is invoked in-process (e.g. CliRunner under pytest, whose argv
+        # carries -p/--pretty-looking flags). The ambiguous-default flags (--heading and
+        # the separators) are caught for the real CLI by the bootstrap launcher guard
+        # (_json_aggregate_blocks_passthrough), so the secondary net here only needs the
+        # unambiguously-set render flags (audit C3).
+        incompatible_render_flags = [
+            spelling
+            for present, spelling in (
+                (passthru, "--passthru"),
+                (trim, "--trim"),
+                (byte_offset, "-b"),
+                (max_columns is not None, "-M"),
+                (max_columns_preview, "--max-columns-preview"),
+                (pretty, "-p"),
+            )
+            if present
+        ]
+        if incompatible_render_flags:
+            flag_list = ", ".join(incompatible_render_flags)
+            _exit_search_error(
+                "unsupported_flag",
+                (
+                    f"flag(s) {flag_list} not supported with plain --json; "
+                    "use --format rg --json for ripgrep JSON Lines that carry render "
+                    "metadata, or drop the flag(s)."
+                ),
+                json_mode=True,
+                exit_code=2,
+            )
     native_tg_binary = resolve_native_tg_binary()
     if (
         native_tg_binary is not None
@@ -6721,6 +6853,41 @@ def _echo_symbol_location_rows(rows: list[dict[str, Any]]) -> None:
             typer.echo(rendered)
 
 
+def _symbol_payload_has_no_results(payload: dict[str, Any], result_key: str) -> bool:
+    """Whether a symbol-command payload found nothing for the requested symbol.
+
+    A payload is empty either when the resolver flagged ``no_match`` or when its
+    primary result collection is empty. Used to honor rg's no-match exit convention
+    for the symbol commands (audit L1).
+    """
+    if payload.get("no_match"):
+        return True
+    return not payload.get(result_key)
+
+
+def _emit_symbol_command_result(
+    payload: dict[str, Any],
+    *,
+    result_key: str,
+    json_output: bool,
+    emit_text: Callable[[dict[str, Any]], None],
+) -> None:
+    """Emit a symbol-command payload and honor the no-match exit convention (L1).
+
+    When the symbol resolved to zero results we annotate the payload with
+    ``not_found: true`` (additive JSON field) and exit 1, mirroring how ``rg`` exits 1
+    on no match, while still emitting a valid JSON object for ``--json`` consumers.
+    """
+    not_found = _symbol_payload_has_no_results(payload, result_key)
+    payload["not_found"] = not_found
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        emit_text(payload)
+    if not_found:
+        raise typer.Exit(1)
+
+
 def _maybe_swap_reversed_positionals(
     *,
     path: str,
@@ -6871,7 +7038,7 @@ def defs(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
-    from tensor_grep.cli.repo_map import build_symbol_defs, build_symbol_defs_json
+    from tensor_grep.cli.repo_map import build_symbol_defs
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -6880,17 +7047,6 @@ def defs(
             symbol_option=symbol,
             command_name="defs",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_defs_json(
-                    resolved_symbol,
-                    resolved_path,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
-
         payload = build_symbol_defs(
             resolved_symbol,
             resolved_path,
@@ -6901,9 +7057,17 @@ def defs(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Definitions for {payload['symbol']} in {payload['path']}")
-    typer.echo(f"definitions={len(payload['definitions'])}")
-    _echo_symbol_location_rows(payload["definitions"])
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Definitions for {current['symbol']} in {current['path']}")
+        typer.echo(f"definitions={len(current['definitions'])}")
+        _echo_symbol_location_rows(current["definitions"])
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="definitions",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
 
 
 @app.command()
@@ -6928,7 +7092,7 @@ def source(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact source blocks for a symbol definition."""
-    from tensor_grep.cli.repo_map import build_symbol_source, build_symbol_source_json
+    from tensor_grep.cli.repo_map import build_symbol_source
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -6937,17 +7101,6 @@ def source(
             symbol_option=symbol,
             command_name="source",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_source_json(
-                    resolved_symbol,
-                    resolved_path,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
-
         payload = build_symbol_source(
             resolved_symbol,
             resolved_path,
@@ -6958,8 +7111,16 @@ def source(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Source for {payload['symbol']} in {payload['path']}")
-    typer.echo(f"sources={len(payload['sources'])} files={len(payload['files'])}")
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Source for {current['symbol']} in {current['path']}")
+        typer.echo(f"sources={len(current['sources'])} files={len(current['files'])}")
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="sources",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
 
 
 @app.command()
@@ -6984,7 +7145,7 @@ def impact(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
-    from tensor_grep.cli.repo_map import build_symbol_impact, build_symbol_impact_json
+    from tensor_grep.cli.repo_map import build_symbol_callers, build_symbol_impact
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -6993,30 +7154,48 @@ def impact(
             symbol_option=symbol,
             command_name="impact",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_impact_json(
-                    resolved_symbol,
-                    resolved_path,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
-
         payload = build_symbol_impact(
             resolved_symbol,
             resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
         )
+        # H5: impact previously surfaced only definition/import-derived `files` and so
+        # under-reported call sites relative to `tg callers` (which finds the CLI
+        # handler, RPC handler, and tests). Populate a top-level `callers` key from the
+        # same caller pass so impact is a superset, not a subset, of callers.
+        if not payload.get("no_match"):
+            callers_payload = build_symbol_callers(
+                resolved_symbol,
+                resolved_path,
+                semantic_provider=provider,
+                max_repo_files=max_repo_files,
+            )
+            payload["callers"] = list(callers_payload.get("callers", []))
+            for caller in payload["callers"]:
+                caller_file = str(caller.get("file", ""))
+                if caller_file and caller_file not in payload["files"]:
+                    payload["files"].append(caller_file)
+        else:
+            payload.setdefault("callers", [])
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Impact for {payload['symbol']} in {payload['path']}")
-    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
-    typer.echo("preferred=blast-radius for direct symbol impact")
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Impact for {current['symbol']} in {current['path']}")
+        typer.echo(
+            f"files={len(current['files'])} tests={len(current['tests'])} "
+            f"callers={len(current['callers'])}"
+        )
+        typer.echo("preferred=blast-radius for direct symbol impact")
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="files",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
 
 
 @app.command()
@@ -7041,7 +7220,7 @@ def refs(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
-    from tensor_grep.cli.repo_map import build_symbol_refs, build_symbol_refs_json
+    from tensor_grep.cli.repo_map import build_symbol_refs
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -7050,17 +7229,6 @@ def refs(
             symbol_option=symbol,
             command_name="refs",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_refs_json(
-                    resolved_symbol,
-                    resolved_path,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
-
         payload = build_symbol_refs(
             resolved_symbol,
             resolved_path,
@@ -7071,9 +7239,17 @@ def refs(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"References for {payload['symbol']} in {payload['path']}")
-    typer.echo(f"references={len(payload['references'])} files={len(payload['files'])}")
-    _echo_symbol_location_rows(payload["references"])
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"References for {current['symbol']} in {current['path']}")
+        typer.echo(f"references={len(current['references'])} files={len(current['files'])}")
+        _echo_symbol_location_rows(current["references"])
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="references",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
 
 
 @app.command()
@@ -7098,7 +7274,7 @@ def callers(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
-    from tensor_grep.cli.repo_map import build_symbol_callers, build_symbol_callers_json
+    from tensor_grep.cli.repo_map import build_symbol_callers
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -7107,17 +7283,6 @@ def callers(
             symbol_option=symbol,
             command_name="callers",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_callers_json(
-                    resolved_symbol,
-                    resolved_path,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
-
         payload = build_symbol_callers(
             resolved_symbol,
             resolved_path,
@@ -7128,9 +7293,17 @@ def callers(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Callers for {payload['symbol']} in {payload['path']}")
-    typer.echo(f"callers={len(payload['callers'])} files={len(payload['files'])}")
-    _echo_symbol_location_rows(payload["callers"])
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Callers for {current['symbol']} in {current['path']}")
+        typer.echo(f"callers={len(current['callers'])} files={len(current['files'])}")
+        _echo_symbol_location_rows(current["callers"])
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="callers",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
 
 
 @app.command(name="blast-radius")
@@ -10051,13 +10224,16 @@ def audit_verify(
 
     try:
         if json_output:
-            typer.echo(
-                verify_audit_manifest_json(
-                    manifest_path,
-                    signing_key=signing_key,
-                    previous_manifest=previous_manifest,
-                )
+            json_text = verify_audit_manifest_json(
+                manifest_path,
+                signing_key=signing_key,
+                previous_manifest=previous_manifest,
             )
+            typer.echo(json_text)
+            # Mirror the text path: a tampered/invalid manifest must exit 1 even in
+            # --json mode (audit H1), so callers can gate on the process status.
+            if not json.loads(json_text).get("valid", False):
+                raise typer.Exit(code=1)
             return
 
         payload = verify_audit_manifest(
@@ -10065,6 +10241,8 @@ def audit_verify(
             signing_key=signing_key,
             previous_manifest=previous_manifest,
         )
+    except typer.Exit:
+        raise
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -10339,9 +10517,16 @@ def review_bundle_verify(
 
     try:
         if json_output:
-            typer.echo(verify_review_bundle_json(bundle_path))
+            json_text = verify_review_bundle_json(bundle_path)
+            typer.echo(json_text)
+            # Mirror the text path: a tampered/invalid bundle must exit 1 even in
+            # --json mode (audit H1) so callers can gate on the process status.
+            if not json.loads(json_text).get("valid", False):
+                raise typer.Exit(code=1)
             return
         payload = verify_review_bundle(bundle_path)
+    except typer.Exit:
+        raise
     except FileNotFoundError as exc:
         if json_output:
             typer.echo(
@@ -10527,6 +10712,18 @@ def run(
             typer.echo(
                 "Error: tg run ast-grep semantic options require --pattern <PATTERN> "
                 "before PATH; positional arguments without --pattern are treated as PATTERN.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        # L9: a lone positional that resolves to an existing file/dir is almost certainly
+        # a PATH supplied without a PATTERN. Previously it was swallowed as the AST
+        # pattern, yielding a silent zero-match exit 1. Fail loudly with a clear message
+        # instead so the missing pattern is obvious.
+        if len(positional_args) == 1 and Path(positional_args[0]).exists():
+            typer.echo(
+                "Error: tg run requires a PATTERN. Received only a PATH "
+                f"({positional_args[0]!r}); pass the AST pattern before the path "
+                "(tg run <PATTERN> <PATH>) or use --pattern <PATTERN>.",
                 err=True,
             )
             raise typer.Exit(code=2)

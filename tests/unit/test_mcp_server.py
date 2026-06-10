@@ -19,7 +19,7 @@ def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
     canonical = dict(manifest)
     canonical.pop("manifest_sha256", None)
     canonical.pop("signature", None)
-    return json.dumps(canonical, indent=2).encode("utf-8")
+    return json.dumps(canonical, indent=2, sort_keys=True).encode("utf-8")
 
 
 def _write_audit_manifest(
@@ -241,17 +241,24 @@ def _call_mcp_tool_text(name: str, arguments: dict[str, object]) -> str:
 
 def test_tg_ast_search_accepts_ast_wrapper_backend():
     from tensor_grep.cli import mcp_server
+    from tensor_grep.core.result import SearchResult
 
     fake_backend = type("AstGrepWrapperBackend", (), {"search": MagicMock()})()
+    fake_backend.search.return_value = SearchResult(matches=[], total_files=0, total_matches=0)
 
     with (
         patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
         patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
     ):
-        mock_pipeline.return_value.get_backend.return_value = fake_backend
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "AstGrepWrapperBackend"
+        pipeline.selected_backend_reason = "ast_grep_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
         mock_scanner.return_value.walk.return_value = []
 
-        out = mcp_server.tg_ast_search("def $A():", "python", ".")
+        out = mcp_server.tg_ast_search("def $A():", "python", ".", structured_json=False)
 
     assert out.startswith("No AST matches found for pattern in ..")
     assert "Routing: backend=" in out
@@ -281,12 +288,16 @@ def test_tg_search_includes_routing_summary_in_non_empty_output():
 
         out = mcp_server.tg_search("ERROR", ".")
 
-    assert "Found 1 matches across 1 files:" in out
-    assert "Routing: backend=CuDFBackend reason=gpu_explicit_ids_cudf" in out
-    assert "gpu_device_ids=[7, 3]" in out
-    assert "gpu_chunk_plan_mb=[(7, 256), (3, 512)]" in out
-    assert "distributed=True" in out
-    assert "workers=2" in out
+    payload = json.loads(out)
+    assert payload["total_matches"] == 1
+    assert payload["total_files"] == 1
+    routing = payload["routing"]
+    assert routing["backend"] == "CuDFBackend"
+    assert routing["reason"] == "gpu_explicit_ids_cudf"
+    assert routing["gpu_device_ids"] == [7, 3]
+    assert routing["gpu_chunk_plan_mb"] == [[7, 256], [3, 512]]
+    assert routing["distributed"] is True
+    assert routing["workers"] == 2
 
 
 def test_tg_search_context_rows_do_not_inflate_header_count():
@@ -321,10 +332,16 @@ def test_tg_search_context_rows_do_not_inflate_header_count():
 
         out = mcp_server.tg_search("ERROR", ".", context=1)
 
-    assert "Found 1 matches across 1 files:" in out
-    assert "  1: before" in out
-    assert "  2: ERROR here" in out
-    assert "  3: after" in out
+    payload = json.loads(out)
+    # total_matches counts actual matches, not context rows
+    assert payload["total_matches"] == 1
+    assert payload["total_files"] == 1
+    # rendered_match_count includes context rows (3 total lines)
+    assert payload["rendered_match_count"] == 3
+    line_numbers = [m["line_number"] for m in payload["matches"]]
+    assert line_numbers == [1, 2, 3]
+    texts = [m["text"] for m in payload["matches"]]
+    assert texts == ["before", "ERROR here", "after"]
 
 
 def test_tg_search_accepts_query_alias_and_bounds_text_output():
@@ -368,13 +385,22 @@ def test_tg_search_accepts_query_alias_and_bounds_text_output():
 
     backend.search.assert_called_once()
     assert backend.search.call_args.args[1] == "ERROR"
-    assert "Found 4 matches across 2 files:" in out
-    assert "\na.log:" in out
-    assert "\nb.log:" not in out
-    assert "  1: ERROR one" in out
-    assert "  2: ERROR two" in out
-    assert "  3: ERROR three" not in out
-    assert "... output truncated to 2 results across 1 files" in out
+    payload = json.loads(out)
+    assert payload["total_matches"] == 4
+    assert payload["total_files"] == 2
+    # bounded to 2 results across 1 file
+    assert payload["rendered_match_count"] == 2
+    assert payload["rendered_file_count"] == 1
+    assert payload["truncated"] is True
+    assert payload["omitted_matches"] == 2
+    assert payload["omitted_files"] == 1
+    rendered_files = {m["file"] for m in payload["matches"]}
+    assert "a.log" in rendered_files
+    assert "b.log" not in rendered_files
+    rendered_texts = [m["text"] for m in payload["matches"]]
+    assert "ERROR one" in rendered_texts
+    assert "ERROR two" in rendered_texts
+    assert "ERROR three" not in rendered_texts
 
 
 def test_tg_search_can_return_bounded_structured_json():
@@ -469,8 +495,11 @@ def test_tg_search_uses_single_aggregate_ripgrep_search_for_cli_parity():
 
     backend.search.assert_called_once()
     assert backend.search.call_args.args[:2] == (".", "ERROR")
-    assert "Found 1 matches across 1 files:" in out
-    assert "Routing: backend=RipgrepBackend reason=rg_json" in out
+    payload = json.loads(out)
+    assert payload["total_matches"] == 1
+    assert payload["total_files"] == 1
+    assert payload["routing"]["backend"] == "RipgrepBackend"
+    assert payload["routing"]["reason"] == "rg_json"
 
 
 def test_tg_search_should_report_runtime_routing_override_when_backend_falls_back():
@@ -503,11 +532,14 @@ def test_tg_search_should_report_runtime_routing_override_when_backend_falls_bac
 
         out = mcp_server.tg_search("ERROR.*timeout", ".")
 
-    assert "Routing: backend=CPUBackend reason=torch_regex_cpu_fallback" in out
-    assert "gpu_device_ids=[]" in out
-    assert "gpu_chunk_plan_mb=[]" in out
-    assert "distributed=False" in out
-    assert "workers=1" in out
+    payload = json.loads(out)
+    routing = payload["routing"]
+    assert routing["backend"] == "CPUBackend"
+    assert routing["reason"] == "torch_regex_cpu_fallback"
+    assert routing["gpu_device_ids"] == []
+    assert routing["gpu_chunk_plan_mb"] == []
+    assert routing["distributed"] is False
+    assert routing["workers"] == 1
 
 
 def test_tg_search_should_prefer_runtime_single_worker_gpu_metadata_over_selected_plan():
@@ -540,11 +572,14 @@ def test_tg_search_should_prefer_runtime_single_worker_gpu_metadata_over_selecte
 
         out = mcp_server.tg_search("ERROR", ".")
 
-    assert "Routing: backend=CuDFBackend reason=cudf_chunked_single_worker_plan" in out
-    assert "gpu_device_ids=[3]" in out
-    assert "gpu_chunk_plan_mb=[(3, 1)]" in out
-    assert "distributed=False" in out
-    assert "workers=1" in out
+    payload = json.loads(out)
+    routing = payload["routing"]
+    assert routing["backend"] == "CuDFBackend"
+    assert routing["reason"] == "cudf_chunked_single_worker_plan"
+    assert routing["gpu_device_ids"] == [3]
+    assert routing["gpu_chunk_plan_mb"] == [[3, 1]]
+    assert routing["distributed"] is False
+    assert routing["workers"] == 1
 
 
 def test_tg_search_count_matches_should_respect_total_files_without_materialized_matches():
@@ -607,9 +642,15 @@ def test_tg_search_should_render_count_only_file_summary_without_materialized_ma
 
         out = mcp_server.tg_search("ERROR", ".")
 
-    assert "Found 3 matches across 1 files:" in out
-    assert "\na.log:" in out
-    assert "  count=3" in out
+    payload = json.loads(out)
+    assert payload["total_matches"] == 3
+    assert payload["total_files"] == 1
+    # count-only result: no materialized match lines rendered
+    assert payload["rendered_match_count"] == 0
+    assert payload["omitted_matches"] == 3
+    assert payload["omitted_files"] == 1
+    assert payload["routing"]["backend"] == "RipgrepBackend"
+    assert payload["routing"]["reason"] == "rg_count"
 
 
 def test_tg_ast_search_should_render_count_only_file_summary_without_materialized_matches():
@@ -641,9 +682,15 @@ def test_tg_ast_search_should_render_count_only_file_summary_without_materialize
 
         out = mcp_server.tg_ast_search("def $A():", "python", ".")
 
-    assert "Found 2 structural AST matches across 1 files:" in out
-    assert "\na.py:" in out
-    assert "  count=2" in out
+    payload = json.loads(out)
+    assert payload["total_matches"] == 2
+    assert payload["total_files"] == 1
+    # count-only result: no materialized match lines rendered
+    assert payload["rendered_match_count"] == 0
+    assert payload["omitted_matches"] == 2
+    assert payload["omitted_files"] == 1
+    assert payload["routing"]["backend"] == "AstGrepWrapperBackend"
+    assert payload["routing"]["reason"] == "ast_grep_json"
 
 
 def test_tg_devices_returns_no_gpu_message_when_empty():
@@ -661,7 +708,11 @@ def test_tg_devices_returns_no_gpu_message_when_empty():
     ):
         out = mcp_server.tg_devices()
 
-    assert out == "No routable GPUs detected."
+    # default is json_output=True; parse the JSON and assert no-GPU fields
+    payload = json.loads(out)
+    assert payload["has_gpu"] is False
+    assert payload["device_count"] == 0
+    assert payload["devices"] == []
 
 
 def test_tg_devices_can_emit_json_payload():
@@ -729,10 +780,14 @@ def test_tg_classify_logs_defaults_to_local_heuristics(monkeypatch, tmp_path):
 
     out = mcp_server.tg_classify_logs(str(log_path))
 
-    assert "provider=heuristic" in out
-    assert "status=local" in out
-    assert "[ERROR]" in out
-    assert "database failed" in out
+    # default is structured_json=True; parse JSON and assert equivalent fields
+    payload = json.loads(out)
+    assert payload["provider"] == "heuristic"
+    assert payload["provider_status"] == "local"
+    anomaly_texts = [a["text"] for a in payload["anomalies"]]
+    assert any("database failed" in t for t in anomaly_texts)
+    anomaly_labels = [a["label"] for a in payload["anomalies"]]
+    assert any("error" in lbl.lower() for lbl in anomaly_labels)
 
 
 def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Path):
@@ -1689,6 +1744,9 @@ def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
 def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
     from tensor_grep.cli import mcp_server
 
+    # M12: created_at is now normalised to ISO-8601 by the MCP layer (unix timestamps are
+    # converted); use an ISO-8601 string in the native payload so the expected dict still
+    # matches the parsed output after normalisation.
     payload = {
         "version": 1,
         "schema_version": 1,
@@ -1699,7 +1757,7 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
             "checkpoint_id": "ckpt-123",
             "mode": "filesystem-snapshot",
             "root": "C:/repo",
-            "created_at": "1234567890",
+            "created_at": "2009-02-13T23:31:30+00:00",
             "file_count": 1,
         },
         "plan": {"total_edits": 1},
@@ -1714,7 +1772,12 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
             return_value=CompletedProcess(
                 args=["tg.exe"],
                 returncode=0,
-                stdout=json.dumps(payload),
+                # pass the unix-timestamp form to simulate what the native binary emits;
+                # the MCP layer must convert it to ISO-8601 before returning
+                stdout=json.dumps({
+                    **payload,
+                    "checkpoint": {**payload["checkpoint"], "created_at": "1234567890"},
+                }),
                 stderr="",
             ),
         ) as mock_run,
@@ -1728,9 +1791,12 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
         )
 
     parsed = json.loads(out)
-    # audit A4: tolerate the added mcp_contract_version envelope key.
+    # audit A4: tolerate the added mcp_contract_version and applied_edits envelope keys.
     assert {key: parsed[key] for key in payload} == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # M12: applied_edits count is stamped at the top level
+    assert "applied_edits" in parsed
+    assert isinstance(parsed["applied_edits"], int)
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",

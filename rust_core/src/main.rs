@@ -5563,6 +5563,43 @@ fn checkpoint_timestamp_string() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+/// Format a UNIX epoch (seconds) as an ISO-8601 / RFC-3339 UTC instant, e.g.
+/// `2026-06-10T12:34:56Z`. The audit manifest `created_at` MUST use this form so the
+/// Python verifier (`_parse_timestamp` -> `datetime.fromisoformat`) and `audit-history`
+/// time-ordering accept it; a bare epoch string parses to `None` and breaks chronological
+/// sorting (audit M5). Uses Howard Hinnant's `civil_from_days` algorithm so we depend only
+/// on `std` (no `chrono`/`time` crate, which would force a dependency bump + rebuild).
+fn epoch_seconds_to_iso8601_utc(epoch_secs: u64) -> String {
+    let days = (epoch_secs / 86_400) as i64;
+    let secs_of_day = epoch_secs % 86_400;
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+
+    // civil_from_days: convert days since 1970-01-01 to (year, month, day).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if month <= 2 { year + 1 } else { year };
+
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// `created_at` for the rewrite audit manifest, as an ISO-8601 UTC string (audit C1/M5).
+fn audit_manifest_timestamp_string() -> String {
+    let epoch_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    epoch_seconds_to_iso8601_utc(epoch_secs)
+}
+
 fn checkpoint_storage_dir(root: &Path) -> PathBuf {
     root.join(".tensor-grep").join("checkpoints")
 }
@@ -6472,7 +6509,9 @@ fn write_audit_manifest_for_plan(
     let manifest = RewriteAuditManifest {
         version: JSON_OUTPUT_VERSION,
         kind: "rewrite-audit-manifest",
-        created_at: checkpoint_timestamp_string(),
+        // ISO-8601 UTC (audit C1/M5): matches the Python checkpoint `created_at` format and
+        // keeps `audit-history` time-ordering working (`_parse_timestamp`). NOT a bare epoch.
+        created_at: audit_manifest_timestamp_string(),
         lang: lang.to_string(),
         path: root_path.to_string(),
         plan_total_edits,

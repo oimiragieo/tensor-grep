@@ -4407,7 +4407,7 @@ requires-dist = [
     { name = "tree-sitter-typescript", marker = "extra == 'bench'" },
     { name = "tree-sitter-typescript", marker = "extra == 'dev'" },
     { name = "tritonclient", extras = ["http"], marker = "extra == 'nlp'" },
-    { name = "typer", specifier = ">=0.12" },
+    { name = "typer", specifier = ">=0.12,<0.25" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
 ]
 provides-extras = ["gpu", "gpu-win", "nlp", "ast", "dev", "bench"]

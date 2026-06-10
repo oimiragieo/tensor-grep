@@ -117,7 +117,7 @@ def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
     canonical = dict(manifest)
     canonical.pop("manifest_sha256", None)
     canonical.pop("signature", None)
-    return json.dumps(canonical, indent=2).encode("utf-8")
+    return json.dumps(canonical, indent=2, sort_keys=True).encode("utf-8")
 
 
 def _write_audit_manifest(
@@ -2468,7 +2468,8 @@ def test_cli_invalid_regex_reports_diagnostic_and_error_exit(monkeypatch):
 
     assert result.exit_code == 2
     assert "invalid regex" in result.stderr.lower()
-    assert "Use --fixed-strings" in result.stderr
+    assert "-P (PCRE2)" in result.stderr
+    assert "--fixed-strings (-F)" in result.stderr
 
 
 def test_cli_invalid_regex_is_rejected_before_native_delegation(monkeypatch):
@@ -2490,7 +2491,8 @@ def test_cli_invalid_regex_is_rejected_before_native_delegation(monkeypatch):
 
     assert result.exit_code == 2
     assert "invalid regex" in result.stderr.lower()
-    assert "Use --fixed-strings" in result.stderr
+    assert "-P (PCRE2)" in result.stderr
+    assert "--fixed-strings (-F)" in result.stderr
     assert "cmd" not in seen
 
 
@@ -2684,7 +2686,8 @@ def test_cli_wrapped_rg_regex_parse_error_reports_diagnostic(monkeypatch):
 
     assert result.exit_code == 2
     assert "error parsing regex" in result.stderr.lower()
-    assert "Use --fixed-strings" in result.stderr
+    assert "-P (PCRE2)" in result.stderr
+    assert "--fixed-strings (-F)" in result.stderr
 
 
 def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_code(monkeypatch):
@@ -3338,10 +3341,20 @@ def test_symbol_commands_accept_path_symbol_positional_alias(tmp_path):
         "blast-radius-render": "symbol-blast-radius-render",
         "blast-radius-plan": "symbol-blast-radius-plan",
     }
+    # refs and callers exit 1 when the symbol has no call sites (L1: exit 1 on zero
+    # results).  The symbol `create_invoice` is only defined in the test file —
+    # it is never called, so references/callers are empty and the command exits 1.
+    # All other commands find non-empty results (defs, source, impact) or do not
+    # use _emit_symbol_command_result (blast-radius variants) and still exit 0.
+    commands_that_exit_1_on_empty = {"refs", "callers"}
 
     for command, routing_reason in commands.items():
         result = runner.invoke(app, [command, str(project), "create_invoice", "--json"])
-        assert result.exit_code == 0, result.output
+        expected_exit = 1 if command in commands_that_exit_1_on_empty else 0
+        assert result.exit_code == expected_exit, (
+            f"command={command!r} expected exit {expected_exit}, got {result.exit_code}:\n"
+            + result.output
+        )
         assert result.stderr == ""
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
@@ -3382,13 +3395,21 @@ def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
         "blast-radius-render": "symbol-blast-radius-render",
         "blast-radius-plan": "symbol-blast-radius-plan",
     }
+    # refs and callers exit 1 when the symbol has no call sites (L1: exit 1 on zero
+    # results).  The symbol `create_invoice` is only defined in the test file —
+    # it is never called, so references/callers are empty and the command exits 1.
+    commands_that_exit_1_on_empty = {"refs", "callers"}
 
     for command, routing_reason in commands.items():
         result = runner.invoke(
             app,
             [command, "--symbol", "create_invoice", str(project), "--json"],
         )
-        assert result.exit_code == 0, result.output
+        expected_exit = 1 if command in commands_that_exit_1_on_empty else 0
+        assert result.exit_code == expected_exit, (
+            f"command={command!r} expected exit {expected_exit}, got {result.exit_code}:\n"
+            + result.output
+        )
         assert f"Warning: --symbol is deprecated for tg {command}" in result.stderr
         assert f"for example: tg {command} <PATH> <SYMBOL>" in result.stderr
         payload = json.loads(result.stdout)
@@ -3552,16 +3573,22 @@ def test_impact_json_no_match_includes_preferred_command_metadata(tmp_path):
     runner = CliRunner()
     result = runner.invoke(app, ["impact", "--symbol", "missing", "--json", str(project)])
 
-    assert result.exit_code == 0
+    # L1: symbol commands exit 1 on zero results; "missing" resolves to no files.
+    assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["routing_reason"] == "symbol-impact"
     assert payload["no_match"] is True
+    # L1: not_found annotated by _emit_symbol_command_result
+    assert payload["not_found"] is True
     assert payload["preferred_command"] == "blast-radius"
     assert (
         payload["preferred_command_reason"]
         == "direct symbol impact is better served by blast-radius"
     )
     assert payload["trust_level"] in {"planning-signal", "heuristic"}
+    # H5: impact now includes a top-level "callers" key (empty list on no-match)
+    assert "callers" in payload
+    assert payload["callers"] == []
 
 
 def test_impact_text_guides_direct_symbol_impact_to_blast_radius(tmp_path):
@@ -6445,21 +6472,26 @@ def test_test_only_repo_map_keeps_files_non_empty_for_agent_inventory(tmp_path):
 
 
 def test_iter_repo_files_does_not_resolve_every_child_file(monkeypatch, tmp_path):
+    # L8/repo-map: the gitignore-aware walk matches paths AS WALKED against the
+    # once-resolved root, so it must NOT call path.resolve() on every child — that would
+    # be an O(files) stat/symlink syscall regression on large trees (~384k files on a
+    # workspace root). Resolving the root itself is fine; resolving children is not.
     project = tmp_path / "project"
     project.mkdir()
     (project / "a.py").write_text("print('ok')\n", encoding="utf-8")
+    expected = project.resolve() / "a.py"
     original_resolve = repo_map.Path.resolve
 
     def _guarded_resolve(self, *args, **kwargs):
         if self.name == "a.py":
-            raise AssertionError("child file resolve should not be called")
+            raise AssertionError("repo-map walk must not resolve() child files")
         return original_resolve(self, *args, **kwargs)
 
     monkeypatch.setattr(repo_map.Path, "resolve", _guarded_resolve)
 
     files = repo_map._iter_repo_files(project)
 
-    assert files == [project.resolve() / "a.py"]
+    assert files == [expected]
 
 
 def test_repo_map_file_universe_does_not_resolve_child_files(monkeypatch, tmp_path):
@@ -13297,7 +13329,8 @@ def test_audit_verify_json_reports_chain_failure(tmp_path):
         ],
     )
 
-    assert result.exit_code == 0
+    # H1: audit-verify --json exits 1 when valid:false
+    assert result.exit_code == 1
     parsed = json.loads(result.stdout)
     assert parsed["checks"]["digest_valid"] is True
     assert parsed["checks"]["chain_valid"] is False
@@ -13382,7 +13415,8 @@ def test_review_bundle_verify_json_reports_invalid_integrity(tmp_path):
 
     result = runner.invoke(app, ["review-bundle", "verify", str(bundle_path), "--json"])
 
-    assert result.exit_code == 0
+    # H1: review-bundle verify --json exits 1 when valid:false
+    assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["routing_reason"] == "review-bundle-verify"
     assert payload["checks"]["audit_manifest"]["valid"] is True

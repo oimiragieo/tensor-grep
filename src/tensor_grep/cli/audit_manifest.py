@@ -45,10 +45,17 @@ def _envelope(*, routing_reason: str = "audit-manifest-verify") -> dict[str, Any
 
 
 def _canonical_manifest_bytes(manifest: dict[str, Any]) -> bytes:
+    # Canonical form for manifest_sha256 AND the hmac-sha256 signature. This MUST be
+    # byte-for-byte identical to what the native Rust writer hashes in
+    # `canonical_manifest_bytes` (rust_core/src/main.rs), which serializes the manifest via
+    # `serde_json::to_value` (a key-sorted Map) + `to_vec_pretty`. That is equivalent to
+    # `json.dumps(canonical, indent=2, sort_keys=True)`; the missing `sort_keys=True` here is
+    # what made the writer's own digest fail verification (audit C1/C2). `sort_keys=True` also
+    # makes the digest independent of the on-disk key ordering of the manifest being verified.
     canonical = dict(manifest)
     canonical.pop("manifest_sha256", None)
     canonical.pop("signature", None)
-    return json.dumps(canonical, indent=2).encode("utf-8")
+    return json.dumps(canonical, indent=2, sort_keys=True).encode("utf-8")
 
 
 def _sha256_hex(data: bytes) -> str:

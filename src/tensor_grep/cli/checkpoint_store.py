@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -43,6 +44,24 @@ _NON_GIT_IGNORED_DIRS = {
     "target",
 }
 _DISCOVERY_IGNORED_DIRS = _NON_GIT_IGNORED_DIRS - {"artifacts"}
+
+
+class CheckpointCorruptError(RuntimeError):
+    """Raised when a checkpoint snapshot is missing or unreadable.
+
+    Distinct from ``FileNotFoundError`` (checkpoint metadata not found) so
+    callers can tell "the checkpoint record doesn't exist" apart from "the
+    checkpoint record exists but one or more snapshot blobs are corrupt /
+    missing, so undo was aborted before touching any working-tree file".
+
+    The ``message`` attribute is always a clean, human-readable string with
+    no raw OS error text (e.g. no ``[WinError 2]``).  If multiple files are
+    corrupt the first one is reported; ``missing_files`` carries the full list.
+    """
+
+    def __init__(self, message: str, missing_files: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.missing_files: list[str] = missing_files or []
 
 
 def _is_generated_discovery_dir(path: Path) -> bool:
@@ -919,13 +938,46 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     snapshot_dir = _snapshot_path(root, checkpoint_id)
     root_resolved = root.resolve()
 
-    # Validate every metadata entry stays inside the checkpoint root BEFORE mutating
-    # anything. Failing fast here means a tampered manifest cannot overwrite or delete
-    # files outside the repo, and a single bad entry cannot leave a partially-restored
-    # tree (audit S1).
+    # --- PRE-FLIGHT PHASE (read-only; abort before touching any working-tree file) ---
+
+    # 1. Validate every metadata entry stays inside the checkpoint root (S1).
     resolved_targets = {
         rel_path: _resolve_within_root(root, root_resolved, rel_path) for rel_path in entries
     }
+
+    # 2. Verify every snapshot source that should exist is present and readable BEFORE
+    #    mutating any file.  A missing or unreadable blob means the checkpoint is corrupt;
+    #    we must raise CheckpointCorruptError NOW — before removing or overwriting a
+    #    single working-tree file — so the caller's tree is left completely intact (H2).
+    missing: list[str] = []
+    for rel_path, exists in entries.items():
+        if not exists:
+            continue
+        source = snapshot_dir / Path(rel_path)
+        if not source.exists():
+            missing.append(rel_path)
+        else:
+            # Probe readability: a zero-length open is enough to catch permission errors.
+            try:
+                source.open("rb").close()
+            except OSError:
+                missing.append(rel_path)
+
+    if missing:
+        first = missing[0]
+        raise CheckpointCorruptError(
+            f"Checkpoint {checkpoint_id!r} is corrupt: "
+            f"{len(missing)} snapshot file(s) are missing or unreadable "
+            f"(first: {first!r}). "
+            "No working-tree files were modified.",
+            missing_files=missing,
+        )
+
+    # --- STAGING PHASE (copy into temp dir, no working-tree mutations yet) ---
+    #
+    # Build a staging area inside the system temp dir.  All copies happen here first;
+    # only after every copy succeeds do we swap files into the working tree.  This
+    # ensures that a crash or error mid-copy cannot leave a partially-restored tree.
 
     scope_kind = str(metadata.get("scope", "tree"))
     if scope_kind == "file":
@@ -935,25 +987,82 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     else:
         current_entries = _filesystem_snapshot_entries(root)
     expected_paths = set(entries.keys())
-    removed_paths = 0
 
-    for rel_path in sorted(set(current_entries) - expected_paths, reverse=True):
-        current_path = root / Path(rel_path)
-        if current_path.exists():
-            current_path.unlink()
-            removed_paths += 1
+    # Build a list of (staged_source, final_target) pairs for files to restore.
+    staging_pairs: list[tuple[Path, Path]] = []
+    staging_dir_obj = tempfile.TemporaryDirectory(prefix="tg-undo-staging-")
+    try:
+        staging_root = Path(staging_dir_obj.name)
 
-    restored_files = 0
-    for rel_path, exists in entries.items():
-        target = resolved_targets[rel_path]
-        if exists:
-            source = snapshot_dir / Path(rel_path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-            restored_files += 1
-        elif target.exists():
-            target.unlink()
-            removed_paths += 1
+        restored_files = 0
+        for rel_path, exists in entries.items():
+            target = resolved_targets[rel_path]
+            if exists:
+                source = snapshot_dir / Path(rel_path)
+                staged = staging_root / Path(rel_path)
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                # This copy is safe: source existence was verified in pre-flight.
+                shutil.copy2(source, staged)
+                staging_pairs.append((staged, target))
+                restored_files += 1
+
+        # --- COMMIT PHASE (mutate working tree only after all copies succeed) ---
+        #
+        # At this point every file to be restored lives in the staging dir.
+        # Now we perform the actual working-tree mutations.  If any step fails
+        # here we attempt a best-effort revert of already-committed changes.
+
+        removed_paths = 0
+        committed_removes: list[Path] = []
+        committed_overwrites: list[tuple[Path, bytes]] = []
+
+        try:
+            # Remove files that exist in the current tree but not in the snapshot.
+            for rel_path in sorted(set(current_entries) - expected_paths, reverse=True):
+                current_path = root / Path(rel_path)
+                if current_path.exists():
+                    current_path.unlink()
+                    committed_removes.append(current_path)
+                    removed_paths += 1
+
+            # Remove files that the snapshot records as deleted.
+            for rel_path, exists in entries.items():
+                if not exists:
+                    target = resolved_targets[rel_path]
+                    if target.exists():
+                        target.unlink()
+                        committed_removes.append(target)
+                        removed_paths += 1
+
+            # Swap staged copies into the working tree.
+            for staged, target in staging_pairs:
+                # Record pre-existing content for revert.
+                prior_bytes: bytes | None = None
+                if target.exists():
+                    try:
+                        prior_bytes = target.read_bytes()
+                    except OSError:
+                        prior_bytes = None
+
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(staged, target)
+                if prior_bytes is not None:
+                    committed_overwrites.append((target, prior_bytes))
+
+        except Exception:
+            # Best-effort revert: undo any working-tree mutations already committed.
+            for path_to_restore, prior_bytes in reversed(committed_overwrites):
+                try:
+                    path_to_restore.write_bytes(prior_bytes)
+                except OSError:
+                    pass
+            for _removed_path in committed_removes:
+                # We cannot recreate removed files without their snapshot; skip.
+                pass
+            raise
+
+    finally:
+        staging_dir_obj.cleanup()
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
         for directory in sorted(root.rglob("*"), reverse=True):

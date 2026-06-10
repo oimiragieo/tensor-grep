@@ -501,6 +501,24 @@ def _mcp_capabilities_payload() -> dict[str, Any]:
     }
 
 
+def _inject_mcp_contract_fields(result_json: str) -> str:
+    """H9: inject mcp_contract_version and schema_version into every tool JSON envelope.
+
+    Operates on the final serialized string so it works uniformly across all tool
+    code-paths regardless of which builder produced the underlying dict.  No-ops for
+    non-dict JSON (arrays, primitives) to stay safe.
+    """
+    try:
+        payload = json.loads(result_json)
+    except (json.JSONDecodeError, ValueError):
+        return result_json
+    if not isinstance(payload, dict):
+        return result_json
+    payload.setdefault("mcp_contract_version", _TG_MCP_SERVER_CONTRACT_VERSION)
+    payload.setdefault("schema_version", _json_output_version())
+    return json.dumps(payload, indent=2)
+
+
 def _normalize_rewrite_json_payload(payload: object) -> str:
     if not isinstance(payload, dict):
         return _rewrite_error("Rewrite command returned non-object JSON.", code="invalid_output")
@@ -853,6 +871,55 @@ def _execute_embedded_rewrite_json(
     return _normalize_rewrite_json_payload(payload)
 
 
+def _normalize_apply_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """M12: inject applied_edits and normalize checkpoint timestamp/id format.
+
+    The native Rust engine stores created_at as a Unix epoch seconds string and
+    checkpoint_id as ckpt-{epoch}-{hex}, while the Python checkpoint_store uses
+    ISO-8601 for created_at and ckpt-{datetime}-{hex}.  Normalize the native format
+    here so all tg_rewrite_apply callers see a consistent envelope regardless of
+    which code-path created the checkpoint.
+    """
+    from datetime import UTC, datetime
+
+    # M12 part 1: inject top-level applied_edits count.
+    if "applied_edits" not in payload:
+        edits = payload.get("edits")
+        if isinstance(edits, list):
+            payload["applied_edits"] = len(edits)
+        else:
+            total = payload.get("total_edits")
+            if isinstance(total, int) and not isinstance(total, bool):
+                payload["applied_edits"] = total
+            else:
+                payload["applied_edits"] = 0
+
+    # M12 part 2: normalize checkpoint created_at to ISO-8601 and checkpoint_id
+    # from ckpt-{epoch}-{hex} to ckpt-{datetime}-{hex}.
+    ckpt = payload.get("checkpoint")
+    if isinstance(ckpt, dict):
+        created_at = ckpt.get("created_at")
+        ckpt_id = ckpt.get("checkpoint_id") or ""
+        # Detect epoch string: all digits, 8-12 chars (covers seconds since 1970 for years
+        # 2001-2286).
+        if (
+            isinstance(created_at, str)
+            and created_at.strip().isdigit()
+            and 8 <= len(created_at.strip()) <= 12
+        ):
+            epoch_s = int(created_at.strip())
+            iso_str = datetime.fromtimestamp(epoch_s, tz=UTC).isoformat()
+            ckpt["created_at"] = iso_str
+            # Rewrite ckpt-{epoch}-{hex} → ckpt-{datetime}-{hex}
+            prefix = f"ckpt-{created_at.strip()}-"
+            if ckpt_id.startswith(prefix):
+                hex_suffix = ckpt_id[len(prefix) :]
+                dt_part = datetime.fromtimestamp(epoch_s, tz=UTC).strftime("%Y%m%d%H%M%S")
+                ckpt["checkpoint_id"] = f"ckpt-{dt_part}-{hex_suffix}"
+
+    return payload
+
+
 def _produce_rewrite_plan_json(
     *,
     pattern: str,
@@ -1144,9 +1211,11 @@ def execute_rewrite_apply_json(
     rewrite_payload = json.loads(rewrite_json)
     if checkpoint_payload is not None:
         rewrite_payload["checkpoint"] = checkpoint_payload
-        rewrite_json = json.dumps(rewrite_payload, indent=2)
     if rewrite_payload.get("error"):
-        return rewrite_json, 1
+        return json.dumps(rewrite_payload, indent=2), 1
+    # M12: normalize applied_edits and checkpoint timestamp/id before returning.
+    rewrite_payload = _normalize_apply_result_payload(rewrite_payload)
+    rewrite_json = json.dumps(rewrite_payload, indent=2)
     if loaded_policy is None:
         return rewrite_json, 0
 
@@ -1186,12 +1255,13 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
         )
 
     diff_preview = completed.stdout or ""
-    if not diff_preview.strip():
-        return _rewrite_error(
-            "Rewrite diff command produced no diff output.", code="invalid_output"
-        )
-
     payload = _rewrite_envelope()
+    if not diff_preview.strip():
+        # M11: zero matches is a valid result — return normal shape, not an error.
+        payload["diff"] = ""
+        payload["total_edits"] = 0
+        return json.dumps(payload, indent=2)
+
     payload["diff"] = diff_preview
     return json.dumps(payload, indent=2)
 
@@ -1368,7 +1438,7 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
 @mcp.tool()  # type: ignore
 def tg_rulesets() -> str:
     """Return metadata for built-in security and compliance rulesets."""
-    return json.dumps(_build_rulesets_payload(), indent=2)
+    return _inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
 
 
 @mcp.tool()  # type: ignore
@@ -1489,9 +1559,11 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
         from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
 
         effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
-        return json.dumps(
-            build_repo_map(path, max_repo_files=effective_max_repo_files),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_repo_map(path, max_repo_files=effective_max_repo_files),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -1517,7 +1589,7 @@ def tg_context_pack(query: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_context_pack(query, path), indent=2)
+        return _inject_mcp_contract_fields(json.dumps(build_context_pack(query, path), indent=2))
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -1560,18 +1632,20 @@ def tg_edit_plan(
     from tensor_grep.cli.repo_map import build_context_edit_plan
 
     try:
-        return json.dumps(
-            build_context_edit_plan(
-                query,
-                path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_tokens=max_tokens,
-                max_symbols=max_symbols,
-                semantic_provider=provider,
-            ),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_context_edit_plan(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
+                    max_symbols=max_symbols,
+                    semantic_provider=provider,
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -1612,22 +1686,24 @@ def tg_context_render(
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
     try:
-        return json.dumps(
-            build_context_render(
-                query,
-                path,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                max_tokens=max_tokens,
-                model=model,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                semantic_provider=provider,
-                profile=profile,
-            ),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_context_render(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    max_tokens=max_tokens,
+                    model=model,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    semantic_provider=provider,
+                    profile=profile,
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -1683,20 +1759,22 @@ def tg_agent_capsule(
     try:
         from tensor_grep.cli.agent_capsule import build_agent_capsule
 
-        return json.dumps(
-            build_agent_capsule(
-                query,
-                path,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_tokens=max_tokens,
-                max_repo_files=max_repo_files,
-                model=model,
-                semantic_provider=provider,
-                gpu_device_ids=gpu_device_ids,
-                gpu_timeout_s=gpu_timeout_s,
-            ),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_agent_capsule(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
+                    max_repo_files=max_repo_files,
+                    model=model,
+                    semantic_provider=provider,
+                    gpu_device_ids=gpu_device_ids,
+                    gpu_timeout_s=gpu_timeout_s,
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         return _agent_capsule_error(
@@ -2117,7 +2195,9 @@ def tg_symbol_defs(symbol: str, path: str = ".", provider: str = "native") -> st
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_defs(symbol, path, semantic_provider=provider), indent=2)
+        return _inject_mcp_contract_fields(
+            json.dumps(build_symbol_defs(symbol, path, semantic_provider=provider), indent=2)
+        )
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -2129,6 +2209,20 @@ def tg_symbol_defs(symbol: str, path: str = ".", provider: str = "native") -> st
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # C4: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-defs",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -2143,7 +2237,9 @@ def tg_symbol_source(symbol: str, path: str = ".", provider: str = "native") -> 
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_source(symbol, path, semantic_provider=provider), indent=2)
+        return _inject_mcp_contract_fields(
+            json.dumps(build_symbol_source(symbol, path, semantic_provider=provider), indent=2)
+        )
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -2155,6 +2251,20 @@ def tg_symbol_source(symbol: str, path: str = ".", provider: str = "native") -> 
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # C4: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-source",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -2169,14 +2279,16 @@ def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> 
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(
-            build_symbol_impact(
-                symbol,
-                path,
-                semantic_provider=provider,
-                max_repo_files=_DEFAULT_MCP_REPO_SCAN_LIMIT,
-            ),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_symbol_impact(
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=_DEFAULT_MCP_REPO_SCAN_LIMIT,
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2191,6 +2303,20 @@ def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> 
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
         }
         return json.dumps(payload, indent=2)
+    except Exception as exc:  # C4: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-impact",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
+        }
+        return json.dumps(payload, indent=2)
 
 
 @mcp.tool()  # type: ignore
@@ -2203,7 +2329,9 @@ def tg_symbol_refs(symbol: str, path: str = ".", provider: str = "native") -> st
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_refs(symbol, path, semantic_provider=provider), indent=2)
+        return _inject_mcp_contract_fields(
+            json.dumps(build_symbol_refs(symbol, path, semantic_provider=provider), indent=2)
+        )
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -2215,6 +2343,20 @@ def tg_symbol_refs(symbol: str, path: str = ".", provider: str = "native") -> st
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # C4: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-refs",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -2229,7 +2371,9 @@ def tg_symbol_callers(symbol: str, path: str = ".", provider: str = "native") ->
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_callers(symbol, path, semantic_provider=provider), indent=2)
+        return _inject_mcp_contract_fields(
+            json.dumps(build_symbol_callers(symbol, path, semantic_provider=provider), indent=2)
+        )
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -2241,6 +2385,20 @@ def tg_symbol_callers(symbol: str, path: str = ".", provider: str = "native") ->
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # C4: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-callers",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -2261,11 +2419,13 @@ def tg_symbol_blast_radius(
         max_depth: Maximum reverse-import depth to include.
     """
     try:
-        return json.dumps(
-            build_symbol_blast_radius(
-                symbol, path, max_depth=max_depth, semantic_provider=provider
-            ),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_symbol_blast_radius(
+                    symbol, path, max_depth=max_depth, semantic_provider=provider
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2312,21 +2472,23 @@ def tg_symbol_blast_radius_render(
         render_profile: Render profile to use: full, compact, or llm.
     """
     try:
-        return json.dumps(
-            build_symbol_blast_radius_render(
-                symbol,
-                path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                profile=profile,
-                semantic_provider=provider,
-            ),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_symbol_blast_radius_render(
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    profile=profile,
+                    semantic_provider=provider,
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2360,7 +2522,7 @@ def tg_search(
     glob: str | None = None,
     type_filter: str | None = None,
     query: str | None = None,
-    structured_json: bool = False,
+    structured_json: bool = True,
 ) -> str:
     """
     Search files for a regex pattern using tensor-grep's high-speed GPU or CPU engine.
@@ -2380,7 +2542,8 @@ def tg_search(
         count_matches: Just count the matches using ultra-fast Rust backend (-c).
         glob: Include/exclude files matching glob (e.g. '*.py').
         type_filter: Only search files matching TYPE (e.g. 'py', 'js').
-        structured_json: Return bounded structured JSON instead of text.
+        structured_json: Return bounded structured JSON (default true). Set to false for
+            plain-text output.
     """
     search_pattern = pattern or query
     if not search_pattern:
@@ -2559,15 +2722,17 @@ def tg_search(
 
 
 @mcp.tool()  # type: ignore
-def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
+def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: bool = True) -> str:
     """
-    Search source code structurally using PyTorch Geometric Graph Neural Networks.
-    Ignores whitespace and formatting, searching the true AST structure.
+    Search source code structurally using the ast-grep/tree-sitter backend.
+    Ignores whitespace and formatting, matching the true AST structure.
 
     Args:
         pattern: AST pattern to search for (e.g. 'if ($A) { return $B; }').
         lang: Language to parse (e.g. 'python', 'javascript').
         path: Directory or file to search.
+        structured_json: Return bounded structured JSON (default true). Set to false for
+            plain-text output.
     """
     config = SearchConfig(ast=True, lang=lang, no_messages=True)
     pipeline = Pipeline(config=config)
@@ -2575,6 +2740,19 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
 
     backend_name = type(backend).__name__
     if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
+        if structured_json:
+            return json.dumps(
+                {
+                    "pattern": pattern,
+                    "lang": lang,
+                    "path": path,
+                    "error": {
+                        "code": "unavailable",
+                        "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
+                    },
+                },
+                indent=2,
+            )
         return "Error: AstBackend is not available on this system. Requires torch_geometric and tree_sitter."
 
     scanner = DirectoryScanner(config)
@@ -2610,12 +2788,25 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
         _finalize_aggregate_result(all_results)
 
         if all_results.is_empty:
+            if structured_json:
+                return json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
+                        "total_matches": 0,
+                        "total_files": all_results.total_files,
+                        "rendered_match_count": 0,
+                        "rendered_file_count": 0,
+                        "matches": [],
+                        "truncated": False,
+                        "omitted_matches": 0,
+                        "omitted_files": 0,
+                        "routing": _routing_payload(all_results),
+                    },
+                    indent=2,
+                )
             return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
-
-        output = [
-            f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
-            _routing_summary(all_results),
-        ]
 
         # Group by file
         by_file: dict[str, list[Any]] = {}
@@ -2623,6 +2814,55 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
             if match.file not in by_file:
                 by_file[match.file] = []
             by_file[match.file].append(match)
+
+        if structured_json:
+            rendered_file_limit = 15
+            rendered_result_limit = 150
+            rendered_by_file: dict[str, list[Any]] = {}
+            rendered_match_count = 0
+            for filepath, matches in by_file.items():
+                if len(rendered_by_file) >= rendered_file_limit:
+                    break
+                rendered_by_file[filepath] = []
+                for match in matches:
+                    if rendered_match_count >= rendered_result_limit:
+                        break
+                    rendered_by_file[filepath].append(match)
+                    rendered_match_count += 1
+            rendered_file_count = len(rendered_by_file)
+            omitted_matches = max(0, all_results.total_matches - rendered_match_count)
+            omitted_files = max(0, all_results.total_files - rendered_file_count)
+            payload_matches = [
+                {
+                    "file": filepath,
+                    "line_number": m.line_number,
+                    "text": m.text.strip(),
+                }
+                for filepath, matches in rendered_by_file.items()
+                for m in matches
+            ]
+            return json.dumps(
+                {
+                    "pattern": pattern,
+                    "lang": lang,
+                    "path": path,
+                    "total_matches": all_results.total_matches,
+                    "total_files": all_results.total_files,
+                    "rendered_match_count": len(payload_matches),
+                    "rendered_file_count": rendered_file_count,
+                    "matches": payload_matches,
+                    "truncated": omitted_matches > 0 or omitted_files > 0,
+                    "omitted_matches": omitted_matches,
+                    "omitted_files": omitted_files,
+                    "routing": _routing_payload(all_results),
+                },
+                indent=2,
+            )
+
+        output = [
+            f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
+            _routing_summary(all_results),
+        ]
 
         if by_file:
             for filepath, matches in list(by_file.items())[:15]:
@@ -2648,17 +2888,33 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
     except Exception as e:
         import traceback
 
+        if structured_json:
+            return json.dumps(
+                {
+                    "pattern": pattern,
+                    "lang": lang,
+                    "path": path,
+                    "error": {
+                        "code": "internal_error",
+                        "message": str(e),
+                        "detail": traceback.format_exc(),
+                    },
+                },
+                indent=2,
+            )
         return f"AST Search failed: {e!s}\n{traceback.format_exc()}"
 
 
 @mcp.tool()  # type: ignore
-def tg_classify_logs(file_path: str) -> str:
+def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     """
     Analyze a system log file with local heuristics by default, or the opt-in
     CyBERT/Triton provider when TENSOR_GREP_CLASSIFY_PROVIDER=cybert is set.
 
     Args:
         file_path: The absolute path to the log file to classify.
+        structured_json: Return bounded structured JSON (default true). Set to false for
+            plain-text output.
     """
     try:
         from tensor_grep.io.reader_fallback import FallbackReader
@@ -2671,6 +2927,17 @@ def tg_classify_logs(file_path: str) -> str:
         reader = FallbackReader()
         lines = list(reader.read_lines(file_path))
         if not lines:
+            if structured_json:
+                return json.dumps(
+                    {
+                        "file_path": file_path,
+                        "error": {
+                            "code": "invalid_input",
+                            "message": f"File {file_path} is empty or unreadable.",
+                        },
+                    },
+                    indent=2,
+                )
             return f"Error: File {file_path} is empty or unreadable."
 
         budgeted_lines, line_budget = _apply_classify_line_budget(
@@ -2681,6 +2948,31 @@ def tg_classify_logs(file_path: str) -> str:
         provider_used = backend_metadata.get("provider_used", "heuristic")
         provider_status = backend_metadata.get("provider_status", "local")
 
+        warnings_or_errors = []
+        for i, r in enumerate(results):
+            if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
+                warnings_or_errors.append((budgeted_lines[i].strip(), r["label"], r["confidence"]))
+
+        if structured_json:
+            return json.dumps(
+                {
+                    "file_path": file_path,
+                    "provider": provider_used,
+                    "provider_status": provider_status,
+                    "sample_lines": line_budget["emitted_lines"],
+                    "total_lines": line_budget["total_lines"],
+                    "anomaly_count": len(warnings_or_errors),
+                    "anomalies": [
+                        {"label": label, "confidence": conf, "text": text}
+                        for text, label, conf in warnings_or_errors[:20]
+                    ],
+                },
+                indent=2,
+            )
+
+        if not warnings_or_errors:
+            return f"No severe anomalies detected in {file_path}. All logs appear nominal."
+
         output = [
             (
                 f"Log Classification for {file_path} "
@@ -2688,15 +2980,6 @@ def tg_classify_logs(file_path: str) -> str:
                 f"sample={line_budget['emitted_lines']}/{line_budget['total_lines']} lines):"
             )
         ]
-
-        warnings_or_errors = []
-        for i, r in enumerate(results):
-            if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
-                warnings_or_errors.append((budgeted_lines[i].strip(), r["label"], r["confidence"]))
-
-        if not warnings_or_errors:
-            return f"No severe anomalies detected in {file_path}. All logs appear nominal."
-
         output.append(f"\nDetected {len(warnings_or_errors)} High-Confidence Anomalies:")
         for text, label, conf in warnings_or_errors[:20]:  # Limit output
             output.append(f"[{label.upper()}] ({conf:.2f}) {text}")
@@ -2706,16 +2989,29 @@ def tg_classify_logs(file_path: str) -> str:
     except Exception as e:
         import traceback
 
+        if structured_json:
+            return json.dumps(
+                {
+                    "file_path": file_path,
+                    "error": {
+                        "code": "internal_error",
+                        "message": str(e),
+                        "detail": traceback.format_exc(),
+                    },
+                },
+                indent=2,
+            )
         return f"Log Classification failed: {e!s}\n{traceback.format_exc()}"
 
 
 @mcp.tool()  # type: ignore
-def tg_devices(json_output: bool = False) -> str:
+def tg_devices(json_output: bool = True) -> str:
     """
     Return routable GPU inventory for scheduling and diagnostics.
 
     Args:
-        json_output: Emit machine-readable JSON output when true.
+        json_output: Emit machine-readable JSON output (default true). Set to false for
+            plain-text output.
     """
     import json
 
@@ -2895,7 +3191,7 @@ def tg_audit_history(path: str = ".") -> str:
         return _audit_history_error("path must not be empty.", code="invalid_input")
 
     try:
-        return json.dumps(list_audit_history_payload(path), indent=2)
+        return _inject_mcp_contract_fields(json.dumps(list_audit_history_payload(path), indent=2))
     except FileNotFoundError as exc:
         return _audit_history_error(str(exc), code="not_found")
     except ValueError as exc:
@@ -2922,9 +3218,11 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         )
 
     try:
-        return json.dumps(
-            diff_audit_manifests_payload(previous_manifest, current_manifest),
-            indent=2,
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                diff_audit_manifests_payload(previous_manifest, current_manifest),
+                indent=2,
+            )
         )
     except FileNotFoundError as exc:
         return _audit_diff_error(str(exc), code="not_found")
@@ -3141,19 +3439,30 @@ def tg_session_open(path: str = ".", max_repo_files: int | None = 512) -> str:
         max_repo_files: Optional cap for files scanned into the initial session repo map.
             Defaults to 512 for agent-safe cold opens.
     """
-    from tensor_grep.cli.session_store import open_session
+    from tensor_grep.cli.session_store import get_session, open_session
 
     try:
-        payload = open_session(path, max_repo_files=max_repo_files)
+        result = open_session(path, max_repo_files=max_repo_files)
     except Exception as exc:
         return _session_exception_payload(path=path, message=str(exc), detail={})
+
+    # M13: add tracked_file_count which counts source + test files (related_paths)
+    # to complement file_count which only counts non-test source files.
+    try:
+        session_payload = get_session(result.session_id, path)
+        repo_map = session_payload.get("repo_map") or {}
+        related_paths = repo_map.get("related_paths") or []
+        tracked_file_count = len(related_paths)
+    except Exception:
+        tracked_file_count = result.file_count
 
     return json.dumps(
         {
             "version": _json_output_version(),
             "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
             "schema_version": _json_output_version(),
-            **payload.__dict__,
+            **result.__dict__,
+            "tracked_file_count": tracked_file_count,
         },
         indent=2,
     )
@@ -3205,7 +3514,7 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
             detail={},
         )
 
-    return json.dumps(payload, indent=2)
+    return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @mcp.tool()  # type: ignore
@@ -3280,7 +3589,7 @@ def tg_session_context(
             query=query,
         )
 
-    return json.dumps(payload, indent=2)
+    return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @mcp.tool()  # type: ignore

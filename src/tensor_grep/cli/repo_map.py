@@ -428,6 +428,141 @@ def _is_test_file(path: Path) -> bool:
     )
 
 
+def _gitignore_pattern_to_regex(pattern: str) -> str:
+    """Translate a single gitignore glob body to an anchored regex fragment.
+
+    The fragment matches against a repo-relative POSIX path (no leading slash).
+    Handles ``*`` (segment-local), ``**`` (cross-segment), ``?`` and literal
+    characters; anchoring/negation/dir-only handling lives in the caller.
+    """
+
+    regex_parts: list[str] = []
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "*":
+            if pattern[index : index + 2] == "**":
+                # ``**`` matches any number of path segments (including none).
+                index += 2
+                if pattern[index : index + 1] == "/":
+                    index += 1
+                    regex_parts.append("(?:.*/)?")
+                else:
+                    regex_parts.append(".*")
+            else:
+                regex_parts.append("[^/]*")
+                index += 1
+        elif char == "?":
+            regex_parts.append("[^/]")
+            index += 1
+        else:
+            regex_parts.append(re.escape(char))
+            index += 1
+    return "".join(regex_parts)
+
+
+class _GitignoreMatcher:
+    """Pragmatic ``.gitignore`` matcher covering the common pattern forms.
+
+    Supports directory-only patterns (trailing ``/``), anchored patterns
+    (leading or embedded ``/``), unanchored basename patterns, ``*``/``**``/``?``
+    globs, and ``!`` negation. Paths are matched relative to ``root`` using
+    POSIX separators. This intentionally mirrors ripgrep's gitignore handling
+    closely enough that context/repo-map walks stop drowning in vendored and
+    cache files; it is not a byte-perfect reimplementation of git's spec.
+    """
+
+    def __init__(self, root: Path, lines: list[str]) -> None:
+        self._root = root.resolve()
+        self._rules: list[tuple[re.Pattern[str], bool, bool]] = []
+        for raw_line in lines:
+            line = raw_line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            # A literal leading ``#`` or ``!`` is escaped with a backslash.
+            negated = False
+            if line.startswith("!"):
+                negated = True
+                line = line[1:]
+            elif line.startswith(("\\#", "\\!")):
+                line = line[1:]
+            line = line.rstrip()
+            if not line:
+                continue
+            dir_only = line.endswith("/")
+            body = line[:-1] if dir_only else line
+            anchored = body.startswith("/") or ("/" in body.rstrip("/"))
+            body = body.lstrip("/")
+            if not body:
+                continue
+            fragment = _gitignore_pattern_to_regex(body)
+            if anchored:
+                regex = rf"^{fragment}(?:/.*)?$"
+            else:
+                # Unanchored patterns match at any depth.
+                regex = rf"(?:^|.*/){fragment}(?:/.*)?$"
+            try:
+                compiled = re.compile(regex)
+            except re.error:
+                continue
+            self._rules.append((compiled, negated, dir_only))
+
+    @property
+    def has_rules(self) -> bool:
+        return bool(self._rules)
+
+    def is_ignored(self, path: Path, *, is_dir: bool) -> bool:
+        # Match the path AS WALKED — never ``resolve()`` here. ``self._root`` is resolved
+        # once in __init__ and the walk descends from it, so every entry is already
+        # absolute and under the root. Calling ``path.resolve()`` per entry would add a
+        # stat/symlink syscall for every file in the tree — an O(files) regression that
+        # melts down on large roots (~384k files on a workspace root) and would also
+        # follow symlinks, which is not how gitignore matches paths.
+        candidate = path if path.is_absolute() else (self._root / path)
+        try:
+            relative = candidate.relative_to(self._root)
+        except ValueError:
+            return False
+        rel_posix = relative.as_posix()
+        if not rel_posix or rel_posix == ".":
+            return False
+        # A dir-only pattern (``dist/``) ignores the directory *and everything
+        # inside it*. Test the path itself plus each ancestor segment-prefix so
+        # files under an ignored directory are recognised even when checked in
+        # isolation (the walk also prunes such directories during traversal).
+        segments = rel_posix.split("/")
+        ancestor_prefixes = ["/".join(segments[: index + 1]) for index in range(len(segments) - 1)]
+        ignored = False
+        for compiled, negated, dir_only in self._rules:
+            if dir_only:
+                matched = any(compiled.match(prefix) for prefix in ancestor_prefixes)
+                if is_dir:
+                    matched = matched or bool(compiled.match(rel_posix))
+            else:
+                matched = bool(compiled.match(rel_posix))
+                if not matched:
+                    # An unanchored/file pattern still ignores descendants of a
+                    # directory it matched (e.g. ``build`` matching ``build/x``).
+                    matched = any(compiled.match(prefix) for prefix in ancestor_prefixes)
+            if matched:
+                ignored = not negated
+        return ignored
+
+
+@lru_cache(maxsize=64)
+def _load_gitignore_matcher(root_key: str) -> _GitignoreMatcher:
+    root = Path(root_key)
+    gitignore_path = root / ".gitignore"
+    lines: list[str] = []
+    try:
+        if gitignore_path.is_file():
+            lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    return _GitignoreMatcher(root, lines)
+
+
 def _repo_walk_dir_sort_key(name: str) -> tuple[int, str]:
     normalized = name.lower()
     if normalized in _SOURCE_FIRST_DIR_NAMES:
@@ -489,7 +624,10 @@ def _should_skip_repo_dir(path: Path) -> bool:
     ))
 
 
-def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
+def _iter_repo_bucket_files(
+    root: Path,
+    gitignore: _GitignoreMatcher | None = None,
+) -> Iterator[Path]:
     try:
         entries = list(os.scandir(root))
     except OSError:
@@ -500,10 +638,17 @@ def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
     for entry in entries:
         try:
             if entry.is_dir(follow_symlinks=False):
-                if not _should_skip_repo_dir(Path(entry.path)):
-                    dir_paths.append(Path(entry.path))
+                directory = Path(entry.path)
+                if _should_skip_repo_dir(directory):
+                    continue
+                if gitignore is not None and gitignore.is_ignored(directory, is_dir=True):
+                    continue
+                dir_paths.append(directory)
             elif entry.is_file(follow_symlinks=False):
-                file_paths.append(Path(entry.path))
+                file_path = Path(entry.path)
+                if gitignore is not None and gitignore.is_ignored(file_path, is_dir=False):
+                    continue
+                file_paths.append(file_path)
         except OSError:
             continue
 
@@ -513,10 +658,10 @@ def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
     other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
 
     for directory in source_dirs:
-        yield from _iter_repo_bucket_files(directory)
+        yield from _iter_repo_bucket_files(directory, gitignore)
     yield from file_paths
     for directory in other_dirs:
-        yield from _iter_repo_bucket_files(directory)
+        yield from _iter_repo_bucket_files(directory, gitignore)
 
 
 def _iter_repo_files(
@@ -531,6 +676,7 @@ def _iter_repo_files(
 
         files: list[Path] = []
         normalized_root = root.resolve()
+        gitignore = _load_gitignore_matcher(str(normalized_root))
         if max_files is not None:
             try:
                 entries = list(os.scandir(normalized_root))
@@ -541,14 +687,19 @@ def _iter_repo_files(
             for entry in entries:
                 try:
                     if entry.is_dir(follow_symlinks=False):
-                        if not _should_skip_repo_dir(Path(entry.path)):
-                            path = Path(entry.path)
-                            buckets.append((
-                                _repo_walk_bucket_sort_key(path, normalized_root),
-                                _iter_repo_bucket_files(path),
-                            ))
+                        path = Path(entry.path)
+                        if _should_skip_repo_dir(path):
+                            continue
+                        if gitignore.is_ignored(path, is_dir=True):
+                            continue
+                        buckets.append((
+                            _repo_walk_bucket_sort_key(path, normalized_root),
+                            _iter_repo_bucket_files(path, gitignore),
+                        ))
                     elif entry.is_file(follow_symlinks=False):
                         path = Path(entry.path)
+                        if gitignore.is_ignored(path, is_dir=False):
+                            continue
                         buckets.append((
                             _repo_walk_bucket_sort_key(path, normalized_root),
                             iter([path]),
@@ -578,7 +729,7 @@ def _iter_repo_files(
                     break
             return selected
 
-        files = list(_iter_repo_bucket_files(normalized_root))
+        files = list(_iter_repo_bucket_files(normalized_root, gitignore))
         files.sort(key=lambda path: _repo_walk_path_sort_key(path, normalized_root))
         return files
 
@@ -1465,6 +1616,28 @@ def _split_top_level_list(text: str) -> list[str]:
     return items
 
 
+_RUST_USE_SEGMENT_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*|\*)$")
+
+
+def _is_valid_rust_use_path(path: str) -> bool:
+    """Return ``True`` when ``path`` is a syntactically valid Rust ``use`` path.
+
+    The ``use ... ;`` regex used to collect bindings is intentionally permissive
+    (``DOTALL``) and can latch onto the word ``use`` inside a doc comment such as
+    ``/// We only use the trigram index ... ;``. Those false positives produce
+    module names containing whitespace/newlines that later blow up
+    ``Path.with_suffix`` with ``empty name`` ``ValueError``s. A genuine use path is
+    a ``::``-separated list of Rust identifiers (plus ``*`` for globs), so reject
+    anything else here.
+    """
+
+    candidate = path.strip()
+    if not candidate:
+        return False
+    segments = candidate.split("::")
+    return all(_RUST_USE_SEGMENT_RE.match(segment.strip()) for segment in segments)
+
+
 def _flatten_rust_use_items(expression: str, prefix: str = "") -> list[str]:
     normalized = expression.strip()
     if not normalized:
@@ -1507,8 +1680,11 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
             if not normalized:
                 continue
             if normalized.endswith("::*"):
+                module_glob = normalized[:-3].strip()
+                if not _is_valid_rust_use_path(module_glob):
+                    continue
                 bindings.append({
-                    "module": normalized[:-3].strip(),
+                    "module": module_glob,
                     "wildcard": True,
                     "start_line": start_line,
                     "end_line": end_line,
@@ -1520,6 +1696,11 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
             else:
                 imported_path = normalized
                 local_name = normalized.rsplit("::", 1)[-1].strip()
+
+            # Reject false-positive matches (e.g. the word ``use`` inside a doc
+            # comment) so downstream path resolution never receives whitespace.
+            if not _is_valid_rust_use_path(imported_path):
+                continue
 
             if "::" in imported_path:
                 module_name, imported_name = imported_path.rsplit("::", 1)
@@ -1874,7 +2055,15 @@ def _rust_module_candidates(
 
     if heuristic_parts:
         base = start.joinpath(*heuristic_parts).resolve()
-        _add_candidate(base.with_suffix(".rs"), [], 1.0)
+        # Defensive guard: a malformed module name (e.g. a mis-parsed doc
+        # comment) can yield a base path whose final component has an empty
+        # name, which makes ``with_suffix`` raise ``ValueError``. Skip the
+        # ``.rs`` sibling in that case rather than crashing symbol lookup.
+        try:
+            rust_sibling = base.with_suffix(".rs")
+        except ValueError:
+            rust_sibling = None
+        _add_candidate(rust_sibling, [], 1.0)
         _add_candidate(base / "mod.rs", [], 1.0)
 
     return candidates
@@ -5448,6 +5637,12 @@ def build_context_pack(
     max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    # Match map/agent/blast-radius: when the caller does not bound the scan,
+    # default to DEFAULT_AGENT_REPO_MAP_LIMIT so context never walks an entire
+    # workspace (which previously made `tg context` hang indefinitely on large
+    # trees that lack a --max-repo-files default at the CLI layer).
+    if max_repo_files is None:
+        max_repo_files = DEFAULT_AGENT_REPO_MAP_LIMIT
     payload = build_repo_map(
         path,
         max_repo_files=max_repo_files,
@@ -8431,6 +8626,10 @@ def _promote_substantive_symbol_for_edit_seed(
         )
         if implementation_candidate is not None:
             return implementation_candidate
+    # An exactly-named primary symbol (H7) must not be demoted by a higher-scored
+    # but merely graph-central candidate.
+    if bool(primary_symbol.get("exact_query_match")):
+        return primary_symbol
     if "validation-direct-definition" in primary_file_reasons:
         return primary_symbol
     primary_score = int(primary_symbol.get("score", 0) or 0)
@@ -8644,6 +8843,80 @@ def _rollback_risk_from_blast_radius(
     return round(min(1.0, max(0.0, risk)), 3)
 
 
+def _is_distinctive_identifier(token: str) -> bool:
+    """Return ``True`` when ``token`` looks like a deliberate code identifier.
+
+    Distinctive identifiers carry a structural signal that a bare English word
+    does not: an underscore, a digit, or internal case mixing (``camelCase`` /
+    ``PascalCase``). This keeps the exact-symbol fallback from latching onto a
+    common word (``device``, ``file``) that merely happens to also be a symbol.
+    """
+
+    if len(token) < 3:
+        return False
+    if "_" in token or any(char.isdigit() for char in token):
+        return True
+    lowered = token.lower()
+    return token not in {lowered, token.upper()}
+
+
+def _exact_query_match_primary_symbol(
+    ranked_symbols: list[dict[str, Any]],
+    *,
+    repo_map: dict[str, Any] | None = None,
+    query: str = "",
+) -> dict[str, Any] | None:
+    """Return the best symbol whose name exactly matches a query token.
+
+    When the query names a symbol that resolves exactly (``exact_query_match``
+    was set during scoring), that definition should win primary-target selection
+    over a higher-ranked graph-centrality candidate that merely happens to live
+    in the top-ranked file. ``ranked_symbols`` is already score-sorted, so the
+    first exact match with a resolvable file is the highest-scored exact match.
+
+    Some pipelines (notably context-render) pre-filter ``ranked_symbols`` down to
+    symbols defined in the top-ranked files, which can drop the exactly-named
+    target before it reaches here. In that case fall back to scanning the full
+    ``repo_map`` symbol inventory for a definition matching a query token and
+    synthesize a candidate carrying ``exact_query_match`` so it is treated as the
+    resolved primary target.
+    """
+
+    ranked = next(
+        (
+            current
+            for current in ranked_symbols
+            if bool(current.get("exact_query_match")) and current.get("file")
+        ),
+        None,
+    )
+    if ranked is not None:
+        return ranked
+    if repo_map is None or not query:
+        return None
+
+    query_tokens = set(re.findall(r"[A-Za-z0-9_]+", query))
+    if not query_tokens:
+        return None
+    # Only fall back for distinctive identifiers the query *names* on purpose
+    # (``tg_rewrite_plan``, ``camelCase``, ``Name2``) -- never a bare lowercase
+    # English word such as ``device`` that merely happens to also be a symbol,
+    # which would hijack descriptive queries away from graph-centrality ranking.
+    distinctive_tokens = {token for token in query_tokens if _is_distinctive_identifier(token)}
+    if not distinctive_tokens:
+        return None
+    for definition in repo_map.get("symbols", []):
+        if not isinstance(definition, dict):
+            continue
+        name = str(definition.get("name", "") or "")
+        if name not in distinctive_tokens or not definition.get("file"):
+            continue
+        candidate = dict(definition)
+        candidate["exact_query_match"] = True
+        return candidate
+    return None
+
+
 def _build_edit_plan_seed(
     repo_map: dict[str, Any],
     payload: dict[str, Any],
@@ -8664,6 +8937,17 @@ def _build_edit_plan_seed(
         ),
         next(iter(ranked_symbols), None),
     )
+    # H7: an exactly-named, resolvable symbol must outrank a graph-centrality
+    # candidate that merely lives in the top-ranked file. Promote it here so the
+    # capsule's primary_symbol stays coupled to the highest-scored candidate.
+    exact_primary = _exact_query_match_primary_symbol(
+        ranked_symbols,
+        repo_map=repo_map,
+        query=query,
+    )
+    if exact_primary is not None and exact_primary is not primary_symbol:
+        primary_symbol = exact_primary
+        primary_file = str(exact_primary["file"])
     if primary_symbol is not None and primary_file is not None:
         primary_symbol_file = str(primary_symbol.get("file", "") or "")
         primary_file_has_ranked_symbol = any(
@@ -9654,7 +9938,7 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
     edit_plan_seed = payload.get("edit_plan_seed")
     navigation_pack = payload.get("navigation_pack")
     primary_file = (
-        str(edit_plan_seed.get("primary_file", "")) if isinstance(edit_plan_seed, dict) else ""
+        str(edit_plan_seed.get("primary_file") or "") if isinstance(edit_plan_seed, dict) else ""
     )
     primary_target = (
         dict(navigation_pack.get("primary_target", {})) if isinstance(navigation_pack, dict) else {}
@@ -9737,7 +10021,9 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
         omitted_sections = _list_of_dicts(payload.get("omitted_sections"))
         omitted_sections.append({
             "kind": "primary",
-            "file": primary_file,
+            # Emit JSON null (not the string "None") when no primary file
+            # resolved, matching follow_up_reads[].file semantics.
+            "file": primary_file or None,
             "reason": omitted_reason,
         })
         payload["omitted_sections"] = omitted_sections
@@ -11138,6 +11424,69 @@ def _dedupe_symbol_references(references: list[dict[str, Any]]) -> list[dict[str
     return deduped
 
 
+def _classify_string_reference(line_text: str, match_start: int) -> str:
+    """Classify a quoted-string occurrence of a symbol.
+
+    Returns one of ``"decorator-arg"`` (inside a ``@deco(...)`` call on the same
+    line), ``"fstring"`` (the literal is an f-string), or ``"string-literal"``
+    (any other quoted occurrence, e.g. ``routing_backend="Foo"`` or an
+    ``__all__`` entry). These are *not* AST references; they exist so that
+    rename-aware agents can find ``@patch("module.Symbol")`` targets and string
+    assignments that the precise AST pass intentionally excludes.
+    """
+
+    prefix = line_text[:match_start]
+    stripped_prefix = prefix.lstrip()
+    if stripped_prefix.startswith("@") and "(" in prefix:
+        return "decorator-arg"
+    quote_lead = prefix.rstrip()
+    if quote_lead.endswith(("f'", 'f"', "rf'", 'rf"', "fr'", 'fr"', "f'''", 'f"""')):
+        return "fstring"
+    return "string-literal"
+
+
+def _string_literal_references(path: Path, symbol: str) -> list[dict[str, Any]]:
+    """Find occurrences of ``symbol`` as a quoted string literal.
+
+    The precise AST reference pass deliberately excludes string occurrences such
+    as ``@patch("pkg.mod.Symbol")`` decorator arguments,
+    ``routing_backend="Symbol"`` assignments, and ``__all__`` entries. Those are
+    surfaced here so they are not silently dropped from rename planning.
+    """
+
+    if not symbol:
+        return []
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    # Match the symbol when it sits inside a single- or double-quoted string,
+    # either standalone (``"Symbol"``) or as a dotted-path tail
+    # (``"pkg.mod.Symbol"``). ``\b`` keeps it from matching ``SymbolExtra``.
+    pattern = re.compile(
+        rf"""(?P<quote>['"])(?:[A-Za-z0-9_.]*\.)?{re.escape(symbol)}\b(?:['"])""",
+    )
+    occurrences: list[dict[str, Any]] = []
+    for match in pattern.finditer(source):
+        line_no = source.count("\n", 0, match.start()) + 1
+        line_start = source.rfind("\n", 0, match.start()) + 1
+        line_end = source.find("\n", match.start())
+        if line_end < 0:
+            line_end = len(source)
+        line_text = source[line_start:line_end]
+        occurrence_kind = _classify_string_reference(line_text, match.start() - line_start)
+        occurrences.append({
+            "name": symbol,
+            "kind": "string-reference",
+            "occurrence": occurrence_kind,
+            "file": str(path),
+            "line": line_no,
+            "text": line_text.strip(),
+        })
+    return occurrences
+
+
 def build_symbol_refs(
     symbol: str,
     path: str | Path = ".",
@@ -11159,6 +11508,7 @@ def build_symbol_refs_from_map(
     if payload.get("no_match"):
         payload["routing_reason"] = "symbol-refs"
         payload["references"] = []
+        payload["string_refs"] = []
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
         return payload
@@ -11272,6 +11622,17 @@ def build_symbol_refs_from_map(
     for reference in references:
         if _is_lsp_proof_row(reference):
             reference["lsp_proof"] = True
+
+    # Collect string-literal occurrences (decorator args, ``routing_backend=``
+    # assignments, ``__all__`` entries, f-strings). These are reported alongside
+    # the precise AST ``references`` so rename-aware agents do not miss them.
+    string_refs: list[dict[str, Any]] = []
+    for current in bounded_files:
+        string_refs.extend(_string_literal_references(current, symbol))
+    string_refs.sort(
+        key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
+    )
+
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
     related_paths: list[str] = []
     for current in [*payload["files"], *referenced_files, *payload["tests"]]:
@@ -11280,6 +11641,7 @@ def build_symbol_refs_from_map(
 
     payload["routing_reason"] = "symbol-refs"
     payload["references"] = references
+    payload["string_refs"] = string_refs
     payload["files"] = referenced_files
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
