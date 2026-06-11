@@ -1,6 +1,118 @@
 # CHANGELOG
 
 
+## v1.13.39 (2026-06-11)
+
+### Bug Fixes
+
+- Dogfood MED/LOW batch 2 + close the C3 fork-bomb for ALL --json+passthrough combos
+  ([#257](https://github.com/oimiragieo/tensor-grep/pull/257),
+  [`e4beaf6`](https://github.com/oimiragieo/tensor-grep/commit/e4beaf64131f977a9b845d29646a343b4e5c3901))
+
+* fix: clear dogfood MEDIUM/LOW batch 2 (json schema/columns, regex fallback, defs filter)
+
+Final batch of the dogfood MEDIUM/LOW sweep: - M1: `tg --json` and `tg --json --stats` now emit the
+  same match-object schema — the Python JsonFormatter carries BOTH `line` (the native plain-`--json`
+  field) and `line_number`, so consumers keyed on `matches[].line` no longer break when --stats
+  routes through the Python serializer (mirrors NdjsonFormatter). - M3: every `tg run --json` shape
+  (search/rewrite-plan/stdin/apply) now carries a consistent `version`/`schema_version`/`mode` and a
+  present `total_matches` (additive — no existing keys renamed). (The `tg run --pattern --lang`
+  search-routed path inherits the separate native search --json contract, which has never carried
+  schema_version — left as a follow-up.) - M4: `--batch-rewrite` config error now names the required
+  shape (`{"rewrites": [{"pattern": ..., "replacement": ..., "lang": ...}], "verify": false}`) in
+  both the rust validator and a Python doc comment, instead of the cryptic `$` field error. - M14b:
+  an inline-flag regex the default validator rejects but PCRE2 accepts (e.g. `start(?s).*end`) now
+  transparently retries with PCRE2 (with a one-line stderr note) when no engine was explicitly
+  chosen — instead of erroring. `--engine pcre2` is now honored too. - L3: `tg defs` definitions
+  carry additive `class` + `score` fields, and `tg defs --class NAME` filters by enclosing class so
+  common names (e.g. `search`) can be disambiguated. - L4: assessed as BY-DESIGN — `tg impact` is a
+  fast file-level planning signal that points to `blast-radius` (wiring its caller_tree/score in
+  would duplicate blast-radius and double the cost). The redirect reason is now actionable instead
+  of terse.
+
+44 new/updated regression tests. Full gate green: ruff, ruff format --preview, mypy --strict, cargo
+  fmt/clippy -D warnings/test, pytest (the lone local failure is the native-disabled timing
+  env-artifact, green on CI with the native binary present).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: close the C3 fork-bomb for ALL --json + passthrough-flag combos (re-exec marker)
+
+The v1.13.37 native guard only rejected `--json` + RENDER flags (-b/--passthru/...). But `--json
+  --debug` and `--json --stats` (search passthrough flags that are NOT render flags) still
+  fork-bombed: the native binary delegates them to the Python sidecar, and the Python launcher's
+  `_can_delegate_to_native_tg_search` treats `--json` as a delegation trigger and bounces them BACK
+  to native — an infinite native<->python re-exec loop. This bites during `tg update`: the native
+  front-door refresh self-test runs `tg search ... --json --debug`, which fork-bombs and locks
+  tg.exe so the new native binary cannot even install.
+
+Root-cause fix — a re-exec marker that breaks the mutual delegation for EVERY flag combo: -
+  rust_core/src/python_sidecar.rs: `configure_python_child_environment` (the single shared child-env
+  setup for all native->python spawns) sets `TG_REEXEC_GUARD=1`. - src/tensor_grep/cli/bootstrap.py:
+  `main_entry` nulls the resolved native binary when `TG_REEXEC_GUARD` is set, so a Python process
+  spawned BY the native front door never delegates search back to it — it handles the search in
+  Python instead.
+
+Needs BOTH the native binary (sets the marker) and the Python package (honors it), which ship
+  together. Verified end-to-end against a rebuilt native binary + guard-aware Python: `--json
+  --debug` and `--json --stats` exit 0 with ZERO spawned native children (was exit-124 hang/fork).
+  Two regression tests (guard blocks delegation / no-guard delegates) in
+  test_launcher_no_respawn.py.
+
+* fix: M14b inline-flag fallback must not require PCRE2 that rg lacks
+
+The M14b auto-fallback retried inline-flag patterns under PCRE2 unconditionally. On a box whose `rg`
+  is built without PCRE2 (most CI images, some platform packages), that raised a confusing
+  `ConfigurationError: PCRE2 requested but no PCRE2-capable 'rg' backend is available.` (exit 1)
+  instead of the helpful `-P` remediation.
+
+Gate the fallback on `RipgrepBackend.supports_pcre2()` via a new
+  `_pcre2_fallback_backend_available()` helper: when no PCRE2-capable rg exists, keep the original
+  invalid-regex error + `-P` remediation (exit 2) rather than failing on an unavailable engine. The
+  regression test now branches on PCRE2 availability so it is correct in both environments.
+
+* fix: keep M14b PCRE2-fallback eligibility pure; gate availability at the call site
+
+The previous fix folded the PCRE2-availability check INTO
+  `_eligible_for_pcre2_inline_flag_fallback`, making it environment-dependent and breaking
+  `test_m14b_fallback_eligibility_rules` (which asserts a default config is eligible) on rg builds
+  without PCRE2. Separate the concerns: eligibility stays a pure engine/fixed-strings predicate; the
+  call site additionally requires `_pcre2_fallback_backend_available()` before retrying under PCRE2.
+  Both the eligibility test (env-independent) and the end-to-end fallback test (branches on
+  availability) now pass with or without a PCRE2-capable rg.
+
+* fix: CI env-robustness — --preview format main.py + skip ast-grep-only M3 stdin test
+
+Two CI-only failures (the local box has richer deps than CI images): - Restore the `ruff format
+  --preview` style on main.py that intermediate non-preview `ruff format` calls had stripped (the
+  lint gate runs `--check --preview`). Format-only; `git diff -w` is bracket/comma placement, no
+  logic change. - `test_stdin_mode_has_required_envelope_keys` runs a REAL AST search via `--stdin`,
+  which needs ast-grep; skip it when no ast-grep binary is on PATH (mirrors test_apply_policy),
+  matching how the other run_json tests mock the backend.
+
+* fix: stdin M3 test skip must use the real ast-grep backend check, not which("sg")
+
+The previous skip used `shutil.which("sg")`, but on Linux `sg` is the set-group-id command
+  (util-linux), unrelated to ast-grep — so the naive check false-positived on CI, the skip never
+  fired, and the --stdin AST search failed with a ConfigurationError. Use
+  `AstGrepWrapperBackend.is_available()` instead, which validates that any `sg` binary is actually
+  ast-grep (via `_is_ast_grep_sg_binary`). Verified: True locally (ast-grep present -> test runs),
+  False under simulated no-ast-grep (-> test skips).
+
+* fix: skip the other real-AST-search M3 test when no AST backend (CI)
+
+`test_search_mode_flag_is_search_not_stdin` runs an un-mocked `tg run` search, which needs ANY AST
+  backend (native ast or the ast-grep wrapper). CI images have neither, so it raised
+  `ConfigurationError: no AST backend is available`. Add `_ast_backend_available()` (checks both
+  backends) and skip on it. The other run_json tests either mock execute_rewrite_* or exercise the
+  pure JSON-injection/source helpers, so this and the stdin test are the only two that touch a real
+  backend.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.13.38 (2026-06-11)
 
 ### Bug Fixes
