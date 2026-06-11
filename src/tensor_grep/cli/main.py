@@ -1148,54 +1148,64 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
     payload["expected_version"] = expected_version
     payload["managed_native"] = str(native_tg_binary) if native_tg_binary else None
     if native_tg_binary is None or not native_tg_binary.is_file():
-        payload.update({
-            "status": "blocked_missing_managed_native",
-            "message": (
-                "No managed native tg.exe was found. Run tg upgrade or reinstall tensor-grep "
-                "before repairing Python subprocess launcher resolution."
-            ),
-        })
+        payload.update(
+            {
+                "status": "blocked_missing_managed_native",
+                "message": (
+                    "No managed native tg.exe was found. Run tg upgrade or reinstall tensor-grep "
+                    "before repairing Python subprocess launcher resolution."
+                ),
+            }
+        )
         return payload
 
     native_version = _doctor_tg_candidate_version(native_tg_binary)
     payload["managed_native_version"] = native_version
     if not _native_tg_version_matches(expected_version, native_version):
-        payload.update({
-            "status": "blocked_managed_native_version_mismatch",
-            "message": (
-                "Managed native tg.exe is not verified for this tensor-grep version: "
-                f"{native_tg_binary} reports {native_version or 'no version'}, "
-                f"expected {expected_version}."
-            ),
-        })
+        payload.update(
+            {
+                "status": "blocked_managed_native_version_mismatch",
+                "message": (
+                    "Managed native tg.exe is not verified for this tensor-grep version: "
+                    f"{native_tg_binary} reports {native_version or 'no version'}, "
+                    f"expected {expected_version}."
+                ),
+            }
+        )
         return payload
 
     candidate = _doctor_python_subprocess_path_tg_candidate()
     if not candidate:
-        payload.update({
-            "status": "blocked_no_python_subprocess_tg",
-            "message": "No tg.exe candidate was found on PATH for Python subprocess resolution.",
-        })
+        payload.update(
+            {
+                "status": "blocked_no_python_subprocess_tg",
+                "message": "No tg.exe candidate was found on PATH for Python subprocess resolution.",
+            }
+        )
         return payload
 
     candidate_path = Path(str(candidate.get("path") or ""))
     candidate_version = candidate.get("version")
     candidate_kind = _doctor_tg_launcher_kind(str(candidate_path), candidate_version)
-    payload.update({
-        "foreign_path": str(candidate_path),
-        "pre_repair_version": candidate_version,
-        "pre_repair_launcher_kind": candidate_kind,
-    })
+    payload.update(
+        {
+            "foreign_path": str(candidate_path),
+            "pre_repair_version": candidate_version,
+            "pre_repair_launcher_kind": candidate_kind,
+        }
+    )
 
     if _same_path(candidate_path, native_tg_binary) and _native_tg_version_matches(
         expected_version,
         candidate_version,
     ):
-        payload.update({
-            "status": "already_ok",
-            "message": "Python subprocess resolution already finds the managed native tg.exe.",
-            "post_repair_version": candidate_version,
-        })
+        payload.update(
+            {
+                "status": "already_ok",
+                "message": "Python subprocess resolution already finds the managed native tg.exe.",
+                "post_repair_version": candidate_version,
+            }
+        )
         return payload
 
     if candidate_kind == "python-entrypoint":
@@ -1213,61 +1223,71 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
             and _same_path(post_path, native_tg_binary)
             and _native_tg_version_matches(expected_version, post_version)
         ):
-            payload.update({
-                "status": "repaired",
-                "replaced_path": str(candidate_path),
-                "message": (
-                    "Python subprocess launcher repaired. Removed or backed up the "
-                    "tensor-grep Python Scripts entrypoint so the verified managed native "
-                    "tg.exe is selected first."
-                ),
-            })
+            payload.update(
+                {
+                    "status": "repaired",
+                    "replaced_path": str(candidate_path),
+                    "message": (
+                        "Python subprocess launcher repaired. Removed or backed up the "
+                        "tensor-grep Python Scripts entrypoint so the verified managed native "
+                        "tg.exe is selected first."
+                    ),
+                }
+            )
             return payload
 
-        payload.update({
-            "status": "blocked_python_entrypoint_cleanup",
-            "message": (
-                "Python subprocess resolution is still blocked by a Python Scripts "
-                "tensor-grep entrypoint. "
-                + (
-                    cleanup_message
-                    if cleanup_message
-                    else "Package ownership could not be verified, so no launcher was removed."
-                )
-            ),
-        })
+        payload.update(
+            {
+                "status": "blocked_python_entrypoint_cleanup",
+                "message": (
+                    "Python subprocess resolution is still blocked by a Python Scripts "
+                    "tensor-grep entrypoint. "
+                    + (
+                        cleanup_message
+                        if cleanup_message
+                        else "Package ownership could not be verified, so no launcher was removed."
+                    )
+                ),
+            }
+        )
         return payload
 
     if candidate_kind != "foreign":
-        payload.update({
-            "status": "blocked_non_foreign_launcher",
-            "message": (
-                "Python subprocess resolution does not point at a foreign tg.exe, so "
-                "foreign launcher repair is not applicable. Use tg doctor --json for details."
-            ),
-        })
+        payload.update(
+            {
+                "status": "blocked_non_foreign_launcher",
+                "message": (
+                    "Python subprocess resolution does not point at a foreign tg.exe, so "
+                    "foreign launcher repair is not applicable. Use tg doctor --json for details."
+                ),
+            }
+        )
         return payload
 
     if candidate_path.name.lower() != "tg.exe":
-        payload.update({
-            "status": "blocked_unsupported_launcher_name",
-            "message": (
-                "Python subprocess launcher repair only handles a foreign tg.exe selected "
-                f"by Windows CreateProcess, not {candidate_path.name}."
-            ),
-        })
+        payload.update(
+            {
+                "status": "blocked_unsupported_launcher_name",
+                "message": (
+                    "Python subprocess launcher repair only handles a foreign tg.exe selected "
+                    f"by Windows CreateProcess, not {candidate_path.name}."
+                ),
+            }
+        )
         return payload
 
     if not allow_foreign_rename:
-        payload.update({
-            "status": "blocked_requires_allow_foreign_rename",
-            "message": (
-                "Python subprocess resolution is blocked by a foreign tg.exe. Re-run with "
-                "--allow-foreign-rename only if you own that command and accept that it will "
-                "be moved aside to a .bak file before tensor-grep installs its managed "
-                f"native front door at {candidate_path}."
-            ),
-        })
+        payload.update(
+            {
+                "status": "blocked_requires_allow_foreign_rename",
+                "message": (
+                    "Python subprocess resolution is blocked by a foreign tg.exe. Re-run with "
+                    "--allow-foreign-rename only if you own that command and accept that it will "
+                    "be moved aside to a .bak file before tensor-grep installs its managed "
+                    f"native front door at {candidate_path}."
+                ),
+            }
+        )
         return payload
 
     backup_path = candidate_path.with_name(
@@ -1291,20 +1311,24 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
             os.replace(backup_path, candidate_path)
             raise
     except Exception as exc:
-        payload.update({
-            "status": "failed",
-            "message": f"Python subprocess launcher repair failed: {exc}",
-        })
+        payload.update(
+            {
+                "status": "failed",
+                "message": f"Python subprocess launcher repair failed: {exc}",
+            }
+        )
         return payload
 
-    payload.update({
-        "status": "repaired",
-        "replaced_path": str(candidate_path),
-        "message": (
-            "Python subprocess launcher repaired. The foreign tg.exe was backed up and "
-            "the verified managed native tensor-grep front door now occupies that PATH slot."
-        ),
-    })
+    payload.update(
+        {
+            "status": "repaired",
+            "replaced_path": str(candidate_path),
+            "message": (
+                "Python subprocess launcher repaired. The foreign tg.exe was backed up and "
+                "the verified managed native tensor-grep front door now occupies that PATH slot."
+            ),
+        }
+    )
     return payload
 
 
@@ -1370,15 +1394,17 @@ def _schedule_windows_native_frontdoor_refresh(
 ) -> Path:
     import textwrap
 
-    asset_payload = json.dumps([
-        {
-            "url": url,
-            "flavor": candidate.flavor,
-            "asset_name": candidate.asset_name,
-            "requested_flavor": _requested_native_frontdoor_flavor(),
-        }
-        for candidate, url in _native_frontdoor_download_candidates(expected_version)
-    ])
+    asset_payload = json.dumps(
+        [
+            {
+                "url": url,
+                "flavor": candidate.flavor,
+                "asset_name": candidate.asset_name,
+                "requested_flavor": _requested_native_frontdoor_flavor(),
+            }
+            for candidate, url in _native_frontdoor_download_candidates(expected_version)
+        ]
+    )
     if asset_payload == "[]":
         raise RuntimeError("no release-native front-door asset is available for this platform")
     bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
@@ -2029,12 +2055,14 @@ def _doctor_skipped_native_tg_binaries(
         version_matches = _native_tg_version_matches(expected_version, version)
         if version_matches:
             continue
-        skipped.append({
-            "path": str(resolved),
-            "kind": _doctor_native_tg_binary_kind(resolved),
-            "version": version,
-            "version_status": "stale" if version is not None else "unknown",
-        })
+        skipped.append(
+            {
+                "path": str(resolved),
+                "kind": _doctor_native_tg_binary_kind(resolved),
+                "version": version,
+                "version_status": "stale" if version is not None else "unknown",
+            }
+        )
     return skipped
 
 
@@ -2236,10 +2264,12 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
             if key in seen:
                 continue
             seen.add(key)
-            candidates.append({
-                "path": str(resolved),
-                "version": _doctor_tg_candidate_version(resolved),
-            })
+            candidates.append(
+                {
+                    "path": str(resolved),
+                    "version": _doctor_tg_candidate_version(resolved),
+                }
+            )
     return candidates
 
 
@@ -2412,10 +2442,12 @@ def _doctor_gpu_status() -> dict[str, Any]:
         status["available"] = detector.has_gpu()
         status["device_count"] = detector.get_device_count()
         for device in detector.list_devices():
-            status["devices"].append({
-                "id": device.device_id,
-                "vram_total_mb": device.vram_capacity_mb,
-            })
+            status["devices"].append(
+                {
+                    "id": device.device_id,
+                    "vram_total_mb": device.vram_capacity_mb,
+                }
+            )
     except ImportError:
         status["error"] = "PyTorch/cuDF not installed"
     except Exception as e:
@@ -2493,12 +2525,14 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
 
     routing_backend = str(payload.get("routing_backend") or "")
     sidecar_used = bool(payload.get("sidecar_used", False))
-    base.update({
-        "routing_backend": routing_backend or None,
-        "routing_reason": payload.get("routing_reason"),
-        "sidecar_used": sidecar_used,
-        "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
-    })
+    base.update(
+        {
+            "routing_backend": routing_backend or None,
+            "routing_reason": payload.get("routing_reason"),
+            "sidecar_used": sidecar_used,
+            "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
+        }
+    )
     if routing_backend == "NativeGpuBackend" and not sidecar_used:
         base["status"] = "supported"
         return base
@@ -2725,11 +2759,13 @@ def _build_doctor_payload(
         for index, candidate in enumerate(candidates, start=1):
             candidate_path = candidate.get("path")
             candidate_version = candidate.get("version")
-            mcp_stdio_launchers.append((
-                f"{label} {index}",
-                _doctor_tg_launcher_kind(candidate_path, candidate_version),
-                candidate_path,
-            ))
+            mcp_stdio_launchers.append(
+                (
+                    f"{label} {index}",
+                    _doctor_tg_launcher_kind(candidate_path, candidate_version),
+                    candidate_path,
+                )
+            )
     gpu_status = _doctor_gpu_status()
     gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
     # audit M10: gpu.available reflects whether a CUDA device is *present*, not whether the
@@ -3101,10 +3137,12 @@ def _build_native_tg_search_command(
     if config.force_cpu:
         command.append("--cpu")
     elif config.gpu_device_ids:
-        command.extend([
-            "--gpu-device-ids",
-            ",".join(str(device_id) for device_id in config.gpu_device_ids),
-        ])
+        command.extend(
+            [
+                "--gpu-device-ids",
+                ",".join(str(device_id) for device_id in config.gpu_device_ids),
+            ]
+        )
 
     if config.ignore_case:
         command.append("-i")
@@ -3357,16 +3395,32 @@ def _engine_is_explicit_pcre2(config: "SearchConfig") -> bool:
     return bool(config.pcre2) or str(getattr(config, "engine", "") or "").lower() == "pcre2"
 
 
+def _pcre2_fallback_backend_available() -> bool:
+    """True when the resolved ripgrep backend can actually run PCRE2. The rg shipped on some
+    platforms (and most CI images) is built WITHOUT PCRE2, so blindly retrying under PCRE2
+    would raise a confusing ConfigurationError instead of the helpful ``-P`` remediation."""
+    try:
+        from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+        return bool(RipgrepBackend().supports_pcre2())
+    except Exception:
+        return False
+
+
 def _eligible_for_pcre2_inline_flag_fallback(config: "SearchConfig") -> bool:
     """True when an inline-flag regex rejection should transparently retry under PCRE2
     instead of erroring (audit M14b). Fires for the default/unset engine and for
     ``--engine auto``; ``-F`` is honored (literal intent) and an explicit PCRE2 engine
     already routes through PCRE2, so neither needs the fallback. The default engine value
     is the same whether the user typed ``--engine default`` or nothing, so both opt in --
-    matching the bare ``tg search 'a(?s).*b'`` repro."""
+    matching the bare ``tg search 'a(?s).*b'`` repro. The fallback also requires a
+    PCRE2-capable rg backend; without one we keep the original error + ``-P`` remediation
+    rather than failing with a confusing "PCRE2 unavailable" ConfigurationError."""
     if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return False
-    return str(getattr(config, "engine", "") or "").lower() in {"default", "auto", ""}
+    if str(getattr(config, "engine", "") or "").lower() not in {"default", "auto", ""}:
+        return False
+    return _pcre2_fallback_backend_available()
 
 
 def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
@@ -3979,23 +4033,29 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append({
-                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
-                    "language": normalize_ast_language(
-                        item.get("language") or payload.get("language") or default_language
-                    ),
-                })
+                specs.append(
+                    {
+                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                        "pattern": pattern,
+                        "language": normalize_ast_language(
+                            item.get("language") or payload.get("language") or default_language
+                        ),
+                    }
+                )
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append({
-            "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
-            "language": normalize_ast_language(str(payload.get("language") or default_language)),
-        })
+        specs.append(
+            {
+                "id": str(payload.get("id") or rule_file.stem),
+                "pattern": pattern,
+                "language": normalize_ast_language(
+                    str(payload.get("language") or default_language)
+                ),
+            }
+        )
 
     return specs
 
@@ -4327,11 +4387,13 @@ def _apply_ruleset_baseline(
     suppression_justification: str | None = None,
 ) -> None:
     findings = cast(list[dict[str, object]], payload["findings"])
-    matched_fingerprints = sorted({
-        cast(str, finding["fingerprint"])
-        for finding in findings
-        if cast(int, finding["matches"]) > 0
-    })
+    matched_fingerprints = sorted(
+        {
+            cast(str, finding["fingerprint"])
+            for finding in findings
+            if cast(int, finding["matches"]) > 0
+        }
+    )
     if baseline_path is not None:
         baseline = _load_ruleset_baseline(baseline_path)
         baseline_fingerprints = set(cast(list[str], baseline["fingerprints"]))
@@ -4429,11 +4491,13 @@ def _apply_ruleset_baseline(
                 finding_inline_occurrences += 1
             else:
                 active_occurrences += 1
-            occurrence_rows.append({
-                "file": occurrence_file,
-                "line": occurrence_line,
-                "status": occurrence_status,
-            })
+            occurrence_rows.append(
+                {
+                    "file": occurrence_file,
+                    "line": occurrence_line,
+                    "status": occurrence_status,
+                }
+            )
         if not raw_occurrences and any(
             _suppression_entry_matches(
                 entry=entry,
@@ -4618,35 +4682,39 @@ def _run_ast_scan_payload(
         if rule_matches > 0:
             matched_rules += 1
         sorted_files = sorted(matched_files)
-        findings.append({
-            "rule_id": rule["id"],
-            "language": rule["language"],
-            "severity": rule.get("severity"),
-            "message": rule.get("message"),
-            "fingerprint": _ruleset_finding_fingerprint(
-                rule_id=rule["id"],
-                language=rule["language"],
-                matched_files=sorted_files,
-            ),
-            "matches": rule_matches,
-            "files": sorted_files,
-            "evidence": [
-                {
-                    "file": file_path,
-                    "match_count": match_counts_by_file.get(file_path, 0),
-                    **(
-                        {"snippets": snippets_by_file.get(file_path, [])}
-                        if include_evidence_snippets
-                        else {}
-                    ),
-                }
-                for file_path in sorted_files
-            ],
-            "_raw_occurrences": sorted({
-                (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
-                for occurrence in rule_occurrences
-            }),
-        })
+        findings.append(
+            {
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "severity": rule.get("severity"),
+                "message": rule.get("message"),
+                "fingerprint": _ruleset_finding_fingerprint(
+                    rule_id=rule["id"],
+                    language=rule["language"],
+                    matched_files=sorted_files,
+                ),
+                "matches": rule_matches,
+                "files": sorted_files,
+                "evidence": [
+                    {
+                        "file": file_path,
+                        "match_count": match_counts_by_file.get(file_path, 0),
+                        **(
+                            {"snippets": snippets_by_file.get(file_path, [])}
+                            if include_evidence_snippets
+                            else {}
+                        ),
+                    }
+                    for file_path in sorted_files
+                ],
+                "_raw_occurrences": sorted(
+                    {
+                        (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
+                        for occurrence in rule_occurrences
+                    }
+                ),
+            }
+        )
         if findings[-1]["_raw_occurrences"]:
             findings[-1]["_raw_occurrences"] = [
                 {"file": file_path, "line": line_number}
@@ -4757,10 +4825,12 @@ def _run_ast_scan_payload(
                         resolved_match_counts_by_file[match.file] = (
                             resolved_match_counts_by_file.get(match.file, 0) + 1
                         )
-                        resolved_rule_occurrences.append({
-                            "file": match.file,
-                            "line": match.line_number,
-                        })
+                        resolved_rule_occurrences.append(
+                            {
+                                "file": match.file,
+                                "line": match.line_number,
+                            }
+                        )
                         if (
                             include_evidence_snippets
                             and len(resolved_snippets_by_file.get(match.file, []))
@@ -4790,10 +4860,12 @@ def _run_ast_scan_payload(
                         resolved_match_counts_by_file.get(current_file, 0) + result.total_matches
                     )
                     for match in result.matches:
-                        resolved_rule_occurrences.append({
-                            "file": match.file or current_file,
-                            "line": match.line_number,
-                        })
+                        resolved_rule_occurrences.append(
+                            {
+                                "file": match.file or current_file,
+                                "line": match.line_number,
+                            }
+                        )
                     if include_evidence_snippets:
                         file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
                         for match in result.matches:
@@ -4846,10 +4918,12 @@ def _run_ast_scan_payload(
                 regex_match_counts_by_file[current_file] = (
                     regex_match_counts_by_file.get(current_file, 0) + match_count
                 )
-                regex_rule_occurrences.append({
-                    "file": current_file,
-                    "line": line_number,
-                })
+                regex_rule_occurrences.append(
+                    {
+                        "file": current_file,
+                        "line": line_number,
+                    }
+                )
                 if include_evidence_snippets:
                     file_snippets = regex_snippets_by_file.setdefault(current_file, [])
                     for regex_match in line_matches:

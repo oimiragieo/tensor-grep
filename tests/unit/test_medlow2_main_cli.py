@@ -82,17 +82,24 @@ def test_m14b_inline_flag_pattern_falls_back_to_pcre2(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
     target.write_text("start foo\nbar end\nstart middle end\n", encoding="utf-8")
 
+    from tensor_grep.cli.main import _pcre2_fallback_backend_available
+
     runner = CliRunner()
     result = runner.invoke(app, ["search", INLINE_FLAG_PATTERN, str(target)])
 
-    # No longer a hard usage error - the fallback makes it a normal match result
-    # (exit 0 = matches found). The ripgrep backend writes matched lines to the
-    # inherited fd 1, which CliRunner does not buffer, so correctness of the match
-    # text is covered by the subprocess-level repro; here we assert the contract
-    # that matters: it stopped erroring and announced the engine switch on stderr.
-    assert result.exit_code == 0, result.stdout + result.stderr
-    # The switch is announced, not silent.
-    assert "retried with PCRE2" in result.stderr
+    if _pcre2_fallback_backend_available():
+        # PCRE2-capable rg: the inline-flag pattern transparently retries under PCRE2
+        # (exit 0 = matches found) and the switch is announced on stderr, not silent.
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "retried with PCRE2" in result.stderr
+    else:
+        # No PCRE2-capable rg (e.g. most CI images): do NOT blindly fall back to an
+        # unavailable engine — keep the original error with the actionable -P remediation
+        # instead of a confusing "PCRE2 unavailable" ConfigurationError.
+        assert result.exit_code == 2, result.stdout + result.stderr
+        combined = (result.stdout + result.stderr).lower()
+        assert "invalid regex" in combined
+        assert "pcre2" in combined
 
 
 def test_m14b_genuinely_invalid_pattern_still_errors(tmp_path: Path) -> None:
