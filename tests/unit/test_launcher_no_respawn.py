@@ -47,6 +47,53 @@ def _make_fake_popen(returncode: int, *, pid: int = 12345) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
+# C3: re-exec guard breaks the native<->python mutual delegation fork-bomb
+# ---------------------------------------------------------------------------
+
+
+def test_reexec_guard_prevents_native_search_delegation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the native front door spawned us (TG_REEXEC_GUARD=1), the launcher must NOT
+    delegate search back to the native binary. That mutual native<->python delegation
+    fork-bombs on `tg --json --debug` / `--stats` (passthrough flags the render-flag guard
+    does not cover)."""
+    native_calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: Path("fake-native-tg.exe"))
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: Path("fake-rg.exe"))
+    monkeypatch.setattr(
+        bootstrap, "_run_native_tg_search", lambda *a, **k: native_calls.append(a) or 0
+    )
+    monkeypatch.setattr(bootstrap, "_run_rg_passthrough", lambda *a, **k: 0)
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "alpha", "f.txt", "--json", "--debug"])
+
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
+    try:
+        bootstrap.main_entry()
+    except SystemExit:
+        pass
+    assert native_calls == [], "must not delegate search to native when spawned by native"
+
+
+def test_native_search_delegation_happens_without_reexec_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the guard, `--json --debug` DOES reach native delegation (the loop path the
+    guard intercepts) — confirms the guard is what breaks the cycle."""
+    native_calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: Path("fake-native-tg.exe"))
+    monkeypatch.setattr(
+        bootstrap, "_run_native_tg_search", lambda *a, **k: native_calls.append(a) or 0
+    )
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "alpha", "f.txt", "--json", "--debug"])
+    monkeypatch.delenv("TG_REEXEC_GUARD", raising=False)
+    try:
+        bootstrap.main_entry()
+    except SystemExit:
+        pass
+    assert native_calls, "without the guard, --json --debug delegates to native (the loop)"
+
+
+# ---------------------------------------------------------------------------
 # C3: No re-spawn on abnormal exit
 # ---------------------------------------------------------------------------
 

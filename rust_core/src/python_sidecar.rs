@@ -783,6 +783,12 @@ fn configure_python_module_path(command: &mut Command) {
 
 fn configure_python_child_environment(command: &mut Command) {
     configure_python_module_path(command);
+    // Mark the spawned Python as a re-exec OF the native front door. The Python launcher
+    // checks this and refuses to delegate search back to the native binary — otherwise
+    // `tg --json <native-passthrough-flag>` (e.g. --debug/--stats) ping-pongs
+    // native<->python forever (the C3 fork-bomb, which render-flag guards alone did not
+    // fully close). This breaks the mutual-delegation cycle for ALL flag combinations.
+    command.env("TG_REEXEC_GUARD", "1");
     if let Some(native_tg_binary) = native_tg_binary_env_override(
         env::var_os(TG_NATIVE_TG_BINARY_ENV),
         env::current_exe().ok(),

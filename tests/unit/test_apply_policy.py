@@ -808,7 +808,11 @@ def test_ast_workflow_main_entry_emits_json_for_policy_apply(
         ])
 
     assert excinfo.value.code == 0
-    assert '{"policy_result":{"all_passed":true}}' in capsys.readouterr().out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["policy_result"] == {"all_passed": True}
+    # audit M3: every tg run --json shape now carries version/schema_version/mode.
+    assert payload["mode"] == "apply"
+    assert payload["schema_version"] == 1
 
 
 def test_ast_workflow_main_entry_preserves_nonzero_exit_for_policy_failures(
@@ -849,4 +853,6 @@ def test_ast_workflow_main_entry_preserves_nonzero_exit_for_policy_failures(
         ])
 
     assert excinfo.value.code == 1
-    assert '{"policy_result":{"all_passed":false}}' in capsys.readouterr().out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["policy_result"] == {"all_passed": False}
+    assert payload["mode"] == "apply"

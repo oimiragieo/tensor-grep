@@ -862,6 +862,12 @@ def main_entry() -> None:
         effective_search_args = _effective_native_tg_search_args(passthrough_search_args)
         native_binary_path = resolve_native_tg_binary()
         native_binary = str(native_binary_path) if native_binary_path else None
+        if os.environ.get("TG_REEXEC_GUARD"):
+            # We were spawned by the native front door (it delegated a `--json` +
+            # passthrough-flag search to us). Never delegate search BACK to the native
+            # binary — that mutual native<->python delegation is the C3 fork-bomb. Handle
+            # the search in Python (rg passthrough or the full CLI) instead.
+            native_binary = None
         guarded_broad_root = _search_args_include_guarded_broad_root(
             passthrough_search_args
         ) or _search_args_include_unbounded_broad_scan(passthrough_search_args)

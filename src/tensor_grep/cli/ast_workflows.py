@@ -484,6 +484,38 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
     return "adaptive AST routing"
 
 
+def _inject_run_json_fields(json_str: str, mode: str) -> str:
+    """Ensure every ``tg run --json`` payload carries a consistent envelope.
+
+    Four distinct output shapes exist in ``run_command``:
+      - ``"search"``       - plain AST search result (total_matches present)
+      - ``"rewrite-plan"`` - preview of pending edits (total_matches absent in some paths)
+      - ``"apply"``        - applied-edit result (total_matches absent in some paths)
+      - ``"stdin"``        - search over piped stdin input
+
+    This helper is called on *all four* paths to guarantee that
+    ``version``, ``schema_version``, ``mode``, and ``total_matches``
+    are **always** present as top-level keys so consumers can key on them
+    without a KeyError.  Existing keys are **never** renamed or removed;
+    only missing keys are backfilled.
+
+    M3: batch-rewrite payloads (mode ``"rewrite-plan"`` / ``"apply"``) come from
+    ``execute_rewrite_plan_json`` / ``execute_rewrite_apply_json`` in
+    ``mcp_server.py`` and may lack ``mode`` and ``total_matches``.
+    """
+    try:
+        payload = json.loads(json_str)
+    except (json.JSONDecodeError, ValueError):
+        return json_str
+    if not isinstance(payload, dict):
+        return json_str
+    payload.setdefault("version", 1)
+    payload.setdefault("schema_version", 1)
+    payload.setdefault("mode", mode)
+    payload.setdefault("total_matches", 0)
+    return json.dumps(payload)
+
+
 def _safe_stdout_line(text: str) -> None:
     try:
         print(text)
@@ -542,6 +574,25 @@ def run_command(
     stdin: bool = False,
     globs: list[str] | None = None,
 ) -> int:
+    # M4: ``--batch-rewrite`` is handled entirely by the native Rust binary
+    # (``rust_core/src/main.rs`` → ``parse_batch_rewrite_config_value``).
+    # It is NOT routed through this Python function; bootstrap.py dispatches
+    # ``tg run --batch-rewrite`` straight to ``_run_native_tg_command``.
+    #
+    # The ``--batch-rewrite`` config file format is:
+    #
+    #   {
+    #     "rewrites": [
+    #       {"pattern": "<ast-pattern>", "replacement": "<replacement>", "lang": "<language>"},
+    #       ...
+    #     ],
+    #     "verify": false   // optional boolean, default false
+    #   }
+    #
+    # Passing a JSON array (``[ ... ]``) instead of an object produces the error
+    # "invalid batch rewrite config field `$`: expected object" from the Rust
+    # parser (rust_core/src/main.rs:parse_batch_rewrite_config_value, line ~6088).
+    # That error originates in Rust; see cross-file FLAG below for the fix location.
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
 
@@ -611,7 +662,7 @@ def run_command(
             lang=lang or "",
             path=path or ".",
         )
-        _safe_stdout_line(rewrite_json)
+        _safe_stdout_line(_inject_run_json_fields(rewrite_json, "rewrite-plan"))
         return exit_code
 
     if (apply or interactive) and not filter_regex and not interactive:
@@ -632,7 +683,7 @@ def run_command(
             test_cmd=test_cmd,
             policy=policy,
         )
-        _safe_stdout_line(rewrite_json)
+        _safe_stdout_line(_inject_run_json_fields(rewrite_json, "apply"))
         return exit_code
 
     search_path = path or "."
@@ -693,6 +744,8 @@ def run_command(
                 json.dumps({
                     "version": 1,
                     "schema_version": 1,
+                    "mode": "search",
+                    "total_matches": 0,
                     "ok": False,
                     "error": "backend_error",
                     "detail": str(exc),
@@ -787,6 +840,7 @@ def run_command(
         payload = {
             "version": 1,
             "schema_version": 1,
+            "mode": "stdin" if stdin else "search",
             "routing_backend": backend_name,
             "routing_reason": "ast",
             "sidecar_used": False,

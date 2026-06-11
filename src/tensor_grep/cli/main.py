@@ -3305,6 +3305,17 @@ def _exit_search_error(
     sys.exit(exit_code)
 
 
+def _is_inline_flag_regex_error(message: str) -> bool:
+    """Return True when ``message`` is the "inline flag group not at the start of the
+    pattern" rejection that PCRE2 (``-P``) accepts but the default Rust/``re`` engine does
+    not (e.g. ``a(?s).*b``). Centralized so both the remediation hint (M14) and the
+    transparent PCRE2 fallback (M14b) classify the error identically."""
+    lowered = message.lower()
+    return "global flags not at the start" in lowered or (
+        "flag" in lowered and ("(?" in message or "inline" in lowered)
+    )
+
+
 def _invalid_regex_remediation(message: str) -> str:
     """Return a remediation hint that never converts a hard regex error into a silent
     wrong answer (audit M14).
@@ -3316,11 +3327,7 @@ def _invalid_regex_remediation(message: str) -> str:
     ``-P`` (the PCRE2 engine, which accepts mid-expression inline flags) or at moving the
     flag to the front of the pattern instead.
     """
-    lowered = message.lower()
-    inline_flag_error = "global flags not at the start" in lowered or (
-        "flag" in lowered and ("(?" in message or "inline" in lowered)
-    )
-    if inline_flag_error:
+    if _is_inline_flag_regex_error(message):
         return (
             "Use -P (PCRE2) to allow inline flags mid-pattern, or move the inline flag "
             "group (for example (?s)) to the very start of the pattern."
@@ -3343,8 +3350,40 @@ def _exit_invalid_regex(exc: Exception, *, json_mode: bool = False) -> None:
     )
 
 
+def _engine_is_explicit_pcre2(config: "SearchConfig") -> bool:
+    """True when the user explicitly selected PCRE2, via ``-P``/``--pcre2`` or
+    ``--engine pcre2``. PCRE2 accepts mid-pattern inline flag groups, so the Python
+    pre-flight validator must not reject patterns the chosen engine would accept."""
+    return bool(config.pcre2) or str(getattr(config, "engine", "") or "").lower() == "pcre2"
+
+
+def _pcre2_fallback_backend_available() -> bool:
+    """True when the resolved ripgrep backend can actually run PCRE2. The rg shipped on some
+    platforms (and most CI images) is built WITHOUT PCRE2, so blindly retrying under PCRE2
+    would raise a confusing ConfigurationError instead of the helpful ``-P`` remediation."""
+    try:
+        from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+        return bool(RipgrepBackend().supports_pcre2())
+    except Exception:
+        return False
+
+
+def _eligible_for_pcre2_inline_flag_fallback(config: "SearchConfig") -> bool:
+    """True when an inline-flag regex rejection should transparently retry under PCRE2
+    instead of erroring (audit M14b). Fires for the default/unset engine and for
+    ``--engine auto``; ``-F`` is honored (literal intent) and an explicit PCRE2 engine
+    already routes through PCRE2, so neither needs the fallback. The default engine value
+    is the same whether the user typed ``--engine default`` or nothing, so both opt in --
+    matching the bare ``tg search 'a(?s).*b'`` repro. (Whether a PCRE2-capable rg backend
+    actually exists is a separate, environment-dependent check applied at the call site.)"""
+    if config.fixed_strings or _engine_is_explicit_pcre2(config):
+        return False
+    return str(getattr(config, "engine", "") or "").lower() in {"default", "auto", ""}
+
+
 def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
-    if config.fixed_strings or config.pcre2:
+    if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return
 
     flags = 0
@@ -5806,8 +5845,24 @@ def search_command(
                 _validate_search_regex(regex_pattern, config)
         except Exception as exc:
             if _is_invalid_regex_error(exc):
-                _exit_invalid_regex(exc, json_mode=json)
-            raise
+                # M14b: a mid-pattern inline flag group (e.g. `start(?s).*end`) is rejected
+                # by the default Rust/`re` engine but accepted by PCRE2. When the user did
+                # not explicitly pick a non-PCRE2 engine, retry transparently under PCRE2
+                # instead of erroring, and announce the switch on stderr so it is observable.
+                if (
+                    _is_inline_flag_regex_error(str(exc))
+                    and _eligible_for_pcre2_inline_flag_fallback(config)
+                    and _pcre2_fallback_backend_available()
+                ):
+                    config = dataclasses.replace(config, pcre2=True)
+                    typer.echo(
+                        "note: retried with PCRE2 (-P) for inline-flag pattern",
+                        err=True,
+                    )
+                else:
+                    _exit_invalid_regex(exc, json_mode=json)
+            else:
+                raise
     guarded_broad_root = _search_paths_include_guarded_broad_root(paths_to_search)
     explicit_hidden_search_root = not config.hidden and any(
         _path_has_hidden_component(path) for path in paths_to_search
@@ -6933,6 +6988,28 @@ def _echo_symbol_location_rows(rows: list[dict[str, Any]]) -> None:
             typer.echo(rendered)
 
 
+def _apply_defs_class_filter(payload: dict[str, Any], class_filter: str) -> None:
+    """Filter ``payload['definitions']`` in place to those whose enclosing class matches
+    ``class_filter`` (case-insensitive exact match), disambiguating common method names
+    such as ``search`` (audit L3-cli).
+
+    Each definition carries a ``class`` field (enclosing class name, or ``None`` for
+    module-level/free functions) populated by ``build_symbol_defs`` in repo_map.py. The
+    filter and the requested value are recorded as additive top-level fields so JSON
+    consumers can see that a narrowing was applied; the existing keys are left intact.
+    """
+    target = class_filter.strip().casefold()
+    definitions = payload.get("definitions") or []
+    filtered = [
+        definition
+        for definition in definitions
+        if str(definition.get("class") or "").casefold() == target
+    ]
+    payload["definitions"] = filtered
+    payload["class_filter"] = class_filter
+    payload["class_filter_matched"] = len(filtered)
+
+
 def _symbol_payload_has_no_results(payload: dict[str, Any], result_key: str) -> bool:
     """Whether a symbol-command payload found nothing for the requested symbol.
 
@@ -7115,6 +7192,14 @@ def defs(
         min=1,
         help="Maximum repo files to scan before returning a bounded result.",
     ),
+    class_filter: str | None = typer.Option(
+        None,
+        "--class",
+        help=(
+            "Only return definitions whose enclosing class matches TEXT "
+            "(case-insensitive). Disambiguates common method names like 'search'."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
@@ -7136,6 +7221,9 @@ def defs(
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+    if class_filter is not None:
+        _apply_defs_class_filter(payload, class_filter)
 
     def _emit_text(current: dict[str, Any]) -> None:
         typer.echo(f"Definitions for {current['symbol']} in {current['path']}")

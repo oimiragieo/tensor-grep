@@ -3555,10 +3555,8 @@ def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
     assert payload["tests"][0] == str(test_path.resolve())
     assert str(test_path.resolve()) in payload["related_paths"]
     assert payload["preferred_command"] == "blast-radius"
-    assert (
-        payload["preferred_command_reason"]
-        == "direct symbol impact is better served by blast-radius"
-    )
+    assert payload["preferred_command"] in payload["preferred_command_reason"]
+    assert "planning signal" in payload["preferred_command_reason"]
     assert payload["trust_level"] in {"planning-signal", "heuristic"}
 
 
@@ -3583,10 +3581,8 @@ def test_impact_json_no_match_includes_preferred_command_metadata(tmp_path):
     # L1: not_found annotated by _emit_symbol_command_result
     assert payload["not_found"] is True
     assert payload["preferred_command"] == "blast-radius"
-    assert (
-        payload["preferred_command_reason"]
-        == "direct symbol impact is better served by blast-radius"
-    )
+    assert payload["preferred_command"] in payload["preferred_command_reason"]
+    assert "planning signal" in payload["preferred_command_reason"]
     assert payload["trust_level"] in {"planning-signal", "heuristic"}
     # H5: impact now includes a top-level "callers" key (empty list on no-match)
     assert "callers" in payload
