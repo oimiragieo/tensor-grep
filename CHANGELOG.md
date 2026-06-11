@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.13.37 (2026-06-11)
+
+### Bug Fixes
+
+- Reject --json + render flags in the native binary (C3 self-sufficiency)
+  ([#254](https://github.com/oimiragieo/tensor-grep/pull/254),
+  [`377a490`](https://github.com/oimiragieo/tensor-grep/commit/377a4901f7f83f0f2c6dc9e89d58ca33569936f2))
+
+The native tg.exe delegated `--json` + a render-only flag (-b/--passthru/--heading/
+  --trim/-M/-p/--context-separator/--field-*) to the Python sidecar. When the resolved Python is a
+  stale tensor-grep lacking the launcher guard, that delegation deadlocks and fork-bombs the
+  native<->python re-exec chain (audit C3). The v1.13.36 launcher guard fixed this for a current
+  Python but left the native binary dependent on the Python version.
+
+Add a native-level guard (json_aggregate_render_flag_conflicts) that rejects these combinations
+  directly with a structured `unsupported_flag` exit-2 error BEFORE spawning any child, mirroring
+  the Python _json_aggregate_blocks_passthrough guard. The native front door is now self-sufficient
+  regardless of which Python it resolves.
+
+Verified: against a stale tensor-grep 1.13.21 Python (previously a deadlock / exit-124 hang), `tg
+  --json -b` and friends now exit 2 with ZERO spawned processes; plain `--json` and `--format rg
+  --json` still work. Adds rust unit tests for the guard.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.13.36 (2026-06-10)
 
 ### Bug Fixes
