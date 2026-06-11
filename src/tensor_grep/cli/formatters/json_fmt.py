@@ -1,9 +1,51 @@
 import json
+import re
 
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
 JSON_OUTPUT_VERSION = 1
+
+
+def _column_for_match(match: MatchLine, config: SearchConfig | None = None) -> int | None:
+    """Return 1-based column of the match within its line, or None when not derivable.
+
+    Priority:
+    1. match.range["start"]["column"] (0-based → 1-based), provided by ast-grep backend.
+    2. Pattern-based scan of match.text using config (mirrors RipgrepFormatter logic).
+    3. None — caller should omit or null the field rather than emit a wrong value.
+    """
+    if match.range is not None:
+        start = match.range.get("start")
+        if isinstance(start, dict):
+            column = start.get("column")
+            if isinstance(column, int):
+                return column + 1
+
+    if config is None:
+        return None
+
+    pattern = config.query_pattern or ""
+    if not pattern and config.regexp:
+        pattern = config.regexp[0]
+    if not pattern:
+        return None
+
+    if config.fixed_strings:
+        index = match.text.find(pattern)
+    else:
+        try:
+            flags = (
+                re.IGNORECASE
+                if config.ignore_case or (config.smart_case and pattern.islower())
+                else 0
+            )
+            found = re.search(pattern, match.text, flags=flags)
+            index = -1 if found is None else found.start()
+        except re.error:
+            index = match.text.find(pattern)
+    return index + 1 if index >= 0 else None
 
 
 def _routing_gpu_chunk_plan(result: SearchResult) -> list[dict[str, int]]:
@@ -13,12 +55,15 @@ def _routing_gpu_chunk_plan(result: SearchResult) -> list[dict[str, int]]:
     ]
 
 
-def _match_payload(match: MatchLine) -> dict[str, object]:
+def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "file": match.file,
         "line_number": match.line_number,
         "text": match.text,
     }
+    column = _column_for_match(match, config)
+    if column is not None:
+        payload["column"] = column
     if match.range is not None:
         payload["range"] = match.range
     if match.meta_variables is not None:
@@ -70,6 +115,9 @@ def _gpu_proof_payload(result: SearchResult) -> dict[str, object]:
 
 
 class JsonFormatter(OutputFormatter):
+    def __init__(self, config: SearchConfig | None = None) -> None:
+        self.config = config
+
     def format(self, result: SearchResult) -> str:
         envelope = _routing_envelope(result)
         data = {
@@ -85,7 +133,7 @@ class JsonFormatter(OutputFormatter):
             "routing_gpu_chunk_plan_mb": envelope["routing_gpu_chunk_plan_mb"],
             "routing_distributed": envelope["routing_distributed"],
             "routing_worker_count": envelope["routing_worker_count"],
-            "matches": [_match_payload(match) for match in result.matches],
+            "matches": [_match_payload(match, self.config) for match in result.matches],
         }
         for key in (
             "gpu_evidence_status",

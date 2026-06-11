@@ -1820,6 +1820,72 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
         manager.stop_all()
 
 
+_DOCTOR_LSP_WORKSPACE_ERROR_MARKERS = (
+    "fetchworkspaceerror",
+    "failed to fetch workspace",
+    "workspace was not loaded",
+    "no workspace folder",
+    "could not load workspace",
+    "rooturi",
+)
+
+
+def _doctor_lsp_workspace_error_lines(stderr_lines: list[str]) -> list[str]:
+    """Return stderr lines that indicate a workspace/fetch failure."""
+    matches: list[str] = []
+    for raw in stderr_lines:
+        line = str(raw)
+        lowered = line.lower()
+        if any(marker in lowered for marker in _DOCTOR_LSP_WORKSPACE_ERROR_MARKERS):
+            matches.append(line)
+    return matches
+
+
+def _doctor_downgrade_lsp_workspace_proof(provider: dict[str, Any]) -> dict[str, Any]:
+    """Demote a workspace-blind ``lsp_proof`` claim (audit M10).
+
+    The managed health probe issues a single-file ``documentSymbol`` request, which a
+    language server happily answers even when its workspace failed to load (e.g.
+    rust-analyzer emitting ``FetchWorkspaceError``). The provider then reports
+    ``lsp_proof:true`` while suppressing the very stderr tail that proves cross-file
+    navigation is degraded. When the surfaced stderr names a workspace/fetch error, drop
+    ``lsp_proof`` to ``false``, expose a ``workspace_warning``, and un-suppress the
+    offending stderr lines so the JSON is honest instead of over-claiming.
+    """
+    if not provider.get("lsp_proof"):
+        return provider
+    surfaced = [str(item) for item in provider.get("provider_recent_stderr") or [] if str(item)]
+    workspace_lines = _doctor_lsp_workspace_error_lines(surfaced)
+    if not workspace_lines:
+        return provider
+    updated = dict(provider)
+    updated["lsp_proof"] = False
+    updated["lsp_workspace_ready"] = False
+    updated["workspace_warning"] = (
+        "Single-file documentSymbol probe succeeded, but the provider reported a "
+        "workspace/fetch error, so cross-file navigation is not proven. Treat lsp_proof "
+        "as degraded until the workspace loads cleanly."
+    )
+    updated.setdefault(
+        "not_lsp_proof_reason",
+        "Provider answered the single-file probe but its workspace failed to load "
+        "(see provider_recent_stderr); cross-file navigation is unproven.",
+    )
+    # Stop hiding the evidence: restore the workspace-error lines to stderr_tail and clear
+    # the suppression flag that previously masked them.
+    existing_tail = [str(item) for item in updated.get("stderr_tail") or [] if str(item)]
+    merged_tail = existing_tail + [line for line in workspace_lines if line not in existing_tail]
+    updated["stderr_tail"] = merged_tail[-50:]
+    updated["stderr_tail_suppressed"] = False
+    return updated
+
+
+def _doctor_apply_lsp_workspace_warnings(
+    providers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [_doctor_downgrade_lsp_workspace_proof(provider) for provider in providers]
+
+
 def _doctor_lsp_providers_by_language(
     providers: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
@@ -2666,6 +2732,13 @@ def _build_doctor_payload(
             ))
     gpu_status = _doctor_gpu_status()
     gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
+    # audit M10: gpu.available reflects whether a CUDA device is *present*, not whether the
+    # GPU search runtime actually routes through NativeGpuBackend. Surface an honest
+    # search_ready boolean derived from the runtime probe so callers don't read
+    # gpu.available=true as "GPU search works".
+    gpu_status["search_ready"] = (
+        cast(dict[str, Any], gpu_status["search_runtime_probe"]).get("status") == "supported"
+    )
     payload: dict[str, Any] = {
         "schema_version": _DOCTOR_SCHEMA_VERSION,
         "doctor_schema_version": _DOCTOR_SCHEMA_VERSION,
@@ -2775,7 +2848,9 @@ def _build_doctor_payload(
         "session_daemon": _doctor_session_daemon_status(str(root)),
     }
     if with_lsp:
-        lsp_providers = _doctor_lsp_provider_statuses(str(root))
+        lsp_providers = _doctor_apply_lsp_workspace_warnings(
+            _doctor_lsp_provider_statuses(str(root))
+        )
         lsp_providers_by_language = _doctor_lsp_providers_by_language(lsp_providers)
         payload["lsp"] = {
             "schema_version": _DOCTOR_LSP_SCHEMA_VERSION,
@@ -6179,7 +6254,9 @@ def search_command(
     elif json or format_type == "json":
         from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
-        formatter = JsonFormatter()
+        # Pass the search config so aggregate --json match objects can carry the 1-based
+        # `column` for text-search matches (which have no ast-grep range) — audit L5.
+        formatter = JsonFormatter(config=config)
     elif format_type == "table":
         from tensor_grep.cli.formatters.table_fmt import TableFormatter
 
@@ -6202,8 +6279,11 @@ def calibrate() -> None:
     """Measure CPU vs GPU crossover thresholds using the native Rust binary."""
     native_tg_binary = resolve_native_tg_binary()
     if native_tg_binary is None:
+        # audit L10: calibrate is unsupported without the native binary (and on CPU-only
+        # boxes the native binary itself exits non-zero when CUDA is unavailable). tg's
+        # convention is exit 1 for runtime/unsupported errors, not exit 2 (usage errors).
         typer.echo("Error: native tg binary not found for calibrate command.", err=True)
-        raise typer.Exit(2)
+        raise typer.Exit(1)
 
     completed = subprocess.run([str(native_tg_binary), "calibrate"], check=False)
     raise typer.Exit(int(completed.returncode))
@@ -7609,9 +7689,9 @@ def session_open(
         f"Opened session {payload.session_id} "
         f"(files={payload.file_count}, symbols={payload.symbol_count})"
     )
-    if payload.scan_limit:
+    if isinstance(payload.scan_limit, dict) and payload.scan_limit.get("possibly_truncated"):
         typer.echo(
-            "Session repo map is capped; refresh without --max-repo-files for full coverage."
+            "Session repo map is capped; reopen with a larger --max-repo-files for full coverage."
         )
 
 
@@ -7743,19 +7823,32 @@ def session_show(
     from tensor_grep.cli.session_store import get_session
 
     try:
+        session_id, path = _maybe_swap_reversed_session_path(
+            session_id=session_id,
+            path=path,
+            command_name="show",
+        )
         payload = get_session(session_id, path)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
+    repo_map = cast(dict[str, Any], payload.get("repo_map") or {})
+    file_count = len(cast(list[Any], repo_map.get("files", [])))
+    symbol_count = len(cast(list[Any], repo_map.get("symbols", [])))
+
     if json_output:
-        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
+        # Additive parity with `session open --json` / `session list --json`, which both
+        # surface top-level file_count/symbol_count (audit M8). Only fill them when absent
+        # so a payload that already carries them is left untouched.
+        json_payload = dict(payload)
+        json_payload.setdefault("file_count", file_count)
+        json_payload.setdefault("symbol_count", symbol_count)
+        typer.echo(json.dumps(_with_schema_version(json_payload, version=1), indent=2))
         return
 
     typer.echo(f"Session {payload['session_id']} for {payload['root']}")
-    typer.echo(
-        f"files={len(payload['repo_map']['files'])} symbols={len(payload['repo_map']['symbols'])}"
-    )
+    typer.echo(f"files={file_count} symbols={symbol_count}")
 
 
 @session_app.command("refresh")

@@ -45,6 +45,10 @@ def _heuristic_classify_lines(lines: list[str]) -> list[dict[str, Any]]:
             results.append({"label": "error", "confidence": 0.95})
         elif re.search(r"\bwarn(?:ing)?\b|\bdegraded\b|\bslow\b", line_lower):
             results.append({"label": "warn", "confidence": 0.85})
+        elif re.search(r"\btrace\b", line_lower):
+            results.append({"label": "trace", "confidence": 0.80})
+        elif re.search(r"\bdebug\b", line_lower):
+            results.append({"label": "debug", "confidence": 0.80})
         else:
             results.append({"label": "info", "confidence": 0.80})
     return results

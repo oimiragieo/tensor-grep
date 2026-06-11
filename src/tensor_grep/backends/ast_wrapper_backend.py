@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.backends.ast_backend import normalize_ast_language
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -112,8 +112,9 @@ class AstGrepWrapperBackend(ComputeBackend):
         if ("\n" in pattern or "\r" in pattern) and (
             selector or strictness or globs or stdin_enabled
         ):
-            raise RuntimeError(
-                "ast-grep semantic run options are not supported for multiline patterns yet"
+            raise BackendExecutionError(
+                "ast-grep semantic run options (--selector, --strictness, --stdin, --globs) "
+                "are not supported for multiline patterns"
             )
         if "\n" not in pattern and "\r" not in pattern:
             cmd = [self._get_binary_name(), "run", "--json", "-p", pattern]
@@ -176,7 +177,16 @@ class AstGrepWrapperBackend(ComputeBackend):
 
         detail = stderr or stdout or "no error output"
         detail = detail.splitlines()[0]
-        raise RuntimeError(f"ast-grep failed with exit code {returncode}: {detail}")
+        # Provide a cleaner hint when ast-grep rejects a --selector/--strictness
+        # combination (exit 8) so callers can surface a structured error instead
+        # of a raw traceback.
+        if returncode == 8:
+            raise BackendExecutionError(
+                f"ast-grep rejected the query (exit 8): {detail}. "
+                "This often means --selector does not match the pattern's AST node kind, "
+                "or the pattern is not valid for the specified language."
+            )
+        raise BackendExecutionError(f"ast-grep failed with exit code {returncode}: {detail}")
 
     def _parse_result(self, stdout: str, fallback_file: str | None = None) -> SearchResult:
         matches: list[MatchLine] = []
@@ -252,14 +262,14 @@ class AstGrepWrapperBackend(ComputeBackend):
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
+            raise BackendExecutionError(
                 "ast-grep command timed out after "
                 f"{timeout_seconds:g}s; set {_AST_GREP_COMMAND_TIMEOUT_ENV} to adjust."
             ) from exc
 
     def search_project(self, root_path: str, config_path: str) -> dict[str, SearchResult]:
         if not self.is_available():
-            raise RuntimeError(
+            raise BackendExecutionError(
                 "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
             )
 
@@ -272,8 +282,10 @@ class AstGrepWrapperBackend(ComputeBackend):
                 config_path,
                 root_path,
             ])
+        except BackendExecutionError:
+            raise
         except Exception as e:
-            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
+            raise BackendExecutionError(f"AstGrepWrapperBackend failed: {e}") from e
 
         self._raise_for_nonzero(result)
         grouped_matches: dict[str, list[dict[str, Any]]] = {}
@@ -292,7 +304,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         self, file_paths: list[str], pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         if not self.is_available():
-            raise RuntimeError(
+            raise BackendExecutionError(
                 "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
             )
 
@@ -305,14 +317,16 @@ class AstGrepWrapperBackend(ComputeBackend):
                 )
                 self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout)
+        except BackendExecutionError:
+            raise
         except Exception as e:
-            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
+            raise BackendExecutionError(f"AstGrepWrapperBackend failed: {e}") from e
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         if not self.is_available():
-            raise RuntimeError(
+            raise BackendExecutionError(
                 "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
             )
 
@@ -325,6 +339,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                 )
                 self._raise_for_nonzero(result)
                 return self._parse_result(result.stdout, fallback_file=file_path)
-
+        except BackendExecutionError:
+            raise
         except Exception as e:
-            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
+            raise BackendExecutionError(f"AstGrepWrapperBackend failed: {e}") from e

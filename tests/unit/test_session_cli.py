@@ -80,6 +80,7 @@ def test_session_open_can_cap_initial_repo_map(tmp_path: Path) -> None:
         "max_repo_files": 2,
         "scanned_files": 2,
         "possibly_truncated": True,
+        "truncation_cause": "project-files",
     }
     assert opened["build_seconds"] >= 0
 
@@ -124,6 +125,7 @@ def test_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path) -> Non
         "max_repo_files": 512,
         "scanned_files": 512,
         "possibly_truncated": True,
+        "truncation_cause": "project-files",
     }
 
     show_result = runner.invoke(
