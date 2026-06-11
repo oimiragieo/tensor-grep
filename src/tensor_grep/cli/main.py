@@ -3413,14 +3413,11 @@ def _eligible_for_pcre2_inline_flag_fallback(config: "SearchConfig") -> bool:
     ``--engine auto``; ``-F`` is honored (literal intent) and an explicit PCRE2 engine
     already routes through PCRE2, so neither needs the fallback. The default engine value
     is the same whether the user typed ``--engine default`` or nothing, so both opt in --
-    matching the bare ``tg search 'a(?s).*b'`` repro. The fallback also requires a
-    PCRE2-capable rg backend; without one we keep the original error + ``-P`` remediation
-    rather than failing with a confusing "PCRE2 unavailable" ConfigurationError."""
+    matching the bare ``tg search 'a(?s).*b'`` repro. (Whether a PCRE2-capable rg backend
+    actually exists is a separate, environment-dependent check applied at the call site.)"""
     if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return False
-    if str(getattr(config, "engine", "") or "").lower() not in {"default", "auto", ""}:
-        return False
-    return _pcre2_fallback_backend_available()
+    return str(getattr(config, "engine", "") or "").lower() in {"default", "auto", ""}
 
 
 def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
@@ -5910,9 +5907,11 @@ def search_command(
                 # by the default Rust/`re` engine but accepted by PCRE2. When the user did
                 # not explicitly pick a non-PCRE2 engine, retry transparently under PCRE2
                 # instead of erroring, and announce the switch on stderr so it is observable.
-                if _is_inline_flag_regex_error(
-                    str(exc)
-                ) and _eligible_for_pcre2_inline_flag_fallback(config):
+                if (
+                    _is_inline_flag_regex_error(str(exc))
+                    and _eligible_for_pcre2_inline_flag_fallback(config)
+                    and _pcre2_fallback_backend_available()
+                ):
                     config = dataclasses.replace(config, pcre2=True)
                     typer.echo(
                         "note: retried with PCRE2 (-P) for inline-flag pattern",
