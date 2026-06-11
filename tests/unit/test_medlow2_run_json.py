@@ -35,6 +35,19 @@ def _ast_grep_backend_available() -> bool:
         return False
 
 
+def _ast_backend_available() -> bool:
+    """True when ANY AST backend (the native ast backend OR the ast-grep wrapper) can run a
+    real search. An un-mocked `tg run` search needs one; CI images have neither, so it
+    raises a ConfigurationError there."""
+    try:
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+
+        return bool(AstGrepWrapperBackend().is_available()) or bool(AstBackend().is_available())
+    except Exception:
+        return False
+
+
 def _capture_run_command(
     *args: Any,
     fake_plan: dict[str, Any] | None = None,
@@ -126,6 +139,9 @@ class TestRunJsonModeSearch:
             assert payload.get("mode") == "stdin", f"mode should be 'stdin': {payload}"
             assert "total_matches" in payload, f"total_matches missing: {payload}"
 
+    @pytest.mark.skipif(
+        not _ast_backend_available(), reason="requires an AST backend (native or ast-grep)"
+    )
     def test_search_mode_flag_is_search_not_stdin(self) -> None:
         """When stdin=False, mode must be 'search'."""
         with tempfile.TemporaryDirectory() as tmpdir:
