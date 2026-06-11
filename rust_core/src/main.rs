@@ -6085,7 +6085,11 @@ fn parse_batch_rewrite_config_value(
     value: &serde_json::Value,
 ) -> anyhow::Result<BatchRewriteConfig> {
     let object = value.as_object().ok_or_else(|| {
-        anyhow::anyhow!("invalid batch rewrite config field `$`: expected object")
+        // audit M4: name the required shape instead of the cryptic `$` JSON-pointer root.
+        anyhow::anyhow!(
+            "--batch-rewrite config must be a JSON object like \
+             {{\"rewrites\": [{{\"pattern\": ..., \"replacement\": ..., \"lang\": ...}}], \"verify\": false}}"
+        )
     })?;
 
     for key in object.keys() {

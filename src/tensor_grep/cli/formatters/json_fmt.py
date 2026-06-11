@@ -58,6 +58,11 @@ def _routing_gpu_chunk_plan(result: SearchResult) -> list[dict[str, int]]:
 def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "file": match.file,
+        # audit M1: keep BOTH `line` (the native plain-`--json` field) and `line_number`
+        # so a consumer keyed on `matches[].line` does not break the moment `--stats`
+        # routes through this Python serializer instead of the native binary. Mirrors
+        # NdjsonFormatter.format below.
+        "line": match.line_number,
         "line_number": match.line_number,
         "text": match.text,
     }

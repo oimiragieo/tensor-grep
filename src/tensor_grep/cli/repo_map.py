@@ -11059,6 +11059,58 @@ def _external_references(
     return deduped
 
 
+def _enclosing_class_for_definition(
+    definition: dict[str, Any],
+    all_symbols: list[dict[str, Any]],
+) -> str | None:
+    """Return the name of the innermost class that contains *definition*, or None.
+
+    Looks through *all_symbols* for class-kind entries in the same file whose
+    ``start_line``/``end_line`` span contains the definition's line.  When
+    multiple classes nest (rare but possible), the one with the largest
+    ``start_line`` (i.e. innermost) is returned.
+    """
+    def_file = str(definition.get("file", ""))
+    def_line = int(definition.get("line", 0) or 0)
+    best: dict[str, Any] | None = None
+    for sym in all_symbols:
+        if str(sym.get("kind", "")) != "class":
+            continue
+        if str(sym.get("file", "")) != def_file:
+            continue
+        sym_start = int(sym.get("start_line", sym.get("line", 0)) or 0)
+        sym_end = int(sym.get("end_line", sym_start) or sym_start)
+        if sym_start <= def_line <= sym_end:
+            if best is None or sym_start > int(best.get("start_line", best.get("line", 0)) or 0):
+                best = sym
+    return str(best["name"]) if best is not None else None
+
+
+def _definition_confidence_score(definition: dict[str, Any], symbol: str) -> float:
+    """Return a [0.0, 1.0] confidence score for a definition entry.
+
+    All definitions returned by ``build_symbol_defs_from_map`` already pass an
+    exact-name filter, so this function starts at 1.0 and applies small
+    downward adjustments for signals that indicate lower fidelity:
+
+    * LSP-proof entries get a slight boost (capped at 1.0) — they have
+      cross-validated provenance.
+    * Heuristic / regex-backed provenance gets a small penalty.
+    * The definition is in a test file (path contains "test") — mild penalty,
+      as a matching symbol in test code is less likely to be the canonical def.
+    """
+    score = 1.0
+    provenance = str(definition.get("provenance", "")).lower()
+    if "lsp" in provenance and "fallback" not in provenance:
+        score = min(1.0, score + 0.05)
+    if "heuristic" in provenance or provenance == "regex-heuristic":
+        score -= 0.1
+    file_str = str(definition.get("file", "")).lower().replace("\\", "/")
+    if "/test" in file_str or file_str.startswith("test"):
+        score -= 0.05
+    return round(max(0.0, min(1.0, score)), 3)
+
+
 def build_symbol_defs(
     symbol: str,
     path: str | Path = ".",
@@ -11117,6 +11169,18 @@ def build_symbol_defs_from_map(
             definitions = proof_definitions or definitions
         else:
             definitions = _dedupe_definition_rows([*external_definitions, *definitions])
+
+    # L3: Enrich each definition with `class` (enclosing class name or null)
+    # and `score` (confidence signal).  These are additive fields — existing
+    # keys are not renamed or removed.
+    all_symbols_for_class_lookup = list(repo_map.get("symbols", []))
+    for definition in definitions:
+        if "class" not in definition:
+            definition["class"] = _enclosing_class_for_definition(
+                definition, all_symbols_for_class_lookup
+            )
+        if "score" not in definition:
+            definition["score"] = _definition_confidence_score(definition, symbol)
 
     definition_files = [str(current["file"]) for current in definitions]
     related_paths = []
@@ -11345,7 +11409,10 @@ def build_symbol_impact_from_map(
         payload["routing_reason"] = "symbol-impact"
         payload["preferred_command"] = "blast-radius"
         payload["preferred_command_reason"] = (
-            "direct symbol impact is better served by blast-radius"
+            "impact is a fast file-level planning signal; "
+            "blast-radius adds caller_tree, blast_radius_score, and call-graph depth "
+            "for precise change-impact analysis — use blast-radius when you need "
+            "caller attribution or a scored propagation graph"
         )
         payload["trust_level"] = "planning-signal"
         payload["file_matches"] = []
@@ -11459,7 +11526,12 @@ def build_symbol_impact_from_map(
     payload["routing_reason"] = "symbol-impact"
     payload["symbol"] = symbol
     payload["preferred_command"] = "blast-radius"
-    payload["preferred_command_reason"] = "direct symbol impact is better served by blast-radius"
+    payload["preferred_command_reason"] = (
+        "impact is a fast file-level planning signal; "
+        "blast-radius adds caller_tree, blast_radius_score, and call-graph depth "
+        "for precise change-impact analysis — use blast-radius when you need "
+        "caller attribution or a scored propagation graph"
+    )
     payload["trust_level"] = "planning-signal"
     payload["definitions"] = definitions
     payload["files"] = impacted_files
