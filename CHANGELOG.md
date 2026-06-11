@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.13.38 (2026-06-11)
+
+### Bug Fixes
+
+- Clear dogfood MEDIUM/LOW batch 1 (session/doctor honesty, classify labels, ast errors, json
+  columns) ([#256](https://github.com/oimiragieo/tensor-grep/pull/256),
+  [`6e5daf2`](https://github.com/oimiragieo/tensor-grep/commit/6e5daf234a5edb52a9ffc7df01d5975c60e95fc9))
+
+Clears 10 cleanly-bounded MEDIUM/LOW dogfood items: - M2: `tg run --selector`/`--strictness` now
+  surface a structured JSON error (or a clean stderr message) instead of a raw traceback — the ast
+  wrapper raises BackendExecutionError and the run_command call site catches it. - M6: `tg classify`
+  labels DEBUG/TRACE lines as `debug`/`trace` (both were `info`). - M7: `tg session open` no longer
+  emits a spurious "repo map is capped" warning when the map is not truncated; the bogus remediation
+  flag is corrected. - M8: `tg session show --json` now includes file_count/symbol_count (parity
+  with open/list). - M9: `tg session show` auto-corrects reversed PATH/SID args with a hint (parity
+  with context). - M10: `tg doctor --json` is honest: adds gpu.search_ready, and downgrades
+  lsp_proof (with a workspace_warning + un-suppressed stderr) when a provider reports a
+  workspace/fetch error. - M15: the folder-of-projects broad-scan guardrail was already implemented;
+  locked in with tests. - L2: possibly_truncated no longer false-alarms on vendor/cache saturation;
+  adds an additive truncation_cause field. Removed bare "lib" from the vendor classification — it is
+  a common SOURCE dir, and misclassifying it as vendor silently disabled blast-radius literal
+  seeding. - L5: aggregate `tg --json` match objects now carry a 1-based `column`. - L10: `tg
+  calibrate` exits 1 (not 2) when CUDA is unavailable.
+
+24 new/updated regression tests. Full gate green: ruff, ruff format --preview, mypy --strict, pytest
+  (2891 passed, 21 skipped).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.13.37 (2026-06-11)
 
 ### Bug Fixes
