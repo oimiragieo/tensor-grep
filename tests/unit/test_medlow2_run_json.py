@@ -9,15 +9,24 @@ M4: Batch-rewrite format is documented in run_command; the cryptic "$" error is
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 from io import StringIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _has_ast_grep_binary() -> bool:
+    """True when an ast-grep binary is on PATH. The --stdin path runs a real AST search,
+    which is unavailable on images without ast-grep (e.g. CI)."""
+    return any(shutil.which(name) is not None for name in ("ast-grep", "ast-grep.exe", "sg"))
 
 
 def _capture_run_command(
@@ -76,6 +85,7 @@ def _capture_run_command(
 class TestRunJsonModeSearch:
     """M3 - search mode must carry version, schema_version, mode='search', total_matches."""
 
+    @pytest.mark.skipif(not _has_ast_grep_binary(), reason="requires ast-grep binary")
     def test_stdin_mode_has_required_envelope_keys(self) -> None:
         """Search via --stdin must include all four mandatory envelope keys."""
         with tempfile.TemporaryDirectory() as tmpdir:
