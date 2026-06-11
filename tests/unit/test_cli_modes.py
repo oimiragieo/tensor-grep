@@ -3192,6 +3192,7 @@ def test_map_json_accepts_agent_output_bounds(tmp_path):
         "emitted_files": 1,
         "original_files": 2,
         "possibly_truncated": True,
+        "truncation_cause": "project-files",
     }
 
 
@@ -3276,6 +3277,7 @@ def test_context_json_accepts_agent_output_bounds(tmp_path):
         "emitted_files": 1,
         "original_files": 2,
         "possibly_truncated": True,
+        "truncation_cause": "project-files",
     }
 
 
@@ -3922,6 +3924,7 @@ def test_blast_radius_prioritizes_source_dirs_before_bounded_scan_cap(tmp_path):
         "max_repo_files": 1,
         "scanned_files": 1,
         "possibly_truncated": True,
+        "truncation_cause": "project-files",
     }
 
 
@@ -6054,6 +6057,7 @@ def test_context_render_json_reports_bounded_repo_scan(tmp_path):
         "max_repo_files": 1,
         "scanned_files": 1,
         "possibly_truncated": True,
+        "truncation_cause": "project-files",
     }
 
 

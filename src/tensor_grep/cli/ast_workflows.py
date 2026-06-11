@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 
 if TYPE_CHECKING:
@@ -662,25 +663,48 @@ def run_command(
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
-    if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-        search_paths = [] if stdin else [search_path]
-        result = cast(Any, backend).search_many(search_paths, pattern, config=cfg)
-        all_results.matches.extend(result.matches)
-        all_results.matched_file_paths.extend(result.matched_file_paths)
-        all_results.total_matches += result.total_matches
-        all_results.total_files = max(all_results.total_files, result.total_files)
-    else:
-        from tensor_grep.io.directory_scanner import DirectoryScanner
-
-        scanner = DirectoryScanner(cfg)
-        candidate_files, _, _ = _collect_candidate_files(scanner, [search_path])
-        for current_file in candidate_files:
-            result = backend.search(current_file, pattern, config=cfg)
+    try:
+        if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+            search_paths = [] if stdin else [search_path]
+            result = cast(Any, backend).search_many(search_paths, pattern, config=cfg)
             all_results.matches.extend(result.matches)
             all_results.matched_file_paths.extend(result.matched_file_paths)
             all_results.total_matches += result.total_matches
-            if result.total_files > 0 or result.total_matches > 0:
-                all_results.total_files += 1
+            all_results.total_files = max(all_results.total_files, result.total_files)
+        else:
+            from tensor_grep.io.directory_scanner import DirectoryScanner
+
+            scanner = DirectoryScanner(cfg)
+            candidate_files, _, _ = _collect_candidate_files(scanner, [search_path])
+            for current_file in candidate_files:
+                result = backend.search(current_file, pattern, config=cfg)
+                all_results.matches.extend(result.matches)
+                all_results.matched_file_paths.extend(result.matched_file_paths)
+                all_results.total_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    all_results.total_files += 1
+    except BackendExecutionError as exc:
+        # audit M2: --selector/--strictness combinations ast-grep rejects must surface as a
+        # structured error (or a clean stderr message), never a raw Python traceback.
+        if json_mode:
+            import json
+
+            _safe_stdout_line(
+                json.dumps({
+                    "version": 1,
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": "backend_error",
+                    "detail": str(exc),
+                    "routing_backend": backend_name,
+                    "routing_reason": "ast",
+                    "query": pattern,
+                    "path": search_path,
+                })
+            )
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     # Filter matches
     if filter_regex:
