@@ -9,7 +9,6 @@ M4: Batch-rewrite format is documented in run_command; the cryptic "$" error is
 from __future__ import annotations
 
 import json
-import shutil
 import tempfile
 from io import StringIO
 from pathlib import Path
@@ -23,10 +22,17 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _has_ast_grep_binary() -> bool:
-    """True when an ast-grep binary is on PATH. The --stdin path runs a real AST search,
-    which is unavailable on images without ast-grep (e.g. CI)."""
-    return any(shutil.which(name) is not None for name in ("ast-grep", "ast-grep.exe", "sg"))
+def _ast_grep_backend_available() -> bool:
+    """True when the ast-grep wrapper backend can actually run a search. Uses the backend's
+    OWN detection (which verifies a `sg` binary is really ast-grep) rather than a naive
+    `shutil.which("sg")` — on Linux `sg` is the unrelated set-group-id command, so the naive
+    check false-positives and the --stdin AST search then fails with a ConfigurationError."""
+    try:
+        from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+
+        return bool(AstGrepWrapperBackend().is_available())
+    except Exception:
+        return False
 
 
 def _capture_run_command(
@@ -85,7 +91,9 @@ def _capture_run_command(
 class TestRunJsonModeSearch:
     """M3 - search mode must carry version, schema_version, mode='search', total_matches."""
 
-    @pytest.mark.skipif(not _has_ast_grep_binary(), reason="requires ast-grep binary")
+    @pytest.mark.skipif(
+        not _ast_grep_backend_available(), reason="requires the ast-grep wrapper backend"
+    )
     def test_stdin_mode_has_required_envelope_keys(self) -> None:
         """Search via --stdin must include all four mandatory envelope keys."""
         with tempfile.TemporaryDirectory() as tmpdir:
