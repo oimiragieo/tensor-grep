@@ -53,6 +53,10 @@ jobs:
           # Keep the gate strict for fixable findings. The ignored IDs below are
           # upstream no-fixed-version advisories in optional ML/GPU dependencies;
           # remove each ignore as soon as pip-audit reports a fixed release.
+          # NOTE: pip-audit matches --ignore-vuln on the id it REPORTS, which can switch
+          # between a vuln's aliases across data-source/version updates. List both the
+          # PYSEC and CVE aliases for the same advisory when that happens (e.g. torch
+          # PYSEC-2025-194 is now reported as CVE-2025-3000).
           uv run --no-project --python 3.12 --with pip-audit -- pip-audit \
             --require-hashes \
             --disable-pip \
@@ -64,6 +68,7 @@ jobs:
             --ignore-vuln PYSEC-2025-192 \
             --ignore-vuln PYSEC-2025-193 \
             --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln CVE-2025-3000 \
             --ignore-vuln PYSEC-2025-195 \
             --ignore-vuln PYSEC-2025-196 \
             --ignore-vuln PYSEC-2025-197 \

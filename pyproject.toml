@@ -106,6 +106,16 @@ ignore_missing_imports = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 
+# numpy ships a py.typed stub that uses PEP 695 `type` statements (3.12+ syntax). The
+# type-check gate targets python_version = 3.11, so mypy rejects numpy's stub with a hard
+# syntax error ("Type statement is only supported in Python 3.12 and greater") and aborts
+# before checking our code. We do not type-check against numpy internals, so skip following
+# it (treated as Any). Remove once the gate's python_version moves to >= 3.12.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.semantic_release]
 version_toml = [
     "pyproject.toml:project.version",
