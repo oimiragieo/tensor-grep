@@ -943,12 +943,14 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     joined_errors = "\n".join(errors)
-    assert "cryptography>=46.0.7" in joined_errors
+    assert "cryptography>=48.0.1" in joined_errors
     assert "pygments>=2.20.0" in joined_errors
-    assert "python-multipart>=0.0.27" in joined_errors
+    assert "python-multipart>=0.0.31" in joined_errors
     assert "python-dotenv>=1.2.2" in joined_errors
-    assert "aiohttp>=3.14.0" in joined_errors
+    assert "aiohttp>=3.14.1" in joined_errors
     assert "pyjwt>=2.13.0" in joined_errors
+    assert "starlette>=1.3.1" in joined_errors
+    assert "pydantic-settings>=2.14.2" in joined_errors
 
 
 def test_should_accept_uv_security_floor_constraints_when_all_required_entries_present():
@@ -967,13 +969,15 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
 
     [tool.uv]
     constraint-dependencies = [
-      "cryptography>=46.0.7",
+      "cryptography>=48.0.1",
       "pygments>=2.20.0",
-      "python-multipart>=0.0.27",
+      "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.0",
+      "aiohttp>=3.14.1",
       "pyjwt>=2.13.0",
+      "starlette>=1.3.1",
+      "pydantic-settings>=2.14.2",
     ]
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
