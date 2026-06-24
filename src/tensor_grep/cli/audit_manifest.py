@@ -782,10 +782,15 @@ def verify_audit_manifest(
     payload["signature_kind"] = signature_kind
     payload["valid"] = digest_valid and chain_valid and signature_valid
     payload["errors"] = errors
-    try:
-        record_audit_manifest(resolved_manifest, manifest=manifest)
-    except OSError:
-        pass
+    # Audit MED: only fold a manifest into the tamper-evident history once it has actually
+    # verified. Recording a failed/tampered manifest would poison the chain (a forged link
+    # would read as legitimate in `tg audit history`) and create the index as a write
+    # side-effect of merely *verifying* an untrusted manifest.
+    if payload["valid"]:
+        try:
+            record_audit_manifest(resolved_manifest, manifest=manifest)
+        except OSError:
+            pass
     return payload
 
 
