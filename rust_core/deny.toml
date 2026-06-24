@@ -7,6 +7,21 @@ targets = [
 ]
 all-features = true
 
+[advisories]
+# Keep the gate strict for fixable findings. The IDs below are tracked, upstream-pinned
+# advisories whose vulnerable code paths are NOT reachable from this crate; remove each
+# ignore as soon as we can adopt a fixed release.
+#
+# pyo3 0.24 is pinned transitively by pyo3-arrow 0.9 + numpy 0.24 (the Arrow FFI bridge),
+# so it cannot move to >=0.29 until those crates ship a pyo3-0.29 release. The flagged
+# APIs are unused here: this crate never iterates PyList/PyTuple (no nth/nth_back) and
+# never calls PyCFunction::new_closure — only PyDict + PyModule cross the boundary
+# (verified 2026-06-24). Track: bump pyo3 -> 0.29 with pyo3-arrow + numpy in lockstep.
+ignore = [
+    "RUSTSEC-2026-0176", # pyo3: OOB read in nth/nth_back for PyList/PyTuple iterators (unused)
+    "RUSTSEC-2026-0177", # pyo3: missing Sync bound on PyCFunction::new_closure (unused)
+]
+
 [licenses]
 confidence-threshold = 0.93
 allow = [
