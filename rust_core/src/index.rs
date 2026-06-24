@@ -306,6 +306,14 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Cap a length-prefixed pre-allocation to the bytes actually remaining in the buffer.
+/// Every element consumes at least one byte, so a declared count larger than the remaining
+/// input is corrupt/hostile; clamping prevents a crafted index file from forcing a multi-GB
+/// Vec/HashMap allocation (OOM-abort DoS) before the read loop fails cleanly. audit MED.
+fn bounded_capacity(declared: usize, data: &[u8], pos: usize) -> usize {
+    declared.min(data.len().saturating_sub(pos))
+}
+
 fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let mut pos = 0;
 
@@ -331,7 +339,7 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
 
     let files_count = read_u32_le(data, &mut pos)? as usize;
 
-    let mut files = Vec::with_capacity(files_count);
+    let mut files = Vec::with_capacity(bounded_capacity(files_count, data, pos));
     for _ in 0..files_count {
         let path_len = read_u32_le(data, &mut pos)? as usize;
         let path_str = String::from_utf8_lossy(read_exact(data, &mut pos, path_len)?).to_string();
@@ -348,11 +356,11 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
 
     let trigram_count = read_u32_le(data, &mut pos)? as usize;
 
-    let mut postings = HashMap::with_capacity(trigram_count);
+    let mut postings = HashMap::with_capacity(bounded_capacity(trigram_count, data, pos));
     for _ in 0..trigram_count {
         let trigram: [u8; 3] = read_exact(data, &mut pos, 3)?.try_into()?;
         let posting_count = read_u32_le(data, &mut pos)? as usize;
-        let mut entries = Vec::with_capacity(posting_count);
+        let mut entries = Vec::with_capacity(bounded_capacity(posting_count, data, pos));
         let mut previous_file_id = 0u32;
         let mut previous_line = 0u32;
         let mut first = true;
@@ -1115,6 +1123,23 @@ mod tests {
 
     fn write_test_file(dir: &Path, name: &str, content: &str) {
         fs::write(dir.join(name), content).unwrap();
+    }
+
+    #[test]
+    fn bincode_deserialize_rejects_hostile_length_prefix_without_oom() {
+        // A crafted index declaring ~4 billion file entries but supplying no data must fail
+        // with a clean error, not pre-allocate a multi-GB Vec and OOM-abort. Without the
+        // bounded_capacity clamp this is Vec::with_capacity(u32::MAX) -> allocation abort;
+        // with it, the read loop fails on the first missing entry and returns Err (audit MED).
+        let mut data = Vec::new();
+        data.extend_from_slice(INDEX_MAGIC);
+        data.push(INDEX_FORMAT_VERSION);
+        data.extend_from_slice(&0u32.to_le_bytes()); // root_len = 0
+        data.extend_from_slice(&u32::MAX.to_le_bytes()); // files_count = hostile
+                                                         // no file data follows (truncated)
+
+        let result = bincode_deserialize(&data);
+        assert!(result.is_err(), "hostile length prefix must error, not OOM");
     }
 
     fn serialize_legacy_v1(index: &TrigramIndex) -> Vec<u8> {

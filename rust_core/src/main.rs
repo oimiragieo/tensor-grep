@@ -1563,8 +1563,14 @@ fn json_aggregate_render_flag_conflicts(raw_args: &[OsString]) -> Vec<String> {
         return Vec::new();
     }
     // `--format rg` emits ripgrep JSON Lines, which carry render metadata — allowed.
+    // Stop at the `--` end-of-options token (mirroring the conflict loop below): a
+    // literal `--format rg` smuggled AFTER `--` is a search pattern, not the flag, and
+    // must not suppress a genuine render-flag conflict that precedes `--` (audit MED).
     let mut index = 0usize;
     while index < args.len() {
+        if args[index] == "--" {
+            break;
+        }
         if args[index] == "--format" {
             if args.get(index + 1).map(String::as_str) == Some("rg") {
                 return Vec::new();
@@ -2187,6 +2193,23 @@ mod tests {
         );
         // a literal render-flag-looking pattern after `--` is not a flag.
         assert!(json_conflicts(&["tg", "search", "--json", "--", "--passthru"]).is_empty());
+    }
+
+    #[test]
+    fn json_aggregate_format_rg_after_double_dash_does_not_suppress_real_conflict() {
+        // Regression (audit MED): `--format rg` / `--format=rg` smuggled AFTER `--` is a
+        // literal search pattern, not the format flag, so it must NOT satisfy the rg-format
+        // allowance. The genuine `-b` render-flag conflict BEFORE `--` must still be reported
+        // (otherwise the native binary delegates the --json+render combo to the Python
+        // sidecar, re-opening the C3 fork-bomb against a guard-less Python).
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "-b", "--", "--format", "rg"]),
+            vec!["-b".to_string()]
+        );
+        assert_eq!(
+            json_conflicts(&["tg", "search", "--json", "-b", "--", "--format=rg"]),
+            vec!["-b".to_string()]
+        );
     }
 
     #[cfg(feature = "cuda")]
