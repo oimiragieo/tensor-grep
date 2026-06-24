@@ -3245,13 +3245,15 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
 
     expected_constraints = {
-        "aiohttp>=3.14.0",
-        "cryptography>=46.0.7",
+        "aiohttp>=3.14.1",
+        "cryptography>=48.0.1",
         "pyjwt>=2.13.0",
         "pygments>=2.20.0",
-        "python-multipart>=0.0.27",
+        "python-multipart>=0.0.31",
         "python-dotenv>=1.2.2",
         "requests>=2.33.0",
+        "starlette>=1.3.1",
+        "pydantic-settings>=2.14.2",
     }
     missing_constraints = sorted(
         expected_constraints - {str(entry) for entry in constraint_dependencies}

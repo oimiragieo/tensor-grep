@@ -579,6 +579,62 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
     urllib.request.urlretrieve(url, destination)
 
 
+def _native_frontdoor_checksums_url(version: str) -> str:
+    return f"https://github.com/oimiragieo/tensor-grep/releases/download/v{version}/CHECKSUMS.txt"
+
+
+def _fetch_native_frontdoor_checksums(version: str) -> str | None:
+    """Fetch the published CHECKSUMS.txt manifest for a release, or None if unavailable."""
+    import urllib.request
+
+    url = _native_frontdoor_checksums_url(version)
+    try:
+        with urllib.request.urlopen(url) as response:
+            raw: bytes = response.read()
+            return raw.decode("utf-8")
+    except Exception:
+        return None
+
+
+def _expected_asset_sha256(checksums_text: str, asset_name: str) -> str | None:
+    """Look up the published sha256 for asset_name in a CHECKSUMS.txt manifest.
+
+    Lines are ``<sha256>  <asset>`` (the format emitted by the release tooling and
+    consumed by scripts/install.sh). Tolerates blank/comment lines and a leading
+    ``*`` binary marker on the filename.
+    """
+    for raw_line in checksums_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        digest, name = parts[0], parts[-1]
+        if name.lstrip("*") == asset_name:
+            return digest.lower()
+    return None
+
+
+def _native_frontdoor_checksum_error(
+    asset_path: Path, asset_name: str, checksums_text: str
+) -> str | None:
+    """Return None when asset_path matches its published sha256, else an error string.
+
+    Fail-closed: a missing manifest entry is an error (we refuse to trust an
+    unlisted download), mirroring scripts/install.sh.
+    """
+    import hashlib
+
+    expected = _expected_asset_sha256(checksums_text, asset_name)
+    if not expected:
+        return f"no published checksum for {asset_name}; refusing to trust the download"
+    actual = hashlib.sha256(asset_path.read_bytes()).hexdigest().lower()
+    if actual != expected:
+        return f"checksum mismatch for {asset_name} (expected {expected}, got {actual})"
+    return None
+
+
 def _write_native_frontdoor_metadata(
     destination: Path,
     *,
@@ -605,6 +661,17 @@ def _install_release_native_frontdoor(
     if not candidates:
         raise RuntimeError("no release-native front-door asset is available for this platform")
 
+    # Audit HIGH (2026-06-24): verify every downloaded asset against the published
+    # CHECKSUMS.txt BEFORE installing/executing it, matching the fail-closed posture
+    # of the installers (scripts/install.sh, install.ps1, npm/install.js). Without
+    # the manifest nothing can be verified, so refuse rather than trust the download.
+    checksums_text = _fetch_native_frontdoor_checksums(version)
+    if checksums_text is None:
+        raise RuntimeError(
+            "release-native front-door asset install refused: could not fetch "
+            f"CHECKSUMS.txt for v{version}; refusing to install an unverified native binary"
+        )
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     download_errors: list[str] = []
     for candidate, url in candidates:
@@ -614,6 +681,12 @@ def _install_release_native_frontdoor(
                 _download_native_frontdoor_asset(url, temp_path)
             except Exception as exc:
                 download_errors.append(f"{candidate.flavor} asset unavailable: {exc}")
+                continue
+            checksum_error = _native_frontdoor_checksum_error(
+                temp_path, candidate.asset_name, checksums_text
+            )
+            if checksum_error is not None:
+                download_errors.append(f"{candidate.flavor} asset {checksum_error}")
                 continue
             if not sys.platform.startswith("win"):
                 temp_path.chmod(0o755)

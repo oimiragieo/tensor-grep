@@ -16,13 +16,15 @@ cache-keys = [
     { file = "rust_core/src/**/*.rs" },
 ]
 constraint-dependencies = [
-    "aiohttp>=3.14.0",
-    "cryptography>=46.0.7",
+    "aiohttp>=3.14.1",
+    "cryptography>=48.0.1",
     "pyjwt>=2.13.0",
     "pygments>=2.20.0",
-    "python-multipart>=0.0.27",
+    "python-multipart>=0.0.31",
     "python-dotenv>=1.2.2",
     "requests>=2.33.0",
+    "starlette>=1.3.1",
+    "pydantic-settings>=2.14.2",
 ]
 
 [tool.pytest.ini_options]
@@ -103,6 +105,16 @@ strict = true
 ignore_missing_imports = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+# numpy ships a py.typed stub that uses PEP 695 `type` statements (3.12+ syntax). The
+# type-check gate targets python_version = 3.11, so mypy rejects numpy's stub with a hard
+# syntax error ("Type statement is only supported in Python 3.12 and greater") and aborts
+# before checking our code. We do not type-check against numpy internals, so skip following
+# it (treated as Any). Remove once the gate's python_version moves to >= 3.12.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [tool.semantic_release]
 version_toml = [

@@ -8192,6 +8192,23 @@ def test_native_frontdoor_asset_candidates_prefer_nvidia_only_when_requested(mon
     ]
 
 
+def _allow_native_frontdoor_checksum(monkeypatch):
+    """Audit HIGH (2026-06-24): tg upgrade now verifies the downloaded native asset
+    against the published CHECKSUMS.txt and refuses an unverified binary. These
+    fallback/refresh/restore tests don't exercise that gate, so stub it as verified
+    (the gate itself is covered by tests/unit/test_native_frontdoor_checksum.py)."""
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._fetch_native_frontdoor_checksums",
+        lambda version: "stub-checksums-manifest",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._native_frontdoor_checksum_error",
+        lambda asset_path, asset_name, checksums_text: None,
+        raising=False,
+    )
+
+
 def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable(
     monkeypatch, tmp_path
 ):
@@ -8233,6 +8250,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -8316,6 +8334,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -8378,6 +8397,7 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -8437,6 +8457,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -9450,6 +9471,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -9625,6 +9647,7 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -9686,6 +9709,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.33.0",
@@ -9764,6 +9788,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.os.replace", _fake_replace)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",

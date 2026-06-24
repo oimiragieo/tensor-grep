@@ -203,6 +203,25 @@ def test_verify_audit_manifest_tolerates_manifests_without_created_at(tmp_path: 
     assert result["errors"] == []
 
 
+def test_verify_audit_manifest_does_not_record_tampered_manifest(tmp_path: Path):
+    """Audit MED: a manifest that FAILS verification (e.g. digest mismatch from a
+    tampered body) must NOT be inserted into the tamper-evident audit history -- else a
+    forged manifest would later appear as a legitimate chain link in `tg audit history`,
+    and verifying an untrusted manifest would create an index file as a side effect."""
+    project, audit_dir = _make_project(tmp_path)
+    manifest_path = audit_dir / "tampered.json"
+    _write_audit_manifest(manifest_path, project_root=project)
+    # Mutate the body AFTER the digest was stamped so digest_valid becomes False.
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["files"][0]["after_sha256"] = "c" * 64
+    manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    result = audit_manifest.verify_audit_manifest(manifest_path)
+
+    assert result["valid"] is False
+    assert not _index_path(project).exists()
+
+
 def test_verify_audit_manifest_refreshes_existing_index_entry_without_duplicates(tmp_path: Path):
     project, audit_dir = _make_project(tmp_path)
     manifest_path = audit_dir / "rewrite-audit.json"

