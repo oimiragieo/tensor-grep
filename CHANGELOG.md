@@ -1,6 +1,140 @@
 # CHANGELOG
 
 
+## v1.13.40 (2026-06-24)
+
+### Bug Fixes
+
+- **security**: Dependabot floors + 2 HIGH findings + green the audit gate + byte-column parity
+  ([#259](https://github.com/oimiragieo/tensor-grep/pull/259),
+  [`5ab9a1f`](https://github.com/oimiragieo/tensor-grep/commit/5ab9a1f158b64063f88a8f3bf98e428f901c32df))
+
+* fix(deps): bump stale security-floor constraint pins to patched versions
+
+The [tool.uv].constraint-dependencies security floors had drifted below the latest patched releases
+  flagged by Dependabot, so the lockfile still resolved known-vulnerable transitive deps: - aiohttp
+  3.14.0 -> 3.14.1 (DoS / cookie / pipelining, alerts #52-59) - cryptography 46.0.7 -> 49.0.0
+  (vulnerable bundled OpenSSL, alert #60) - python-multipart 0.0.27 -> 0.0.32 (querystring DoS /
+  smuggling, #48-51) - starlette (new floor) 1.0.1 -> 1.3.1 (HTTP request CVEs, #61-64) -
+  pydantic-settings (new floor) 2.13.1 -> 2.14.2 (secrets_dir symlink, #65)
+
+All are transitive-and-unreachable on tensor-grep's stdio-only MCP / core CLI paths (no HTTP/ASGI
+  server is ever started), but the constraint block exists precisely to keep these patched. Floors
+  are enforced by validate_uv_security_constraints + its tests, bumped to match. pyo3 (#46/#47) is
+  tracked separately as a breaking 0.24->0.29 migration.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(mcp): gate lint_cmd/test_cmd shell exec behind explicit opt-in (audit HIGH)
+
+The MCP tool tg_rewrite_apply forwarded free-form lint_cmd/test_cmd straight to the native apply
+  path, which runs them via `sh -c` / `cmd /C`. Over the MCP trust boundary those arguments are
+  agent-steerable (prompt-injected repo content), so this exposed an RCE primitive that the CLI
+  (operator-typed) does not.
+
+Ship the shell-exec capability default-OFF per the repo's Enablement Discipline: tg_rewrite_apply
+  now refuses lint_cmd/test_cmd with code="unsupported_option" unless the operator sets
+  TG_MCP_ALLOW_VALIDATION_COMMANDS=1 in the server env. The agent-safe edit loop never needs them.
+  Gate lives at the MCP-tool boundary (not the shared execute_rewrite_apply_json, which the CLI also
+  calls).
+
+Tests (TDD): reject lint_cmd / reject test_cmd / allow when opted-in; the existing opt-in
+  passthrough test now sets the flag. Full module green (125 passed).
+
+* fix(upgrade): verify native front-door asset against CHECKSUMS.txt (audit HIGH)
+
+`tg upgrade` (and the detached Windows background refresh helper) downloaded, installed, and
+  executed the native tg binary behind only a forgeable `--version` smoke test -- unlike the
+  installers (install.sh / install.ps1 / npm/install.js), which were hardened in audit S4 to
+  fail-closed against the published CHECKSUMS.txt. The in-product upgrade path never got the same
+  integrity check.
+
+_install_release_native_frontdoor now fetches CHECKSUMS.txt for the target release and verifies each
+  downloaded asset's sha256 BEFORE the smoke test and install, failing closed: a missing manifest, a
+  missing entry, or a hash mismatch refuses the install (the caller falls back as before). Mirrors
+  the `<sha256> <asset>` manifest format consumed by scripts/install.sh.
+
+Tests (TDD): manifest parse, tampered asset rejected (not installed), verified asset installed,
+  fetch-failure refused. Existing upgrade fallback/refresh tests stub the new gate as verified.
+
+* fix(audit): green the Dependency & License gate (memmap2 patch + tracked pyo3 ignores)
+
+The `Dependency & License Audit` CI job (cargo audit + cargo deny) had been red on main since the
+  pyo3 RUSTSEC advisories landed (2026-06-11), and a new memmap2 advisory (2026-06-20) compounded
+  it. Two distinct fixes:
+
+- memmap2 0.9.10 -> 0.9.11: real patch that fixes RUSTSEC-2026-0186 (unchecked pointer offset). No
+  suppression needed. - pyo3 RUSTSEC-2026-0176 / -0177: documented, tracked ignores in
+  rust_core/deny.toml (+ matching `cargo audit --ignore`), mirroring the repo's existing pip-audit
+  `--ignore-vuln` pattern. pyo3 0.24 is pinned transitively by pyo3-arrow 0.9 + numpy 0.24 (the
+  Arrow FFI bridge) so it cannot reach >=0.29 until those ship a pyo3-0.29 release; the flagged APIs
+  (PyList/PyTuple nth/nth_back, new_closure) are verified unused in this crate. Remove the ignores
+  once the bridge can be bumped.
+
+Verified locally: `cargo audit` exit 0, `cargo deny check` -> advisories/bans/ licenses/sources all
+  ok. Audit workflow contract tests pass.
+
+* fix(format): emit BYTE columns for --json/--vimgrep parity with ripgrep (audit MED)
+
+Both _column_for_match fallbacks (json_fmt module fn + RipgrepFormatter method) computed the column
+  from a character index when the range-based column was absent. ripgrep, --vimgrep and the native
+  binary all emit BYTE offsets, so any line with non-ASCII bytes before the match reported a column
+  short by the UTF-8 over-width (e.g. "café x" reported col 6 instead of 7). The range-based branch
+  was already byte-accurate, so only the pattern-scan fallback needed the encode() fix.
+
+Tests (TDD): non-ASCII byte-offset parity for both formatters + an ASCII guard confirming existing
+  behavior is unchanged.
+
+* fix(cpu): include blank lines in -v (invert) search and count (audit MED)
+
+The Rust CPU backend dropped empty lines from inverted output: search_file_* guarded emission with
+  `should_include && !line_bytes.is_empty()`, and count_file_* filtered `!is_empty()` out of the
+  par_split. A blank line cannot match a non-empty pattern, so under `-v` it must be INCLUDED -- `tg
+  search --cpu -v` and `--cpu -c -v` silently undercounted/omitted every blank line versus real
+  grep.
+
+- search_file_memmem / search_file_regex: drop the `!is_empty()` guard (redundant for non-invert,
+  wrong for invert). - count_file_memmem / count_file_regex: replace the blanket `!is_empty()`
+  filter with grep's line model -- strip a single trailing '\n' (the phantom split after the final
+  newline), then keep interior empties. Empty files short-circuit to 0. Non-invert counts are
+  unchanged (empty lines never match a non-empty pattern).
+
+Test: blank-line inclusion for both search and count under -v; existing count tests unchanged. cargo
+  test (4 passed) + clippy -D warnings clean.
+
+* fix(audit): only record a manifest into history after it verifies (audit MED)
+
+verify_audit_manifest recorded EVERY manifest into the tamper-evident audit chain, including ones
+  that failed digest/chain/signature checks. Two harms from merely *verifying* an untrusted
+  manifest: (1) a forged/tampered manifest was folded into the chain and later read as a legitimate
+  link in `tg audit history`, defeating the tamper-evidence; (2) the index.json was created as a
+  write side-effect under the manifest's directory. Gate record_audit_manifest on payload["valid"].
+
+Test (TDD): a body-tampered manifest (digest mismatch) verifies invalid AND leaves no index file;
+  existing valid-manifest recording tests unchanged (26 passed).
+
+* fix(ci): unblock the audit + type-check gates (torch CVE alias + numpy mypy stub)
+
+Two pre-existing CI breakages (red on main too) blocking the Dependency & License Audit and
+  Formatting & Linting checks:
+
+- pip-audit: torch 2.10.0's only unignored advisory is reported as CVE-2025-3000, an alias of the
+  already-ignored PYSEC-2025-194 (confirmed via OSV). pip-audit matches --ignore-vuln on the id it
+  currently reports and switched from the PYSEC to the CVE alias, so the existing ignore stopped
+  matching. Add --ignore-vuln CVE-2025-3000 (torch has no fixed release; optional gpu/bench extra).
+  - mypy: numpy ships a py.typed stub using PEP 695 `type` statements (3.12+ syntax). The gate
+  targets python_version=3.11, so mypy aborts with a hard syntax error on numpy's stub before
+  checking our code (CI's unpinned mypy 2.1.0 hits it). Skip following numpy via
+  [[tool.mypy.overrides]] (Any); we don't type-check numpy internals.
+
+Verified local: mypy (locked 1.19.1 + 2.1.0) clean on 63 files; audit-workflow contract test passes;
+  audit.yml valid YAML.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.13.39 (2026-06-11)
 
 ### Bug Fixes
