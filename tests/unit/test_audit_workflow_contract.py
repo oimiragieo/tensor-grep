@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -17,7 +18,8 @@ def test_audit_workflow_checks_out_pull_request_head_ref() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
 
-    assert "uses: actions/checkout@v6" in workflow
+    # checkout is SHA-pinned for supply-chain hardening; the `# v6` comment keeps Dependabot updating it.
+    assert re.search(r"uses: actions/checkout@[0-9a-f]{40} # v6", workflow)
     assert (
         "repository: ${{ github.event_name == 'pull_request' && "
         "github.event.pull_request.head.repo.full_name || github.repository }}"

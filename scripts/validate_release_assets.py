@@ -30,6 +30,38 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _normalize_pinned_actions(content: str) -> str:
+    """Rewrite SHA-pinned action refs (``owner/repo@<40hex> # vX``) back to their logical tag
+    (``owner/repo@vX``) for VALIDATION ONLY, so the workflow-content checks keep asserting against
+    the version comment rather than the (intentionally pinned) commit SHA. The raw workflow files
+    stay SHA-pinned; ``validate_actions_sha_pinned`` separately enforces that they ARE pinned.
+    """
+    return re.sub(r"@[0-9a-f]{40} # (\S+)", r"@\1", content)
+
+
+def validate_actions_sha_pinned() -> list[str]:
+    """Every third-party GitHub Action ``uses:`` must be pinned to a full 40-hex commit SHA
+    (supply-chain hardening — tags/branches are mutable). Exempt: ``dtolnay/rust-toolchain``
+    (``@stable`` is a moving ref by design that resolves to the latest Rust toolchain) and local
+    reusable workflows (``./...``). The ``# vX`` version comment keeps Dependabot updating the pins.
+    """
+    errors: list[str] = []
+    exempt_prefixes = ("dtolnay/rust-toolchain",)
+    workflows_dir = ROOT / ".github" / "workflows"
+    for workflow in sorted(workflows_dir.glob("*.yml")):
+        content = workflow.read_text(encoding="utf-8")
+        for match in re.finditer(r"uses:\s*([^\s@]+)@([^\s#]+)", content):
+            action, ref = match.group(1), match.group(2)
+            if action.startswith("./") or any(action.startswith(p) for p in exempt_prefixes):
+                continue
+            if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                errors.append(
+                    f"{workflow.name}: third-party action `{action}@{ref}` must be pinned to a "
+                    "full 40-hex commit SHA (add `# vX` so Dependabot keeps it updated)"
+                )
+    return errors
+
+
 def _version_from_pyproject() -> str:
     data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     return str(data["project"]["version"])
@@ -175,6 +207,7 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
 
 
 def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
+    ci_workflow = _normalize_pinned_actions(ci_workflow)
     errors: list[str] = []
     for expected in (
         "release-intent:",
@@ -1414,6 +1447,7 @@ def validate_dependabot_config(*, dependabot_content: str) -> list[str]:
 
 
 def validate_public_gpu_proof_workflow_content(*, workflow_content: str) -> list[str]:
+    workflow_content = _normalize_pinned_actions(workflow_content)
     errors: list[str] = []
     try:
         parsed = yaml.safe_load(workflow_content) or {}
@@ -1496,6 +1530,7 @@ def validate_public_gpu_proof_workflow_content(*, workflow_content: str) -> list
 
 
 def validate_dependabot_automation_workflow_content(*, workflow_content: str) -> list[str]:
+    workflow_content = _normalize_pinned_actions(workflow_content)
     errors: list[str] = []
     for expected in (
         "name: Dependabot Automation",
@@ -1632,6 +1667,7 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
 
 
 def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
+    workflow_content = _normalize_pinned_actions(workflow_content)
     errors: list[str] = []
     for expected in (
         "name: Security Audit",
@@ -2292,6 +2328,7 @@ def validate_benchmarks_docs(*, benchmarks_content: str) -> list[str]:
 
 
 def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
+    release_workflow = _normalize_pinned_actions(release_workflow)
     errors: list[str] = []
     for expected in (
         "on:",
@@ -3479,6 +3516,8 @@ def validate_all() -> list[str]:
     errors.extend(
         validate_dependabot_automation_workflow_content(workflow_content=dependabot_workflow)
     )
+
+    errors.extend(validate_actions_sha_pinned())
 
     package_manager_runbook = _read(ROOT / "docs" / "package_manager_publish.md")
     release_checklist = _read(ROOT / "docs" / "RELEASE_CHECKLIST.md")
