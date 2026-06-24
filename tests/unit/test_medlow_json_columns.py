@@ -184,3 +184,33 @@ class TestNdjsonFormatterUnchanged:
         row = json.loads(rows[0])
         # _match_payload(match, config=None) → range path → column=3
         assert row["column"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Byte-offset column parity (audit MED): ripgrep, --vimgrep and --json all emit
+# BYTE columns, not character indices. Non-ASCII bytes before the match must
+# advance the reported column by their UTF-8 width, matching real ripgrep.
+# ---------------------------------------------------------------------------
+
+
+class TestColumnByteOffsetParity:
+    def test_json_pattern_column_is_byte_offset_for_nonascii(self):
+        # "café " is 5 codepoints but 6 UTF-8 bytes (é is 2 bytes); the match 'x' is
+        # at char index 5 / byte 6, so the 1-based column must be 7 (rg parity), not 6.
+        match = _match_no_range("café x")
+        config = SearchConfig(query_pattern="x", fixed_strings=True)
+        assert _column_for_match(match, config) == 7
+
+    def test_json_pattern_column_unchanged_for_ascii(self):
+        # ASCII: byte offset == char index, so existing behavior is preserved.
+        match = _match_no_range("hello world")
+        config = SearchConfig(query_pattern="world", fixed_strings=True)
+        assert _column_for_match(match, config) == 7
+
+    def test_ripgrep_pattern_column_is_byte_offset_for_nonascii(self):
+        from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+
+        config = SearchConfig(query_pattern="x", fixed_strings=True)
+        fmt = RipgrepFormatter(config=config)
+        match = _match_no_range("café x")
+        assert fmt._column_for_match(match) == 7

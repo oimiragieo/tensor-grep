@@ -67,7 +67,11 @@ class RipgrepFormatter(OutputFormatter):
                 index = -1 if found is None else found.start()
             except re.error:
                 index = match.text.find(pattern)
-        return index + 1 if index >= 0 else 1
+        if index < 0:
+            return 1
+        # ripgrep/--vimgrep columns are BYTE offsets, not character indices: advance
+        # by the UTF-8 width of the text before the match (audit MED parity).
+        return len(match.text[:index].encode("utf-8")) + 1
 
     def format(self, result: SearchResult) -> str:
         lines = []

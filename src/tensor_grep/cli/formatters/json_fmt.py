@@ -45,7 +45,11 @@ def _column_for_match(match: MatchLine, config: SearchConfig | None = None) -> i
             index = -1 if found is None else found.start()
         except re.error:
             index = match.text.find(pattern)
-    return index + 1 if index >= 0 else None
+    if index < 0:
+        return None
+    # ripgrep/--vimgrep/--json columns are BYTE offsets, not character indices:
+    # advance by the UTF-8 width of the text before the match (audit MED parity).
+    return len(match.text[:index].encode("utf-8")) + 1
 
 
 def _routing_gpu_chunk_plan(result: SearchResult) -> list[dict[str, int]]:
