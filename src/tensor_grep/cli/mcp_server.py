@@ -241,6 +241,19 @@ def _rewrite_error(message: str, *, code: str, retryable: bool | None = None) ->
     )
 
 
+def _mcp_validation_commands_allowed() -> bool:
+    """Whether lint_cmd/test_cmd may run over the MCP surface.
+
+    These parameters execute a free-form shell command (sh -c / cmd /C) in the
+    native apply path. Over the MCP trust boundary the tool arguments can be
+    steered by untrusted repo content / prompt injection, so this shell-exec
+    capability ships default-OFF (Enablement Discipline) and must be explicitly
+    enabled by the operator via TG_MCP_ALLOW_VALIDATION_COMMANDS.
+    """
+    value = os.environ.get("TG_MCP_ALLOW_VALIDATION_COMMANDS", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # audit A2: native rewrite failures previously collapsed to code="invalid_input"
 # regardless of cause, which makes an LLM caller retry a valid pattern when the
 # real failure was environmental. Classify the native stderr/exit so genuinely
@@ -3117,7 +3130,10 @@ def tg_rewrite_apply(
         audit_manifest: Optional path for a deterministic rewrite audit manifest.
         audit_signing_key: Optional path to an HMAC signing key for the audit manifest.
         lint_cmd: Optional command to run after apply/verify for structured lint validation.
+            Executes a shell command; disabled on the MCP surface unless the operator
+            sets TG_MCP_ALLOW_VALIDATION_COMMANDS=1 (rejected with code="unsupported_option").
         test_cmd: Optional command to run after apply/verify for structured test validation.
+            Gated identically to lint_cmd via TG_MCP_ALLOW_VALIDATION_COMMANDS.
         policy: Optional path to an apply policy JSON file for post-apply checks and rollback.
         expected_plan_digest: Optional plan_digest from a prior tg_rewrite_plan. When
             supplied, the apply is refused with code="plan_drift" if the recomputed
@@ -3126,6 +3142,18 @@ def tg_rewrite_apply(
             When supplied, the apply is refused with code="plan_drift" if the current
             tree no longer yields exactly this many edits.
     """
+    # Audit HIGH (2026-06-24): lint_cmd/test_cmd execute a free-form shell command
+    # in the native apply path. Over the MCP trust boundary (agent-steerable args)
+    # that is an RCE primitive, so refuse them unless the operator explicitly opts in.
+    # The agent-safe edit loop does not require validation commands.
+    if (lint_cmd is not None or test_cmd is not None) and not _mcp_validation_commands_allowed():
+        return _rewrite_error(
+            "lint_cmd/test_cmd execute a shell command and are disabled on the MCP "
+            "surface by default. Set TG_MCP_ALLOW_VALIDATION_COMMANDS=1 in the server "
+            "environment to opt in (the agent-safe edit loop does not require them).",
+            code="unsupported_option",
+            retryable=False,
+        )
     payload, _exit_code = execute_rewrite_apply_json(
         pattern=pattern,
         replacement=replacement,
