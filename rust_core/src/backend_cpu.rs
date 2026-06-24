@@ -132,7 +132,7 @@ impl CpuBackend {
                 let is_match = memmem::find(line_bytes, pattern).is_some();
                 let should_include = if invert_match { !is_match } else { is_match };
 
-                if should_include && !line_bytes.is_empty() {
+                if should_include {
                     results.push(CpuMatch {
                         file: path.clone(),
                         line: line_num,
@@ -149,7 +149,7 @@ impl CpuBackend {
             let is_match = memmem::find(line_bytes, pattern).is_some();
             let should_include = if invert_match { !is_match } else { is_match };
 
-            if should_include && !line_bytes.is_empty() {
+            if should_include {
                 results.push(CpuMatch {
                     file: path.clone(),
                     line: line_num,
@@ -180,7 +180,7 @@ impl CpuBackend {
                 let is_match = re.is_match(line_bytes);
                 let should_include = if invert_match { !is_match } else { is_match };
 
-                if should_include && !line_bytes.is_empty() {
+                if should_include {
                     results.push(CpuMatch {
                         file: path.clone(),
                         line: line_num,
@@ -197,7 +197,7 @@ impl CpuBackend {
             let is_match = re.is_match(line_bytes);
             let should_include = if invert_match { !is_match } else { is_match };
 
-            if should_include && !line_bytes.is_empty() {
+            if should_include {
                 results.push(CpuMatch {
                     file: path.clone(),
                     line: line_num,
@@ -520,10 +520,20 @@ impl CpuBackend {
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // For ripgrep parity on count matches, we count MATCHING LINES, not total occurrences.
-        // But for massive speedup without line splitting, we can use par_split
-        let count = mmap
+        // grep's line model: a trailing '\n' terminates the last line without adding a phantom
+        // empty line, but interior empty lines ARE lines and must be counted under -v. Strip a
+        // single trailing '\n', then never drop empty lines (an empty line cannot match a
+        // non-empty pattern, so non-invert counts are unaffected). audit MED.
+        if mmap.is_empty() {
+            return Ok(0);
+        }
+        let content: &[u8] = if mmap.last() == Some(&b'\n') {
+            &mmap[..mmap.len() - 1]
+        } else {
+            &mmap[..]
+        };
+        let count = content
             .par_split(|&b| b == b'\n')
-            .filter(|line_bytes| !line_bytes.is_empty()) // Prevent counting trailing empty split
             .filter(|line_bytes| {
                 let is_match = memmem::find(line_bytes, pattern).is_some();
                 if invert_match {
@@ -546,9 +556,18 @@ impl CpuBackend {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
-        let count = mmap
+        // See count_file_memmem: strip a single trailing '\n', keep interior empties so -v
+        // counts blank lines (audit MED).
+        if mmap.is_empty() {
+            return Ok(0);
+        }
+        let content: &[u8] = if mmap.last() == Some(&b'\n') {
+            &mmap[..mmap.len() - 1]
+        } else {
+            &mmap[..]
+        };
+        let count = content
             .par_split(|&b| b == b'\n')
-            .filter(|line_bytes| !line_bytes.is_empty()) // Prevent counting trailing empty split
             .filter(|line_bytes| {
                 let is_match = re.is_match(line_bytes);
                 if invert_match {
