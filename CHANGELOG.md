@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v1.13.41 (2026-06-24)
+
+### Bug Fixes
+
+- **security**: Native C3 guard bypass + index deserializer DoS clamp (audit batch 2)
+  ([#260](https://github.com/oimiragieo/tensor-grep/pull/260),
+  [`afb4014`](https://github.com/oimiragieo/tensor-grep/commit/afb40141a0eeeb086f6b93b94e7d295696b8978f))
+
+* fix(native): C3 guard must stop at `--` so `--format rg` cannot be smuggled (audit MED)
+
+The native json_aggregate_render_flag_conflicts allow-check scanned ALL args for `--format rg` /
+  `--format=rg` without stopping at the `--` end-of-options token, while the conflict-collection
+  loop below it correctly breaks on `--`. So `tg search --json -b -- --format rg PATTERN` matched
+  the literal `--format rg` (a search pattern after `--`, not the flag), returned "no conflict", and
+  the genuine `-b` render conflict before `--` was suppressed -- delegating the --json+render combo
+  to the Python sidecar and re-opening the C3 fork-bomb against a guard-less/stale Python.
+
+Fix: break the allow-check loop on `--`, mirroring the conflict loop.
+
+Test (TDD): a render conflict before `--` with `--format rg`/`--format=rg` smuggled after `--` now
+  correctly reports `["-b"]`. cargo test (3 passed) + clippy -D warnings clean.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(index): clamp length-prefixed allocations in the index deserializer (audit MED)
+
+bincode_deserialize sized three containers (files Vec, postings HashMap, per-trigram entries Vec)
+  directly from unvalidated u32 counts read out of the index file. A crafted or corrupt
+  `.tensor-grep` index declaring ~4 billion entries forced a multi-GB Vec::with_capacity,
+  OOM-aborting the process instead of returning the tool's normal graceful "corrupt index" recovery
+  -- a DoS triggerable by searching a repo that ships a poisoned index.
+
+Add bounded_capacity(declared, data, pos) clamping each pre-allocation to the bytes actually
+  remaining (every element consumes >= 1 byte, so a larger count is corrupt); the read loop then
+  fails cleanly when the data runs out.
+
+Test (TDD): a hostile u32::MAX file count with truncated data now returns Err instead of
+  OOM-aborting; all 25 index unit tests (incl. round-trip) still pass; clippy -D warnings clean.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.13.40 (2026-06-24)
 
 ### Bug Fixes
