@@ -1,6 +1,83 @@
 # CHANGELOG
 
 
+## v1.13.43 (2026-06-25)
+
+### Bug Fixes
+
+- **rust**: Bump pyo3 0.24->0.29 (+ arrow 59, pyo3-arrow 0.19) to clear RUSTSEC-2026-0176/0177
+  ([#265](https://github.com/oimiragieo/tensor-grep/pull/265),
+  [`561aa99`](https://github.com/oimiragieo/tensor-grep/commit/561aa99a4deba1b8b4a6dcf1d2e6125555243c14))
+
+The pyo3 0.24 advisories RUSTSEC-2026-0176 (OOB read in PyList/PyTuple nth/nth_back) and
+  RUSTSEC-2026-0177 (missing Sync bound on PyCFunction::new_closure) were SUPPRESSED because pyo3
+  was pinned transitively by pyo3-arrow 0.9 + numpy 0.24. pyo3-arrow 0.19 now bridges pyo3 0.29 +
+  arrow 59, so the whole Arrow-FFI stack moves in lockstep and the suppressions are removed.
+
+- rust_core/Cargo.toml: pyo3 0.24.1->0.29.0, arrow/arrow-array/arrow-buffer/arrow-schema 55->59,
+  pyo3-arrow 0.9->0.19. - backend_gpu.rs: Python::with_gil->Python::attach (3 sites) and
+  prepare_freethreaded_python()-> Python::initialize() (pyo3 0.28 renames; the old names were
+  removed in 0.29). - lib.rs: read_mmap_to_arrow[_chunked] now return Py<PyAny> via .unbind()
+  (PyObject alias + .into() are deprecated in 0.29); py.allow_threads->py.detach;
+  #[pymodule(gil_used = true)] is a conservative free-threaded opt-out until a Send+Sync audit. -
+  deny.toml + audit.yml: removed the RUSTSEC-2026-0176/0177 ignores; the gate now runs strict.
+
+Verified locally: cargo check + clippy clean; cargo audit (NO ignores) + cargo deny -> "advisories
+  ok, bans ok, licenses ok, sources ok"; cargo test 38/39 (the lone failure is a pre-existing local
+  Python-env _sre.MAGIC mismatch in a test's fake-rg helper, unrelated to this change). Migration
+  was Exa-researched and adversarially council-reviewed (3 lenses) before building.
+
+Follow-up: audit RustBackend + the module functions for Send+Sync, then relax gil_used to false.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **skill**: De-brittle release-history governance; trim stale SKILL.md ledger
+  ([#264](https://github.com/oimiragieo/tensor-grep/pull/264),
+  [`39bc49b`](https://github.com/oimiragieo/tensor-grep/commit/39bc49b8458acd6de2721803174226f112237ed4))
+
+The docs-governance tests pinned a hand-maintained per-release proof ledger (specific PR numbers,
+  commit hashes, and CI run IDs) inside SKILL.md and across the handoff docs. That ledger inevitably
+  drifted -- its entries had frozen at v1.13.23 while the product shipped through v1.13.42 -- and
+  the tests forced every release to hand-edit proof strings to stay green. This replaces that
+  anti-pattern with the current-release facts + a pointer to CHANGELOG.md / GitHub releases as the
+  single source of release history.
+
+- SKILL.md: removed the 40-entry "Recent release history" list, the per-slice dogfood ledger, and
+  the two stale "release proof" bullets (~66 lines); the current-release facts now link to
+  CHANGELOG.md. - test_public_docs_governance.py: dropped the per-release
+  proof/commit-hash/CI-run-ID pins from test_handoff..., test_..._docs_merge_state, and
+  test_..._cli_syntax; deleted test_skill_ledger_should_record_root_forwarding_release_proof (it
+  pinned one stale slice entry). ALL behavioral / current-release / public-CLI-syntax / capability
+  checks are retained.
+
+43 governance tests pass; ruff + format clean. No product behavior change (docs only -> no release).
+  Follow-up (separate PR): the same ledger trim for AGENTS.md / SESSION_HANDOFF.md /
+  CONTINUATION_PLAN.md (now harmless since the tests no longer pin them).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **skill,help**: Align SKILL.md with v1.13.42 + document the MCP validation-command gate
+  ([#263](https://github.com/oimiragieo/tensor-grep/pull/263),
+  [`cc7aa74`](https://github.com/oimiragieo/tensor-grep/commit/cc7aa748859aea1c2081e72212cc5481e0b59f34))
+
+- SKILL.md "Current State": fix the stale date (2026-05-26 -> 2026-06-25) and add a concise "Recent
+  v1.13.40-v1.13.42 hardening" summary -- verified upgrades/installs (incl. Homebrew checksum), the
+  MCP `tg_rewrite_apply` validation-command gate, grep `-v` blank-line + byte-column parity,
+  audit-manifest tamper-evidence, index-deserializer DoS hardening, and supply-chain pins. The
+  governance-pinned release ledger and proof strings are left intact (those are enforced by
+  test_public_docs_governance.py; restructuring them is a separate maintainer decision). - tg
+  --help: document the new `TG_MCP_ALLOW_VALIDATION_COMMANDS` operator env var in the env-overrides
+  list, and add it to the top-level help contract (test_cli_modes) so it can't silently regress.
+
+Audited the rest of `tg --help`: 451 Option/Argument definitions, ZERO missing `help=`, all 39
+  commands listed and described -- it was already accurate, so no other changes were needed.
+  docs-governance + help-contract suites pass; ruff + mypy clean.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.13.42 (2026-06-25)
 
 ### Bug Fixes
