@@ -4,6 +4,28 @@
 
 # tensor-grep (tg)
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/tensor-grep)](https://pypi.org/project/tensor-grep/)
+
+**Fast AST/semantic code-context CLI for AI agents and developers.** Get blast-radius, callers, and structural code context from any codebase — in milliseconds, with no server.
+
+```bash
+pip install tensor-grep        # or: uvx tensor-grep
+
+tg blast-radius src/api.py::compress_text   # what does this function affect?
+tg callers src/api.py::compress_text         # who calls this?
+tg context src/ "authentication flow"        # semantic context capsule for agents
+```
+
+## Powered by / powers
+
+tensor-grep is the open-source AST engine behind **[gotcontext.ai](https://gotcontext.ai)** — the hosted MCP gateway that gives your AI tools compressed code context with one API key.
+
+- **This CLI:** install locally, run on your own codebase, free forever (Apache-2.0).
+- **gotcontext.ai:** the hosted version adds MCP Streamable HTTP, semantic compression (cut token usage 40–85%), Knowledge Hub RAG, and team/project management. [Try it free →](https://gotcontext.ai)
+
+---
+
 Native search and rewrite tool for large text corpora and codebases. `tensor-grep` combines a Rust-native CPU text engine, Rust-native AST search/rewrite, indexed repeated-query acceleration, and a benchmark-governed native GPU path for large workloads.
 
 `tensor-grep` has first class support on Windows, macOS and Linux. The native CPU engine embeds ripgrep's grep crates directly (no subprocess overhead) with chunk parallelism for large files. The native GPU engine uses Rust-native CUDA via `cudarc` with NVRTC JIT compilation, CUDA streams, pinned memory, and CUDA graphs. GPU routing stays opt-in unless local calibration proves a real end-to-end crossover.
