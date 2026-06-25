@@ -37,6 +37,8 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
             "class TensorGrep < Formula\n"
             '  TENSOR_GREP_VERSION = "1.2.3"\n'
             "  version TENSOR_GREP_VERSION\n"
+            '  sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n'
+            '  sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n'
             "end\n"
         ),
         encoding="utf-8",
@@ -130,3 +132,29 @@ def test_should_fail_when_summary_missing_required_paths(tmp_path: Path):
     assert any(
         "Bundle summary must include tg --version smoke verification" in err for err in errors
     )
+
+
+def test_smoke_test_requires_binary_sha256_only_at_release_time(tmp_path: Path):
+    """audit MED: the binary sha256 is required only when require_binary_sha256 is set (the
+    release/publish job, which has real binaries + CHECKSUMS). PR-readiness (no binaries -> the
+    formula is legitimately unstamped) must NOT fail."""
+    module = _load_module()
+    bundle = _write_bundle(tmp_path, "1.2.3")
+    brew = bundle / "homebrew-tap" / "Formula" / "tensor-grep.rb"
+    brew.write_text(
+        "class TensorGrep < Formula\n"
+        '  TENSOR_GREP_VERSION = "1.2.3"\n'
+        "  version TENSOR_GREP_VERSION\n"
+        "end\n",
+        encoding="utf-8",
+    )
+    # PR-readiness: unstamped formula tolerated.
+    readiness = module.smoke_test_package_manager_bundle(
+        bundle_dir=bundle, expected_version="1.2.3"
+    )
+    assert not any("sha256" in err for err in readiness)
+    # release-time: stamped per-OS sha256 required.
+    release = module.smoke_test_package_manager_bundle(
+        bundle_dir=bundle, expected_version="1.2.3", require_binary_sha256=True
+    )
+    assert any("must carry a 64-hex sha256" in err for err in release)

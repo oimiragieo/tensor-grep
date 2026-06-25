@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 
 try:
     import tomllib
@@ -32,7 +33,9 @@ def _version_from_pyproject() -> str:
     return str(data["project"]["version"])
 
 
-def smoke_test_package_manager_bundle(*, bundle_dir: Path, expected_version: str) -> list[str]:
+def smoke_test_package_manager_bundle(
+    *, bundle_dir: Path, expected_version: str, require_binary_sha256: bool = False
+) -> list[str]:
     errors: list[str] = []
     validators = _load_release_assets_module()
 
@@ -72,6 +75,17 @@ def smoke_test_package_manager_bundle(*, bundle_dir: Path, expected_version: str
             brew_content=brew_content, py_version=expected_version
         )
     )
+    # audit MED: at RELEASE/publish time (real binaries + CHECKSUMS exist, signalled by an explicit
+    # require_binary_sha256) the SHIPPED Homebrew formula must carry a 64-hex sha256 for each OS
+    # binary so `brew install` verifies the download. At PR-readiness time there are no binaries to
+    # checksum, so the formula is legitimately unstamped and the check is skipped.
+    brew_sha_digests = re.findall(r'(?m)^\s*sha256 "([0-9a-f]{64})"', brew_content)
+    if require_binary_sha256 and len(brew_sha_digests) < 2:
+        errors.append(
+            "Bundle Homebrew formula must carry a 64-hex sha256 for each OS binary "
+            f"(found {len(brew_sha_digests)}); expected the macOS and Linux digests stamped "
+            "from CHECKSUMS.txt"
+        )
     errors.extend(
         validators.validate_winget_manifest(
             winget_content=winget_content, py_version=expected_version
@@ -132,7 +146,11 @@ def main() -> int:
 
     expected_version = args.expected_version or _version_from_pyproject()
     errors = smoke_test_package_manager_bundle(
-        bundle_dir=args.bundle_dir, expected_version=expected_version
+        bundle_dir=args.bundle_dir,
+        expected_version=expected_version,
+        # The release/publish job supplies an explicit --expected-version (and real CHECKSUMS, so
+        # the formula is stamped); PR-readiness supplies neither, so the binary sha256 is not required.
+        require_binary_sha256=args.expected_version is not None,
     )
     if errors:
         for err in errors:

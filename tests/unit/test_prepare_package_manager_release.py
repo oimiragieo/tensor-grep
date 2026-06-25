@@ -130,3 +130,28 @@ def test_prepare_bundle_check_mode_fails_on_manifest_drift(tmp_path):
     module.ROOT = root
     rc = module.prepare_bundle(output_dir=root / "artifacts" / "bundle", check_only=True)
     assert rc == 1
+
+
+def test_stamp_homebrew_sha256_inserts_digest_after_each_os_url():
+    """audit MED: the Homebrew formula stamper inserts a sha256 after each per-OS url so the
+    published formula verifies the downloaded binary."""
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "prepare_package_manager_release.py"
+    spec = importlib.util.spec_from_file_location("prepare_package_manager_release", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    formula = (
+        "  if OS.mac?\n"
+        '    url "https://github.com/oimiragieo/tensor-grep/releases/download/'
+        'v#{version}/tg-macos-amd64-cpu"\n'
+        "  elsif OS.linux?\n"
+        '    url "https://github.com/oimiragieo/tensor-grep/releases/download/'
+        'v#{version}/tg-linux-amd64-cpu"\n'
+        "  end\n"
+    )
+    mac, lin = "a" * 64, "b" * 64
+    stamped = module._stamp_homebrew_sha256(brew_content=formula, mac_sha256=mac, linux_sha256=lin)
+    assert f'tg-macos-amd64-cpu"\n    sha256 "{mac}"' in stamped
+    assert f'tg-linux-amd64-cpu"\n    sha256 "{lin}"' in stamped

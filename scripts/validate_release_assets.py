@@ -3261,6 +3261,17 @@ def validate_homebrew_formula_contract(*, brew_content: str, py_version: str) ->
     if "version TENSOR_GREP_VERSION" not in brew_content:
         errors.append("Homebrew formula must declare `version TENSOR_GREP_VERSION`")
 
+    # audit MED: a Homebrew formula with a versioned URL must carry a 64-hex sha256 so `brew
+    # install` verifies the binary. The source template carries none (the binary digests only
+    # exist post-build; they are stamped into the published bundle formula from CHECKSUMS.txt).
+    # Validate IF-PRESENT: any sha256 that exists must be a lowercase 64-hex digest.
+    for match in re.finditer(r'(?m)^\s*sha256 "([^"]*)"', brew_content):
+        digest = match.group(1)
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            errors.append(
+                f"Homebrew formula sha256 must be a lowercase 64-hex digest, found '{digest}'"
+            )
+
     return errors
 
 

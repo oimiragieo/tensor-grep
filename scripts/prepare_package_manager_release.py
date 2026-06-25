@@ -13,6 +13,8 @@ except ModuleNotFoundError:  # pragma: no cover
 from pathlib import Path
 
 WINDOWS_NATIVE_ASSET = "tg-windows-amd64-cpu.exe"
+MACOS_NATIVE_ASSET = "tg-macos-amd64-cpu"
+LINUX_NATIVE_ASSET = "tg-linux-amd64-cpu"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parents[0]
@@ -165,6 +167,40 @@ def _stamp_winget_installer_sha(*, winget_content: str, installer_sha256: str) -
     )
 
 
+def _asset_sha_from_checksums(checksums_path: Path | None, asset_name: str) -> str | None:
+    """Return the lowercased SHA256 for ``asset_name`` from a ``<sha>  <asset>`` CHECKSUMS file."""
+    if checksums_path is None or not checksums_path.exists():
+        return None
+    for raw_line in checksums_path.read_text(encoding="utf-8").splitlines():
+        parts = raw_line.split()
+        if len(parts) == 2 and parts[1] == asset_name:
+            digest = parts[0]
+            if re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+                return digest.lower()
+            raise ValueError(f"Invalid SHA256 digest for {asset_name}")
+    raise ValueError(f"Missing {asset_name} entry in {checksums_path}")
+
+
+def _stamp_homebrew_sha256(*, brew_content: str, mac_sha256: str, linux_sha256: str) -> str:
+    """Insert a ``sha256 "<digest>"`` line after each per-OS ``url`` in the formula so the
+    published Homebrew formula verifies the downloaded binary (audit MED). The source template
+    carries no sha256 (the binary digests only exist post-build); they are stamped here at bundle
+    time from CHECKSUMS.txt, mirroring the winget InstallerSha256 stamping above.
+    """
+    content = brew_content
+    for asset, digest in ((MACOS_NATIVE_ASSET, mac_sha256), (LINUX_NATIVE_ASSET, linux_sha256)):
+        content = re.sub(
+            r'(?m)^(\s*)(url "https://github\.com/oimiragieo/tensor-grep/releases/download/'
+            rf'v[^"]+/{re.escape(asset)}")\s*$',
+            lambda match, d=digest: (
+                f'{match.group(1)}{match.group(2)}\n{match.group(1)}sha256 "{d}"'
+            ),
+            content,
+            count=1,
+        )
+    return content
+
+
 def prepare_bundle(
     *, output_dir: Path, check_only: bool, release_checksums: Path | None = None
 ) -> int:
@@ -181,6 +217,8 @@ def prepare_bundle(
 
     try:
         windows_installer_sha = _windows_installer_sha_from_checksums(release_checksums)
+        macos_native_sha = _asset_sha_from_checksums(release_checksums, MACOS_NATIVE_ASSET)
+        linux_native_sha = _asset_sha_from_checksums(release_checksums, LINUX_NATIVE_ASSET)
     except ValueError as exc:
         print(f"ERROR: {exc}")
         return 1
@@ -206,7 +244,14 @@ def prepare_bundle(
 
     brew_dest.parent.mkdir(parents=True, exist_ok=True)
     winget_dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(brew_src, brew_dest)
+    brew_content = _read(brew_src)
+    if macos_native_sha is not None and linux_native_sha is not None:
+        brew_content = _stamp_homebrew_sha256(
+            brew_content=brew_content,
+            mac_sha256=macos_native_sha,
+            linux_sha256=linux_native_sha,
+        )
+    brew_dest.write_text(brew_content, encoding="utf-8")
     if winget_src_dir.is_dir():
         for manifest_path in sorted(winget_src_dir.iterdir()):
             if manifest_path.is_file():
