@@ -537,7 +537,8 @@ def validate_ast_run(stdout: str, _repo_root: Path, _expected_version: str) -> N
 def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -> None:
     required_docs = [
         repo_root / "AGENTS.md",
-        repo_root / "README.md",
+        # README.md is the marketing-facing doc and no longer duplicates these technical claims;
+        # they remain governed in the dedicated docs below (AGENTS/SKILL/CONTRACTS/handoff).
         repo_root / "SKILL.md",
         repo_root / "docs" / "SESSION_HANDOFF.md",
         repo_root / "docs" / "CONTINUATION_PLAN.md",
@@ -614,7 +615,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
                     )
 
     gpu_docs = [
-        repo_root / "README.md",
+        # README.md excluded (marketing doc); the GPU claims are governed in benchmarks/gpu_crossover/PAPER.
         repo_root / "docs" / "benchmarks.md",
         repo_root / "docs" / "gpu_crossover.md",
         repo_root / "docs" / "PAPER.md",
