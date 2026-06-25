@@ -1,6 +1,148 @@
 # CHANGELOG
 
 
+## v1.13.44 (2026-06-25)
+
+### Bug Fixes
+
+- **docs**: Green main after the README rewrite (restore enterprise links + relax redundant README
+  governance) ([#269](https://github.com/oimiragieo/tensor-grep/pull/269),
+  [`fc1f4b9`](https://github.com/oimiragieo/tensor-grep/commit/fc1f4b9a0f00da0919445cdd57cc29641ed14bbb))
+
+* fix(docs): green main after the README rewrite — restore enterprise-doc links + relax redundant
+  README governance
+
+The marketing README rewrite (force-pushed to main) dropped the enterprise-doc links + the detailed
+  feature/contract/release-state text that test_public_docs_governance +
+  test_enterprise_docs_governance pinned in the README, leaving main red on 11 governance tests.
+
+- README.md: restored the docs/CI_PIPELINE.md / SUPPORT_MATRIX.md / HOTFIX_PROCEDURE.md links and
+  the '## Future Work' section (recovered verbatim from the pre-rewrite README; the docs exist +
+  CONTRACTS references them). - test_public_docs_governance.py: relaxed the redundant README-content
+  pins. Every relaxed string is still governed by an assertion on a dedicated doc (SKILL.md /
+  AGENTS.md / docs/CONTRACTS.md / SESSION_HANDOFF.md / gpu_crossover.md) in the same file. Kept all
+  structural README checks (canonical-doc links), negative guards, and the full dedicated-doc
+  governance. No content lost.
+
+58 governance tests pass (was 10 failed); ruff clean.
+
+* fix(release): relax validate_readme_contract to match the marketing README
+
+The README rewrite changed wording the release validator over-pinned: '## Canonical Docs' (now
+  lowercase), the internal RELEASE_CHECKLIST link (dropped from the user-facing canonical-docs
+  table), the exact platform sentence, and the 'public contracts in...' phrase. The README still
+  carries the substance (all canonical-doc LINKS, platform support, harness_api link), so: heading
+  match is now case-insensitive, the RELEASE_CHECKLIST README requirement is dropped, platform
+  support accepts the README's wording, and harness_api is checked by link presence.
+  Banned-positioning + GPU-asset-honesty checks unchanged. Updated the 2 fixture unit tests
+  accordingly.
+
+* fix(test): relax 2 more README-content pins the marketing rewrite changed
+
+CI's full suite (test-python + test-gpu-nvidia run the unit tests) caught 2 README pins my doc-file
+  sweep missed: test_harness_cookbook (tg_mcp_capabilities — governed in docs/harness_api.md, which
+  the README links) and test_issue_intake (the 'Reporting Bugs and Requests' heading + intake prose
+  — governed in CONTRIBUTING.md/SECURITY.md; README keeps the issues/new bug-report link).
+  Substantive governance (dedicated-doc + CONTRIBUTING + SECURITY assertions) retained.
+
+* fix(rust): revert #266 free-threading (gil_used=false + frozen) — broke Linux agent-readiness
+
+The release job needs agent-readiness, which has been failing on Linux since #266 (free-threading)
+  merged with its CI cancelled by a force-push — blocking all releases since v1.13.43. The extension
+  imports fine locally + windows-agent-readiness passes, but Linux agent-readiness fails to import
+  the extension. Reverting to the known-green #265 config (gil_used=true, no #[pyclass(frozen)]) to
+  unblock releases. Free-threading is marginal-value and can be re-enabled later behind a full green
+  CI run.
+
+* fix(ci): agent-readiness must use 'uv run --no-sync' (AST deps were re-synced away)
+
+ROOT CAUSE of the release-blocker: the agent-readiness gate ran 'uv run python agent_readiness.py'
+  after 'uv pip install -e ".[dev]"'. Bare 'uv run' re-syncs the env to the DEFAULT dependencies and
+  drops the [dev] optional extras — including tree-sitter — so the AST backend probe failed with 'no
+  AST backend is available' (ConfigurationError). The release job needs agent-readiness, so this
+  blocked every release since v1.13.43. Windows passed only because it runs --only-shell-probes
+  (skips the AST probe). Fix: 'uv run --no-sync' uses the [dev] env as installed. Added a one-line
+  AST-availability print for confirmation.
+
+* fix(ci): install ast-grep CLI in agent-readiness (AST probe had no backend)
+
+ROOT CAUSE (the real one): the agent-readiness gate runs an AST probe that needs an AST backend, but
+  the native AstBackend is GPU-gated (is_available() returns torch.cuda.is_available()), so it's
+  always unavailable on the non-GPU runner. The fallback is the ast-grep CLI wrapper — which the job
+  never installed (only benchmark.yml does). So the probe failed 'no AST backend is available',
+  failing the gate that the release job requires → blocking all releases. Fix: install ast-grep
+  0.41.1 (matching benchmark.yml's pin) before the gate. Windows passed only because it runs
+  --only-shell-probes.
+
+* fix(ci): exclude README from agent_readiness docs-claim-check (the actual gate failure)
+
+THE actual failing check behind the blocked releases: agent_readiness.validate_docs_claims pins
+  detailed technical claims (version, context_consistency, broad generated-root scan, GPU crossover,
+  RTX strings...) in README.md — all removed by the marketing rewrite. (The AST-backend/ast-grep
+  fixes in the prior commits were real and needed, but this docs-claim-check is what failed the
+  gate.) Like the pytest governance relaxation, README is the marketing doc; these claims stay
+  governed in the dedicated docs (AGENTS/SKILL/CONTRACTS/SESSION_HANDOFF +
+  benchmarks/gpu_crossover/PAPER), which remain checked. README excluded from required_docs +
+  gpu_docs.
+
+* fix(ci): keep README version-staleness checks; only exempt it from technical-fragment pins
+
+Follow-up to the docs-claim-check fix: removing README wholesale from validate_docs_claims broke 3
+  tests that verify README stale-version detection (current/latest release prose + GPU dogfood
+  label). Correct scope: README stays in required_docs so version-staleness (current_version_pattern
+  + latest_release_patterns) still runs, but is exempted from the technical-fragment pins the
+  marketing rewrite dropped. The GPU-label staleness test now exercises a dedicated GPU doc
+  (benchmarks.md, which is in gpu_docs) since README no longer carries GPU labels. 38
+  agent_readiness tests pass.
+
+- **rust**: Enable free-threaded Python — gil_used=false + #[pyclass(frozen)]
+  ([#266](https://github.com/oimiragieo/tensor-grep/pull/266),
+  [`9685279`](https://github.com/oimiragieo/tensor-grep/commit/96852798e7710978f0964f19b9c91e3da1d95a9e))
+
+Follow-up to the pyo3 0.29 migration (#265), which conservatively pinned `gil_used = true` pending a
+  Send+Sync audit. Audit done: RustBackend wraps a stateless CpuBackend (a unit struct), the
+  read_mmap_to_arrow[_chunked] #[pyfunction]s hold no shared mutable state, and every pyclass method
+  is &self — so the module is safe under no-GIL (free-threaded, 3.13t+) Python.
+
+- lib.rs: `#[pymodule(gil_used = true)]` -> `#[pymodule(gil_used = false)]`. Loading the extension
+  in a free-threaded interpreter no longer forces the GIL back on for the whole process. - lib.rs:
+  `#[pyclass]` -> `#[pyclass(frozen)]` on RustBackend — drops PyO3's per-instance RefCell
+  borrow-check on every call (small per-call throughput win) and makes the immutability contract
+  explicit.
+
+cargo check + clippy clean. The research lens audited rust_core/src for shared mutable state
+  (statics, OnceCell, Cell/RefCell, thread_local) and found none reachable from the pymodule
+  boundary.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Add Apache-2.0 license, NOTICE, and gotcontext.ai funnel section to README
+  ([`4864716`](https://github.com/oimiragieo/tensor-grep/commit/48647161df8e4cc1a21ce65b1032af618561c137))
+
+Adds the Apache-2.0 LICENSE and NOTICE files (copyright James Hollingsworth). Adds a brief "Quick
+  Start + Powered by / powers" section at the top of README.md pointing developers toward the hosted
+  gotcontext.ai MCP gateway as the capture layer for teams who want compression, KnowledgeHub RAG,
+  and managed tooling on top of the open-source AST engine.
+
+- **readme**: Rewrite README to cover full CLI scope
+  ([`d30f3fd`](https://github.com/oimiragieo/tensor-grep/commit/d30f3fd3dfa47ab09450293f089832c985eba646))
+
+Replaces the narrow "AST code context" positioning with an accurate full-scope description:
+  ripgrep-compatible text search (with honest subset caveat), native AST search/rewrite,
+  indexed/daemon acceleration, AI-agent context capsules, symbol intelligence (defs/refs/callers/
+  blast-radius), security & compliance rule packs with signed audit manifests, edit safety
+  checkpoints, built-in MCP server + LSP, and experimental GPU routing.
+
+Adds CI badge. Keeps logo block, Apache-2.0 + PyPI badges, and the gotcontext.ai funnel section.
+  Removes stale multi-page release-history block (accurate info lives in CHANGELOG / GitHub
+  releases).
+
+- **readme**: Tighten intro, restore issue-form links, replace powered-by section
+  ([`c5bb92c`](https://github.com/oimiragieo/tensor-grep/commit/c5bb92c253a490afe2fb35a1f7d5c33c4b14d339))
+
+
 ## v1.13.43 (2026-06-25)
 
 ### Bug Fixes
