@@ -41,29 +41,29 @@ LATEST_VERIFIED_CODEQL = "26513808787"
 def test_readme_should_point_to_canonical_public_docs() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
 
+    # Structural pointers to canonical docs are the README's job and stay pinned here.
     assert "docs/benchmarks.md" in readme
     assert "docs/tool_comparison.md" in readme
     assert "docs/gpu_crossover.md" in readme
     assert "docs/routing_policy.md" in readme
     assert "docs/harness_api.md" in readme
     assert "docs/harness_cookbook.md" in readme
+    # High-level capability surface the README still advertises.
     assert "tg calibrate" in readme
-    assert "tg search --ndjson" in readme
     assert "tg mcp" in readme
-    assert "tg_agent_capsule" in readme
     assert "native CPU engine" in readme
-    assert "native GPU engine" in readme
     assert "benchmark-governed" in readme
-    assert "100 MB" in readme or "100MB" in readme
-    assert "tg run --rewrite" in readme
-    assert "--apply" in readme
-    assert "atomic temp-file rename contract" in readme
-    assert "multi-project workspace roots" in readme
-    assert "broad generated-root scan" in readme
-    assert "PowerShell double quotes expand `$NAME`" in readme
-    assert "cmd.exe metacharacters" in readme
-    assert "open a session once" in readme
-    assert "daemon-routed edit-plan/context" in readme
+
+    # NOTE: the detailed CLI/contract prose below used to be pinned into the README too. The README
+    # is now a marketing/positioning doc, so those redundant pins were relaxed; each contract is
+    # still governed against its dedicated doc elsewhere in this file / on disk:
+    #   - `tg search --ndjson`, `tg_agent_capsule` -> SKILL.md / AGENTS.md / docs/harness_api.md
+    #   - native GPU engine (`NativeGpuBackend`) -> docs/gpu_crossover.md, docs/routing_policy.md
+    #   - 100 MB large-file/binary skip -> docs/harness_api.md, docs/CONTRACTS.md (binary-skip)
+    #   - `tg run --rewrite` / `--apply` / atomic temp-file rename -> docs/PAPER.md, docs/harness_api.md
+    #   - multi-project workspace roots / broad generated-root scan -> docs/CONTRACTS.md (below)
+    #   - PowerShell `$NAME` expansion / `cmd.exe` metacharacters -> docs/CONTRACTS.md (below)
+    #   - open a session once / daemon-routed edit-plan/context -> docs/CONTRACTS.md (warm-path)
 
 
 def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
@@ -149,7 +149,11 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         "docs/CONTINUATION_PLAN.md": CONTINUATION_PLAN_PATH.read_text(encoding="utf-8"),
     }
 
-    for content in docs.values():
+    # The README is now a marketing/positioning doc; the detailed current-release-state facts below
+    # are governed against the dedicated handoff docs (AGENTS.md / SKILL.md / SESSION_HANDOFF.md /
+    # CONTINUATION_PLAN.md) plus CHANGELOG.md, so README is excluded from these positive content pins.
+    handoff_docs = {path: content for path, content in docs.items() if path != "README.md"}
+    for content in handoff_docs.values():
         assert CURRENT_RELEASE_TAG in content
         assert f"release_docs_current_tag: {_project_release_tag()}" in content
         assert "python scripts/agent_readiness.py" in content
@@ -240,140 +244,23 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "v1.9.2` release hardens edit JSON" in handoff
     assert "v1.9.1` release hardens mixed-language capsule confidence" in handoff
 
-    readme = docs["README.md"]
-    assert "## Current Release State" in readme
-    assert CURRENT_FIX_COMMIT in readme
-    assert CURRENT_FEATURE_COMMIT in readme
-    assert CURRENT_RELEASE_COMMIT in readme
-    assert LATEST_VERIFIED_MAIN_CI in readme
-    assert LATEST_VERIFIED_CODEQL in readme
-    assert LATEST_COMPLETE_RELEASE_COMMIT in readme
-    assert LATEST_COMPLETE_FIX_COMMIT in readme
-    assert CURRENT_GPU_FIX_COMMIT in readme
-    assert CURRENT_DOCS_STAMP_FIX_COMMIT in readme
-    assert CURRENT_MULTIPATTERN_FIX_COMMIT in readme
-    assert f"GitHub release assets for `{LATEST_VERIFIED_RELEASE_TAG}`" in readme
-    assert f"tensor-grep=={LATEST_VERIFIED_RELEASE_TAG.removeprefix('v')}" in readme
-    assert "PyPI latest remains `1.10.10`" in readme
-    assert "rust_binary_version_status = matches" in readme
-    assert "native front door" in readme
-    assert "fresh quoted no-match phrase" in readme
-    assert "tg classify --format json" in readme
-    assert "classification_backend" in readme
-    assert "not a full ast-grep replacement" in readme
-    assert "GPU remains opt-in/experimental" in readme
-    assert "Default `classify` is now deterministic and local" in readme
-    assert "top-level `validation_commands`" in readme
-    assert "local deterministic classifications" in readme
-    assert "path_tg_first_launcher_kind" in readme
-    assert "tg_launcher_command_kind" in readme
-    assert "only initialize selected devices" in readme
-    assert "Actionable Context Capsule" in readme
-    assert "validation_alignment" in readme
-    assert "public managed GPU is not promotion-ready" in readme
-    assert "tg search --json` is tensor-grep aggregate JSON" in readme
-
-    current_closed_heading = f"What `{LATEST_VERIFIED_RELEASE_TAG}` closed:"
-    v1114_heading = "What `v1.11.4` closed:"
-    v1113_heading = "What `v1.11.3` closed:"
-    v1112_heading = "What `v1.11.2` closed:"
-    v1111_heading = "What `v1.11.1` closed:"
-    v1110_failed_heading = "What `v1.11.0` tagged but did not complete:"
-    v11010_heading = "What `v1.10.10` closed:"
-    v1109_heading = "What `v1.10.9` closed:"
-    v1108_heading = "What `v1.10.8` closed:"
-    v1107_heading = "What `v1.10.7` closed:"
-    v1106_heading = "What `v1.10.6` closed:"
-    v1105_heading = "What `v1.10.5` closed:"
-    v1100_heading = "What `v1.10.0` closed:"
-    v1911_heading = "What `v1.9.11` closed:"
-    v1910_heading = "What `v1.9.10` closed:"
-    v199_heading = "What `v1.9.9` closed:"
-    v198_heading = "What `v1.9.8` closed:"
-    v197_heading = "What `v1.9.7` closed:"
-    v196_heading = "What `v1.9.6` closed:"
-    v195_heading = "What `v1.9.5` closed:"
-    v194_heading = "What `v1.9.4` closed:"
-    v193_heading = "What `v1.9.3` closed:"
-    v192_heading = "What `v1.9.2` closed:"
-    follow_up_heading = f"Active post-`{CURRENT_RELEASE_TAG}` follow-up:"
-    current_closed_block = readme.split(current_closed_heading, 1)[1].split(v1114_heading, 1)[0]
-    v1114_closed_block = readme.split(v1114_heading, 1)[1].split(v1113_heading, 1)[0]
-    v1113_closed_block = readme.split(v1113_heading, 1)[1].split(v1112_heading, 1)[0]
-    v1112_closed_block = readme.split(v1112_heading, 1)[1].split(v1111_heading, 1)[0]
-    v1111_closed_block = readme.split(v1111_heading, 1)[1].split(v1110_failed_heading, 1)[0]
-    v1110_failed_block = readme.split(v1110_failed_heading, 1)[1].split(v11010_heading, 1)[0]
-    v11010_closed_block = readme.split(v11010_heading, 1)[1].split(v1109_heading, 1)[0]
-    v1109_closed_block = readme.split(v1109_heading, 1)[1].split(v1108_heading, 1)[0]
-    v1108_closed_block = readme.split(v1108_heading, 1)[1].split(v1107_heading, 1)[0]
-    v1107_closed_block = readme.split(v1107_heading, 1)[1].split(v1106_heading, 1)[0]
-    v1106_closed_block = readme.split(v1106_heading, 1)[1].split(v1105_heading, 1)[0]
-    v1105_closed_block = readme.split(v1105_heading, 1)[1].split(v1100_heading, 1)[0]
-    v1100_closed_block = readme.split(v1100_heading, 1)[1].split(v1911_heading, 1)[0]
-    v1911_closed_block = readme.split(v1911_heading, 1)[1].split(v1910_heading, 1)[0]
-    v1910_closed_block = readme.split(v1910_heading, 1)[1].split(v199_heading, 1)[0]
-    v199_closed_block = readme.split(v199_heading, 1)[1].split(v198_heading, 1)[0]
-    v198_closed_block = readme.split(v198_heading, 1)[1].split(v197_heading, 1)[0]
-    v197_closed_block = readme.split(v197_heading, 1)[1].split(v196_heading, 1)[0]
-    v196_closed_block = readme.split(v196_heading, 1)[1].split(v195_heading, 1)[0]
-    v195_closed_block = readme.split(v195_heading, 1)[1].split(v194_heading, 1)[0]
-    v194_closed_block = readme.split(v194_heading, 1)[1].split(v193_heading, 1)[0]
-    v192_closed_block = readme.split(v192_heading, 1)[1].split("What `v1.9.1` closed:", 1)[0]
-    follow_up_block = readme.split(follow_up_heading, 1)[1]
-    assert "post-release-safe docs governance" in current_closed_block
-    assert "current tag labels" in current_closed_block
-    assert "native GPU unavailable" in v1114_closed_block
-    assert "NativeCpuBackend" in v1114_closed_block
-    assert "fixed multi-pattern" in v1113_closed_block
-    assert "Aho-Corasick" in v1113_closed_block
-    assert "100 fixed no-match patterns over 1GB" in v1113_closed_block
-    assert "classify provider provenance" in v1112_closed_block
-    assert "classification_backend" in v1112_closed_block
-    assert "tg classify --format json" in v1112_closed_block
-    assert "agent capsule hardcases" in v1111_closed_block
-    assert "implementation files outrank preview/mention files" in v1111_closed_block
-    assert "release docs governance" in v1111_closed_block
-    assert "publish-success-gate" in v1110_failed_block
-    assert "PyPI latest remains `1.10.10`" in v1110_failed_block
-    assert "GpuSidecar" in v11010_closed_block
-    assert "subprocess.run" in v11010_closed_block
-    assert "repair-launcher" in v11010_closed_block
-    assert "agent-native code intelligence" in v1109_closed_block
-    assert "release docs/governance" in v1109_closed_block
-    assert "GpuSidecar" in v1108_closed_block
-    assert "subprocess.run" in v1108_closed_block
-    assert "native GPU search" in v1107_closed_block
-    assert "smart-case" in v1107_closed_block
-    assert "ambiguous invoice-task routing" in v1106_closed_block
-    assert "CWD-is-generated-root" in v1106_closed_block
-    assert "GpuSidecar" in v1106_closed_block
-    assert "publish-success-gate" in v1106_closed_block
-    assert "hot-query regex repeats" in v1105_closed_block
-    assert "agentic GPU route evidence" in v1100_closed_block
-    assert "sidecar-routed GPU evidence is reported as unsupported" in v1100_closed_block
-    assert "release wheel retry" in v1911_closed_block
-    assert "Cargo dependency prefetch" in v1911_closed_block
-    assert "capsule alternative target confidence" in v1910_closed_block
-    assert "provider tokens" in v1910_closed_block
-    assert "transient crates.io DNS failure" in v1910_closed_block
-    assert "agent workflow benchmark governance" in v199_closed_block
-    assert "run_agent_workflow_benchmarks.py" in v199_closed_block
-    assert "tensor-grep 1.9.9" in v199_closed_block
-    assert "stale tensor-grep-owned `tg.com`" in v198_closed_block
-    assert "Windows `PATHEXT`" in v198_closed_block
-    assert "fresh `cmd` and unprofiled `pwsh` report `tg 1.9.8`" in v198_closed_block
-    assert "Python GPU scale rows are unsupported" in v197_closed_block
-    assert "Native CUDA correctness passed" in v197_closed_block
-    assert "cold exact text" in v197_closed_block
-    assert "sidecar" in v196_closed_block
-    assert "foreign" in v196_closed_block
-    assert "GPU native gate attribution" in v195_closed_block
-    assert "$file" in v194_closed_block
-    assert "docs-governance tests" in v194_closed_block
-    assert "--diff --json" in v192_closed_block
-    assert "rolls changed files back" in v192_closed_block
-    assert "GPU benchmark auto-recommendation disabled" in follow_up_block
-    assert "subprocess.run" in follow_up_block
+    # NOTE: the README used to carry a full "## Current Release State" section -- per-release fix /
+    # feature / release commit hashes, CI/CodeQL run IDs, PyPI line, and a hand-maintained per-version
+    # "What `vX` closed:" changelog ledger. The README is now a marketing/positioning doc and no longer
+    # mirrors that ledger; it was a maintenance trap that drifted every release. Those facts remain
+    # governed by their single sources of truth:
+    #   - current-release-state facts (tag, agent-readiness gate, dogfood) -> handoff_docs loop above
+    #     plus the docs/SESSION_HANDOFF.md `handoff` block above (latest tag / PyPI / GitHub release).
+    #   - per-version "What `vX` closed" / fix-commit ledger -> CHANGELOG.md and GitHub releases.
+    #   - the behavioral/capability fragments that used to be pinned into the README block (e.g.
+    #     `native front door`, `tg classify --format json`, `classification_backend`,
+    #     `top-level validation_commands`, `path_tg_first_launcher_kind`, `tg_launcher_command_kind`,
+    #     `Actionable Context Capsule`, `validation_alignment`, `public managed GPU is not
+    #     promotion-ready`, `NativeCpuBackend`, `GpuSidecar`, `Aho-Corasick`, etc.) are each governed
+    #     against the dedicated docs (SKILL.md / AGENTS.md / docs/CONTRACTS.md / docs/SESSION_HANDOFF.md
+    #     / docs/CONTINUATION_PLAN.md / docs/gpu_crossover.md / docs/benchmarks.md) in this file.
+    # The negative `not in` README checks above (no "Latest complete public release PR/commit") are
+    # retained so the README cannot silently re-grow an incorrect release ledger.
 
 
 def test_public_ast_positioning_should_not_claim_ast_grep_parity() -> None:
@@ -390,18 +277,22 @@ def test_public_ast_positioning_should_not_claim_ast_grep_parity() -> None:
     for path, text in public_surfaces.items():
         assert "ast-grep parity" not in text, path
 
-    assert "validated useful slice" in public_surfaces["README.md"]
+    # The README's marketing copy keeps the honest "useful slice of ast-grep, not a full replacement"
+    # positioning, but the exact `validated useful slice` contract phrasing is governed against the
+    # dedicated docs (SKILL.md / AGENTS.md) rather than re-pinned into the README prose.
     assert "validated useful slice" in public_surfaces["SKILL.md"]
     assert "useful validated AST slice" in public_surfaces["AGENTS.md"]
 
 
 def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
-    readme = README_PATH.read_text(encoding="utf-8")
+    # The README is now a marketing doc; the full GPU-crossover story (RTX 4070/5070, 1GB/5GB
+    # correctness, single- vs many-pattern positioning, public-managed not-promotion-ready) is
+    # governed against the dedicated GPU/benchmark docs below, so the README is not pinned here.
     benchmarks = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
     gpu_doc = GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8")
     paper = PAPER_DOC_PATH.read_text(encoding="utf-8")
 
-    for doc in (readme, benchmarks, gpu_doc, paper):
+    for doc in (benchmarks, gpu_doc, paper):
         assert (
             f"post-`{CURRENT_RELEASE_TAG}`" in doc or f"post-`{CURRENT_RELEASE_TAG}` dogfood" in doc
         )
@@ -453,11 +344,13 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
 
 
 def test_gpu_docs_should_distinguish_public_managed_binary_from_native_cuda_dogfood() -> None:
-    readme = README_PATH.read_text(encoding="utf-8")
+    # The public-managed-binary vs native-CUDA-dogfood distinction (metadata, proof gates, promotion
+    # blockers, workload class) is governed against the dedicated GPU/benchmark docs below. The README
+    # is now a marketing doc and no longer mirrors this contract prose.
     benchmarks = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
     gpu_doc = GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8")
 
-    for doc in (readme, benchmarks, gpu_doc):
+    for doc in (benchmarks, gpu_doc):
         assert "public managed binary" in doc
         assert "CUDA-feature native build" in doc or "local CUDA-feature release build" in doc
         assert "tg-native-metadata.json" in doc
@@ -1022,11 +915,13 @@ def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags
 
 
 def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
-    readme = README_PATH.read_text(encoding="utf-8")
+    # The warm-path/session-discovery contract (snapshot size/mtime, `tg session refresh`,
+    # `--refresh-on-stale`, nearby-scope discovery) is governed against the dedicated docs SKILL.md
+    # and docs/CONTRACTS.md below. The README is now a marketing doc and is not pinned to this prose.
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
     contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
 
-    for doc in (readme, skill, contracts):
+    for doc in (skill, contracts):
         assert "snapshot" in doc
         assert "size/mtime" in doc
         assert "`tg session refresh" in doc
@@ -1040,13 +935,16 @@ def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
 
 
 def test_agent_docs_should_lock_agent_context_and_validation_contracts() -> None:
+    # The agent context/validation contract (`context_consistency`, executable body lines,
+    # `validation_plan[].detection`, `validation_alignment`) is governed against the dedicated agent
+    # docs (AGENTS.md / SKILL.md / docs/CONTRACTS.md / docs/SESSION_HANDOFF.md) below. The README is a
+    # marketing doc now; it still surfaces `validation_alignment` but is not pinned to the rest.
     agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
-    readme = README_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
     contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
     handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
 
-    for doc in (agents, readme, skill, contracts, handoff):
+    for doc in (agents, skill, contracts, handoff):
         assert "context_consistency" in doc
         assert "executable" in doc
         assert "validation_plan[].detection" in doc
@@ -1069,12 +967,18 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
     for doc in (agents, readme, skill, contracts, handoff, continuation):
         assert "tg agent" in doc
         assert "Actionable Context Capsule" in doc
-        assert "route rationale" in doc
         assert "line maps" in doc
         assert "checkpoint" in doc
-        assert "omission counts" in doc
         assert "confidence" in doc
         assert "ask" in doc.lower()
+
+    # `route rationale` and `omission counts` are detailed capsule-contract terms. The marketing
+    # README summarizes the capsule without that exact wording, so they are governed against the
+    # dedicated agent docs (AGENTS.md / SKILL.md / docs/CONTRACTS.md / docs/SESSION_HANDOFF.md /
+    # docs/CONTINUATION_PLAN.md) instead of being re-pinned into the README.
+    for doc in (agents, skill, contracts, handoff, continuation):
+        assert "route rationale" in doc
+        assert "omission counts" in doc
 
     for doc in (agents, skill, contracts, continuation):
         assert "parser-backed" in doc
@@ -1093,13 +997,14 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
 
 
 def test_agent_docs_should_lock_windows_cmd_quoted_pattern_probe() -> None:
+    # The Windows `.cmd` quoted multi-word false-positive probe is governed against the dedicated
+    # agent/contract docs below. The README is now a marketing doc and is not pinned to this prose.
     agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
-    readme = README_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
     contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
     handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
 
-    for doc in (agents, readme, skill, contracts, handoff):
+    for doc in (agents, skill, contracts, handoff):
         assert "quoted multi-word" in doc
         assert "false-positive" in doc
 
@@ -1112,8 +1017,14 @@ def test_ast_info_public_docs_should_describe_json_languages_payload() -> None:
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
     handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
 
-    for doc in (readme, skill, handoff):
+    # The exact `tg ast-info --json` language-identifier wording is governed against the dedicated
+    # docs (SKILL.md / docs/SESSION_HANDOFF.md); the marketing README does not carry that prose.
+    for doc in (skill, handoff):
         assert "`tg ast-info --json` exposes AST language identifiers" in doc
+
+    # The negative guard (no misleading "AST grammar inventory" claim) is kept for all surfaces,
+    # including the README, so none can re-grow the overclaim.
+    for doc in (readme, skill, handoff):
         assert "AST grammar inventory" not in doc
 
 
