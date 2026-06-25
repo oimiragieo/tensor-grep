@@ -7,6 +7,10 @@ features = ["pyo3/extension-module"]
 python-source = "src"
 module-name = "tensor_grep.rust_core"
 manifest-path = "rust_core/Cargo.toml"
+# Bundle the license files referenced by the auto-emitted `License-File:` metadata. Without this,
+# maturin writes `License-File: LICENSE`/`NOTICE` into PKG-INFO but omits the actual files, and PyPI
+# rejects the upload: "400 License-File LICENSE does not exist in distribution file" (blocked v1.13.44).
+include = ["LICENSE", "NOTICE"]
 
 [tool.uv]
 cache-keys = [
