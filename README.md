@@ -8,7 +8,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tensor-grep)](https://pypi.org/project/tensor-grep/)
 [![CI](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml)
 
-**Fast text, AST, indexed, and GPU-aware search CLI.** Search code and large datasets — with ripgrep-compatible text search, native AST structural search and rewrite, indexed acceleration for repeated queries, AI-agent context capsules, symbol intelligence, security/compliance rule packs, and an embedded MCP server.
+**Fast text, AST, indexed, and GPU-aware search CLI.** One binary for ripgrep-compatible text search, native AST search and rewrite, indexed acceleration for repeated queries, machine-readable context for AI agents, symbol call-graph analysis, security and compliance rule packs, and an embedded MCP server.
 
 ```bash
 pip install tensor-grep        # or: uvx tensor-grep
@@ -158,12 +158,18 @@ tg dogfood
 
 ---
 
-## Powered by / powers
+## Issues & support
 
-tensor-grep is the open-source AST and search engine behind **[gotcontext.ai](https://gotcontext.ai)** — the hosted MCP gateway that gives your AI tools compressed code context with one API key.
+- [Report a bug](https://github.com/oimiragieo/tensor-grep/issues/new?template=bug_report.yml)
+- [Request a feature](https://github.com/oimiragieo/tensor-grep/issues/new?template=feature_request.yml)
+- [Ask a question](https://github.com/oimiragieo/tensor-grep/issues/new?template=question.yml)
+- [Report a security vulnerability privately](https://github.com/oimiragieo/tensor-grep/security/advisories/new)
 
-- **This CLI:** install locally, run on your own codebase, free forever (Apache-2.0).
-- **gotcontext.ai:** the hosted version adds MCP Streamable HTTP, semantic compression (cut token usage 40–85%), Knowledge Hub RAG, and team/project management. [Try it free →](https://gotcontext.ai)
+---
+
+## gotcontext.ai
+
+`tensor-grep` runs locally on your machine. [gotcontext.ai](https://gotcontext.ai) is the hosted version: an MCP gateway that uses tensor-grep for code intelligence and layers on semantic compression, Knowledge Hub RAG, and team management, so any AI tool gets compressed code context from one API key.
 
 ---
 
