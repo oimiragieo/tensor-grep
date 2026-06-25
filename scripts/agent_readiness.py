@@ -537,8 +537,7 @@ def validate_ast_run(stdout: str, _repo_root: Path, _expected_version: str) -> N
 def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -> None:
     required_docs = [
         repo_root / "AGENTS.md",
-        # README.md is the marketing-facing doc and no longer duplicates these technical claims;
-        # they remain governed in the dedicated docs below (AGENTS/SKILL/CONTRACTS/handoff).
+        repo_root / "README.md",
         repo_root / "SKILL.md",
         repo_root / "docs" / "SESSION_HANDOFF.md",
         repo_root / "docs" / "CONTINUATION_PLAN.md",
@@ -590,9 +589,12 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
 
     for path in required_docs:
         content = path.read_text(encoding="utf-8")
-        for fragment in required_fragments:
-            if fragment not in content:
-                missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
+        # README is the marketing-facing doc — exempt it from the technical-fragment pins (those
+        # claims are governed in the dedicated docs above), but still enforce version-staleness below.
+        if path.name != "README.md":
+            for fragment in required_fragments:
+                if fragment not in content:
+                    missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
         for match in current_version_pattern.finditer(content):
             found = match.group("version")
             if found != expected_version:
