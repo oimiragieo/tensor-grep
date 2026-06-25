@@ -23,14 +23,13 @@ use arrow_array::Array;
 use arrow_array::StringArray;
 use mmap_arrow::create_arrow_string_array_from_mmap;
 use pyo3::prelude::*;
-use pyo3_arrow::error::PyArrowResult;
 use std::sync::Arc;
 
 /// Reads a file into a zero-copy Arrow StringArray and exports it as a PyCapsule
 #[pyfunction]
-fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyArrowResult<PyObject> {
+fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyResult<Py<PyAny>> {
     // 1. Release the GIL while we map the file and scan for newlines
-    let string_array = py.allow_threads(|| {
+    let string_array = py.detach(|| {
         create_arrow_string_array_from_mmap(filepath)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("mmap failed: {}", e)))
     })?;
@@ -40,7 +39,7 @@ fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyArrowResult<PyObject>
 
     // 3. Export to a Python Arrow object (returns a PyCapsule wrapping the C Data Interface)
     let exported = py_array.to_pyarrow(py)?;
-    Ok(exported.into())
+    Ok(exported.unbind())
 }
 
 /// Reads a file into a zero-copy Arrow StringArray and yields it in chunks (slices)
@@ -51,9 +50,9 @@ fn read_mmap_to_arrow_chunked(
     py: Python<'_>,
     filepath: &str,
     max_bytes: usize,
-) -> PyArrowResult<Vec<PyObject>> {
+) -> PyResult<Vec<Py<PyAny>>> {
     // 1. Map the entire file and build offsets (zero-copy)
-    let string_array = py.allow_threads(|| {
+    let string_array = py.detach(|| {
         create_arrow_string_array_from_mmap(filepath)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("mmap failed: {}", e)))
     })?;
@@ -87,7 +86,7 @@ fn read_mmap_to_arrow_chunked(
         let py_array = pyo3_arrow::PyArray::from_array_ref(Arc::new(sliced_array));
 
         let exported = py_array.to_pyarrow(py)?;
-        py_chunks.push(exported.into());
+        py_chunks.push(exported.unbind());
 
         current_idx += slice_len;
     }
@@ -330,7 +329,10 @@ impl RustBackend {
 }
 
 /// A Python module implemented in Rust.
-#[pymodule]
+// pyo3 0.28+ defaults a #[pymodule] to gil_used = false (free-threaded opt-out). This module's
+// pyclass methods run Rust-only code, but pin gil_used = true conservatively until free-thread
+// safety is audited; relaxing it is a separate, deliberate change.
+#[pymodule(gil_used = true)]
 fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;
