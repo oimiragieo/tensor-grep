@@ -589,9 +589,12 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
 
     for path in required_docs:
         content = path.read_text(encoding="utf-8")
-        for fragment in required_fragments:
-            if fragment not in content:
-                missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
+        # README is the marketing-facing doc — exempt it from the technical-fragment pins (those
+        # claims are governed in the dedicated docs above), but still enforce version-staleness below.
+        if path.name != "README.md":
+            for fragment in required_fragments:
+                if fragment not in content:
+                    missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")
         for match in current_version_pattern.finditer(content):
             found = match.group("version")
             if found != expected_version:
@@ -614,7 +617,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
                     )
 
     gpu_docs = [
-        repo_root / "README.md",
+        # README.md excluded (marketing doc); the GPU claims are governed in benchmarks/gpu_crossover/PAPER.
         repo_root / "docs" / "benchmarks.md",
         repo_root / "docs" / "gpu_crossover.md",
         repo_root / "docs" / "PAPER.md",

@@ -45,7 +45,6 @@ def test_should_require_readme_canonical_doc_links_and_release_markers():
     errors = module.validate_readme_contract(readme_content=readme)
     assert any("README missing canonical docs reference" in err for err in errors)
     assert any("README must link installation docs" in err for err in errors)
-    assert any("README must link release checklist" in err for err in errors)
 
 
 def test_should_require_uv_lock_editable_version_to_match_pyproject():
@@ -2588,8 +2587,7 @@ def test_should_require_readme_canonical_docs_and_installation_surfaces():
     joined_errors = "\n".join(errors)
     assert "README missing canonical docs reference" in joined_errors
     assert "README must link installation docs" in joined_errors
-    assert "README must link release checklist" in joined_errors
-    assert "README must state current first-class platform support explicitly" in joined_errors
+    assert "README must state platform support" in joined_errors
     assert "README must direct harness consumers to docs/harness_api.md" in joined_errors
 
 

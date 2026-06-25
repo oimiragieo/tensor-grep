@@ -140,9 +140,7 @@ fn ast_rewrite_apply_json(
 }
 
 /// Python bindings for the Rust CPU backend
-// `frozen`: RustBackend is immutable (stateless CpuBackend, all methods &self). This drops PyO3's
-// per-instance RefCell borrow-check on every call and makes the thread-safety contract explicit.
-#[pyclass(frozen)]
+#[pyclass]
 pub struct RustBackend {
     inner: CpuBackend,
 }
@@ -331,11 +329,10 @@ impl RustBackend {
 }
 
 /// A Python module implemented in Rust.
-// Free-thread safety audited (2026-06-25): RustBackend wraps a stateless CpuBackend (unit struct),
-// the #[pyfunction]s (read_mmap_to_arrow[_chunked]) hold no shared mutable state, and every pyclass
-// method is &self. So the module opts into free-threaded Python (gil_used = false, the pyo3 0.28+
-// default) — loading it in a no-GIL (3.13t+) interpreter no longer forces the GIL back on.
-#[pymodule(gil_used = false)]
+// gil_used pinned `true` (conservative). The free-threaded build (gil_used = false, #266) broke
+// Linux `agent-readiness` in CI — that PR's run was cancelled by a force-push, so it merged
+// unverified. Re-enable free-threading only behind a full green CI run (Linux extension load).
+#[pymodule(gil_used = true)]
 fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;

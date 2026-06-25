@@ -123,9 +123,17 @@ jobs:
           uv venv --python 3.12
           uv pip install -e ".[dev]"
 
+      - name: Install ast-grep CLI (AST wrapper backend)
+        # The native AstBackend is GPU-gated (torch.cuda), so on a non-GPU runner the AST probe needs
+        # the ast-grep CLI wrapper. Matches the pinned version installed in benchmark.yml.
+        run: cargo install ast-grep --version 0.41.1 --locked
+
       - name: Run agent-readiness contract gate
         run: |
-          uv run python scripts/agent_readiness.py \
+          # --no-sync: keep the [dev] env (tree-sitter) the step above installed; bare `uv run`
+          # re-syncs to the default deps and drops the optional extras.
+          uv run --no-sync python -c "from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend; print('ast-grep wrapper available:', AstGrepWrapperBackend().is_available())"
+          uv run --no-sync python scripts/agent_readiness.py \
             --no-shell-probes \
             --no-wsl-probe \
             --json \
