@@ -6,7 +6,7 @@ static PYTHON_INIT: Once = Once::new();
 
 pub fn ensure_python_initialized() {
     PYTHON_INIT.call_once(|| {
-        pyo3::prepare_freethreaded_python();
+        pyo3::Python::initialize();
     });
 }
 
@@ -22,7 +22,7 @@ pub struct CliFlags {
 pub fn should_use_gpu_pipeline() -> bool {
     ensure_python_initialized();
 
-    Python::with_gil(|py| -> PyResult<bool> {
+    Python::attach(|py| -> PyResult<bool> {
         // Attempt to import tensor_grep's existing device detector
         let sys = py.import("sys")?;
         let _path = sys.getattr("path")?;
@@ -48,7 +48,7 @@ pub fn should_use_gpu_pipeline() -> bool {
 pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyhow::Result<()> {
     ensure_python_initialized();
 
-    Python::with_gil(|py| -> PyResult<()> {
+    Python::attach(|py| -> PyResult<()> {
         let sys = py.import("sys")?;
 
         // Emulate sys.argv for the Typer entrypoint
@@ -68,7 +68,7 @@ pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyho
 pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> anyhow::Result<()> {
     ensure_python_initialized();
 
-    Python::with_gil(|py| -> PyResult<()> {
+    Python::attach(|py| -> PyResult<()> {
         let pipeline_module = py.import("tensor_grep.core.pipeline")?;
         let pipeline_class = pipeline_module.getattr("Pipeline")?;
 
