@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v1.13.42 (2026-06-25)
+
+### Bug Fixes
+
+- **packaging**: Verify the Homebrew binary via sha256 in the published formula (audit MED)
+  ([#262](https://github.com/oimiragieo/tensor-grep/pull/262),
+  [`51b27eb`](https://github.com/oimiragieo/tensor-grep/commit/51b27eb6d1af5cead10117cafd5030d82c11f64b))
+
+Homebrew was the only install channel with zero binary integrity verification -- `brew install`
+  downloaded the release binary with no checksum. The published formula now carries a per-OS
+  `sha256`, so brew verifies the download (parity with install.sh / install.ps1 / npm / winget, all
+  hardened in audit S4).
+
+Mirrors the existing winget InstallerSha256 stamping (the chicken-and-egg the council flagged -- the
+  binary digests only exist post-build): prepare_package_manager_release.py stamps the macOS + Linux
+  sha256 into the BUNDLE formula from CHECKSUMS.txt (_asset_sha_from_checksums +
+  _stamp_homebrew_sha256). The source template (scripts/tensor-grep.rb) intentionally carries none.
+  validate_homebrew_formula_contract validates sha256 IF-PRESENT (64-hex); the bundle smoke-test
+  enforces the shipped formula carries one per OS.
+
+Verified end-to-end locally (synthetic CHECKSUMS -> stamped formula -> smoke-test green) + unit
+  tests for the stamper and the if-present validator. 166 tests pass; ruff clean.
+
+Authenticity note (council): CHECKSUMS.txt is same-channel (uploaded with the binary), so this is
+  integrity on par with the other channels; verifying its Sigstore .sig (already produced at
+  release.yml) is a tracked follow-up for full authenticity.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Continuous Integration
+
+- **security**: Sha-pin all third-party GitHub Actions (audit MED, council-spec'd)
+  ([#261](https://github.com/oimiragieo/tensor-grep/pull/261),
+  [`4123050`](https://github.com/oimiragieo/tensor-grep/commit/41230501b43d8aaf0ebb190908afd4337750ba73))
+
+Pin every third-party action `uses:` across the workflow files to a full 40-hex commit SHA plus a `#
+  vX` version comment (the comment keeps Dependabot updating them). Tags/branches are mutable; a
+  full SHA is the only immutable ref, mitigating a compromised-upstream-action supply-chain attack
+  on the publish/sign jobs (id-token / contents / attestations: write).
+
+87 uses pinned, incl. the highest-privilege previously-floating targets an earlier pass missed:
+  taiki-e/install-action@cargo-cyclonedx, pypa/gh-action-pypi-publish (was a branch alias),
+  PyO3/maturin-action, python-semantic-release, sigstore, attest-build-provenance,
+  softprops/action-gh-release, astral-sh/setup-uv, actions/*. EXEMPT: dtolnay/rust-toolchain @stable
+  -- a moving ref by design; pinning would freeze the Rust toolchain.
+
+validate_release_assets.py normalizes the pinned form back to the logical tag for its ~30 existing
+  version assertions (_normalize_pinned_actions); a new validate_actions_sha_pinned() enforces that
+  every third-party action IS pinned (dtolnay exempt). Tests de-tag real-file reads so
+  version-injection negatives still work, plus a new regression test. 163 tests pass.
+
+Council-verified (3 Claude lenses) before building; incorporates their must-fixes: the validator
+  tag-string break, the dtolnay exemption, and the missed high-privilege targets.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.13.41 (2026-06-24)
 
 ### Bug Fixes
