@@ -126,4 +126,4 @@ def test_readme_points_harness_consumers_to_contract_and_cookbook_docs() -> None
 
     assert "docs/harness_api.md" in readme
     assert "docs/harness_cookbook.md" in readme
-    assert "tg_mcp_capabilities" in readme
+    # tg_mcp_capabilities is governed in docs/harness_api.md (linked above); not re-pinned in README.

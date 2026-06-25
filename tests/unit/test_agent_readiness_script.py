@@ -311,9 +311,12 @@ def test_agent_readiness_docs_claims_allow_latest_complete_pypi_lag_when_current
 def test_agent_readiness_docs_claims_reject_stale_gpu_dogfood_label(tmp_path) -> None:
     module = _load_script_module()
     _write_docs_claim_fixture(tmp_path, version="1.9.12")
-    readme_path = tmp_path / "README.md"
-    readme_path.write_text(
-        readme_path.read_text(encoding="utf-8").replace(
+    # README is the marketing doc and no longer carries GPU dogfood labels (it is exempt from the
+    # gpu_fragments pins); the staleness check now applies to the dedicated GPU docs, so corrupt
+    # benchmarks.md (which is in gpu_docs) to exercise it.
+    gpu_doc_path = tmp_path / "docs" / "benchmarks.md"
+    gpu_doc_path.write_text(
+        gpu_doc_path.read_text(encoding="utf-8").replace(
             "post-`v1.9.12`",
             "post-`v1.9.10`",
             1,

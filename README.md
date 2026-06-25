@@ -153,7 +153,9 @@ tg dogfood
 | [docs/installation.md](docs/installation.md) | Supported install paths |
 | [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) | Opt-in and hidden features outside the stable surface |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | Compatibility guarantees for configs, caches, and outputs |
-| [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | CI gates, the release pipeline, and version flow |
+| [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | CI, release, audit, and dependency-maintenance automation |
+| [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | Supported platforms, runtimes, and distribution channels |
+| [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) | Patch, rollback, and verification process |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution and release-intent rules |
 
@@ -171,6 +173,21 @@ tg dogfood
 ## gotcontext.ai
 
 `tensor-grep` runs locally on your machine. [gotcontext.ai](https://gotcontext.ai) is the hosted version: an MCP gateway that uses tensor-grep for code intelligence and layers on semantic compression, Knowledge Hub RAG, and team management, so any AI tool gets compressed code context from one API key.
+
+---
+
+## Future Work
+
+The `v1.x` line is feature-complete for the current native search, AST, and editor-plane surface. The remaining work is intentionally narrow:
+
+- add any lexical reranking or AST-shaped chunking only when it beats the accepted lexical-first repo-map line on both retrieval quality and editor-plane benchmarks
+- add tighter multi-agent signal surfaces on top of the existing JSON/NDJSON, session, and MCP contracts instead of inventing another parallel agent protocol
+- publish a broader reproducible comparator pack for tools such as `ag`, `ack`, `ugrep`, and GNU `grep` alongside the current `rg` and `git grep` rows
+- graduate or retire the experimental resident AST worker based on benchmark-governed evidence, not intuition
+- keep benchmark-governed security and compliance acceleration on top of the existing rulesets and audit surfaces
+- keep managed provider / editor-plane integrations honest and contract-tested
+- continue supply-chain hardening, package-manager validation, and operational docs for team ownership
+- preserve benchmark history and rejected experiments so future work stays measurable instead of speculative
 
 ---
 
