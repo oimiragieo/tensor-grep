@@ -1,6 +1,14 @@
 import importlib.util
+import re
 import textwrap
 from pathlib import Path
+
+
+def _detag(content: str) -> str:
+    """Restore SHA-pinned action refs (``@<sha> # vX``) to their logical tag (``@vX``) so
+    tests that assert or string-manipulate version strings keep working against the
+    SHA-pinned workflow files (supply-chain hardening)."""
+    return re.sub(r"@[0-9a-f]{40} # (\S+)", r"@\1", content)
 
 
 def test_should_validate_release_and_package_assets_consistency():
@@ -791,7 +799,7 @@ def test_should_require_audit_workflow_checkout_to_use_pr_head_ref():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    workflow = _detag((root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8"))
     workflow = workflow.replace(
         "      - uses: actions/checkout@v6\n"
         "        with:\n"
@@ -904,7 +912,7 @@ def test_should_reject_audit_workflow_legacy_scanner_environment_steps():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    workflow = _detag((root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8"))
     workflow = workflow.replace(
         "      - name: Export Python audit requirements\n",
         "      - name: Create Python audit environment\n"
@@ -1126,7 +1134,7 @@ def test_should_require_pypi_artifact_builds_to_prefetch_cargo_dependencies_with
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         "      - name: Prefetch Rust dependencies for PyPI artifacts\n",
         "      - name: Prefetch Rust dependencies without retry\n",
@@ -1856,7 +1864,7 @@ def test_should_require_ci_semantic_release_github_asset_jobs():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace("  build-release-native-assets:", "  old-assets:", 1)
     ci_workflow = ci_workflow.replace("  publish-github-release-assets:", "  old-upload:", 1)
 
@@ -1963,7 +1971,7 @@ def test_should_require_ci_release_assets_to_gate_on_semantic_release_released_o
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         "      released: ${{ steps.publish_check.outputs.released }}\n",
         "",
@@ -2006,7 +2014,7 @@ def test_should_require_ci_macos_native_frontdoor_to_use_intel_runner_label():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         "- os: macos-15-intel\n"
         "            acceleration: cpu\n"
@@ -2035,7 +2043,7 @@ def test_should_require_ci_native_build_smoke_to_use_intel_runner_label():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         "os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]",
         "os: [ubuntu-latest, windows-latest, macos-latest]",
@@ -2051,7 +2059,7 @@ def test_should_require_ci_native_build_smoke_to_use_intel_runner_label():
 
 def test_should_configure_semantic_release_native_assets_for_optional_gpu_profile():
     root = Path(__file__).resolve().parents[2]
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 
     assert "TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE" in ci_workflow
     assert "vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor'" in ci_workflow
@@ -2077,7 +2085,7 @@ def test_should_require_ci_release_asset_verifiers_to_use_selectable_native_prof
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
         "--expected-profile native-frontdoor",
@@ -2100,7 +2108,7 @@ def test_should_reject_ci_release_native_macos_nvidia_asset():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         "- os: macos-15-intel\n"
         "            acceleration: cpu\n"
@@ -3896,7 +3904,9 @@ def test_should_require_release_build_binaries_step_contracts():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     build_binaries_prefix, build_binaries_rest = release_workflow.split("  build-binaries:", 1)
     build_binaries_section, remainder = build_binaries_rest.split("  create-release:", 1)
     build_binaries_section = build_binaries_section.replace(
@@ -4033,7 +4043,9 @@ def test_should_require_create_release_download_artifacts_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     release_workflow = release_workflow.replace(
         "actions/download-artifact@v8",
         "actions/download-artifact@v3",
@@ -4062,7 +4074,9 @@ def test_should_require_create_release_setup_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     create_release_prefix, create_release_rest = release_workflow.split("  create-release:", 1)
     create_release_section, remainder = create_release_rest.split("  verify-release-assets:", 1)
     create_release_section = create_release_section.replace(
@@ -4101,7 +4115,9 @@ def test_should_require_create_release_artifact_validation_steps():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     create_release_prefix, create_release_rest = release_workflow.split("  create-release:", 1)
     create_release_section, remainder = create_release_rest.split("  verify-release-assets:", 1)
     create_release_section = create_release_section.replace(
@@ -4144,7 +4160,9 @@ def test_should_require_verify_release_assets_checkout_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     verify_prefix, verify_rest = release_workflow.split("  verify-release-assets:", 1)
     verify_section, remainder = verify_rest.split("  validate-tag-version-parity:", 1)
     verify_section = verify_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
@@ -4171,7 +4189,9 @@ def test_should_require_verify_release_assets_python_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     verify_prefix, verify_rest = release_workflow.split("  verify-release-assets:", 1)
     verify_section, remainder = verify_rest.split("  validate-tag-version-parity:", 1)
     verify_section = verify_section.replace(
@@ -4205,7 +4225,9 @@ def test_should_require_validate_tag_version_parity_setup_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     tag_prefix, tag_rest = release_workflow.split("  validate-tag-version-parity:", 1)
     tag_section, remainder = tag_rest.split("  publish-npm:", 1)
     tag_section = tag_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
@@ -4238,7 +4260,9 @@ def test_should_require_validate_tag_version_parity_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     tag_prefix, tag_rest = release_workflow.split("  validate-tag-version-parity:", 1)
     tag_section, remainder = tag_rest.split("  publish-npm:", 1)
     tag_section = tag_section.replace(
@@ -4268,7 +4292,9 @@ def test_should_require_publish_npm_checkout_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
@@ -4289,7 +4315,9 @@ def test_should_require_publish_npm_uv_python_setup_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace("astral-sh/setup-uv@v8.0.0", "astral-sh/setup-uv@v4.0.0", 1)
@@ -4312,7 +4340,9 @@ def test_should_require_publish_npm_node_version_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace("node-version: '22'", "node-version: '18'", 1)
@@ -4333,7 +4363,9 @@ def test_should_require_publish_npm_version_check_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace(
@@ -4361,7 +4393,9 @@ def test_should_require_publish_npm_registry_parity_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace(
@@ -4389,7 +4423,9 @@ def test_should_require_publish_npm_working_directory_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace("working-directory: npm", "working-directory: .", 1)
@@ -4413,7 +4449,9 @@ def test_should_require_publish_npm_auth_env_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
     npm_section = npm_section.replace(
@@ -4441,7 +4479,9 @@ def test_should_require_publish_docs_checkout_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
     docs_section = docs_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
@@ -4464,7 +4504,9 @@ def test_should_require_publish_docs_python_setup_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
     docs_section = docs_section.replace("actions/setup-python@v6", "actions/setup-python@v4", 1)
@@ -4489,7 +4531,9 @@ def test_should_require_publish_docs_force_flag():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
     docs_section = docs_section.replace("mkdocs gh-deploy --force", "mkdocs gh-deploy", 1)
@@ -4512,7 +4556,9 @@ def test_should_require_publish_docs_build_step_with_strict_mode():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
     docs_section = docs_section.replace(
@@ -4548,7 +4594,9 @@ def test_should_require_publish_docs_install_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
     docs_section = docs_section.replace(
@@ -4576,7 +4624,7 @@ def test_should_require_ci_release_readiness_docs_build_step():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     ci_workflow = ci_workflow.replace(
         "      - name: Build docs site (strict)\n",
         "      - name: Build docs site\n",
@@ -4599,7 +4647,9 @@ def test_should_require_publish_docs_deploy_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
     docs_section = docs_section.replace(
@@ -4624,7 +4674,9 @@ def test_should_require_release_success_gate_setup_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     gate_prefix, gate_rest = release_workflow.split("  release-success-gate:", 1)
     gate_section = gate_rest
     gate_section = gate_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
@@ -4655,7 +4707,9 @@ def test_should_require_release_success_gate_confirm_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     gate_prefix, gate_rest = release_workflow.split("  release-success-gate:", 1)
     gate_section = gate_rest.replace(
         'echo "Release publication gates passed: parity, npm, docs."',
@@ -4682,7 +4736,9 @@ def test_should_require_release_success_gate_parity_script_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     gate_prefix, gate_rest = release_workflow.split("  release-success-gate:", 1)
     gate_section = gate_rest.replace(
         "python scripts/validate_release_version_parity.py",
@@ -4709,7 +4765,9 @@ def test_should_require_release_success_gate_parity_entrypoint_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = _detag(
+        (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
     gate_prefix, gate_rest = release_workflow.split("  release-success-gate:", 1)
     gate_section = gate_rest.replace(
         "python scripts/validate_release_version_parity.py",
@@ -4736,7 +4794,9 @@ def test_should_validate_public_gpu_proof_workflow_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    workflow = (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(encoding="utf-8")
+    workflow = _detag(
+        (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(encoding="utf-8")
+    )
 
     assert module.validate_public_gpu_proof_workflow_content(workflow_content=workflow) == []
 
@@ -4794,3 +4854,19 @@ def test_should_reject_public_gpu_proof_workflow_without_dispatch_only_fixed_run
     assert "Public GPU proof workflow must request read-only contents permission" in joined_errors
     assert "Public GPU proof workflow must use fixed GPU runner labels" in joined_errors
     assert "Public GPU proof workflow must run with --public-managed-proof" in joined_errors
+
+
+def test_validate_actions_sha_pinned_passes_and_exempts_rust_toolchain():
+    """Supply-chain hardening: every third-party action in the repo's workflows must be
+    pinned to a 40-hex commit SHA, and dtolnay/rust-toolchain@stable must stay exempt
+    (its @stable is a moving ref by design)."""
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.validate_actions_sha_pinned() == []
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "dtolnay/rust-toolchain@stable" in ci
