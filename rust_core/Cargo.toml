@@ -3,7 +3,7 @@ name = "tensor_grep_rs"
 version = "1.13.43"
 edition = "2021"
 description = "Rust core engine for tensor-grep"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/oimiragieo/tensor-grep"
 readme = "README.md"
 
