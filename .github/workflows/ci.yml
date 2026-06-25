@@ -125,7 +125,11 @@ jobs:
 
       - name: Run agent-readiness contract gate
         run: |
-          uv run python scripts/agent_readiness.py \
+          # --no-sync: agent_readiness exercises the AST backend, which needs tree-sitter installed
+          # above via `uv pip install -e ".[dev]"`. Bare `uv run` re-syncs to the default deps and
+          # drops the `[dev]` optional extras, leaving "no AST backend available".
+          uv run --no-sync python -c "from tensor_grep.backends.ast_backend import AstBackend; print('AST backend available:', AstBackend().is_available())"
+          uv run --no-sync python scripts/agent_readiness.py \
             --no-shell-probes \
             --no-wsl-probe \
             --json \
