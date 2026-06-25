@@ -2318,8 +2318,10 @@ mod tests {
     #[test]
     fn validation_command_argv_substitutes_brace_file_placeholder_safely() {
         // The {file} placeholder variant must also keep a malicious path in a single argv element.
-        let argv =
-            validation_command_argv("ruff check {file}", Some("/repo/evil; rm -rf ~/`whoami`.py"));
+        let argv = validation_command_argv(
+            "ruff check {file}",
+            Some("/repo/evil; rm -rf ~/`whoami`.py"),
+        );
         assert_eq!(
             argv,
             vec![
