@@ -153,6 +153,7 @@ tg dogfood
 | [docs/installation.md](docs/installation.md) | Supported install paths |
 | [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) | Opt-in and hidden features outside the stable surface |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | Compatibility guarantees for configs, caches, and outputs |
+| [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | CI gates, the release pipeline, and version flow |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution and release-intent rules |
 
