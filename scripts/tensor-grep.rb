@@ -7,6 +7,10 @@ class TensorGrep < Formula
   TENSOR_GREP_VERSION = "1.13.41"
   version TENSOR_GREP_VERSION
   
+  # NOTE: a `sha256 "<digest>"` line is stamped after each url into the PUBLISHED formula at
+  # release-bundle time from CHECKSUMS.txt (scripts/prepare_package_manager_release.py). This
+  # source template carries none on purpose: the binary digests only exist after the release
+  # builds them (the same post-build constraint as the winget InstallerSha256).
   if OS.mac?
     url "https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/tg-macos-amd64-cpu"
   elsif OS.linux?

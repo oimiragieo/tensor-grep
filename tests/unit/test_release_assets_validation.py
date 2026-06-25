@@ -4870,3 +4870,37 @@ def test_validate_actions_sha_pinned_passes_and_exempts_rust_toolchain():
     assert module.validate_actions_sha_pinned() == []
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "dtolnay/rust-toolchain@stable" in ci
+
+
+def test_validate_homebrew_formula_contract_validates_sha256_if_present():
+    """audit MED: a sha256 in the formula must be a lowercase 64-hex digest (validate IF-PRESENT;
+    the source template legitimately carries none until stamped from CHECKSUMS at bundle time)."""
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    base = (
+        "class TensorGrep < Formula\n"
+        '  TENSOR_GREP_VERSION = "1.2.3"\n'
+        "  version TENSOR_GREP_VERSION\n"
+    )
+    bad = base + '  sha256 "NOTAHEX"\nend\n'
+    assert any(
+        "64-hex" in e
+        for e in module.validate_homebrew_formula_contract(brew_content=bad, py_version="1.2.3")
+    )
+    good = base + '  sha256 "' + ("a" * 64) + '"\nend\n'
+    assert not any(
+        "sha256" in e
+        for e in module.validate_homebrew_formula_contract(brew_content=good, py_version="1.2.3")
+    )
+    # source template with NO sha256 must NOT error (chicken-and-egg).
+    assert not any(
+        "sha256" in e
+        for e in module.validate_homebrew_formula_contract(
+            brew_content=base + "end\n", py_version="1.2.3"
+        )
+    )
