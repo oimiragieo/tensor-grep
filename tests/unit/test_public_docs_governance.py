@@ -228,17 +228,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     assert "GPU benchmark auto-recommendation must remain false" in handoff
     assert "validation_alignment" in handoff
     assert "warn when timed entrypoints include `.cmd`, `uv`, or Python-module overhead" in handoff
-    assert "v1.9.0` release adds `tg agent`" in handoff
-    assert "v1.9.10` caps capsule alternative-target confidence" in handoff
-    assert "v1.9.9` release adds `run_agent_workflow_benchmarks.py`" in handoff
-    assert "v1.9.8` release refreshes stale tensor-grep-owned `tg.com`" in handoff
-    assert "v1.9.7` release clarifies GPU benchmark promotion gates" in handoff
-    assert "v1.9.6` release fixes the `v1.9.5` dogfood blockers" in handoff
-    assert "v1.9.5` release hardens GPU native gate attribution" in handoff
-    assert "v1.9.4` release fixes stale docs-governance expectations" in handoff
-    assert "v1.9.3` release hardens explicit language/file-name agent ranking" in handoff
-    assert "v1.9.2` release hardens edit JSON" in handoff
-    assert "v1.9.1` release hardens mixed-language capsule confidence" in handoff
+    # Per-version "Closed vX gap" changelog pins removed — that hand-maintained per-release ledger
+    # in SESSION_HANDOFF drifted; CHANGELOG.md + git log are the canonical history. The current-state
+    # and thematic ("Closed <theme> gap") behavioral checks above are retained.
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme

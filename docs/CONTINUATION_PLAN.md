@@ -11,9 +11,6 @@ The current tagged state is `v1.13.42`, and the latest complete public PyPI/rele
 Current release facts:
 
 - Latest verified release proof PR: #236 `fix: repair owned python launchers`
-- Latest verified release proof merge commit: `3c0c213 fix: repair owned python launchers`
-- Latest verified release proof commit: `bd7035c chore(release): v1.13.23 [skip ci]`
-- Latest verified proof public release commit: `bd7035c chore(release): v1.13.23 [skip ci]`
 - Latest merged fix commit: `3c0c213 fix: repair owned python launchers`
 - Latest merged feature commit: `a518cc6 feat: add agent success harness`
 - Latest verified proof public release PR: #236 `fix: repair owned python launchers`
