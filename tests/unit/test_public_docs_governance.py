@@ -170,18 +170,10 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         f"latest complete public PyPI/release-asset distribution is also `{CURRENT_RELEASE_TAG}`"
     ) in docs["docs/CONTINUATION_PLAN.md"]
 
-    for content in (
-        docs["AGENTS.md"],
-        docs["SKILL.md"],
-        docs["docs/SESSION_HANDOFF.md"],
-        docs["docs/CONTINUATION_PLAN.md"],
-    ):
-        assert CURRENT_RELEASE_COMMIT in content
-        assert CURRENT_FIX_COMMIT in content
-        assert CURRENT_GPU_FIX_COMMIT in content
-        assert CURRENT_DOCS_STAMP_FIX_COMMIT in content
-        assert CURRENT_MULTIPATTERN_FIX_COMMIT in content
-        assert CURRENT_FEATURE_COMMIT in content
+    # NOTE: per-release proof anchors (specific fix/release commit hashes) used to be pinned across
+    # every doc here. They were a maintenance trap (hand-updated each release, inevitably drifting),
+    # so they were removed; the current-release facts above plus CHANGELOG.md / GitHub releases are
+    # the single source of release history. Behavioral/capability checks below are retained.
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
     assert f"- Latest tagged version: `{CURRENT_RELEASE_TAG}`" in handoff
@@ -190,10 +182,6 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         f"GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/{CURRENT_RELEASE_TAG}>"
         in handoff
     )
-    assert "publish-success-gate` failed" in handoff
-    assert "PyPI latest remains `1.10.10`" in handoff
-    assert LATEST_VERIFIED_MAIN_CI in handoff
-    assert LATEST_VERIFIED_CODEQL in handoff
     assert f"tensor-grep=={LATEST_COMPLETE_RELEASE_TAG.removeprefix('v')}" in handoff
     assert "post-release-safe docs governance" in handoff
     assert "native GPU unavailable" in handoff
@@ -540,26 +528,6 @@ def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process()
             assert fragment in content, f"{path} missing `{fragment}`"
 
 
-def test_skill_ledger_should_record_root_forwarding_release_proof() -> None:
-    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
-    ledger_lines = [
-        line
-        for line in skill.splitlines()
-        if "PR order: 6;" in line
-        and "preserve root `tg` shortcut forwarding" in line
-        and "`tg --count-matches PATTERN PATH`" in line
-    ]
-    assert len(ledger_lines) == 1
-
-    ledger = ledger_lines[0]
-    assert "pending" not in ledger
-    assert "Gemini review: PASS" in ledger
-    assert "PR #185 passed" in ledger
-    assert "main CI run `26260569216` passed" in ledger
-    assert "semantic-release published `v1.12.50`" in ledger
-    assert "PyPI/uvx public install proof verified" in ledger
-
-
 def test_agent_success_harness_should_remain_workflow_not_search_speed_contract() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
@@ -605,41 +573,9 @@ def test_public_docs_should_not_contain_unaccepted_gpu_or_cold_rg_marketing() ->
 def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
 
-    assert (
-        "Latest merged docs/product commit: `f311469 docs: define agent context capsule roadmap`"
-        in skill
-    )
-    assert "PR #66 `docs: define agent context capsule roadmap` merged" in skill
-    assert "Main CI run `25561521904` passed" in skill
-    assert "CodeQL/dynamic main run `25561520180` passed" in skill
-    assert "semantic-release correctly skipped publishing" in skill
+    # Current-release + behavioral/contract checks are retained; the per-PR "merged and released
+    # as vX" ledger pins (a hand-maintained list that drifted) were removed in favour of CHANGELOG.md.
     assert f"current tagged version is `{CURRENT_RELEASE_TAG}`" in skill
-    assert "PR #101 `fix: harden gpu search accuracy contracts` merged" in skill
-    assert "PR #100 `fix: harden v1.10.5 dogfood blockers` merged" in skill
-    assert CURRENT_RELEASE_COMMIT in skill
-    assert LATEST_VERIFIED_MAIN_CI in skill
-    assert LATEST_VERIFIED_CODEQL in skill
-    assert LATEST_COMPLETE_RELEASE_COMMIT in skill
-    assert "PR #91 `fix: harden release wheel retries` merged" in skill
-    assert "PR #90 `fix: harden v1.9.9 dogfood followups` merged" in skill
-    assert "PR #89 `fix: add agent workflow benchmark governance` merged" in skill
-    assert "PR #87 `fix: refresh stale tg.com bridge after upgrade` merged" in skill
-    assert "PR #86 `fix: clarify GPU benchmark promotion gates` merged" in skill
-    assert "PR #83 `fix: harden GPU gates and launcher diagnostics` merged" in skill
-    assert "PR #82 `fix: harden docs governance and validation placeholders` merged" in skill
-    assert "PR #81 `fix: harden agent ranking docs and validation quoting` merged" in skill
-    assert "PR #80 `fix: harden edit JSON and capsule validation trust` merged" in skill
-    assert "PR #78 `fix: harden agent capsule trust alignment` merged" in skill
-    assert "PR #76 `feat: add actionable agent context capsule` merged" in skill
-    assert "PR #74 `fix: scope GPU probing and benchmark launcher warnings` merged" in skill
-    assert (
-        "Previous agent-contract fix commit: `015fad9 fix: harden public launcher and agent contracts`"
-        in skill
-    )
-    assert (
-        "Previous launcher fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`"
-        in skill
-    )
     assert "public-windows-launcher-quoted-patterns" in skill
     assert "path_tg_first_launcher_kind" in skill
     assert "tg_launcher_command_kind" in skill
@@ -656,11 +592,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
 def test_tensor_grep_skill_should_match_current_public_cli_syntax() -> None:
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
 
-    assert "PR #182 `eea05c6 fix: restore dogfood docs claim wording (#182)`" in skill
-    assert "Release commit: `9c538ba chore(release): v1.12.47 [skip ci]`" in skill
-    assert "Main CI run `26236451411` passed" in skill
-    assert "CodeQL/push run `26236447550` passed" in skill
-    assert "PR #181 `524f6d4 fix: expose windows shell escaping diagnostics`" in skill
+    # Per-PR proof pins removed (CHANGELOG.md is the release history); current public-CLI-syntax
+    # and shell-escaping guidance checks are retained.
     assert "shell_escaping_guidance" in skill
     assert "use single quotes or escape `$`" in skill
     assert "tg checkpoint create [PATH]" in skill
