@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.13.45 (2026-06-25)
+
+### Bug Fixes
+
+- **build**: Bundle LICENSE + NOTICE in the sdist so PyPI accepts the upload
+  ([#270](https://github.com/oimiragieo/tensor-grep/pull/270),
+  [`0f0d6a3`](https://github.com/oimiragieo/tensor-grep/commit/0f0d6a3029a14870038c379e652fcfbe4b3ab44c))
+
+v1.13.44 tagged but publish-pypi failed: '400 License-File LICENSE does not exist in distribution
+  file'. maturin auto-emits 'License-File: LICENSE'/'NOTICE' into PKG-INFO (the root LICENSE the
+  project gained), but does not bundle the files in the sdist, so Warehouse rejects the upload — and
+  this blocks EVERY release. Adding '[tool.maturin] include = ["LICENSE", "NOTICE"]' bundles them
+  (verified locally: the rebuilt sdist now contains tensor_grep-*/LICENSE and /NOTICE). v1.13.43
+  published only because it predated the LICENSE file.
+
+
 ## v1.13.44 (2026-06-25)
 
 ### Bug Fixes
