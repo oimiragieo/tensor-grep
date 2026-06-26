@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
+
+
+def _chunks(*texts: str) -> list[Chunk]:
+    return [Chunk(f"f{i}.py", 1, 1, t) for i, t in enumerate(texts)]
 
 
 def test_chunk_file_returns_overlapping_line_chunks(tmp_path: Path) -> None:
@@ -53,3 +58,38 @@ def test_chunk_is_frozen() -> None:
     c = Chunk(file_path="x.py", start_line=1, end_line=3, text="a\nb\nc\n")
     with pytest.raises(FrozenInstanceError):
         c.start_line = 2  # type: ignore[misc]
+
+
+def test_bm25_ranks_matching_chunk_first() -> None:
+    idx = Bm25Index(
+        _chunks(
+            "def parse_invoice(amount): return amount",
+            "def render_html(node): return node",
+            "configuration = load_config()",
+        )
+    )
+    results = idx.query("parse invoice", top_k=3)
+    assert results, "expected a non-empty ranking"
+    assert results[0][0] == 0  # the parse_invoice chunk ranks first
+    assert results[0][1] > 0.0
+
+
+def test_bm25_unmatched_query_returns_empty() -> None:
+    idx = Bm25Index(_chunks("def foo(): pass"))
+    assert idx.query("nonexistentzzz", top_k=5) == []
+
+
+def test_bm25_empty_corpus_is_safe() -> None:
+    assert Bm25Index([]).query("anything") == []
+
+
+def test_bm25_camelcase_tokenization_matches() -> None:
+    # 'invoice parser' must match the camelCase identifier InvoiceParser via split_terms reuse.
+    idx = Bm25Index(_chunks("class InvoiceParser: ...", "class HtmlRenderer: ..."))
+    results = idx.query("invoice parser", top_k=2)
+    assert results[0][0] == 0
+
+
+def test_bm25_respects_top_k() -> None:
+    idx = Bm25Index(_chunks("alpha beta", "alpha gamma", "alpha delta"))
+    assert len(idx.query("alpha", top_k=2)) == 2
