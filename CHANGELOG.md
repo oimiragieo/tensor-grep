@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v1.15.1 (2026-06-26)
+
+### Bug Fixes
+
+- **search**: Tg search --rank errored in plain-text mode (rg: unrecognized flag --rank)
+  ([#275](https://github.com/oimiragieo/tensor-grep/pull/275),
+  [`a840cd4`](https://github.com/oimiragieo/tensor-grep/commit/a840cd4c3f8547cd2ab8a50c5be49c1fdf8a4eb0))
+
+DOGFOOD FINDING on shipped v1.15.0: `tg search --rank PATTERN PATH` (plain text, the natural usage)
+  died with `rg: unrecognized flag --rank` exit 2 — the v1.14.0 BM25 re-rank only worked with
+  --json. Root cause: bootstrap.py (the `tg` front door = tensor_grep.cli.bootstrap:main_entry)
+  forwards plain searches to ripgrep, and --rank/--bm25 were NOT in _TG_ONLY_SEARCH_FLAGS, so they
+  leaked to rg. My unit/integration tests used CliRunner, which bypasses bootstrap, so they never
+  hit the real path.
+
+Fix: add --rank/--bm25 to bootstrap._TG_ONLY_SEARCH_FLAGS (route to the Python CLI that owns the
+  re-rank) + guard _can_passthrough_rg against rank_bm25 in main.py (defense in depth). Regression
+  test asserts _requires_full_cli routes --rank/--bm25 to the full CLI. Verified end-to-end against
+  the installed shipped artifact: plain --rank now exits 0 with reranked output.
+
+
 ## v1.15.0 (2026-06-26)
 
 ### Features
