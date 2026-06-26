@@ -13,6 +13,8 @@ Use this skill when you need to locate code precisely, understand likely edit im
 - You need references or likely callers before editing code.
 - You need an edit plan, blast radius, or validation target instead of ad hoc grep loops.
 - You are preparing a patch and want a smaller, more accurate context bundle.
+- You need a fast codebase orientation capsule (central files, entry points, symbol map) before diving into symbol lookup.
+- You need to find code by text/content relevance rather than an exact symbol name.
 
 ## Argument Order
 
@@ -25,8 +27,15 @@ prefer the canonical path-first form.
 
 1. Confirm the installed CLI is available:
    - `tg --version`
+0. (Unfamiliar repo) Orient before searching:
+   - `tg orient REPO_PATH`
+   Returns central files (by import in-degree), entry points, symbol map, and AST snippets in one call.
 2. Start with direct source lookup:
    - `tg source REPO_PATH SYMBOL`
+2a. If the symbol name is unknown, find it by content first:
+   - `tg search PATTERN REPO_PATH --rank`
+   BM25 re-ranks results by per-chunk relevance — no API key, no GPU required.
+   Then feed the top hit into `tg source`.
 3. If you need symbol navigation:
    - `tg defs REPO_PATH SYMBOL`
    - `tg refs REPO_PATH SYMBOL`
@@ -46,6 +55,8 @@ prefer the canonical path-first form.
 ## Rules
 
 - Prefer `tg` over repeated manual grep loops when working inside a real repository.
+- Run `tg orient REPO_PATH` first when entering an unfamiliar repo — it gives centrality, entry points, and a symbol map in one call, and costs no API key or GPU.
+- Use `tg search PATTERN PATH --rank` for content/text search; prefer it over raw grep loops when relevance ranking matters. The `--bm25` flag is an alias for `--rank`.
 - Keep edits narrow and grounded in the files `tg` ranks highest.
 - Do not expand context blindly if `tg` already identified the primary file and span.
 - Use provider-backed modes only when a task is clearly about semantic ambiguity.

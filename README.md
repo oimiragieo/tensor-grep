@@ -8,7 +8,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tensor-grep)](https://pypi.org/project/tensor-grep/)
 [![CI](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml)
 
-**Fast text, AST, indexed, and GPU-aware search CLI.** One binary for ripgrep-compatible text search, native AST search and rewrite, indexed acceleration for repeated queries, machine-readable context for AI agents, symbol call-graph analysis, security and compliance rule packs, and an embedded MCP server.
+**Fast text, AST, indexed, and GPU-aware search CLI.** One binary for ripgrep-compatible text search, BM25 re-ranking, native AST search and rewrite, indexed acceleration for repeated queries, codebase orientation for agents, machine-readable context for AI agents, symbol call-graph analysis, security and compliance rule packs, and an embedded MCP server.
 
 ```bash
 pip install tensor-grep        # or: uvx tensor-grep
@@ -35,6 +35,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 ### Text search
 - **ripgrep-compatible subset** — supports the common `rg` flags (pattern, path, `-t`/`--type`, `--count-matches`, `--no-ignore`, `--sort path`, `--format rg`, `--json`, `--ndjson`). This is a validated compatible subset, not a full ripgrep replacement. Use `--format rg` for deterministic ripgrep-shaped stdout; `--format rg --json` for rg JSON Lines output.
 - Root-level shortcuts: `tg PATTERN [PATH]`, `tg -t js PATTERN PATH`, `tg --count-matches PATTERN PATH` all behave as `tg search ...`.
+- **`tg search PATTERN PATH --rank`** (alias `--bm25`) — local BM25 re-ranking of text-search results by per-chunk content relevance. Pure-Python, no API key, no GPU. Scores and re-orders results from the ripgrep-backed engine so the most content-relevant matches surface first. Works in plain text and `--json` output modes. Usage: `tg search PATTERN PATH --rank`.
 - Chunk-parallel native CPU engine for large files.
 
 ### AST search & rewrite
@@ -45,6 +46,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 
 ### AI-agent context
 - **`tg agent PATH "query" --json`** — Actionable Context Capsule: primary files/functions, alternative targets, snippets with line maps, validation commands, rollback/checkpoint metadata, confidence, and an ask-before-editing recommendation. Mixed-language queries report `validation_alignment` instead of silently pairing mismatched targets and validators.
+- **`tg orient [PATH]`** — one-call codebase orientation capsule for agents. Ranks files by import in-degree (imported-by-many = foundational), identifies entry points via main/cli/index/lib heuristics, produces a symbol map, and emits AST-boundary code snippets within a token budget. Pure-CPU, no API key, no GPU. Options: `--max-tokens` (default 3000; bounds the snippet budget only, not the whole capsule), `--max-central-files` (default 10), `--json`. JSON keys include `central_files[{file,graph_score,symbols}]`, `entry_points`, `symbol_map`, `snippets`, `token_estimate`, `token_budget_label`, `truncated`, `scan_limit`, `routing_reason="orient"`. Honest caveat: in-degree centrality is import-graph based and works best on Python; Rust/JS edges resolve fully only in whole-repo scans.
 - **`tg map`** — machine-readable file/symbol map of a codebase.
 - **`tg context PATH "query"`** — semantic context capsule for a natural-language question.
 - **`tg context-render`** / **`tg edit-plan`** — rendered context and structured edit plans with daemon response caching for sub-second warm calls.
@@ -128,6 +130,12 @@ tg callers src/ authenticate_user
 # AST structural search/rewrite
 tg scan --config sgconfig.yml
 
+# Local BM25 re-ranking — surface most-relevant matches first, no API key
+tg search "TODO" src/ --rank
+
+# One-call codebase orientation for agents — central files, entry points, symbol map
+tg orient src/
+
 # Start the built-in MCP server
 tg mcp
 
@@ -180,7 +188,7 @@ tg dogfood
 
 The `v1.x` line is feature-complete for the current native search, AST, and editor-plane surface. The remaining work is intentionally narrow:
 
-- add any lexical reranking or AST-shaped chunking only when it beats the accepted lexical-first repo-map line on both retrieval quality and editor-plane benchmarks
+- extend lexical (BM25) re-ranking with AST-shaped chunking or semantic re-ranking only when it demonstrably beats the shipped `tg search --rank` baseline on both retrieval quality and editor-plane benchmarks
 - add tighter multi-agent signal surfaces on top of the existing JSON/NDJSON, session, and MCP contracts instead of inventing another parallel agent protocol
 - publish a broader reproducible comparator pack for tools such as `ag`, `ack`, `ugrep`, and GNU `grep` alongside the current `rg` and `git grep` rows
 - graduate or retire the experimental resident AST worker based on benchmark-governed evidence, not intuition
