@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v1.15.0 (2026-06-26)
+
+### Features
+
+- Add 'tg orient' — one-call codebase orientation capsule
+  ([#274](https://github.com/oimiragieo/tensor-grep/pull/274),
+  [`5689779`](https://github.com/oimiragieo/tensor-grep/commit/5689779000b8a9e20bb29997407c8760dba7c740))
+
+* feat(orient): add build_orient_capsule core assembler (Plan 2 Task 1)
+
+One-call orientation capsule: central files, entry points, symbol map, AST-boundary snippets within
+  a token budget. Reuses repo_map's import graph + AST symbol-source chunkers. DESIGN FIX vs the
+  plan: the plan reused _personalized_reverse_import_pagerank seeded by all files, which ranks
+  IMPORTERS above the imported (verified: a file imported by 2 others ranked LAST) -- backwards for
+  'show me the core files'. Replaced with import in-degree + module->file resolution (build_repo_map
+  records module names, not paths). 5 TDD tests, ruff --preview + mypy clean.
+
+* feat(orient): add 'tg orient' CLI command with native registration (Plan 2 Task 2-3)
+
+Adds the tg orient command (human + --json). Per the design-verification council, registers it as a
+  REAL native command (the plan's 'no Rust rebuild' was a BLOCKER -- without KNOWN_COMMANDS + a
+  Commands::Orient variant, 'tg orient .' silently runs a ripgrep search for 'orient'): adds
+  'orient' to KNOWN_COMMANDS (commands.py), a Commands::Orient passthrough variant + dispatch arm +
+  a routing test in main.rs. Inserts the command at the CORRECT line (after the map command, not
+  mid-function). Task 3 fix: _ast_chunked_snippet now calls _rust_parser_symbol_sources so .rs files
+  get tree-sitter snippets. Also banks the full council corrections into both plan files. 7 py tests
+  + 1 rust test green.
+
+* test(orient): add 'orient' to PUBLIC_TOP_LEVEL_COMMANDS contract
+
+The new 'tg orient' command made test_top_level_help_visible_commands_match_public_contract +
+  test_empty_invocation_visible_commands_match_public_contract fail (the visible help now lists
+  orient but the pinned contract set didn't). Adds 'orient' to PUBLIC_TOP_LEVEL_COMMANDS; both
+  Python + native help now match. Verified locally.
+
+
 ## v1.14.0 (2026-06-26)
 
 ### Features
