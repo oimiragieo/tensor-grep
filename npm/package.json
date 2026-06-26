@@ -23,5 +23,5 @@
     "cli"
   ],
   "author": "tensor-grep team",
-  "license": "MIT"
+  "license": "Apache-2.0"
 }
