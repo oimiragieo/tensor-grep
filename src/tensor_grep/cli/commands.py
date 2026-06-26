@@ -46,6 +46,7 @@ KNOWN_COMMANDS = {
     "__gpu-cuda-graphs",
     "__gpu-oom-probe",
     "map",
+    "orient",
     "session",
     "doctor",
     "checkpoint",

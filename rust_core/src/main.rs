@@ -916,6 +916,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)
+    #[command(name = "orient", disable_help_flag = true)]
+    Orient {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Open, query, and manage cached edit-loop sessions
     #[command(name = "session", disable_help_flag = true)]
     Session {
@@ -2651,6 +2657,14 @@ mod tests {
     }
 
     #[test]
+    fn orient_is_a_known_python_command_not_a_search_pattern() {
+        // `tg orient PATH` must be recognized as a passthrough command so the native front door
+        // delegates to the Python `orient` handler instead of treating "orient" as a ripgrep
+        // pattern via run_positional_cli().
+        assert!(is_known_python_command("orient"));
+    }
+
+    #[test]
     fn top_level_search_format_python_passthrough_args_detects_non_rg_formats() {
         let raw_args = ["tg", "--format=json", "ERROR", "bench_data"]
             .iter()
@@ -3555,6 +3569,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         #[cfg(feature = "cuda")]
         Commands::GpuOomProbe(args) => handle_gpu_oom_probe_command(args),
         Commands::Map { args } => handle_python_passthrough("map", args),
+        Commands::Orient { args } => handle_python_passthrough("orient", args),
         Commands::Session { args } => handle_python_passthrough("session", args),
         Commands::Doctor { args } => handle_python_passthrough("doctor", args),
         Commands::RepairLauncher { args } => handle_python_passthrough("repair-launcher", args),
