@@ -1,0 +1,5 @@
+# Source files are stored and checked out as LF. Without this, Windows autocrlf=true commits CRLF
+# blobs that the Linux CI ruff-format / cargo-fmt gates reject (the v1.13.46 main.py line-ending
+# incident). eol=lf also stops the "LF will be replaced by CRLF" working-tree churn on Windows.
+*.py text eol=lf
+*.rs text eol=lf

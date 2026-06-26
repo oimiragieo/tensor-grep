@@ -5582,6 +5582,15 @@ def search_command(
             "Use --format rg --json for ripgrep JSON Lines or --ndjson for tensor-grep streaming output."
         ),
     ),
+    rank: bool = typer.Option(
+        False,
+        "--rank",
+        "--bm25",
+        help=(
+            "Re-rank results by BM25 lexical relevance to the query terms instead of grep order "
+            "(pure-CPU ranking; no API key, no model download)."
+        ),
+    ),
     no_json: bool = typer.Option(
         False, "--no-json", help="Disable ripgrep JSON Lines when overriding rg config."
     ),
@@ -5763,6 +5772,7 @@ def search_command(
     )
 
     config = SearchConfig(
+        rank_bm25=rank,
         regexp=regexp,
         file_patterns=file,
         pre=pre,
@@ -6240,6 +6250,10 @@ def search_command(
             all_results.match_counts_by_file[match.file] = (
                 all_results.match_counts_by_file.get(match.file, 0) + 1
             )
+    if config.rank_bm25 and all_results.matches:
+        from tensor_grep.core.reranker import rerank_by_bm25
+
+        all_results = rerank_by_bm25(all_results, pattern, all_results.matched_file_paths)
     matched_file_count = len(matched_files) or all_results.total_files
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
     runtime_override_active = (
