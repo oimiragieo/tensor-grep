@@ -265,6 +265,10 @@ const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "--no-messages",
     "--generate",
     "--lang",
+    // BM25 re-ranking is a Python-side post-process; route --rank/--bm25 searches to the sidecar
+    // so the native front door does not clap-reject the unknown flag.
+    "--rank",
+    "--bm25",
 ];
 
 #[derive(Parser, Debug)]
@@ -2625,6 +2629,25 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_routes_rank_flag_to_python() {
+        // `tg search --rank` must delegate to the Python sidecar (which owns the BM25 re-rank)
+        // instead of being clap-rejected as an unknown flag by the native front door.
+        let raw_args = ["tg", "search", "--rank", "invoice", "src"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            search_format_python_passthrough_args(&raw_args),
+            Some(vec![
+                "--rank".to_string(),
+                "invoice".to_string(),
+                "src".to_string()
+            ])
+        );
     }
 
     #[test]

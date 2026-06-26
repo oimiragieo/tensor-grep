@@ -174,3 +174,6 @@ class SearchConfig:
     query_pattern: str | None = None
     input_total_bytes: int = 0
     gpu_device_ids: list[int] | None = None
+    # BM25 re-ranking of search results (`tg search --rank`). Default off; opt-in per the
+    # design council's BM25-first plan. The dense embedding leg is a separate gated flag.
+    rank_bm25: bool = False
