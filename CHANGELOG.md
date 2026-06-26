@@ -1,6 +1,84 @@
 # CHANGELOG
 
 
+## v1.13.46 (2026-06-26)
+
+### Bug Fixes
+
+- **security**: Run validation commands via argv, not a shell (close $file command injection)
+  ([#268](https://github.com/oimiragieo/tensor-grep/pull/268),
+  [`00eac6d`](https://github.com/oimiragieo/tensor-grep/commit/00eac6de6a301c954a1ec9a93c5cc8aeb99cb6b3))
+
+* fix(security): run validation commands via argv, not a shell (close $file command injection)
+
+`tg run --lint-cmd/--test-cmd` with a $file/{file} placeholder string-substituted the edited file's
+  path into a command line and ran it via `sh -c` (POSIX) or `cmd /S /C` (Windows metachar
+  fallback). A file with a maliciously crafted name (e.g. `evil; rm -rf ~`) in a directory being
+  rewritten thus caused arbitrary command execution under the invoking user (local command
+  injection). cmd.exe argument escaping is fundamentally unfixable (CVE-2024-24576), so escaping is
+  not a safe fix.
+
+Fix: parse the command TEMPLATE into argv (honoring quotes), substitute the RAW file path into the
+
+$file/{file} placeholder TOKEN, and spawn the program directly via Command::new(argv[0]).args(rest)
+  -- no shell. The path lands in a single argv element, so its metacharacters are inert data. The
+  JSON `command` display field still shows the expanded string (unchanged).
+
+- main.rs: split_validation_command_argv (quote-aware split; rejects unbalanced quotes) +
+  validation_command_argv (split+substitute); run_validation_command spawns directly and rejects an
+  empty/blank program or a template whose only token is the placeholder (which would run the file
+  itself). Removed build_validation_shell_command / split_simple_windows_validation_command /
+  is_windows_shell_builtin (the shell-exec paths). - Behavior change: validation commands no longer
+  support shell constructs (pipes, &&, redirects, cmd/sh builtins) -- use a plain `program args
+  {file}` form. Documented in `tg --help` + SKILL.md. - Tests: injection regression for $file and
+  {file} (malicious path stays one argv element), unbalanced-quote rejection,
+  placeholder-in-program-position rejection; moved the e2e validation tests off shell builtins (echo
+  -> python -c).
+
+Researched (Exa) + adversarially council-reviewed (2 lenses) -- the council caught the Windows
+  `echo` test break, the unterminated-quote gap, and the argv[0] edge case, all fixed here. cargo
+  check + clippy clean; 12 validation tests pass; full Rust suite green (one pre-existing local _sre
+  flake).
+
+FOLLOW-UP: the Python MCP `tg_rewrite_apply` path still shell-executes lint_cmd/test_cmd when the
+  operator opts in with TG_MCP_ALLOW_VALIDATION_COMMANDS=1 (gated, default-off) -- apply the argv
+  model there too.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* style: ruff format the validation help docstring edit
+
+* fix(docs): restore docs/CI_PIPELINE.md README link dropped in the README rewrite
+
+The README rewrite (force-pushed to main) dropped the docs/CI_PIPELINE.md table row, but the doc
+  still exists and docs/CONTRACTS.md + test_enterprise_docs_governance still reference it (main went
+  red on this). Restoring the row for consistency.
+
+* style(rust): cargo fmt the validation argv security tests (CI fmt gate)
+
+* fix: drop stray main.py reformat, keep only the validation-no-shell docstring note
+
+#268's main.py carried a 430-line stray whitespace/indent reformat (not ruff 0.15.11 canon) that
+  failed the Python ruff-format gate. Reset main.py to main's CI-clean version and re-applied only
+  the intended one-line docstring note about argv (no-shell) validation execution. The security fix
+  itself lives in rust_core/src/main.rs.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **help**: Document TG_LSP_PROVIDER in tg --help environment overrides
+  ([#272](https://github.com/oimiragieo/tensor-grep/pull/272),
+  [`665ecbb`](https://github.com/oimiragieo/tensor-grep/commit/665ecbbb67f7024b79a595852c138a2d1d94b7fb))
+
+TG_LSP_PROVIDER is read at src/tensor_grep/cli/lsp_server.py:932 (controls the LSP semantic provider
+  mode, default 'native') and documented in the tg lsp docstring, but was missing from the native
+  binary's ENVIRONMENT_OVERRIDES_HELP. A --help audit (v1.13.44) flagged it as the one user-relevant
+  env var not surfaced. Everything else in the help verified accurate + complete.
+
+
 ## v1.13.45 (2026-06-25)
 
 ### Bug Fixes
