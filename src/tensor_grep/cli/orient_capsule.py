@@ -94,6 +94,8 @@ def _ast_chunked_snippet(path_str: str, symbols: list[dict[str, Any]]) -> str | 
         if not sources:
             sources = _repo_map._js_ts_parser_symbol_sources(path, name)
         if not sources:
+            sources = _repo_map._rust_parser_symbol_sources(path, name)
+        if not sources:
             sources = _repo_map._regex_symbol_sources(path, name)
         if sources:
             return str(sources[0].get("source", ""))

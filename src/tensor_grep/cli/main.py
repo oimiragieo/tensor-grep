@@ -6518,6 +6518,36 @@ def map(
 
 
 @app.command()
+def orient(
+    path: str = typer.Argument(".", help="File or directory to orient on"),
+    max_tokens: int = typer.Option(3000, "--max-tokens", help="Snippet token budget", min=1),
+    max_central_files: int = typer.Option(
+        10, "--max-central-files", help="Number of top central files to surface", min=1
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
+) -> None:
+    """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
+    from tensor_grep.cli.orient_capsule import build_orient_capsule, build_orient_capsule_json
+
+    if json_output:
+        typer.echo(
+            build_orient_capsule_json(
+                path, max_tokens=max_tokens, max_central_files=max_central_files
+            )
+        )
+        return
+    payload = build_orient_capsule(path, max_tokens=max_tokens, max_central_files=max_central_files)
+    typer.echo(f"# Codebase orientation: {payload['path']}")
+    typer.echo(f"central files ({len(payload['central_files'])}):")
+    for cf in payload["central_files"]:
+        typer.echo(f"  {cf['file']}  (in-degree={cf['graph_score']})")
+    typer.echo(
+        f"entry_points={len(payload['entry_points'])} "
+        f"snippets={len(payload['snippets'])} ~{payload['token_estimate']} tokens"
+    )
+
+
+@app.command()
 def context(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     query_arg: str | None = typer.Argument(
