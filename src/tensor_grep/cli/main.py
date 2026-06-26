@@ -163,7 +163,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg agent` emits primary targets, alternative targets, snippets, validation_commands, rollback metadata, confidence, optional gpu_acceleration route evidence, and ask-before-editing guidance.
 - `tg agent --gpu-device-ids 0,1 --json` runs an opt-in native GPU evidence scan; sidecar-routed GPU results are reported as unsupported.
 - `context-render` and `edit-plan` also expose top-level validation_commands.
-- Validation command templates can quote `$file` or `{file}` placeholders; applied rewrites run placeholder commands once per edited file.
+- Validation command templates can quote `$file` or `{file}` placeholders; the command is split into a program and arguments and spawned directly (no shell), so the file path is passed as a single argument and shell constructs (pipes, `&&`, redirects, `cmd`/`sh` builtins) are not interpreted. Applied rewrites run placeholder commands once per edited file.
 
 **Search and safety**
 - Use `--format rg --sort path` for deterministic ripgrep-shaped text output.
