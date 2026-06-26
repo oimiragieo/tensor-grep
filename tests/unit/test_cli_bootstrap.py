@@ -1066,3 +1066,13 @@ def test_python_module_help_should_use_public_tg_program_name() -> None:
     assert result.returncode == 0
     assert "Usage: tg " in result.stdout
     assert "python -m tensor_grep" not in result.stdout
+
+
+def test_rank_flags_route_to_full_cli_not_ripgrep() -> None:
+    # Regression (dogfood): `tg search --rank PATTERN PATH` (plain text) must route to the full
+    # Python CLI, which owns the BM25 re-rank. If --rank/--bm25 are not treated as tg-only flags,
+    # bootstrap forwards them to ripgrep, which dies with "rg: unrecognized flag --rank".
+    assert bootstrap._requires_full_cli(["--rank", "invoice", "src"])
+    assert bootstrap._requires_full_cli(["--bm25", "invoice", "src"])
+    # A plain rg-compatible search (no tg-only flags) still passes through to ripgrep.
+    assert not bootstrap._requires_full_cli(["invoice", "src"])

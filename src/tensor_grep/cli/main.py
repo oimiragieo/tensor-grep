@@ -3664,6 +3664,7 @@ def _can_passthrough_rg(
         not config.ast
         and not config.ltl
         and not config.force_cpu
+        and not config.rank_bm25
         and format_type == "rg"
         and (not json_mode or rg_json_passthrough)
         and not ndjson_mode
