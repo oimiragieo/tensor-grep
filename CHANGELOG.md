@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.13.47 (2026-06-26)
+
+### Bug Fixes
+
+- **license**: Declare Apache-2.0 consistently across Cargo.toml + npm
+  ([#271](https://github.com/oimiragieo/tensor-grep/pull/271),
+  [`1137537`](https://github.com/oimiragieo/tensor-grep/commit/1137537ef0448ae99072e43c88954ea044c868c8))
+
+The bundled LICENSE is Apache-2.0, but rust_core/Cargo.toml and npm/package.json|package-lock.json
+  still declared MIT — a metadata inconsistency. Align all package metadata to Apache-2.0 to match
+  the LICENSE file and the README badge. (CEO confirmed Apache-2.0 is canonical.)
+
+
 ## v1.13.46 (2026-06-26)
 
 ### Bug Fixes
