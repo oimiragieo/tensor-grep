@@ -82,6 +82,10 @@ extend-exclude = [
     "benchmarks/external_repos",
 ]
 
+[tool.ruff.format]
+# Pin LF so Windows ruff never emits CRLF that the Linux CI ruff-format gate rejects.
+line-ending = "lf"
+
 [tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
