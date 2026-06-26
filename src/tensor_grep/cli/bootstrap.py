@@ -38,6 +38,8 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--pcre2-version",
     "--lang",
     "--ltl",
+    "--rank",
+    "--bm25",
     "--replace",
     "--stats",
     "--type-list",
