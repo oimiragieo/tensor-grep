@@ -8,6 +8,7 @@ Run these before proposing a change:
 
 ```bash
 uv run ruff check .
+uv run ruff format --preview .
 uv run mypy src/tensor_grep
 uv run pytest -q
 ```
@@ -17,6 +18,12 @@ For release/workflow/package-manager changes, also run:
 ```bash
 uv run python scripts/validate_release_assets.py
 ```
+
+**Ruff preview split:** CI runs `ruff format --check --preview .` but only `ruff check .` (no `--preview`) for lint. Locally, always run `ruff format --preview` but never pass `--preview` to `ruff check` — preview lint rules such as RUF056 produce false failures that do not match CI.
+
+**Line endings:** `.gitattributes` pins `*.py` and `*.rs` to `eol=lf`. Use `git ls-files --eol` to audit actual on-disk endings; `git show` and `git cat-file -p` smudge the output and can report false CR.
+
+**Decode the structured CI failure first:** When a CI run fails, open the failing check's structured JSON output before reading rich tracebacks. Theorizing from tracebacks without identifying the exact failing check wastes cycles — the structured output names the precise gate and often the file and line. This rule saved multiple CI round-trips during the June 2026 README-rewrite incident.
 
 ## Public Issue Intake
 
@@ -50,6 +57,20 @@ New and edited public issues are classified by a deterministic triage workflow. 
 ## Documentation and Contract Changes
 
 If you change workflow, release behavior, docs contracts, or package-manager assets, update the validator-backed tests too.
+
+## Post-Release Docker Dogfood Gate
+
+After a release lands on PyPI, run the post-release dogfood harness to verify the published binary — not just the local source tree:
+
+```bash
+# Run the battery against a tg already on PATH (e.g. an installed wheel)
+python scripts/dogfood/dogfood_features.py
+# Or clean-room via Docker: install the PUBLISHED version, then run the real binary
+docker build --build-arg TG_VERSION=<version> -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood \
+  && docker run --rm tg-dogfood
+```
+
+The harness at `scripts/dogfood/` installs the real PyPI wheel and runs every public `tg` command through the installed `tg` binary. This catches routing bugs that are invisible to `CliRunner`-based unit tests because the bootstrap front door (which forwards plain searches to ripgrep before the Typer app) is bypassed by `CliRunner`. A flag that works in unit tests can still crash with `rg: unrecognized flag` for real users if it is missing from the bootstrap or native front-door allowlists.
 
 Important surfaces include:
 - `tests/unit/test_release_assets_validation.py`
