@@ -1,6 +1,84 @@
 # CHANGELOG
 
 
+## v1.14.0 (2026-06-26)
+
+### Features
+
+- Local BM25 search re-ranking (tg search --rank)
+  ([#273](https://github.com/oimiragieo/tensor-grep/pull/273),
+  [`7629232`](https://github.com/oimiragieo/tensor-grep/commit/76292324a46b971e53d0f1c13f74bd044f818ab9))
+
+* feat(semantic): add retrieval_chunker (newline-aligned overlapping chunks + MAX_CHUNKS guard)
+
+Task 1 of the BM25-first semantic-search plan. Pure-Python, no new deps. Chunk = (file_path,
+  start_line, end_line, text); chunk_file() windows a file into ~chunk_size-line overlapping chunks
+  and fails loudly past MAX_CHUNKS rather than OOM. TDD: 4 tests (overlap coverage, empty file,
+  guard, frozen).
+
+* feat(semantic): add Okapi BM25 engine over chunk corpus (reuses split_terms tokenizer)
+
+Task 2. Real IDF + TF-saturation + length-normalization ranking (k1=1.5, b=0.75), unlike the
+  existing bare term-overlap counter. Reuses retrieval_lexical.split_terms so tokenization matches
+  the lexical path. query() returns (chunk_idx, score) desc, zero-score excluded, deterministic
+  tie-break. TDD: 5 BM25 tests (ranking, empty/unmatched, camelCase match, top_k).
+
+* chore: enforce LF for *.py and *.rs via .gitattributes
+
+The repo had no .gitattributes + Windows autocrlf=true, which makes 'git show'/'cat-file' display
+  CRLF even when the blob is LF (caused a false-alarm during semantic-search dev) and risks
+  committing real CRLF that the Linux CI ruff/cargo-fmt gates reject. Explicit eol=lf removes the
+  ambiguity.
+
+* feat(semantic): add persisted chunk-BM25 index with staleness fingerprint
+
+Task 3. build_and_save() chunks files + serializes a Bm25Index to <root>/.tg_semantic_index/
+  (SEPARATE from the Rust TGI v3 .tg_index); load_or_warn() re-checks an mtime fingerprint and
+  returns None with a stderr warning if missing or stale (caller falls back to unranked).
+  TG_SEMANTIC_INDEX_DIR override. TDD: 6 tests (env/fallback dir, roundtrip, fingerprint, missing,
+  stale).
+
+* feat(semantic): add BM25 reranker for SearchResult (--rank post-processing)
+
+Task 4. rerank_by_bm25() re-sorts a SearchResult's matches by the BM25 score of the chunk containing
+  each match (stable -> ties keep grep order; zero-score/non-corpus matches sink to end). Builds an
+  ephemeral Bm25Index when none is passed. dataclasses.replace preserves all routing fields. TDD: 4
+  tests (ordering, sink, empty, field preservation). mypy clean.
+
+* feat(semantic): wire tg search --rank (BM25 re-ranking) end-to-end
+
+Task 5. SearchConfig.rank_bm25 field; --rank/--bm25 option on the Python search command that, after
+  results are gathered, re-ranks all_results.matches via reranker.rerank_by_bm25 over the matched
+  files. Native front door: add --rank/--bm25 to SEARCH_PYTHON_PASSTHROUGH_FLAGS so tg.exe delegates
+  the search to the Python sidecar instead of clap-rejecting the unknown flag (the council's 'no
+  Rust rebuild' was optimistic; this is a 2-line flag addition + native rebuild via the normal
+  pipeline). TDD: rust routing test + python integration test (--rank reorders an invoice-dense file
+  ahead of a sparse one) + config field test. 36 existing search CLI tests still green.
+
+* feat(semantic): add BM25 quality benchmark + v2 gate (Task 6 -> v1 complete)
+
+benchmarks/eval_bm25_quality.py builds a BM25 index over an offline keyword-discriminating synthetic
+  corpus (10 topic files, 10 labelled queries), averages recall/precision/MRR/nDCG via the existing
+  retrieval_scoring metrics, and exits non-zero unless recall@k >= V2_GATE_RECALL (0.60). This is
+  the harness the v2 dense+RRF leg must BEAT before it ships. BM25 baseline on the synthetic corpus:
+  recall@3=1.0, mrr=1.0. TDD: 3 tests (dataclass, metrics range, gate).
+
+* style(semantic): apply ruff --preview formatting (CI uses 'ruff format --check --preview')
+
+The v1 CI failed Formatting & Linting on main.py because the CI runs 'ruff format --check --preview
+  .' (preview rules) while local checks omitted --preview. Reformatted under --preview + pinned
+  [tool.ruff.format] line-ending = lf so Windows ruff can never emit CRLF the Linux gate rejects.
+  This is the real root cause behind the recurring main.py format failures (incl. #268), not
+  line-endings.
+
+* style: normalize 3 pre-existing CRLF files to LF + ruff --preview (CI Formatting gate)
+
+The new .gitattributes (*.py eol=lf) + [tool.ruff.format] line-ending=lf surfaced 3 files committed
+  with CRLF blobs during the #269 release-blocker work (agent_readiness.py + 2 tests). The CI runs
+  'ruff format --check --preview .' which flags them; renormalized to LF + applied --preview. main's
+  Formatting was green only because it lacked the LF pin. 38 agent_readiness tests still pass.
+
+
 ## v1.13.47 (2026-06-26)
 
 ### Bug Fixes
