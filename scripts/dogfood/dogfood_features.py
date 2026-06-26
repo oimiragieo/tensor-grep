@@ -31,9 +31,7 @@ _RESULTS: list[tuple[bool, str, int, str]] = []
 
 
 def _run(args: list[str]) -> tuple[int, str, str]:
-    proc = subprocess.run(
-        [TG, *args], capture_output=True, text=True, timeout=120, check=False
-    )
+    proc = subprocess.run([TG, *args], capture_output=True, text=True, timeout=120, check=False)
     return proc.returncode, proc.stdout, proc.stderr
 
 
