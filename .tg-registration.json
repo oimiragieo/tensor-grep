@@ -1,0 +1,13 @@
+{
+  "_comment": "Registration-completeness groups for tensor-grep. A tg-invented search flag must live in BOTH front doors: the native passthrough allow-list AND the Python bootstrap tg-only allow-list (a missed one leaks to ripgrep — the v1.15.0 --rank crash). 'entities' = the flags that MUST be in both; the lists otherwise legitimately differ. Seeded with the verified-in-both tg-invented flags; expand as new ones ship.",
+  "registration_groups": [
+    {
+      "name": "search-flag-front-doors",
+      "entities": ["--rank", "--bm25", "--generate", "--lang", "--stats"],
+      "sites": [
+        {"file": "rust_core/src/main.rs", "symbol": "SEARCH_PYTHON_PASSTHROUGH_FLAGS"},
+        {"file": "src/tensor_grep/cli/bootstrap.py", "symbol": "_TG_ONLY_SEARCH_FLAGS"}
+      ]
+    }
+  ]
+}
