@@ -310,6 +310,19 @@ jobs:
       - name: Python Mypy Typecheck
         run: uv run mypy src/tensor_grep
 
+      # Registration-completeness gate (catches "added X, missed front-door site N" — the v1.15.0
+      # --rank class). WARN-ONLY for one release to confirm zero false positives on real PRs, then
+      # remove continue-on-error to make it blocking.
+      - name: Registration completeness (warn-only)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          if [ -f .tg-registration.toml ]; then
+            PYTHONPATH=src python -m tensor_grep.core.registration_check .tg-registration.toml
+          else
+            echo "no .tg-registration.toml present; skipping registration check"
+          fi
+
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
     needs: smoke
