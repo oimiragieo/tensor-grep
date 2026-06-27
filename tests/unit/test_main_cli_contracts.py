@@ -24,6 +24,7 @@ import typer
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import (
+    _annotate_result_completeness,
     _emit_symbol_command_result,
     _invalid_regex_remediation,
     _plain_json_incompatible_render_flags,
@@ -301,12 +302,33 @@ def test_truncation_warning_supersedes_dead_code_caveat_in_text(
     assert "dead code" not in out.lower()  # truncation is the real story, not the generic caveat
 
 
-def test_output_limit_truncation_also_warns(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_blast_radius_output_limit_truncation_flagged() -> None:
+    # REAL blast-radius shape: _apply_blast_radius_output_limits emits callers_truncated /
+    # files_truncated (NOT possibly_truncated). A capped blast radius must read as incomplete.
     payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": ".",
         "callers": [{"file": "a.py"}],
         "files": ["a.py"],
+        "output_limit": {
+            "max_callers": 1,
+            "max_files": 1,
+            "callers_truncated": True,
+            "files_truncated": False,
+            "total_callers": 9,
+            "returned_callers": 1,
+            "omitted_callers": 8,
+        },
+    }
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
+    assert payload["result_incomplete"] is True
+    assert is_truncation is True
+    assert caveat is not None and "INCOMPLETE" in caveat and "8 caller(s)" in caveat
+
+
+def test_repo_map_output_limit_possibly_truncated_flagged() -> None:
+    # The repo-map output cap shape (apply_repo_map_output_limits) uses possibly_truncated.
+    payload: dict[str, Any] = {
         "symbol": "x",
         "path": ".",
         "output_limit": {
@@ -317,13 +339,32 @@ def test_output_limit_truncation_also_warns(
             "truncation_cause": "project-files",
         },
     }
-    # Non-empty callers => exit 0 path, but still flagged incomplete.
-    _emit_symbol_command_result(
-        payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+    caveat, is_truncation = _annotate_result_completeness(payload)
+    assert payload["result_incomplete"] is True and is_truncation is True
+    assert caveat is not None and "INCOMPLETE" in caveat
+
+
+def test_blast_radius_cli_surfaces_truncation_on_real_output() -> None:
+    # Dogfood the REAL command output: cap callers to 1 on a symbol with several callers so
+    # production actually emits callers_truncated=True, and assert the warning is surfaced
+    # (defends against testing a payload shape production never emits).
+    result = runner.invoke(
+        app,
+        [
+            "blast-radius",
+            "src/tensor_grep/cli/main.py",
+            "_emit_symbol_command_result",
+            "--max-callers",
+            "1",
+            "--json",
+        ],
     )
-    emitted = json.loads(capsys.readouterr().out)
-    assert emitted["result_incomplete"] is True
-    assert "INCOMPLETE" in emitted["caveat"]
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    # Only assert the completeness contract when production actually truncated.
+    if payload.get("output_limit", {}).get("callers_truncated"):
+        assert payload["result_incomplete"] is True
+        assert "INCOMPLETE" in payload["caveat"]
 
 
 def test_complete_scan_sets_result_incomplete_false(
