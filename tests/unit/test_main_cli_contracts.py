@@ -167,6 +167,188 @@ def test_l1_emit_keeps_exit_zero_when_results_present(
     assert emitted["not_found"] is False
 
 
+# ----------------------------------------------------------------- P7 zero-callers caveat
+# "zero callers != dead code": a symbol that RESOLVED but has no callers in the static graph
+# is the P7 trap (validated twice on real codebases: registration symbols + spec_to_env_fragment,
+# which `tg callers` reported as 0 callers while it was live-called from a script + two tests).
+# The tool must surface the caveat at the result so an agent without the audit skill can't delete
+# load-bearing code.
+def test_callers_zero_results_emits_dead_code_caveat_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "callers": [],
+        "files": [],
+        "symbol": "spec_to_env_fragment",
+        "path": ".",
+    }
+    with pytest.raises(typer.Exit) as exc:
+        _emit_symbol_command_result(
+            payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+        )
+    assert exc.value.exit_code == 1
+    emitted = json.loads(capsys.readouterr().out)
+    assert "caveat" in emitted
+    assert "dead code" in emitted["caveat"].lower()
+
+
+def test_callers_zero_results_emits_caveat_in_text_mode(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {"callers": [], "files": [], "symbol": "x", "path": "."}
+    with pytest.raises(typer.Exit):
+        _emit_symbol_command_result(
+            payload, result_key="callers", json_output=False, emit_text=lambda _p: None
+        )
+    out = capsys.readouterr().out
+    assert "note:" in out
+    assert "dead code" in out.lower()
+
+
+def test_callers_with_results_has_no_caveat(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "callers": [{"file": "a.py"}],
+        "files": ["a.py"],
+        "symbol": "x",
+        "path": ".",
+    }
+    _emit_symbol_command_result(
+        payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+    )
+    emitted = json.loads(capsys.readouterr().out)
+    assert "caveat" not in emitted
+
+
+def test_zero_definitions_does_not_get_callers_caveat(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The caveat is callers-specific; a zero-result `defs`/`refs` must NOT inherit it.
+    payload: dict[str, Any] = {"definitions": [], "symbol": "x", "path": "."}
+    with pytest.raises(typer.Exit):
+        _emit_symbol_command_result(
+            payload, result_key="definitions", json_output=True, emit_text=lambda _p: None
+        )
+    emitted = json.loads(capsys.readouterr().out)
+    assert "caveat" not in emitted
+
+
+def test_unresolved_symbol_no_match_does_not_get_caveat(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Symbol did not resolve (no_match) -> "zero callers != dead" would mislead; suppress it.
+    payload: dict[str, Any] = {"callers": [], "no_match": True, "symbol": "typo", "path": "."}
+    with pytest.raises(typer.Exit):
+        _emit_symbol_command_result(
+            payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+        )
+    emitted = json.loads(capsys.readouterr().out)
+    assert "caveat" not in emitted
+
+
+# --------------------------------------------------------------- P0 truncated-scan silent zero
+# A scan that hit its file cap and dropped project files can return a confident-looking zero
+# that renders identically to a real zero — "the green light to delete live code". The payload
+# already knows (scan_limit.possibly_truncated); the default output must shout it.
+def test_truncated_scan_marks_result_incomplete_and_warns(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "callers": [],
+        "files": [],
+        "symbol": "spec_to_env_fragment",
+        "path": ".",
+        "scan_limit": {
+            "max_repo_files": 512,
+            "scanned_files": 512,
+            "possibly_truncated": True,
+            "truncation_cause": "project-files",
+        },
+    }
+    with pytest.raises(typer.Exit):
+        _emit_symbol_command_result(
+            payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+        )
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["result_incomplete"] is True
+    assert "INCOMPLETE" in emitted["caveat"]
+    assert "512" in emitted["caveat"]
+
+
+def test_truncation_warning_supersedes_dead_code_caveat_in_text(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "callers": [],
+        "files": [],
+        "symbol": "x",
+        "path": ".",
+        "scan_limit": {
+            "max_repo_files": 512,
+            "scanned_files": 512,
+            "possibly_truncated": True,
+            "truncation_cause": "project-files",
+        },
+    }
+    with pytest.raises(typer.Exit):
+        _emit_symbol_command_result(
+            payload, result_key="callers", json_output=False, emit_text=lambda _p: None
+        )
+    out = capsys.readouterr().out
+    assert "warning:" in out
+    assert "INCOMPLETE" in out
+    assert "dead code" not in out.lower()  # truncation is the real story, not the generic caveat
+
+
+def test_output_limit_truncation_also_warns(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "callers": [{"file": "a.py"}],
+        "files": ["a.py"],
+        "symbol": "x",
+        "path": ".",
+        "output_limit": {
+            "max_files": 25,
+            "emitted_files": 25,
+            "original_files": 400,
+            "possibly_truncated": True,
+            "truncation_cause": "project-files",
+        },
+    }
+    # Non-empty callers => exit 0 path, but still flagged incomplete.
+    _emit_symbol_command_result(
+        payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+    )
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["result_incomplete"] is True
+    assert "INCOMPLETE" in emitted["caveat"]
+
+
+def test_complete_scan_sets_result_incomplete_false(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "callers": [{"file": "a.py"}],
+        "files": ["a.py"],
+        "symbol": "x",
+        "path": ".",
+        "scan_limit": {
+            "max_repo_files": 512,
+            "scanned_files": 40,
+            "possibly_truncated": False,
+            "truncation_cause": None,
+        },
+    }
+    _emit_symbol_command_result(
+        payload, result_key="callers", json_output=True, emit_text=lambda _p: None
+    )
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["result_incomplete"] is False
+    assert "caveat" not in emitted
+
+
 # --------------------------------------------------------------------------- H1
 def _write_audit_manifest(directory: Path, *, valid: bool) -> Path:
     from tensor_grep.cli import audit_manifest as am
