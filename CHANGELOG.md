@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.17.0 (2026-06-27)
+
+### Features
+
+- Agent-contract completeness signals + Windows LSP / routing / BM25 fixes
+  ([#281](https://github.com/oimiragieo/tensor-grep/pull/281),
+  [`3a022ec`](https://github.com/oimiragieo/tensor-grep/commit/3a022ec2bcf2fc52454dfd7059edbef49896b746))
+
+* feat(agent-contract): surface scan-incompleteness + zero-callers caveat
+
+A truncated repo scan that dropped project files returned a confident-looking callers=0 that
+  rendered identically to a real zero -- the dangerous "greenlight to delete live code" (reported by
+  an agent dogfooding tg on a real monorepo). The payload already knew
+  (scan_limit/output_limit.possibly_truncated); the plain + JSON projections just dropped it.
+
+- _emit_symbol_command_result now sets additive result_incomplete + a loud caveat when the scan was
+  truncated (P0), and a "0 callers != dead code" caveat (P7) for a resolved symbol with zero callers
+  on a complete scan. Truncation supersedes. - 10 new contract tests (json + text, supersede,
+  output_limit, no-match suppression).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix: Windows LSP .cmd launch, --generate=/--glob= routing leak, BM25 double-count
+
+Audit wave 1 (HIGH + MED, adversarially verified): - HIGH cross-platform: managed Node LSP shims
+  (npm.cmd, pyright-langserver.cmd, intelephense.cmd) were launched directly -> WinError 193 on
+  Windows, breaking all Node-backed LSP. New wrap_windows_batch_command routes .cmd/.bat through
+  cmd.exe in _run_checked + the external-provider Popen. CI was blind (tests mock subprocess). - MED
+  routing: --generate=VALUE / --glob=VALUE (equals form) were absent from
+  _TG_ONLY_SEARCH_FLAG_PREFIXES -> leaked to ripgrep (the --rank bug class). Also added
+  --rank/--bm25 to the native-delegate guard (symmetric with --ltl) to harden the latent triple-hop
+  coupling. - MED new-code: Bm25Index.query double-counted non-deduped query terms (camelCase
+  "cacheCache" -> 2x score); dedupe with dict.fromkeys (IDF build already uses set()).
+
+* fix(agent-contract): blast-radius output-cap truncation now surfaced (audit #4)
+
+The first-pass truncation warning only matched scan_limit/output_limit.possibly_truncated, but
+  blast-radius emits a different shape (output_limit.callers_truncated/files_truncated) and bypassed
+  the symbol-command emitter entirely -- a capped blast radius reported result_incomplete=false with
+  no warning (false-confidence, same class as a truncated callers=0). The original test also used a
+  payload shape production never emits.
+
+- _scan_truncation_warning now handles all three real shapes (repo-scan cap, repo-map output cap,
+  blast-radius caller/file cap); shared _annotate_result_completeness helper. - blast-radius (json +
+  text) now routes through it; dropped the unused *_json builder import. - ASCII-only message
+  (Windows console cp1252 mojibakes em-dash). - Tests use the REAL blast-radius shape + a CliRunner
+  integration test that dogfoods actual `tg blast-radius --max-callers 1` output (verified: omitting
+  4 caller(s), result_incomplete).
+
+* style: apply ruff --preview formatting to main.py (CI gate uses --check --preview)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.16.0 (2026-06-27)
 
 ### Chores
