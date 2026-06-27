@@ -22,7 +22,46 @@ from pathlib import Path
 from typing import Any
 
 _OPEN_TO_CLOSE = {"{": "}", "[": "]", "(": ")"}
-_STRING_RE = re.compile(r'"([^"\\]*)"|\'([^\'\\]*)\'')
+_DECL_RE_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _declaration_re(symbol: str) -> re.Pattern[str]:
+    """Anchor for `symbol`'s assignment line (cached).
+
+    Matches `SYMBOL ... =` on a single line where the `=` is a real assignment — not a
+    comparison (`==`/`!=`/`<=`/`>=`) and not separated from the symbol by a `#` comment — so a
+    mention of the symbol in a comment or docstring is never mistaken for the declaration.
+    """
+    pattern = _DECL_RE_CACHE.get(symbol)
+    if pattern is None:
+        pattern = re.compile(rf"(?<![\w]){re.escape(symbol)}\b[^\n=#]*(?<![!<>=])=(?!=)")
+        _DECL_RE_CACHE[symbol] = pattern
+    return pattern
+
+
+def _consume_string(text: str, index: int) -> tuple[str | None, int]:
+    """Consume a quoted string starting at `index` (a quote char); return (content, next_index).
+
+    Honors backslash escapes; returns (None, ...) for an unterminated single-line string (a
+    newline before the close), so a stray quote cannot run the scanner away.
+    """
+    quote = text[index]
+    parts: list[str] = []
+    j = index + 1
+    n = len(text)
+    while j < n:
+        ch = text[j]
+        if ch == "\\" and j + 1 < n:
+            parts.append(text[j + 1])
+            j += 2
+            continue
+        if ch == quote:
+            return "".join(parts), j + 1
+        if ch == "\n":
+            return None, j
+        parts.append(ch)
+        j += 1
+    return None, j
 
 
 @dataclass(frozen=True)
@@ -59,33 +98,44 @@ def extract_members(file_path: str, symbol: str) -> set[str]:
         text = Path(file_path).read_text(encoding="utf-8")
     except OSError:
         return set()
-    decl = re.search(rf"(?<![\w]){re.escape(symbol)}\b", text)
-    if decl is None:
+    match = _declaration_re(symbol).search(text)
+    if match is None:
         return set()
-    eq = text.find("=", decl.end())
-    if eq == -1:
-        return set()
-    index = eq + 1
-    while index < len(text) and text[index] not in "{[(":
+    index = match.end()
+    n = len(text)
+    # Skip whitespace and Rust reference/array prefixes (`&`) to the value's opening bracket. A
+    # scalar value (e.g. `X = 5`) has no opening bracket here -> no members.
+    while index < n and text[index] in " \t\r\n&":
         index += 1
-    if index >= len(text):
+    if index >= n or text[index] not in "{[(":
         return set()
     open_ch = text[index]
     close_ch = _OPEN_TO_CLOSE[open_ch]
+    members: set[str] = set()
     depth = 0
-    start = index
-    while index < len(text):
-        if text[index] == open_ch:
+    # Bracket-match the value while skipping string literals and `#` / `//` comments, so a bracket
+    # or quoted string *inside* a literal or comment cannot corrupt the depth count or inject a
+    # spurious member (a `#`-commented entry is the realistic false-NEGATIVE vector: it would read
+    # as a registered member and mask a genuine registration gap).
+    while index < n:
+        ch = text[index]
+        if ch in "\"'":
+            literal, index = _consume_string(text, index)
+            if literal is not None:
+                members.add(literal)
+            continue
+        if ch == "#" or (ch == "/" and index + 1 < n and text[index + 1] == "/"):
+            while index < n and text[index] != "\n":
+                index += 1
+            continue
+        if ch == open_ch:
             depth += 1
-        elif text[index] == close_ch:
+        elif ch == close_ch:
             depth -= 1
             if depth == 0:
                 break
         index += 1
-    block = text[start : index + 1]
-    return {
-        (m.group(1) if m.group(1) is not None else m.group(2)) for m in _STRING_RE.finditer(block)
-    }
+    return members
 
 
 def check_group(group: RegistrationGroup, *, repo_root: str | Path = ".") -> dict[str, Any]:
@@ -101,11 +151,13 @@ def check_group(group: RegistrationGroup, *, repo_root: str | Path = ".") -> dic
         present_in = [k for k, members in members_by_site.items() if entity in members]
         missing_from = [k for k, members in members_by_site.items() if entity not in members]
         if missing_from:  # present in some sites but not all
-            missing.append({
-                "entity": entity,
-                "present_in": present_in,
-                "missing_from": missing_from,
-            })
+            missing.append(
+                {
+                    "entity": entity,
+                    "present_in": present_in,
+                    "missing_from": missing_from,
+                }
+            )
     return {
         "name": group.name,
         "complete": not missing,

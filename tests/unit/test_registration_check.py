@@ -124,6 +124,44 @@ def test_extract_members_missing_symbol_returns_empty(tmp_path: Path) -> None:
     assert extract_members(str(f), "ABSENT") == set()
 
 
+def test_extract_members_skips_commented_out_entries(tmp_path: Path) -> None:
+    # A `#`-commented quoted string inside the block must NOT be collected — otherwise it reads as
+    # a registered member and masks a genuine registration gap (false negative defeats the tool).
+    f = tmp_path / "x.py"
+    f.write_text(
+        'FLAGS = {\n    "--a",\n    # "--ghost",  not registered yet\n    "--b",\n}\n',
+        encoding="utf-8",
+    )
+    assert extract_members(str(f), "FLAGS") == {"--a", "--b"}
+
+
+def test_extract_members_ignores_symbol_mention_in_preceding_comment(tmp_path: Path) -> None:
+    # A comment/docstring mentioning the symbol before its declaration must not be mistaken for it.
+    f = tmp_path / "x.py"
+    f.write_text(
+        "# FLAGS must list every front-door flag; see OTHER == FLAGS guards\n"
+        'FLAGS = {"--a", "--b"}\n',
+        encoding="utf-8",
+    )
+    assert extract_members(str(f), "FLAGS") == {"--a", "--b"}
+
+
+def test_extract_members_bracket_inside_string_does_not_overshoot(tmp_path: Path) -> None:
+    # A bracket inside a string literal must not corrupt the depth count and swallow later content.
+    f = tmp_path / "x.py"
+    f.write_text(
+        'FLAGS = ["route[v1", "/health"]\nGHOST = ["--should-not-appear"]\n',
+        encoding="utf-8",
+    )
+    assert extract_members(str(f), "FLAGS") == {"route[v1", "/health"}
+
+
+def test_extract_members_handles_escaped_quote_in_member(tmp_path: Path) -> None:
+    f = tmp_path / "x.py"
+    f.write_text('FLAGS = ["a\\"b", "c"]\n', encoding="utf-8")
+    assert extract_members(str(f), "FLAGS") == {'a"b', "c"}
+
+
 def test_check_group_flags_entity_missing_from_one_site(tmp_path: Path) -> None:
     a = tmp_path / "a.py"
     a.write_text('FLAGS = {"--x", "--y", "--rank"}\n', encoding="utf-8")
@@ -166,17 +204,19 @@ def test_check_groups_aggregates_and_sets_overall(tmp_path: Path) -> None:
 def test_load_config_parses_groups(tmp_path: Path) -> None:
     cfg = tmp_path / "reg.json"
     cfg.write_text(
-        json.dumps({
-            "registration_groups": [
-                {
-                    "name": "search-flag",
-                    "sites": [
-                        {"file": "a.py", "symbol": "FLAGS"},
-                        {"file": "b.rs", "symbol": "FLAGS"},
-                    ],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "registration_groups": [
+                    {
+                        "name": "search-flag",
+                        "sites": [
+                            {"file": "a.py", "symbol": "FLAGS"},
+                            {"file": "b.rs", "symbol": "FLAGS"},
+                        ],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     groups = load_config(str(cfg))
