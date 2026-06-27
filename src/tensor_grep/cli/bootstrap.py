@@ -50,6 +50,8 @@ _TG_ONLY_SEARCH_FLAGS = {
 
 _TG_ONLY_SEARCH_FLAG_PREFIXES = (
     "--format=",
+    "--generate=",
+    "--glob=",
     "--gpu-device-ids=",
     "--lang=",
     "--replace=",
@@ -385,12 +387,14 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
 
     unsupported_flags = {
         "--ast",
+        "--bm25",
         "--files",
         "--files-with-matches",
         "--files-without-match",
         "--format",
         "--lang",
         "--ltl",
+        "--rank",
         "--replace",
         "--stats",
         "-l",

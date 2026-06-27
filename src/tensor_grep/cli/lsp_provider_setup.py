@@ -278,7 +278,23 @@ def _write_package_json(root: Path) -> None:
     )
 
 
+def wrap_windows_batch_command(command: list[str]) -> list[str]:
+    """Route a ``.cmd``/``.bat`` shim through ``cmd.exe`` on Windows.
+
+    Windows ``CreateProcess`` cannot launch a batch script directly — ``subprocess`` raises
+    ``WinError 193`` ("%1 is not a valid Win32 application"). The managed Node toolchain ships
+    every entry point as a ``.cmd`` shim (``npm.cmd``, ``pyright-langserver.cmd``,
+    ``intelephense.cmd``, ``typescript-language-server.cmd``), so every managed-LSP spawn hits
+    this. No-op on non-Windows and for real executables. The test suite mocks ``subprocess``,
+    so CI never exercised the real launch — this is the fix for that blind spot.
+    """
+    if command and is_windows() and Path(command[0]).suffix.lower() in {".cmd", ".bat"}:
+        return ["cmd.exe", "/C", *command]
+    return command
+
+
 def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
+    command = wrap_windows_batch_command(command)
     completed = subprocess.run(
         command,
         cwd=str(cwd) if cwd is not None else None,

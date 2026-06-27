@@ -7,6 +7,43 @@ import pytest
 import tensor_grep.cli.lsp_provider_setup as provider_setup
 
 
+def test_wrap_windows_batch_command_routes_cmd_through_cmd_exe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On Windows a .cmd/.bat shim cannot be launched directly (WinError 193); it must go
+    # through cmd.exe. npm/pyright-langserver/intelephense all ship as .cmd shims.
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: True)
+    assert provider_setup.wrap_windows_batch_command(["C:\\p\\npm.cmd", "install"]) == [
+        "cmd.exe",
+        "/C",
+        "C:\\p\\npm.cmd",
+        "install",
+    ]
+    assert provider_setup.wrap_windows_batch_command(["C:\\p\\run.BAT"]) == [
+        "cmd.exe",
+        "/C",
+        "C:\\p\\run.BAT",
+    ]
+
+
+def test_wrap_windows_batch_command_leaves_real_exe_and_posix_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: True)
+    # A real .exe on Windows launches directly — no wrapping.
+    assert provider_setup.wrap_windows_batch_command(["C:\\p\\node.exe", "x"]) == [
+        "C:\\p\\node.exe",
+        "x",
+    ]
+    # Non-Windows: a .cmd-suffixed path is never wrapped.
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: False)
+    assert provider_setup.wrap_windows_batch_command(["/usr/bin/npm.cmd", "install"]) == [
+        "/usr/bin/npm.cmd",
+        "install",
+    ]
+    assert provider_setup.wrap_windows_batch_command([]) == []
+
+
 def test_supported_lsp_languages_should_include_managed_provider_matrix() -> None:
     assert provider_setup.supported_lsp_languages() == [
         "python",

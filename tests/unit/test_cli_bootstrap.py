@@ -1076,3 +1076,20 @@ def test_rank_flags_route_to_full_cli_not_ripgrep() -> None:
     assert bootstrap._requires_full_cli(["--bm25", "invoice", "src"])
     # A plain rg-compatible search (no tg-only flags) still passes through to ripgrep.
     assert not bootstrap._requires_full_cli(["invoice", "src"])
+
+
+def test_equals_form_tg_only_flags_route_to_full_cli() -> None:
+    # The --flag=VALUE form must route exactly like the --flag VALUE form, or the equals form
+    # silently leaks to ripgrep (e.g. `tg search --generate=bash` emits rg's completions, not
+    # tg's). The space form is already covered by the exact-set membership check.
+    assert bootstrap._requires_full_cli(["--generate=complete-bash"])
+    assert bootstrap._requires_full_cli(["--glob=*.rs", "PATTERN"])
+    assert bootstrap._requires_full_cli(["--generate", "complete-bash"])
+    assert bootstrap._requires_full_cli(["--glob", "*.rs", "PATTERN"])
+
+
+def test_rank_bm25_do_not_delegate_to_native_binary() -> None:
+    # --rank/--bm25 are Python-only; the native-delegate gate must refuse them (symmetric with
+    # --ltl) so a future SEARCH_PYTHON_PASSTHROUGH_FLAGS regression cannot strand them.
+    assert not bootstrap._can_delegate_to_native_tg_search(["--json", "--rank", "PATTERN"])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--json", "--bm25", "PATTERN"])

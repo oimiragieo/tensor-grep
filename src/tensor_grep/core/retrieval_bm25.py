@@ -56,11 +56,15 @@ class Bm25Index:
         if not q_terms:
             return []
 
+        # Dedupe query terms: split_terms can repeat a token (camelCase "cacheCache" ->
+        # ["cache", "cache"]), which would double-count its BM25 contribution. IDF build uses
+        # set(terms), so scoring must sum once per unique query term (standard Okapi BM25).
+        unique_terms = list(dict.fromkeys(q_terms))
         scored: dict[int, float] = {}
         for i, tf in enumerate(self._tf):
             doc_len = self._doc_len[i]
             score = 0.0
-            for term in q_terms:
+            for term in unique_terms:
                 freq = tf.get(term, 0)
                 if freq == 0:
                     continue
