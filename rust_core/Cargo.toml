@@ -1,6 +1,6 @@
 [package]
 name = "tensor_grep_rs"
-version = "1.15.1"
+version = "1.16.0"
 edition = "2021"
 description = "Rust core engine for tensor-grep"
 license = "Apache-2.0"
@@ -57,6 +57,7 @@ path = "src/main.rs"
 [[bin]]
 name = "tg-search-fast"
 path = "src/bin/tg_search_fast.rs"
+
 
 
 

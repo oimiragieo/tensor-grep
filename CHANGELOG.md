@@ -1,6 +1,139 @@
 # CHANGELOG
 
 
+## v1.16.0 (2026-06-27)
+
+### Chores
+
+- Post-release Docker dogfood harness (all features, real binary)
+  ([#276](https://github.com/oimiragieo/tensor-grep/pull/276),
+  [`06e6dd8`](https://github.com/oimiragieo/tensor-grep/commit/06e6dd8a3d50f3aaed1c98ebc52b3fd9325eb64b))
+
+* chore(dogfood): add post-release Docker dogfood harness for all features
+
+After a release publishes, install the PUBLISHED tg in a clean Docker container and run a
+  full-feature battery against the REAL tg binary. Closes the blind spot that shipped the v1.14.0
+  'tg search --rank' crash: our tests use CliRunner, which bypasses the tg front door (bootstrap
+  forwards plain searches to ripgrep). scripts/dogfood/dogfood_features.py generates a fixture +
+  exercises version/search/search --rank (plain AND --json)/orient/map/agent with exit+output
+  assertions; the Dockerfile installs tensor-grep==TG_VERSION from PyPI and runs it (build fails
+  early if install/tg --version breaks). Validated: 10/10 against the fixed binary; the --rank guard
+  correctly FAILS on the unpatched bug.
+
+* style(dogfood): ruff format --preview the dogfood battery (CI Formatting gate)
+
+### Documentation
+
+- Capture v1.14-v1.15 features + session dev-process learnings
+  ([#277](https://github.com/oimiragieo/tensor-grep/pull/277),
+  [`c4165ba`](https://github.com/oimiragieo/tensor-grep/commit/c4165baa64c590e4d5d69c9ffed370ab99e73d33))
+
+* docs: capture v1.14-v1.15 features + session dev-process learnings
+
+The shipped features (tg search --rank, tg orient) were documented only in plan files. This captures
+  them where users + agents find them, and records the session's hard-won dev process: - README:
+  --rank + orient feature bullets + quick-start; fixed stale hero tagline + Future Work bullet. -
+  AGENTS.md: 'Adding a Command or Flag' (the 4 registration sites / 2 front doors), 'Dogfood the
+  Real Binary not CliRunner', 'Verify AI-Drafted Plans Against the Real Code', + a Skills-discovery
+  pointer. - CONTRIBUTING: ruff --preview-format-not-lint split, line-endings (git ls-files --eol),
+  decode-structured- CI-failure-first, and the post-release Docker dogfood gate (scripts/dogfood/).
+  - docs/index + the tensor-grep usage skill (SKILL.md/REFERENCE.md): the 2 new commands. Two
+  reusable global skills (~/.claude/skills/) created from these learnings:
+  dogfood-the-shipped-artifact, verify-plan-against-code.
+
+* docs: add CLAUDE.md pointer to AGENTS.md (Claude Code auto-loads CLAUDE.md, not AGENTS.md)
+
+tensor-grep had no CLAUDE.md, so Claude Code never auto-loaded the agent guidance in AGENTS.md. Thin
+  DRY pointer fixes that + surfaces the Skills (tensor-grep usage skill +
+  dogfood-the-shipped-artifact + verify-plan-against-code) and the dogfood harness.
+
+- Correct tg callers registration-enumeration caveat (call graph can't see set/decorator sites)
+  ([#279](https://github.com/oimiragieo/tensor-grep/pull/279),
+  [`90df950`](https://github.com/oimiragieo/tensor-grep/commit/90df950555f86a9d15036a3a8cd1ce4a194dcfa1))
+
+The new tensor-grep-code-audit skill (P7: zero callers != dead code) revealed my just-merged
+  registration-completeness docs overstated 'tg callers' — the call graph CANNOT enumerate
+  string/list/ decorator registrations (an allow-list like bootstrap._TG_ONLY_SEARCH_FLAGS,
+  @router.post, dispatch tables), which is EXACTLY where --rank lived (set membership, not a call).
+  Corrected AGENTS.md + the usage skill: callers for callable registrations, grep/tg scan for
+  set/decorator sites; cross-linked tensor-grep-code-audit P7. (Global skill
+  verify-plan-against-code Hard Rule 6 fixed + cross-ref'd too.)
+
+- Fix stale v1.13.23 handoff proof + capture registration-completeness audit path
+  ([#278](https://github.com/oimiragieo/tensor-grep/pull/278),
+  [`97e6973`](https://github.com/oimiragieo/tensor-grep/commit/97e6973ff12ad76744ab14fcc91c521d8920c53c))
+
+Verification workflow caught: (1) AGENTS.md Current Handoff release-proof bullets + date were frozen
+  at v1.13.23 / 2026-05-26 despite shipping v1.15.1 -> updated to the real v1.15.1 chain (#275 /
+  a840cd4 -> 3169980, latest feat #274 tg orient) and 2026-06-26. (2) The registration-completeness
+  insight + the default audit path (callers -> scan -> doctor) from the first real-use win were
+  undocumented -> added the principle to AGENTS.md 'Adding a Command or Flag' and a
+  Registration-Audit Workflow to the usage skill. (Global skill verify-plan-against-code also gained
+  Hard Rule 6 with cross-domain receipts.)
+
+### Features
+
+- Registration-completeness detector (incomplete multi-site registration)
+  ([#280](https://github.com/oimiragieo/tensor-grep/pull/280),
+  [`77dcc8e`](https://github.com/oimiragieo/tensor-grep/commit/77dcc8e117f219d8bccd2af6d3ceefe0fd8d486e))
+
+* feat(registration-check): MVP detector for incomplete multi-site registration
+
+The #1 backlog item from the first real-use win, council-designed (Exa prior-art + 4-seat
+  thinktank). Catches the universal silent-failure class that shipped the v1.15.0 --rank crash: an
+  entity that must be registered in N places, one missed, fails quietly. CliRunner structurally
+  can't see it (it bypasses the front door); a membership check can.
+
+MODEL (per council): ENTITY-SCOPED is the gate mode (Android Lint RegistrationDetector does exactly
+  this) — each declared entity must be in ALL sites; sites may otherwise legitimately differ (tg's
+  two allow-lists are 109 vs 25 — set-equality gave 100+ false positives in dogfood). Relationship
+  layer (equal/subset) DEFERRED to v2 (Seat 4: a relationship annotation is itself a drift-prone N+1
+  site). Empty/renamed-symbol resolution is surfaced as INCOMPLETE (silent-empty was a
+  false-negative vector).
+
+12 TDD tests; ruff + mypy clean. Ships .tg-registration.json with tg's own search-flag group
+  (entities verified in BOTH front doors — note: the council's seed wrongly included --ast, which is
+  bootstrap-only; verification caught it). Dogfood on the real repo: 1/1 complete, exit 0. Runnable
+  now via `python -m tensor_grep.core.registration_check .tg-registration.json` + check_from_config
+  API.
+
+* feat(registration-check): add lsp-languages group (second real registration group)
+
+Answers 'what about LSP?' — LSP flags (--with-lsp/--provider) aren't search-routed (not in the
+  search front doors), but LSP LANGUAGES are a genuine multi-site registration: a language must be
+  in BOTH _LANGUAGE_ORDER and _LANGUAGE_ALIASES (lsp_provider_setup.py). The detector catches it
+  with zero changes (entity-scoped on the 13 canonical languages; a fake 'elixir' is correctly
+  flagged). Proves the detector generalizes beyond the search-flag case. (Per-language SERVER
+  coverage via _NODE_PACKAGE_SPECS needs package->language mapping -> v1.1.)
+
+* feat(registration-check): switch config to TOML (unanimous council verdict)
+
+JSON-vs-TOML council (Exa + 3 seats + opus chairman) = 3/3 TOML. The 'JSON ships now / TOML is a
+  parser branch' argument was verified FALSE: tomllib is already imported (repo_map.py:12) + Python
+  floor is >=3.11, so TOML is a ~3-line loader swap, zero new dep. TOML wins on every other axis:
+  native comments (the .json used a '_comment' HACK), the config is human-authored, the shape is
+  shallow (TOML's sweet spot), and it matches tg's pyproject + the planned tg-workspace.toml.
+  Convention going forward: TOML for human config, JSON for machine output.
+
+load_config now detects by extension (.toml -> tomllib binary-mode; .json still accepted for
+  machine-generated configs). .tg-registration.json -> .tg-registration.toml (real comments,
+  inline-table sites per the chairman). main() help + docstrings updated. 13 tests (added a
+  TOML-loader test); dogfood 2/2 complete, exit 0.
+
+Also folds in the HTML/XML research: HTML/XML is for LLM prompt/output structure (Claude's +30% XML
+  edge), NOT human/CI config files (worst on tokens, ~80% more than Markdown; irrelevant for a
+  code-parsed config) — so it's out for the config; noted as a separate idea for tg agent-capsule
+  OUTPUT.
+
+* ci(registration-check): warn-only registration-completeness gate (council MVP deliverable)
+
+Adds a static-analysis step that runs the detector on .tg-registration.toml. WARN-ONLY
+  (continue-on-error: true) for one release per the council — confirms zero false positives on real
+  PRs, then drop continue-on-error to make it blocking. This is the load-bearing deliverable: it
+  catches the 'added X, missed front-door site N' class (the v1.15.0 --rank crash) that CliRunner
+  structurally cannot.
+
+
 ## v1.15.1 (2026-06-26)
 
 ### Bug Fixes
