@@ -7141,6 +7141,96 @@ def _symbol_payload_has_no_results(payload: dict[str, Any], result_key: str) -> 
     return not payload.get(result_key)
 
 
+_ZERO_CALLERS_CAVEAT = (
+    "0 callers in the static call graph does not mean this symbol is dead code. Dynamic "
+    "dispatch (getattr / decorators / string-keyed registries), test files, re-exports, and "
+    "cross-repo callers can be invisible to the graph. Cross-check with `tg refs` or grep "
+    "before treating it as unused."
+)
+
+
+_TRUNCATION_REMEDY = (
+    "A zero or small count here is NOT trustworthy. Remedy: scope to a subdirectory, raise "
+    "--max-repo-files / --max-callers / --max-files, or warm the index with "
+    "`tg session daemon start`."
+)
+
+
+def _truncation_message(what: str) -> str:
+    # ASCII-only (no em-dash): the warning prints to Windows consoles where cp1252 mojibakes it.
+    return f"INCOMPLETE RESULT: {what}, so callers/definitions may be missing. {_TRUNCATION_REMEDY}"
+
+
+def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
+    """Human warning when a result was truncated before covering the project (P0).
+
+    A truncated result that drops project files can return a confident-looking zero (or small
+    count) that renders identically to a real one — the single most dangerous output for a
+    refactor-safety tool, since it greenlights deleting live code. The payload already knows;
+    this projects it into the default output so an incomplete result can never look complete.
+    Handles all three shapes production emits: the repo-scan cap
+    (``scan_limit.possibly_truncated`` — callers/refs/impact), the repo-map output cap
+    (``output_limit.possibly_truncated`` — map/context), and the blast-radius output cap
+    (``output_limit.callers_truncated`` / ``files_truncated``). Returns None when complete.
+    """
+    for key in ("scan_limit", "output_limit"):
+        limit = payload.get(key)
+        if isinstance(limit, dict) and limit.get("possibly_truncated"):
+            scanned = limit.get("scanned_files", limit.get("emitted_files", "?"))
+            cap = limit.get("max_repo_files", limit.get("max_files", "?"))
+            return _truncation_message(
+                f"the scan stopped at a {cap}-file cap (scanned {scanned}) and dropped project files"
+            )
+    output_limit = payload.get("output_limit")
+    if isinstance(output_limit, dict) and (
+        output_limit.get("callers_truncated") or output_limit.get("files_truncated")
+    ):
+        dropped: list[str] = []
+        if output_limit.get("callers_truncated"):
+            omitted = output_limit.get(
+                "omitted_callers",
+                max(
+                    0,
+                    int(output_limit.get("total_callers", 0))
+                    - int(output_limit.get("returned_callers", 0)),
+                ),
+            )
+            dropped.append(f"{omitted} caller(s)")
+        if output_limit.get("files_truncated"):
+            omitted_files = max(
+                0,
+                int(output_limit.get("total_files", 0))
+                - int(output_limit.get("returned_files", 0)),
+            )
+            dropped.append(f"{omitted_files} file(s)")
+        return _truncation_message(f"output was capped, omitting {' and '.join(dropped)}")
+    return None
+
+
+def _annotate_result_completeness(
+    payload: dict[str, Any], *, result_key: str | None = None
+) -> tuple[str | None, bool]:
+    """Set additive ``result_incomplete`` + ``caveat`` on a symbol payload.
+
+    Returns ``(caveat_text_or_None, is_truncation)``. Truncation (P0) supersedes the
+    "zero callers != dead code" caveat (P7), which applies only to a resolved ``callers`` result.
+    Shared by the symbol-command emitter and the blast-radius command (which has its own output).
+    """
+    truncation = _scan_truncation_warning(payload)
+    payload["result_incomplete"] = truncation is not None
+    caveat = truncation
+    if (
+        caveat is None
+        and result_key == "callers"
+        and not payload.get("no_match")
+        and not payload.get("callers")
+    ):
+        caveat = _ZERO_CALLERS_CAVEAT
+    if caveat is not None:
+        payload["caveat"] = caveat
+    return caveat, truncation is not None
+
+
 def _emit_symbol_command_result(
     payload: dict[str, Any],
     *,
@@ -7153,13 +7243,26 @@ def _emit_symbol_command_result(
     When the symbol resolved to zero results we annotate the payload with
     ``not_found: true`` (additive JSON field) and exit 1, mirroring how ``rg`` exits 1
     on no match, while still emitting a valid JSON object for ``--json`` consumers.
+
+    Two additive completeness signals are surfaced in BOTH the JSON and the default text
+    output so an incomplete answer can never look complete (validated on real repos):
+
+    * ``result_incomplete`` (+ a loud ``caveat``) when the scan was truncated before covering
+      the project — the dangerous "confident false zero" (P0).
+    * for ``callers``, the "zero callers != dead code" caveat (P7) when a symbol resolved but
+      has no callers on a complete scan — dynamic dispatch / tests / re-exports stay invisible.
+
+    The truncation warning supersedes the generic caveat (incompleteness is the real story).
     """
     not_found = _symbol_payload_has_no_results(payload, result_key)
     payload["not_found"] = not_found
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key=result_key)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
         emit_text(payload)
+        if caveat is not None:
+            typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
     if not_found:
         raise typer.Exit(1)
 
@@ -7633,10 +7736,7 @@ def blast_radius(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact callers plus a transitive file/test blast radius for a symbol."""
-    from tensor_grep.cli.repo_map import (
-        build_symbol_blast_radius,
-        build_symbol_blast_radius_json,
-    )
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -7645,20 +7745,6 @@ def blast_radius(
             symbol_option=symbol,
             command_name="blast-radius",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_blast_radius_json(
-                    resolved_symbol,
-                    resolved_path,
-                    max_depth=max_depth,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                    max_callers=max_callers,
-                    max_files=max_files,
-                )
-            )
-            return
-
         payload = build_symbol_blast_radius(
             resolved_symbol,
             resolved_path,
@@ -7672,11 +7758,20 @@ def blast_radius(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
+    # Surface output-cap truncation (callers_truncated/files_truncated) so a capped blast radius
+    # can never look complete — the same false-confidence vector as a truncated callers=0.
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
     typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
     typer.echo(
         f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
         f"files={len(payload['files'])} tests={len(payload['tests'])}"
     )
+    if caveat is not None:
+        typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
 
 
 @app.command(name="blast-radius-render")

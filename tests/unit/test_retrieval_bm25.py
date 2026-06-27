@@ -79,6 +79,16 @@ def test_bm25_unmatched_query_returns_empty() -> None:
     assert idx.query("nonexistentzzz", top_k=5) == []
 
 
+def test_bm25_dedupes_repeated_query_terms() -> None:
+    # split_terms("cacheCache") -> ["cache", "cache"]; the repeat must not double the BM25
+    # contribution. IDF build dedupes with set(), so scoring must too (standard Okapi BM25).
+    idx = Bm25Index(_chunks("cache cache cache", "def foo(): pass"))
+    single = idx.query("cache", top_k=1)
+    repeated = idx.query("cacheCache", top_k=1)
+    assert single and repeated
+    assert single[0][1] == pytest.approx(repeated[0][1])
+
+
 def test_bm25_empty_corpus_is_safe() -> None:
     assert Bm25Index([]).query("anything") == []
 

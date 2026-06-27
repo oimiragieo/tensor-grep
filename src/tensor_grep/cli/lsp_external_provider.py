@@ -14,6 +14,7 @@ from tensor_grep.cli.lsp_provider_setup import (
     canonical_language,
     managed_provider_env,
     resolved_provider_command,
+    wrap_windows_batch_command,
 )
 from tensor_grep.cli.lsp_provider_setup import (
     managed_provider_root as _managed_provider_root,
@@ -401,7 +402,7 @@ class ExternalLSPClient:
         if self.process is not None:
             self.stop()
         self.process = subprocess.Popen(
-            self.command,
+            wrap_windows_batch_command(list(self.command)),
             cwd=str(self.workspace_root),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
