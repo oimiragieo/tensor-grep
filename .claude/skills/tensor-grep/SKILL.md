@@ -53,7 +53,7 @@ When you add an entity that must be registered in multiple places (a command, a 
 2. **Pattern bugs** — `tg scan PATH --config RULESET` runs the AST structural rules across those sites (see `tg rulesets` for available rule packs).
 3. **Diagnostics** — `tg doctor --with-lsp`.
 
-For registration-completeness specifically: `tg callers PATH REGISTRATION_FUNCTION` gives the full list of existing registrations of that type — your new entry must appear in ALL of them. (General principle: the `verify-plan-against-code` skill, Hard Rule 6.)
+For registration-completeness specifically: `tg callers PATH REGISTRATION_FUNCTION` lists *callable* registrations — but the call graph can't see set/list/decorator registrations (allow-lists, `@router.post`, dispatch tables), which are often the missed site, so grep / `tg scan` those too. Your new entry must appear in ALL sites. (General principle: `verify-plan-against-code` Hard Rule 6; call-graph blind spots: `tensor-grep-code-audit` P7.)
 
 ## Non-Interactive Mode
 
