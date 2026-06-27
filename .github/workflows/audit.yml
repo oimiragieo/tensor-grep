@@ -23,12 +23,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit and cargo-deny
-        # Pin + --locked: an unpinned `cargo install` pulls the newest release and resolves newest
-        # transitive deps, so a just-published version that fails to build reds this job on every PR
-        # and on main (cargo-audit v0.22.2 did exactly this, 2026-06-27). Pinning a known-good
-        # version with its vetted Cargo.lock makes the security gate reproducible.
+        # --locked is load-bearing: an unpinned `cargo install` resolves NEWEST transitive deps, and
+        # cargo-audit 0.22.2 then fails to compile (2026-06-27); --locked uses its vetted Cargo.lock,
+        # which builds. We must stay on 0.22.x (not downgrade) because the RustSec advisory DB now
+        # ships CVSS 4.0 entries that older cargo-audit cannot parse ("unsupported CVSS version: 4.0").
         run: |
-          cargo install cargo-audit --version 0.21.2 --locked
+          cargo install cargo-audit --version 0.22.2 --locked
           cargo install cargo-deny --locked
 
       - name: Run cargo audit
