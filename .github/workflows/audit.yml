@@ -23,9 +23,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit and cargo-deny
+        # Pin + --locked: an unpinned `cargo install` pulls the newest release and resolves newest
+        # transitive deps, so a just-published version that fails to build reds this job on every PR
+        # and on main (cargo-audit v0.22.2 did exactly this, 2026-06-27). Pinning a known-good
+        # version with its vetted Cargo.lock makes the security gate reproducible.
         run: |
-          cargo install cargo-audit
-          cargo install cargo-deny
+          cargo install cargo-audit --version 0.21.2 --locked
+          cargo install cargo-deny --locked
 
       - name: Run cargo audit
         working-directory: rust_core
