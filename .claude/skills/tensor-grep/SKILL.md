@@ -45,6 +45,16 @@ prefer the canonical path-first form.
 5. Use the returned file/span candidates to make the smallest correct edit.
 6. Run only the most relevant validation commands after the edit.
 
+## Registration-Audit Workflow (blast-radius before claiming done)
+
+When you add an entity that must be registered in multiple places (a command, a flag, a route, a hook), enumerate ALL its registration sites BEFORE claiming the change is done — missing one fails *quietly*. The default audit path:
+
+1. **Blast radius** — `tg callers PATH SYMBOL --json` lists every call site (file:line). On a real billing repo it surfaced 2 webhook handlers + 1 reconcile cron in ~1s — a 10-minute grep-and-read became a one-second decision.
+2. **Pattern bugs** — `tg scan PATH --config RULESET` runs the AST structural rules across those sites (see `tg rulesets` for available rule packs).
+3. **Diagnostics** — `tg doctor --with-lsp`.
+
+For registration-completeness specifically: `tg callers PATH REGISTRATION_FUNCTION` gives the full list of existing registrations of that type — your new entry must appear in ALL of them. (General principle: the `verify-plan-against-code` skill, Hard Rule 6.)
+
 ## Non-Interactive Mode
 
 - When running in `claude -p` or other non-interactive automation, do not ask for confirmation.
