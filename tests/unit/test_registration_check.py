@@ -204,19 +204,17 @@ def test_check_groups_aggregates_and_sets_overall(tmp_path: Path) -> None:
 def test_load_config_parses_groups(tmp_path: Path) -> None:
     cfg = tmp_path / "reg.json"
     cfg.write_text(
-        json.dumps(
-            {
-                "registration_groups": [
-                    {
-                        "name": "search-flag",
-                        "sites": [
-                            {"file": "a.py", "symbol": "FLAGS"},
-                            {"file": "b.rs", "symbol": "FLAGS"},
-                        ],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "registration_groups": [
+                {
+                    "name": "search-flag",
+                    "sites": [
+                        {"file": "a.py", "symbol": "FLAGS"},
+                        {"file": "b.rs", "symbol": "FLAGS"},
+                    ],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     groups = load_config(str(cfg))

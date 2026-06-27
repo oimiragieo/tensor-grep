@@ -151,13 +151,11 @@ def check_group(group: RegistrationGroup, *, repo_root: str | Path = ".") -> dic
         present_in = [k for k, members in members_by_site.items() if entity in members]
         missing_from = [k for k, members in members_by_site.items() if entity not in members]
         if missing_from:  # present in some sites but not all
-            missing.append(
-                {
-                    "entity": entity,
-                    "present_in": present_in,
-                    "missing_from": missing_from,
-                }
-            )
+            missing.append({
+                "entity": entity,
+                "present_in": present_in,
+                "missing_from": missing_from,
+            })
     return {
         "name": group.name,
         "complete": not missing,
