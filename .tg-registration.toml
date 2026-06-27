@@ -1,0 +1,24 @@
+# Registration-completeness groups for tensor-grep (the `registration-check` detector).
+# A tg-invented search flag must live in BOTH front doors: the native passthrough allow-list
+# AND the Python bootstrap tg-only allow-list — a missed one leaks to ripgrep (the v1.15.0
+# --rank crash). `entities` = the entities that MUST be in every site; the sites otherwise
+# legitimately differ. Run:  python -m tensor_grep.core.registration_check .tg-registration.toml
+
+[[registration_groups]]
+name = "search-flag-front-doors"
+entities = ["--rank", "--bm25", "--generate", "--lang", "--stats"]
+sites = [
+  { file = "rust_core/src/main.rs", symbol = "SEARCH_PYTHON_PASSTHROUGH_FLAGS" },
+  { file = "src/tensor_grep/cli/bootstrap.py", symbol = "_TG_ONLY_SEARCH_FLAGS" },
+]
+
+# A supported LSP language must appear in BOTH the order list and the alias map; miss one ->
+# a half-declared language. (Per-language SERVER coverage via _NODE_PACKAGE_SPECS is a v1.1
+# check that needs package->language mapping.)
+[[registration_groups]]
+name = "lsp-languages"
+entities = ["python", "javascript", "typescript", "go", "rust", "java", "c", "cpp", "csharp", "php", "kotlin", "swift", "lua"]
+sites = [
+  { file = "src/tensor_grep/cli/lsp_provider_setup.py", symbol = "_LANGUAGE_ORDER" },
+  { file = "src/tensor_grep/cli/lsp_provider_setup.py", symbol = "_LANGUAGE_ALIASES" },
+]

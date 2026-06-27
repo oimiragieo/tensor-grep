@@ -184,3 +184,23 @@ def test_load_config_parses_groups(tmp_path: Path) -> None:
     assert groups[0].name == "search-flag"
     assert len(groups[0].sites) == 2
     assert groups[0].sites[0].symbol == "FLAGS"
+
+
+def test_load_config_accepts_toml(tmp_path: Path) -> None:
+    cfg = tmp_path / "reg.toml"
+    cfg.write_text(
+        "[[registration_groups]]\n"
+        'name = "search-flag"\n'
+        'entities = ["--rank"]\n'
+        "sites = [\n"
+        '  { file = "a.py", symbol = "FLAGS" },\n'
+        '  { file = "b.rs", symbol = "FLAGS" },\n'
+        "]\n",
+        encoding="utf-8",
+    )
+    groups = load_config(str(cfg))
+    assert len(groups) == 1
+    assert groups[0].name == "search-flag"
+    assert groups[0].entities == ("--rank",)
+    assert len(groups[0].sites) == 2
+    assert groups[0].sites[0].symbol == "FLAGS"

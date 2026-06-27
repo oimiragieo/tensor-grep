@@ -7,14 +7,16 @@ billing app hit (a `/v1` route missing its cron registration). `tg callers` can'
 set/list/decorator registrations are invisible to the call graph (see the `tensor-grep-code-audit`
 skill, P7) — so this does a membership set-diff across the declared sites instead.
 
-You declare "registration groups" (the N sites that must stay in sync) in a small JSON config; this
-extracts each site's string-literal members and reports any entity present in some-but-not-all sites.
+You declare "registration groups" (the N sites that must stay in sync) in a small TOML config (JSON
+also accepted); this extracts each site's string-literal members and reports any entity present in
+some-but-not-all sites.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -186,8 +188,18 @@ def check_groups(groups: list[RegistrationGroup], *, repo_root: str | Path = "."
 
 
 def load_config(config_path: str) -> list[RegistrationGroup]:
-    """Load registration groups from a JSON config (`{"registration_groups": [{name, sites:[{file,symbol}]}]}`)."""
-    data = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    """Load registration groups from a TOML config (or legacy JSON, by extension).
+
+    TOML is the canonical/human-authored format (it supports comments and matches tg's pyproject /
+    planned tg-workspace.toml); `.json` is still accepted for machine-generated configs. Both parse to
+    the identical shape: `{"registration_groups": [{name, entities?, sites: [{file, symbol}]}]}`.
+    """
+    path = Path(config_path)
+    if path.suffix == ".toml":
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    else:
+        data = json.loads(path.read_text(encoding="utf-8"))
     groups: list[RegistrationGroup] = []
     for raw in data.get("registration_groups", []):
         sites = tuple(
@@ -233,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="registration-check",
         description="Verify multi-site registration completeness (catches 'added X, missed site N').",
     )
-    parser.add_argument("config", help="Path to the registration config (JSON).")
+    parser.add_argument("config", help="Path to the registration config (TOML, or legacy JSON).")
     parser.add_argument(
         "--repo-root", default=".", help="Root the site file paths are relative to."
     )
