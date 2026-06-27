@@ -18,24 +18,18 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 release_docs_current_tag: v1.15.1
 
-As of 2026-05-26, the current tagged release state is `v1.15.1`, and the latest complete public PyPI/release-asset distribution is also `v1.15.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.15.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-06-26, the current tagged release state is `v1.15.1`, and the latest complete public PyPI/release-asset distribution is also `v1.15.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.15.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-- Latest verified release proof PR: #236 `fix: repair owned python launchers`
-- Latest verified release proof merge commit: `3c0c213 fix: repair owned python launchers`
-- Latest verified release proof commit: `bd7035c chore(release): v1.13.23 [skip ci]`
-- Latest verified proof public release PR: #236 `fix: repair owned python launchers`
-- Latest verified proof public release commit: `bd7035c chore(release): v1.13.23 [skip ci]`
-- Latest merged fix commit: `3c0c213 fix: repair owned python launchers`
-- Latest merged feature commit: `a518cc6 feat: add agent success harness`
+- Latest verified release proof PR: #275 `fix(search): tg search --rank errored in plain-text mode`
+- Latest verified release proof merge commit: `a840cd4 fix(search): tg search --rank errored in plain-text mode (#275)`
+- Latest verified release proof commit: `3169980 chore(release): v1.15.1 [skip ci]`
+- Latest verified proof public release PR: #275 `fix(search): tg search --rank errored in plain-text mode`
+- Latest verified proof public release commit: `3169980 chore(release): v1.15.1 [skip ci]`
+- Latest merged fix commit: `a840cd4 fix(search): tg search --rank errored in plain-text mode (#275)`
+- Latest merged feature commit: `5689779 feat: add 'tg orient' — one-call codebase orientation capsule (#274)`
 - Recent fix commits:
-  - `3c0c213 fix: repair owned python launchers`
-  - `995b414 fix: harden v1.13.21 dogfood contracts`
-  - `b69bc5b fix: harden upgrade daemon and lsp diagnostics (#233)`
-  - `6525853 fix: harden dogfood timeout reporting`
-  - `0c9155f fix: harden daemon response cache writes`
-  - `77a73b2 fix: harden v1.13.17 dogfood followups (#229)`
-  - `b0e5c27 fix: harden v1.13.16 dogfood followups (#228)`
-  - `f6623bb fix: harden v1.13.15 dogfood followups`
+  - `a840cd4 fix(search): tg search --rank errored in plain-text mode (#275)`
+  - `1137537 fix(license): declare Apache-2.0 consistently across Cargo.toml + npm (#271)`
   - `b0c7cf6 fix: harden v1.13.14 dogfood contracts`
   - `1e09e59 fix: bound agent-loop memory and dogfood contracts`
   - `21e5437 fix: collect capsule call-site evidence`
@@ -197,6 +191,8 @@ Adding a search flag (e.g. `tg search --myflag`) requires two front doors or the
 2. `bootstrap._TG_ONLY_SEARCH_FLAGS` in `src/tensor_grep/cli/bootstrap.py` — the Python bootstrap's allowlist (the Python front door runs before the Typer app and forwards plain searches to rg).
 
 Missing either slot lets the flag reach ripgrep for users who install the published binary while your CliRunner tests pass cleanly — exactly how the `--rank` crash shipped undetected.
+
+**Registration-completeness is a universal bug class, not a tg quirk.** "Add a thing that must be registered in N places, miss one, it fails *quietly*" hit tg here (the `--rank` flag missed one of two front doors) and a downstream user's billing code (a new `/v1` route missed the cron registration + a `test_route_scope_coverage` exemption — green tests, broken route). Before claiming any registration change is done, **enumerate all N sites**: run `tg callers <registration-symbol>` (the dispatch / allow-list / registration function) — it lists every existing registration of that type in ~1s, so you confirm your new entry appears in *all* of them instead of a grep-and-read hunt. This is the default audit path (`tg callers` for blast radius → `tg scan` for pattern bugs → `tg doctor --with-lsp` for diagnostics), and it's encoded as Hard Rule 6 in the `verify-plan-against-code` skill.
 
 ## Dogfood the Real Binary, Not CliRunner
 
