@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-26
+Last updated: 2026-06-28
 
 ## Current Release State
 
@@ -8,13 +8,13 @@ release_docs_current_tag: v1.17.4
 
 - Latest tagged version: `v1.17.4`
 - Latest complete PyPI version: `v1.17.4`
-- Latest verified release proof PR: #236 `fix: repair owned python launchers`
-- Latest verified release proof merge commit: `3c0c213 fix: repair owned python launchers`
-- Latest verified release proof commit: `bd7035c chore(release): v1.13.23 [skip ci]`
-- Latest verified proof public release PR: #236 `fix: repair owned python launchers`
-- Latest verified proof public release commit: `bd7035c chore(release): v1.13.23 [skip ci]`
-- Latest fix commit: `3c0c213 fix: repair owned python launchers`
-- Latest feature commit: `a518cc6 feat: add agent success harness`
+- Latest verified release proof PR: #285 `fix: supply-chain hardening batch 1 (zip-slip, download timeouts/cap, dead surface)`
+- Latest verified release proof merge commit: `e186aa4 fix: supply-chain hardening batch 1 (zip-slip, download timeouts/cap, dead surface) (#285)`
+- Latest verified release proof commit: `2bf4211 chore(release): v1.17.4 [skip ci]`
+- Latest verified proof public release PR: #285 `fix: supply-chain hardening batch 1 (zip-slip, download timeouts/cap, dead surface)`
+- Latest verified proof public release commit: `2bf4211 chore(release): v1.17.4 [skip ci]`
+- Latest fix commit: `e186aa4 fix: supply-chain hardening batch 1 (zip-slip, download timeouts/cap, dead surface) (#285)`
+- Latest feature commit: `3a022ec feat: agent-contract completeness signals + Windows LSP / routing / BM25 fixes (#281)`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.17.4>
 - `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
 - Main CI run `26513809791`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`

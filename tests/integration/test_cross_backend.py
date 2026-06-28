@@ -67,7 +67,10 @@ def _resolve_rg_binary() -> Path | None:
                 None,
             )
             if member is not None:
-                bundle.extractall(REPO_ROOT / "benchmarks")
+                # Reuse the production zip-slip guard (a crafted rg.zip must not escape the dir).
+                from tensor_grep.cli.lsp_provider_setup import _safe_extract_zip
+
+                _safe_extract_zip(bundle, REPO_ROOT / "benchmarks")
                 if dev_candidate.exists():
                     return dev_candidate
 

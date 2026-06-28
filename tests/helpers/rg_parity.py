@@ -289,7 +289,10 @@ def resolve_pinned_rg_binary() -> Path | None:
         member = next((name for name in bundle.namelist() if name.endswith("/rg.exe")), None)
         if member is None:
             return None
-        bundle.extractall(benchmarks_dir)
+        # Reuse the production zip-slip guard so a crafted benchmarks/rg.zip can't escape the dir.
+        from tensor_grep.cli.lsp_provider_setup import _safe_extract_zip
+
+        _safe_extract_zip(bundle, benchmarks_dir)
 
     if dev_candidate.is_file():
         return dev_candidate.resolve()
