@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.17.2 (2026-06-28)
+
+### Bug Fixes
+
+- Time-bound native front-door downloads (no more indefinite install/upgrade hang)
+  ([#284](https://github.com/oimiragieo/tensor-grep/pull/284),
+  [`97cc991`](https://github.com/oimiragieo/tensor-grep/commit/97cc99105d55966f6db0f87218436f9462e2d752))
+
+The native front-door asset download (urlretrieve, which has NO timeout param) and the CHECKSUMS
+  fetch (urlopen with no timeout) could hang install/upgrade indefinitely on a stalled CDN read
+  (audit: reliability). Add a 30s timeout to the CHECKSUMS urlopen and bound the urlretrieve asset
+  download with a process socket timeout (restored afterward so no global timeout leaks).
+  urlretrieve is kept (the scheduled-helper + tests depend on it); only the timeout is added.
+
+TDD: new test asserts the CHECKSUMS fetch passes a positive urlopen timeout and the asset download
+  sets+restores a 60s socket default timeout. Existing native-frontdoor upgrade tests still pass.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.1 (2026-06-28)
 
 ### Bug Fixes
