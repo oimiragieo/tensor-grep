@@ -311,10 +311,10 @@ jobs:
         run: uv run mypy src/tensor_grep
 
       # Registration-completeness gate (catches "added X, missed front-door site N" — the v1.15.0
-      # --rank class). WARN-ONLY for one release to confirm zero false positives on real PRs, then
-      # remove continue-on-error to make it blocking.
-      - name: Registration completeness (warn-only)
-        continue-on-error: true
+      # --rank class). Blocking as of v1.17 after a clean warn-only release cycle (zero false
+      # positives through v1.16); the parser is string/comment-aware so a commented-out entry
+      # cannot false-pass. To re-soften, restore `continue-on-error: true`.
+      - name: Registration completeness
         run: |
           set -uo pipefail
           if [ -f .tg-registration.toml ]; then
