@@ -242,6 +242,8 @@ def test_ensure_node_packages_should_install_pinned_package_specs(
     assert "typescript@6.0.3" in captured["command"]
     assert "typescript-language-server@5.1.3" in captured["command"]
     assert "intelephense@1.18.0" in captured["command"]
+    # Supply-chain: lifecycle/binding.gyp scripts must be disabled (pure-JS providers need none).
+    assert "--ignore-scripts" in captured["command"]
 
 
 def test_install_managed_lsp_providers_should_not_mutate_toolchains_by_default(
