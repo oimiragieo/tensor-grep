@@ -42,6 +42,12 @@ _RUST_ANALYZER_SHA256: dict[str, str] = {
     "darwin/arm64": "",
 }
 
+# Pin gopls + csharp-ls to exact versions instead of "latest"/unversioned. Once the version is
+# pinned, integrity is enforced fail-closed by each ecosystem's checksum DB: Go's GOSUMDB
+# (sum.golang.org) for `go install gopls@vX`, and NuGet package signing for the dotnet tool.
+_GOPLS_VERSION = "v0.22.0"
+_CSHARP_LS_VERSION = "0.25.0"
+
 _LANGUAGE_ALIASES = {
     "python": "python",
     "javascript": "javascript",
@@ -475,7 +481,7 @@ def _ensure_gopls(root: Path) -> Path:
     go = shutil.which("go")
     if not go:
         raise RuntimeError("Go toolchain not found; unable to install gopls")
-    _run_checked([go, "install", "golang.org/x/tools/gopls@latest"])
+    _run_checked([go, "install", f"golang.org/x/tools/gopls@{_GOPLS_VERSION}"])
     built = _find_go_binary_name(root, "gopls")
     if built is None:
         raise RuntimeError("Go install completed without a discoverable gopls binary")
@@ -494,11 +500,33 @@ def _ensure_csharp_ls(root: Path) -> Path:
         raise RuntimeError("dotnet not found; unable to install csharp-ls")
     tool_dir = _managed_bin_dir(root)
     tool_dir.mkdir(parents=True, exist_ok=True)
-    install_cmd = [dotnet, "tool", "install", "--tool-path", str(tool_dir), "csharp-ls"]
+    install_cmd = [
+        dotnet,
+        "tool",
+        "install",
+        "--tool-path",
+        str(tool_dir),
+        "--version",
+        _CSHARP_LS_VERSION,
+        "csharp-ls",
+    ]
     completed = subprocess.run(install_cmd, check=False, capture_output=True, text=True)
-    if completed.returncode != 0 and "already installed" not in completed.stderr.lower():
-        update_cmd = [dotnet, "tool", "update", "--tool-path", str(tool_dir), "csharp-ls"]
-        _run_checked(update_cmd)
+    if completed.returncode != 0:
+        if "already installed" in completed.stderr.lower():
+            # A different version may already be on the tool-path; converge it to the pinned
+            # version rather than silently accepting whatever happens to be installed.
+            _run_checked([
+                dotnet,
+                "tool",
+                "update",
+                "--tool-path",
+                str(tool_dir),
+                "--version",
+                _CSHARP_LS_VERSION,
+                "csharp-ls",
+            ])
+        else:
+            raise RuntimeError(f"dotnet tool install csharp-ls failed: {completed.stderr.strip()}")
     if not destination.is_file():
         raise RuntimeError(f"dotnet tool install completed without {destination.name}")
     return destination

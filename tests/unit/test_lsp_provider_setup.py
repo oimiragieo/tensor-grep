@@ -44,6 +44,92 @@ def test_wrap_windows_batch_command_leaves_real_exe_and_posix_untouched(
     assert provider_setup.wrap_windows_batch_command([]) == []
 
 
+def test_gopls_install_pins_exact_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "providers"
+    captured: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        provider_setup.shutil, "which", lambda c: None if c == "gopls" else "/usr/bin/go"
+    )
+    monkeypatch.setattr(provider_setup, "_run_checked", lambda cmd, **kw: captured.update(cmd=cmd))
+    built = tmp_path / "gopls"
+    built.write_text("", encoding="utf-8")
+    monkeypatch.setattr(provider_setup, "_find_go_binary_name", lambda *a: built)
+    monkeypatch.setattr(provider_setup, "_copy_binary_to_managed", lambda _b, dest: dest)
+
+    provider_setup._ensure_gopls(root)
+
+    assert f"golang.org/x/tools/gopls@{provider_setup._GOPLS_VERSION}" in captured["cmd"]
+    assert "golang.org/x/tools/gopls@latest" not in captured["cmd"]
+
+
+def test_csharp_ls_install_pins_exact_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    captured: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        provider_setup.shutil, "which", lambda c: None if c == "csharp-ls" else "/usr/bin/dotnet"
+    )
+
+    def _fake_run(cmd, **_kw):
+        captured["cmd"] = cmd
+        dest = provider_setup._managed_bin_binary(root, "csharp-ls")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("", encoding="utf-8")
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(provider_setup.subprocess, "run", _fake_run)
+
+    provider_setup._ensure_csharp_ls(root)
+
+    assert "--version" in captured["cmd"]
+    assert provider_setup._CSHARP_LS_VERSION in captured["cmd"]
+
+
+def test_csharp_ls_already_installed_converges_to_pinned_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    update: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        provider_setup.shutil, "which", lambda c: None if c == "csharp-ls" else "/usr/bin/dotnet"
+    )
+    monkeypatch.setattr(
+        provider_setup.subprocess,
+        "run",
+        lambda cmd, **_kw: type(
+            "R", (), {"returncode": 1, "stderr": "Tool 'csharp-ls' is already installed."}
+        )(),
+    )
+
+    def _fake_run_checked(cmd, **_kw):
+        update["cmd"] = cmd
+        dest = provider_setup._managed_bin_binary(root, "csharp-ls")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(provider_setup, "_run_checked", _fake_run_checked)
+
+    provider_setup._ensure_csharp_ls(root)
+
+    assert "update" in update["cmd"]
+    assert provider_setup._CSHARP_LS_VERSION in update["cmd"]
+
+
+def test_csharp_ls_install_failure_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "providers"
+    monkeypatch.setattr(
+        provider_setup.shutil, "which", lambda c: None if c == "csharp-ls" else "/usr/bin/dotnet"
+    )
+    monkeypatch.setattr(
+        provider_setup.subprocess,
+        "run",
+        lambda cmd, **_kw: type("R", (), {"returncode": 1, "stderr": "network error"})(),
+    )
+    with pytest.raises(RuntimeError, match="csharp-ls failed"):
+        provider_setup._ensure_csharp_ls(root)
+
+
 def test_supported_lsp_languages_should_include_managed_provider_matrix() -> None:
     assert provider_setup.supported_lsp_languages() == [
         "python",
