@@ -575,9 +575,18 @@ def _managed_native_frontdoor_path() -> Path | None:
 
 
 def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
+    import socket
     import urllib.request
 
-    urllib.request.urlretrieve(url, destination)
+    # urlretrieve has NO timeout param; bound it with a process socket timeout so a stalled read on
+    # the release CDN can't hang install/upgrade indefinitely (audit: reliability). Restore the
+    # prior default afterward so we don't leak a global timeout into the rest of the process.
+    previous_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(60)
+    try:
+        urllib.request.urlretrieve(url, destination)
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
 
 
 def _native_frontdoor_checksums_url(version: str) -> str:
@@ -590,7 +599,7 @@ def _fetch_native_frontdoor_checksums(version: str) -> str | None:
 
     url = _native_frontdoor_checksums_url(version)
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(url, timeout=30) as response:
             raw: bytes = response.read()
             return raw.decode("utf-8")
     except Exception:

@@ -10179,6 +10179,49 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
     assert json.loads(popen_calls[0][9]) == [str(bridge_tg)]
 
 
+def test_native_frontdoor_download_helpers_use_timeouts(monkeypatch, tmp_path):
+    # Reliability: the native front-door asset + CHECKSUMS downloads must be time-bounded, or a
+    # stalled CDN read hangs install/upgrade indefinitely. urlretrieve has NO timeout param, so the
+    # asset download is bounded by a process socket timeout instead.
+    import socket
+
+    import tensor_grep.cli.main as m
+
+    # CHECKSUMS fetch uses urlopen(timeout=...).
+    checksum_timeouts: list = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"deadbeef  tg-x.exe\n"
+
+    def _fake_urlopen(url, timeout=None, *args, **kwargs):
+        checksum_timeouts.append(timeout)
+        return _Resp()
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    assert m._fetch_native_frontdoor_checksums("9.9.9") is not None
+    assert checksum_timeouts and all(t is not None and t > 0 for t in checksum_timeouts)
+
+    # Asset download bounds urlretrieve with a socket timeout and restores the prior default.
+    seen_timeout: list = []
+
+    def _fake_urlretrieve(url, dest):
+        seen_timeout.append(socket.getdefaulttimeout())
+        Path(dest).write_bytes(b"x")
+
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    before = socket.getdefaulttimeout()
+    m._download_native_frontdoor_asset("https://example.test/tg-x.exe", tmp_path / "tg.exe")
+    assert seen_timeout == [60.0], f"download did not set a socket timeout: {seen_timeout}"
+    assert socket.getdefaulttimeout() == before, "socket default timeout leaked after download"
+
+
 def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
     monkeypatch, tmp_path
 ):
