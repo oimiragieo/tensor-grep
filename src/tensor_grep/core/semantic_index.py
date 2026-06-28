@@ -8,6 +8,12 @@ Layout under the index dir (default ``<root>/.tg_semantic_index/``, overridable 
 Staleness mirrors (does not duplicate) the Rust index.rs mtime semantics: a fingerprint over the
 indexed files' paths + mtimes is stored at build time and re-checked at load; a mismatch warns and
 returns ``None`` so the caller falls back to the unranked path rather than serving stale results.
+
+NOTE: this persisted-index acceleration is NOT yet wired into the CLI. The live ``tg search --rank``
+path ranks in-memory via :mod:`tensor_grep.core.reranker`; there is intentionally no ``tg index``
+command yet. These helpers are the building blocks for a future indexed-acceleration command — the
+stderr messages therefore describe the in-memory fallback rather than instructing a command that
+does not exist.
 """
 
 from __future__ import annotations
@@ -88,8 +94,7 @@ def load_or_warn(index_dir: Path) -> Bm25Index | None:
     meta_path = index_dir / _META_NAME
     if not chunks_path.is_file() or not meta_path.is_file():
         print(
-            f"tg: no semantic index at {index_dir} (run 'tg index --rank' first); "
-            "falling back to unranked results.",
+            f"tg: no persisted semantic index at {index_dir}; falling back to in-memory ranking.",
             file=sys.stderr,
         )
         return None
@@ -99,7 +104,7 @@ def load_or_warn(index_dir: Path) -> Bm25Index | None:
     if current != meta.get("fingerprint"):
         print(
             f"tg: semantic index at {index_dir} is stale (files changed since indexing); "
-            "re-run 'tg index --rank'. Falling back to unranked results.",
+            "falling back to in-memory ranking.",
             file=sys.stderr,
         )
         return None

@@ -184,6 +184,28 @@ def _passing_many_pattern_payload(module):
     return payload
 
 
+@pytest.mark.parametrize(
+    "name,rel_path",
+    [
+        ("run_compat_checks_zipslip", "benchmarks/run_compat_checks.py"),
+        ("run_benchmarks_zipslip", "benchmarks/run_benchmarks.py"),
+    ],
+)
+def test_extract_windows_rg_bundle_rejects_zip_slip(name, rel_path, tmp_path):
+    # A crafted rg.zip with a member that escapes the destination (zip-slip) must be REFUSED
+    # before extraction, not written outside benchmarks_dir.
+    module = _load_script_module(name, rel_path)
+    bench_dir = tmp_path / name
+    bench_dir.mkdir()
+    archive = bench_dir / "rg.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("ripgrep/rg.exe", b"binary")
+        zf.writestr("../escape.exe", b"evil")  # escapes benchmarks_dir
+    with pytest.raises(RuntimeError, match="escapes destination"):
+        module.extract_windows_rg_bundle(bench_dir)
+    assert not (tmp_path / "escape.exe").exists(), "zip-slip member was written outside the dir"
+
+
 def test_run_gpu_native_benchmarks_gpu_proof_summary_reports_unsupported_route():
     module = _load_script_module(
         "run_gpu_native_benchmarks_script_gpu_proof_summary",

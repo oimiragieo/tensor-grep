@@ -25,6 +25,11 @@ function isAllowedHost(hostname) {
   );
 }
 
+// Time-bound each request and cap the response size so a stalled or oversized release
+// response can't hang the install or exhaust memory before the checksum comparison runs.
+const DOWNLOAD_TIMEOUT_MS = 60000;
+const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024; // generous for a release binary; rejects abuse
+
 // Download a URL to a Buffer, following a bounded number of redirects, enforcing HTTPS,
 // a trusted host, and a final 200 status before returning any bytes.
 function download(url, redirectsLeft = 5) {
@@ -44,34 +49,46 @@ function download(url, redirectsLeft = 5) {
       reject(new Error(`Refusing download from untrusted host: ${parsed.hostname}`));
       return;
     }
-    https
-      .get(url, (response) => {
-        const { statusCode } = response;
-        if ([301, 302, 303, 307, 308].includes(statusCode)) {
-          response.resume();
-          if (redirectsLeft <= 0) {
-            reject(new Error('Too many redirects'));
-            return;
-          }
-          const location = response.headers.location;
-          if (!location) {
-            reject(new Error('Redirect response without a location header'));
-            return;
-          }
-          resolve(download(new URL(location, url).toString(), redirectsLeft - 1));
+    const req = https.get(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
+      const { statusCode } = response;
+      if ([301, 302, 303, 307, 308].includes(statusCode)) {
+        response.resume();
+        if (redirectsLeft <= 0) {
+          reject(new Error('Too many redirects'));
           return;
         }
-        if (statusCode !== 200) {
-          response.resume();
-          reject(new Error(`Download failed with status code ${statusCode}`));
+        const location = response.headers.location;
+        if (!location) {
+          reject(new Error('Redirect response without a location header'));
           return;
         }
-        const chunks = [];
-        response.on('data', (chunk) => chunks.push(chunk));
-        response.on('end', () => resolve(Buffer.concat(chunks)));
-        response.on('error', reject);
-      })
-      .on('error', reject);
+        resolve(download(new URL(location, url).toString(), redirectsLeft - 1));
+        return;
+      }
+      if (statusCode !== 200) {
+        response.resume();
+        reject(new Error(`Download failed with status code ${statusCode}`));
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      response.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > MAX_DOWNLOAD_BYTES) {
+          response.destroy();
+          req.destroy();
+          reject(new Error(`Download exceeded ${MAX_DOWNLOAD_BYTES} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on('end', () => resolve(Buffer.concat(chunks)));
+      response.on('error', reject);
+    });
+    req.on('timeout', () => {
+      req.destroy(new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`));
+    });
+    req.on('error', reject);
   });
 }
 
