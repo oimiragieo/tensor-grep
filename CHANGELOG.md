@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.17.3 (2026-06-28)
+
+### Bug Fixes
+
+- **ci**: Pin cargo-audit so a bad upstream release cant red the security gate
+  ([#283](https://github.com/oimiragieo/tensor-grep/pull/283),
+  [`a9d4ddb`](https://github.com/oimiragieo/tensor-grep/commit/a9d4ddb9b4c2bdb97c9fb24c09b0cbc4b96a9913))
+
+* fix(ci): pin cargo-audit (+ --locked) so a bad upstream release cant red the security gate
+
+`cargo install cargo-audit` (unpinned) pulled the just-published v0.22.2, which fails to compile on
+  the runner -> the Security Audit workflow reds on every PR and on main (2026-06-27). Pin
+  cargo-audit to a known-good 0.21.2 with its vetted Cargo.lock; add --locked to cargo-deny. The
+  advisory DB is still fetched at runtime, so coverage is unchanged.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(ci): cargo-audit 0.22.2 --locked (build with vetted lock; keep CVSS 4.0 support)
+
+0.21.2 builds but cannot parse the CVSS 4.0 advisories now in the RustSec DB ("unsupported CVSS
+  version: 4.0"). 0.22.2 supports CVSS 4.0; --locked uses its vetted Cargo.lock so it compiles (the
+  unlocked resolve was the original build failure).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.2 (2026-06-28)
 
 ### Bug Fixes
