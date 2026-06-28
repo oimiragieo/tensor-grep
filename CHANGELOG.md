@@ -1,6 +1,58 @@
 # CHANGELOG
 
 
+## v1.17.5 (2026-06-28)
+
+### Bug Fixes
+
+- Verify checksum in scheduled native-front-door refresh helpers (fail-closed)
+  ([#287](https://github.com/oimiragieo/tensor-grep/pull/287),
+  [`f5edf3c`](https://github.com/oimiragieo/tensor-grep/commit/f5edf3c5367befc99f5b54c55e894cee6270d143))
+
+Audit #1 (HIGH). The checksum-gated direct install path (_install_release_native_frontdoor) was NOT
+  mirrored in the two GENERATED, detached self-upgrade helpers (run as `python -c` after the parent
+  exits to replace a locked tg.exe). Both downloaded via urlretrieve and installed after only a
+  --version check, so a tampered binary printing the right version persisted through the deferred
+  upgrade path.
+
+Fix (embed approach -- helpers stay dependency-light, no main.py import): - Both parent payload
+  builders (Path A _schedule_windows_native_frontdoor_refresh; Path B the
+  upgrade/_schedule_windows_self_upgrade path) now fetch CHECKSUMS.txt and inject the expected
+  sha256 per asset, FAIL-CLOSED: refuse to schedule if checksums are unavailable or no asset sha
+  resolves. Path B also gains the previously-missing asset_name needed for the lookup. - Both
+  generated helpers compute sha256 of the downloaded file and refuse (continue, delete temp) on
+  missing/mismatched hash BEFORE the version check and os.replace.
+
+Adversarially reviewed (opus): both paths confirmed fail-closed by EXECUTING the helper strings
+  against tampered / missing-sha / matching downloads -- no tampered binary reaches os.replace.
+  Tests hardened past substring checks: compile() each generated helper (a syntax error would
+  otherwise pass the suite but crash the real detached subprocess) and assert the checksum gate
+  precedes os.replace. 420 tests pass; ruff + mypy clean.
+
+Follow-up (noted): Path B's fail-closed refusal surfaces as a traceback vs Path A's clean exit (LOW
+  UX, already fail-closed/non-zero exit); a full exec-behavioral helper harness.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Chores
+
+- Refresh stale release-proof fields + add test-side zip-slip guard
+  ([#286](https://github.com/oimiragieo/tensor-grep/pull/286),
+  [`4ab0f34`](https://github.com/oimiragieo/tensor-grep/commit/4ab0f34a0ace7eeb61a82117bc1393c8dc65e19d))
+
+Two audit follow-ups (no shipped-code change -> no release bump): - #5: the test-side rg.zip
+  extractors (tests/helpers/rg_parity.py, tests/integration/ test_cross_backend.py) still called
+  extractall() without the zip-slip guard the benchmark scripts got in batch 1. Reuse the production
+  _safe_extract_zip so CI cannot regress around a crafted benchmarks/rg.zip. - #4: AGENTS.md +
+  docs/SESSION_HANDOFF.md headline tag was current (v1.17.4) but the "verified proof" fields still
+  pointed at v1.15.1 / v1.13.23. Refreshed all proof fields to the real v1.17.4 state (#285 /
+  e186aa4 / 2bf4211; latest feature 3a022ec/#281). FOLLOW-UP: make stamp_release_assets.py own these
+  proof fields + add governance validation for proof<->tag consistency (today only
+  release_docs_current_tag is checked, which is why they drifted).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.4 (2026-06-28)
 
 ### Bug Fixes
