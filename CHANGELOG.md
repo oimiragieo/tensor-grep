@@ -1,6 +1,54 @@
 # CHANGELOG
 
 
+## v1.17.6 (2026-06-28)
+
+### Bug Fixes
+
+- **search**: Fail-fast on slow searches (60s default, was 600s) + scope-a-path guidance
+  ([#288](https://github.com/oimiragieo/tensor-grep/pull/288),
+  [`a121e9e`](https://github.com/oimiragieo/tensor-grep/commit/a121e9ede197d3d531dba34acf2ce84e28b25382))
+
+Dogfood-found: a whole-repo `tg search --glob X -l` (no path arg) hung ~600s then errored, because
+  the default TG_RG_TIMEOUT_SECONDS was 600 — an agent cannot wait 10 minutes. ripgrep does GB/s, so
+  a >60s search is pathological (an unexcluded large/index tree). Lower the default to 60s and make
+  the timeout message ACTIONABLE: tell the user to scope to a path (e.g. `tg search PATTERN src/`)
+  or raise the env. The guidance now lives in the tool's own error (code), not in tribal-knowledge
+  skills.
+
+- subprocess_policy.configured_ripgrep_timeout_seconds(): 600.0 -> 60.0 (env-overridable). -
+  ripgrep_backend + bootstrap (both passthrough paths): actionable "scope to a path / raise env"
+  msg. - tests: default == 60.0; env override == 120.0.
+
+NOT a full fix for whole-repo search SPEED on huge trees (excluding tg's own dirs + benchmarks/ did
+  NOT resolve it — the slowness is deeper in the full-CLI -l/--glob execution path). That fix is the
+  trigram-hybrid index moat (broad=index / scoped=rg), tracked separately. WORKAROUND remains: scope
+  searches to a path (now surfaced by the tool itself).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Capture v1.17 session learnings (process + features) + supply-chain-hardening skill
+  ([#289](https://github.com/oimiragieo/tensor-grep/pull/289),
+  [`1da8e5a`](https://github.com/oimiragieo/tensor-grep/commit/1da8e5aa7358cd3bc79cf40c530c6e62ca8dbac9))
+
+Comprehensive session capture (workflow-audited, subagent-applied, govern-tested): - AGENTS.md:
+  result_incomplete/0-caller caveat weak-spot, whole-repo search-hang workaround, BLOCKING
+  registration gate, ruff --preview ACTIVE-REVERT warning, one-merge-per-tick,
+  trust-but-verify/execute-generated-code, supply-chain patterns, dogfood-tg-for-navigation +
+  supply-chain-hardening skill pointer. (Version-pinned handoff fields left untouched.) - tg skill
+  SKILL.md/REFERENCE.md: result_incomplete in callers/blast-radius, comment-aware registration
+  checker, new "Known Issues" (whole-repo search hang -> scope to a path). - CLAUDE.md +
+  CONTRIBUTING.md + docs/index.md: skill-list + ruff-revert + agent-contract notes. - NEW global
+  skill ~/.claude/skills/supply-chain-hardening/ (5 cited checks from #283/#284/#285/#287), live in
+  the BM25 skill index.
+
+validate_docs_claims governance gate: 43/43 pass.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.5 (2026-06-28)
 
 ### Bug Fixes
