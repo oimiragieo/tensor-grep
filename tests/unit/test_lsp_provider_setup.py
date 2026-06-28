@@ -187,6 +187,93 @@ def test_verify_node_archive_opt_out_skips_verification(
     provider_setup._verify_node_archive(archive, "node.tar.xz")  # opt-out -> no raise
 
 
+def test_rust_analyzer_sha256_table_is_fully_populated() -> None:
+    # CI completeness gate: rust-analyzer verified NOTHING before this (all-empty table + warn).
+    assert provider_setup._RUST_ANALYZER_SHA256, "rust-analyzer SHA table must not be empty"
+    for key, sha in provider_setup._RUST_ANALYZER_SHA256.items():
+        assert len(sha) == 64 and all(c in "0123456789abcdef" for c in sha.lower()), (
+            f"{key} has a malformed/empty SHA-256: {sha!r}"
+        )
+
+
+def test_rust_analyzer_windows_artifact_is_zip(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Windows release asset is a .zip (the old .gz name 404'd, breaking Windows installs).
+    monkeypatch.setattr(provider_setup, "sys_platform", lambda: "windows")
+    monkeypatch.setattr(provider_setup, "_normalized_machine", lambda: "x86_64")
+    artifact, key = provider_setup._rust_analyzer_artifact_name()
+    assert artifact.endswith(".zip")
+    assert key == "windows/x86_64"
+
+
+def test_verify_rust_analyzer_fails_closed_on_missing_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "ra.gz"
+    archive.write_bytes(b"x")
+    monkeypatch.setattr(
+        provider_setup, "_rust_analyzer_artifact_name", lambda: ("ra.gz", "linux/x86_64")
+    )
+    monkeypatch.setattr(provider_setup, "_RUST_ANALYZER_SHA256", {"linux/x86_64": ""})
+    monkeypatch.delenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", raising=False)
+    with pytest.raises(RuntimeError, match="No pinned SHA-256 for rust-analyzer"):
+        provider_setup._verify_rust_analyzer_checksum(archive)
+
+
+def test_verify_rust_analyzer_fails_closed_on_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "ra.gz"
+    archive.write_bytes(b"tampered")
+    monkeypatch.setattr(
+        provider_setup, "_rust_analyzer_artifact_name", lambda: ("ra.gz", "linux/x86_64")
+    )
+    monkeypatch.setattr(provider_setup, "_RUST_ANALYZER_SHA256", {"linux/x86_64": "a" * 64})
+    monkeypatch.delenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", raising=False)
+    with pytest.raises(RuntimeError, match="checksum mismatch"):
+        provider_setup._verify_rust_analyzer_checksum(archive)
+
+
+def test_verify_rust_analyzer_passes_on_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    archive = tmp_path / "ra.gz"
+    archive.write_bytes(b"good-bytes")
+    monkeypatch.setattr(
+        provider_setup, "_rust_analyzer_artifact_name", lambda: ("ra.gz", "linux/x86_64")
+    )
+    monkeypatch.setattr(
+        provider_setup,
+        "_RUST_ANALYZER_SHA256",
+        {"linux/x86_64": hashlib.sha256(b"good-bytes").hexdigest()},
+    )
+    monkeypatch.delenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", raising=False)
+    provider_setup._verify_rust_analyzer_checksum(archive)  # no raise
+
+
+def test_verify_rust_analyzer_opt_out_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "ra.gz"
+    archive.write_bytes(b"whatever")
+    monkeypatch.setattr(provider_setup, "_RUST_ANALYZER_SHA256", {})
+    monkeypatch.setenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", "1")
+    provider_setup._verify_rust_analyzer_checksum(archive)  # opt-out -> no raise
+
+
+def test_extract_rust_analyzer_exe_from_zip(tmp_path: Path) -> None:
+    import zipfile
+
+    zpath = tmp_path / "ra.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("rust-analyzer.exe", b"EXE-PAYLOAD")
+        zf.writestr("rust_analyzer.pdb", b"PDB-IGNORED")
+    dest = tmp_path / "out" / "rust-analyzer.exe"
+    provider_setup._extract_rust_analyzer_exe_from_zip(zpath, dest)
+    assert dest.read_bytes() == b"EXE-PAYLOAD"
+
+
 def test_supported_lsp_languages_should_include_managed_provider_matrix() -> None:
     assert provider_setup.supported_lsp_languages() == [
         "python",
