@@ -38,7 +38,10 @@ def configured_ripgrep_timeout_seconds() -> float:
             parsed_ms = 0.0
         if parsed_ms > 0:
             return parsed_ms / 1000.0
-    return _configured_positive_float("TG_RG_TIMEOUT_SECONDS", 600.0)
+    # 60s (was 600s): ripgrep does GB/s, so a >60s search means something pathological (scanning
+    # an unexcluded huge/index dir). Fail FAST with guidance instead of a 10-minute hang; an agent
+    # cannot wait 10 minutes. Env-overridable for the rare legitimately-huge monorepo.
+    return _configured_positive_float("TG_RG_TIMEOUT_SECONDS", 60.0)
 
 
 def run_subprocess(
