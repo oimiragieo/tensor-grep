@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v1.17.1 (2026-06-28)
+
+### Bug Fixes
+
+- Registration-check comment/string-aware parser + flip gate to blocking
+  ([#282](https://github.com/oimiragieo/tensor-grep/pull/282),
+  [`e906ce9`](https://github.com/oimiragieo/tensor-grep/commit/e906ce9dcd5696c561ef3cf57b68ac9e8d77ab4c))
+
+* fix(registration-check): comment/string-aware parser + flip CI gate to blocking
+
+extract_members was a raw bracket counter: it (a) anchored on the FIRST mention of the symbol (a
+  comment/docstring reference misanchored find("=")), (b) counted brackets inside string literals
+  (overshooting the block), and (c) collected quoted strings from `#` comments inside the block --
+  the last is the realistic false-NEGATIVE: a commented-out entry reads as registered and masks a
+  genuine gap, defeating the tool. Audit wave 1b (adversarially verified).
+
+- New string/comment-aware scanner: anchor to a real same-line assignment (not ==/!=/<=/>= and not a
+  comment mention), then bracket-match while skipping string literals and #//comments. - Flip the CI
+  registration gate from warn-only (continue-on-error) to BLOCKING: it ran clean through v1.16, and
+  the parser can no longer false-pass on a commented-out entry. - 4 new parser tests (commented
+  entry, preceding-comment mention, bracket-in-string, escaped quote); real-repo
+  .tg-registration.toml check stays 2/2.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* style: apply ruff --preview formatting (CI gate uses --check --preview)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.0 (2026-06-27)
 
 ### Features
