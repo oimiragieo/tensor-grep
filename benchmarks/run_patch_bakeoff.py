@@ -28,6 +28,10 @@ Scenario = dict[str, Any]
 Prediction = dict[str, Any]
 ResultRow = dict[str, Any]
 
+# Bound each scenario validation command so a hung command can't stall the bakeoff (the harness
+# API docs promise a 60s validation timeout).
+_VALIDATION_COMMAND_TIMEOUT_S = 60
+
 _REQUIRED_SCENARIO_FIELDS = (
     "instance_id",
     "repo_fixture",
@@ -270,21 +274,31 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
                 reason = "ok"
                 validation_passed = True
                 for command in validation_commands:
-                    completed = subprocess.run(
-                        command,
-                        cwd=worktree,
-                        env=_validation_subprocess_env(),
-                        shell=True,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    passed = completed.returncode == 0
+                    try:
+                        completed = subprocess.run(
+                            command,
+                            cwd=worktree,
+                            env=_validation_subprocess_env(),
+                            # Scenarios are trusted, maintainer-authored benchmark fixtures (not
+                            # untrusted input), so shell syntax is allowed; the timeout bounds a
+                            # hung validation command so the bakeoff cannot stall indefinitely
+                            # (docs/harness_api.md promises a 60s validation timeout).
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=_VALIDATION_COMMAND_TIMEOUT_S,
+                        )
+                        passed = completed.returncode == 0
+                        returncode: int | None = completed.returncode
+                    except subprocess.TimeoutExpired:
+                        passed = False
+                        returncode = None
                     validation_passed = validation_passed and passed
                     validation_results.append({
                         "command": command,
                         "passed": passed,
-                        "returncode": completed.returncode,
+                        "returncode": returncode,
                     })
                 if not validation_passed:
                     reason = "validation failed"

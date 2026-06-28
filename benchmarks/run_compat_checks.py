@@ -69,6 +69,13 @@ def extract_windows_rg_bundle(benchmarks_dir: Path) -> Path | None:
         rg_member = next((name for name in bundle.namelist() if name.endswith("/rg.exe")), None)
         if rg_member is None:
             return None
+        # Zip-slip guard: validate every member stays within benchmarks_dir before extracting,
+        # so a crafted rg.zip cannot write outside the directory via "../" or absolute paths.
+        dest_root = benchmarks_dir.resolve()
+        for name in bundle.namelist():
+            target = (benchmarks_dir / name).resolve()
+            if target != dest_root and dest_root not in target.parents:
+                raise RuntimeError(f"rg.zip member escapes destination: {name}")
         bundle.extractall(benchmarks_dir)
 
     extracted = benchmarks_dir / Path(rg_member)
