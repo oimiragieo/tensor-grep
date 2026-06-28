@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.17.7 (2026-06-28)
+
+### Bug Fixes
+
+- **lsp**: Npm install --ignore-scripts (block the lifecycle/binding.gyp exec vector)
+  ([#290](https://github.com/oimiragieo/tensor-grep/pull/290),
+  [`665b7f6`](https://github.com/oimiragieo/tensor-grep/commit/665b7f67be3f0a42b9771bb7ca0a13d0b612a837))
+
+LSP integrity Phase 1 (thinktank-vetted, no external data, zero break-risk). The managed Node
+  provider install ran `npm install` WITHOUT --ignore-scripts, so a compromised dependency could
+  execute code at install time via pre/postinstall OR a weaponized binding.gyp (the 2026 node-gyp
+  npm worm). The managed providers (pyright / typescript-language-server / intelephense) are pure JS
+  with no native build step, so disabling scripts is safe and needs no selective rebuild. Top-level
+  specs are already version-pinned.
+
+Phase 2 (separate PR, needs live-feed SHA/version data): committed Node + rust-analyzer SHA tables +
+  Node verify fn + ATOMIC rust-analyzer fail-open->raise (currently warns+returns on an empty SHA
+  table = no verification), gopls/csharp-ls version pins + csharp-ls already-installed silent-accept
+  fix, TG_ALLOW_UNVERIFIED_TOOLCHAIN opt-out, and a CI SHA-completeness gate.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.6 (2026-06-28)
 
 ### Bug Fixes
