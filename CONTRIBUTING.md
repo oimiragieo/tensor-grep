@@ -19,7 +19,7 @@ For release/workflow/package-manager changes, also run:
 uv run python scripts/validate_release_assets.py
 ```
 
-**Ruff preview split:** CI runs `ruff format --check --preview .` but only `ruff check .` (no `--preview`) for lint. Locally, always run `ruff format --preview` but never pass `--preview` to `ruff check` — preview lint rules such as RUF056 produce false failures that do not match CI.
+**Ruff preview split:** CI runs `ruff format --check --preview .` but only `ruff check .` (no `--preview`) for lint. Locally, always run `ruff format --preview` but never pass `--preview` to `ruff check` — preview lint rules such as RUF056 produce false failures that do not match CI. Note: running `ruff format` WITHOUT `--preview` is an ACTIVE REVERT — it rewrites preview-style lines back on disk, so the next CI `ruff format --check --preview` fails on lines you did not intend to touch. Always pass `--preview` to `ruff format`.
 
 **Line endings:** `.gitattributes` pins `*.py` and `*.rs` to `eol=lf`. Use `git ls-files --eol` to audit actual on-disk endings; `git show` and `git cat-file -p` smudge the output and can report false CR.
 
