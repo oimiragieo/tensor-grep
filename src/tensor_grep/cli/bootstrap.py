@@ -702,8 +702,9 @@ def _streaming_passthrough_returncode(
             return int(result.returncode)
         except subprocess.TimeoutExpired:
             sys.stderr.write(
-                "tensor-grep: search exceeded the configured timeout and was stopped "
-                "(adjust TG_RG_TIMEOUT_SECONDS / TG_SUBPROCESS_TIMEOUT_SECONDS).\n"
+                "tensor-grep: search exceeded the configured timeout and was stopped. For a "
+                "large repo, scope the search to a path (e.g. `tg search PATTERN src/`), or raise "
+                "TG_RG_TIMEOUT_SECONDS / TG_SUBPROCESS_TIMEOUT_SECONDS.\n"
             )
             return 124
     # --- end backward-compat shim -------------------------------------------------------

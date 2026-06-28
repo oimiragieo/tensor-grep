@@ -264,8 +264,10 @@ class RipgrepBackend(ComputeBackend):
             # with the coreutils `timeout` convention instead of letting an uncaught
             # TimeoutExpired traceback abort the stream (audit B5/#10).
             sys.stderr.write(
-                "tensor-grep: ripgrep search exceeded the configured timeout and was "
-                "stopped (adjust TG_RG_TIMEOUT_SECONDS).\n"
+                "tensor-grep: search exceeded the "
+                f"{configured_ripgrep_timeout_seconds():g}s timeout and was stopped. For a large "
+                "repo, scope the search to a path (e.g. `tg search PATTERN src/`), or raise "
+                "TG_RG_TIMEOUT_SECONDS.\n"
             )
             return 124
         return int(result.returncode)
