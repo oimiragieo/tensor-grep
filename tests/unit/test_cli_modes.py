@@ -8193,11 +8193,19 @@ def test_native_frontdoor_asset_candidates_prefer_nvidia_only_when_requested(mon
     ]
 
 
+_STUB_ASSET_SHA256 = "a" * 64  # deterministic stand-in used by _allow_native_frontdoor_checksum
+
+
 def _allow_native_frontdoor_checksum(monkeypatch):
     """Audit HIGH (2026-06-24): tg upgrade now verifies the downloaded native asset
     against the published CHECKSUMS.txt and refuses an unverified binary. These
     fallback/refresh/restore tests don't exercise that gate, so stub it as verified
-    (the gate itself is covered by tests/unit/test_native_frontdoor_checksum.py)."""
+    (the gate itself is covered by tests/unit/test_native_frontdoor_checksum.py).
+
+    Audit HIGH (2026-06-28): the deferred helpers now also verify checksums, with
+    the parent side embedding the expected sha256 into each payload entry via
+    _fetch_native_frontdoor_checksums + _expected_asset_sha256.  Stub both so
+    tests remain network-free and payload assertions can use _STUB_ASSET_SHA256."""
     monkeypatch.setattr(
         "tensor_grep.cli.main._fetch_native_frontdoor_checksums",
         lambda version: "stub-checksums-manifest",
@@ -8206,6 +8214,11 @@ def _allow_native_frontdoor_checksum(monkeypatch):
     monkeypatch.setattr(
         "tensor_grep.cli.main._native_frontdoor_checksum_error",
         lambda asset_path, asset_name, checksums_text: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._expected_asset_sha256",
+        lambda checksums_text, asset_name: _STUB_ASSET_SHA256,
         raising=False,
     )
 
@@ -9820,6 +9833,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
             "flavor": "nvidia",
             "asset_name": "tg-windows-amd64-nvidia.exe",
             "requested_flavor": "nvidia",
+            "sha256": _STUB_ASSET_SHA256,
         },
         {
             "url": (
@@ -9829,6 +9843,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
             "flavor": "cpu",
             "asset_name": "tg-windows-amd64-cpu.exe",
             "requested_flavor": "nvidia",
+            "sha256": _STUB_ASSET_SHA256,
         },
     ]
     assert json.loads(popen_calls[0][8]) == [str(bridge_tg)]
@@ -9998,12 +10013,14 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     monkeypatch.setattr("sys.executable", "python")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.32.0",
         raising=False,
     )
+    _allow_native_frontdoor_checksum(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -10061,6 +10078,7 @@ def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
     monkeypatch.setattr("sys.executable", "python")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -10071,6 +10089,7 @@ def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
         "tensor_grep.cli.main._doctor_session_daemon_status",
         lambda _path: {"running": True, "root": daemon_root},
     )
+    _allow_native_frontdoor_checksum(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -10154,6 +10173,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
         lambda: str(bridge_tg.parent),
         raising=False,
     )
+    _allow_native_frontdoor_checksum(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
@@ -10174,9 +10194,213 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
                 "tg-windows-amd64-cpu.exe"
             ),
             "flavor": "cpu",
+            "asset_name": "tg-windows-amd64-cpu.exe",
+            "sha256": _STUB_ASSET_SHA256,
         }
     ]
     assert json.loads(popen_calls[0][9]) == [str(bridge_tg)]
+
+
+def test_schedule_windows_native_frontdoor_refresh_helper_verifies_checksum(monkeypatch, tmp_path):
+    """Audit HIGH (2026-06-28): Path A deferred helper must contain sha256 verification
+    and the injected payload entries must carry a sha256 field."""
+    import tensor_grep.cli.main as m
+
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+
+    popen_calls: list[list[str]] = []
+
+    class _FakePopen:
+        def __init__(self, cmd, **kwargs):
+            popen_calls.append([str(a) for a in cmd])
+
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
+    _allow_native_frontdoor_checksum(monkeypatch)
+
+    m._schedule_windows_native_frontdoor_refresh(native_binary, "1.2.3")
+
+    assert popen_calls, "Popen was not called"
+    helper_code = popen_calls[0][2]
+    # helper must contain sha256 verification logic
+    assert "hashlib.sha256" in helper_code
+    assert "checksum mismatch" in helper_code
+    assert "sha256" in helper_code
+    # injected payload must carry a sha256 per entry
+    asset_payload = json.loads(popen_calls[0][7])
+    assert asset_payload, "asset_payload must be non-empty"
+    for entry in asset_payload:
+        assert "sha256" in entry, f"entry {entry} missing sha256"
+        assert entry["sha256"] == _STUB_ASSET_SHA256
+    # Durability (audit review): the helper is a generated STRING — a syntax error would pass the
+    # suite yet crash the real detached subprocess, and the substring asserts above survive a
+    # security-defeating mutation. Compile it, and require the checksum gate BEFORE os.replace.
+    compile(helper_code, "<path-a-refresh-helper>", "exec")
+    assert "os.replace" in helper_code
+    assert helper_code.index("hashlib.sha256") < helper_code.index("os.replace"), (
+        "checksum gate must precede os.replace"
+    )
+
+
+def test_schedule_windows_self_upgrade_helper_verifies_checksum(monkeypatch, tmp_path):
+    """Audit HIGH (2026-06-28): Path B deferred helper must contain sha256 verification
+    and the injected native_asset payload entries must carry sha256 and asset_name."""
+    # Simulate enough state to call _schedule_windows_self_upgrade directly via the
+    # CliRunner upgrade path so we can inspect the helper code.
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    popen_calls: list[list[str]] = []
+
+    locked_error = (
+        "failed to remove file `...tg.exe`: "
+        "The process cannot access the file because it is being used by another process. "
+        "(os error 32)"
+    )
+
+    def _fake_run(cmd, **kwargs):
+        command = [str(p) for p in cmd]
+        if command[0] in ("uv", str(python_executable)) or command[:2] == [
+            str(python_executable),
+            "-m",
+        ]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        raise AssertionError(f"unexpected command: {command}")
+
+    class _FakePopen:
+        def __init__(self, cmd, **kwargs):
+            popen_calls.append([str(a) for a in cmd])
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "1.1.0")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "1.2.0",
+        raising=False,
+    )
+    _allow_native_frontdoor_checksum(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0, result.output
+    assert popen_calls, "Popen was not called"
+    helper_code = popen_calls[0][2]
+    # helper must contain sha256 verification logic
+    assert "hashlib.sha256" in helper_code
+    assert "checksum mismatch" in helper_code
+    # native asset payload must carry sha256 and asset_name per entry
+    native_asset_payload = json.loads(popen_calls[0][8])
+    assert native_asset_payload, "native_asset_payload must be non-empty"
+    for entry in native_asset_payload:
+        assert "sha256" in entry, f"entry {entry} missing sha256"
+        assert "asset_name" in entry, f"entry {entry} missing asset_name"
+        assert entry["sha256"] == _STUB_ASSET_SHA256
+    # Durability (audit review): compile the generated helper string and require the checksum
+    # gate BEFORE os.replace, so a syntax error or a moved/inverted check can't pass on substrings.
+    compile(helper_code, "<path-b-self-upgrade-helper>", "exec")
+    assert "os.replace" in helper_code
+    assert helper_code.index("hashlib.sha256") < helper_code.index("os.replace"), (
+        "checksum gate must precede os.replace"
+    )
+
+
+def test_schedule_windows_native_frontdoor_refresh_fails_closed_when_checksums_unavailable(
+    monkeypatch, tmp_path
+):
+    """Audit HIGH (2026-06-28): Path A parent must raise when checksums can't be fetched."""
+    import tensor_grep.cli.main as m
+
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._fetch_native_frontdoor_checksums",
+        lambda version: None,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        m._schedule_windows_native_frontdoor_refresh(native_binary, "1.2.3")
+
+    msg = str(exc_info.value).lower()
+    assert "checksums" in msg or "unverified" in msg
+
+
+def test_upgrade_schedules_windows_self_upgrade_fails_closed_when_checksums_unavailable(
+    monkeypatch, tmp_path
+):
+    """Audit HIGH (2026-06-28): Path B parent must abort when checksums can't be fetched."""
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+
+    locked_error = (
+        "failed to remove file `...tg.exe`: "
+        "The process cannot access the file because it is being used by another process. "
+        "(os error 32)"
+    )
+
+    def _fake_run(cmd, **kwargs):
+        command = [str(p) for p in cmd]
+        if command[0] in ("uv",) or command[:3] == [str(python_executable), "-m", "pip"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "1.1.0")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "1.2.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._fetch_native_frontdoor_checksums",
+        lambda version: None,
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    # A RuntimeError raised inside the except-handler propagates out of the command;
+    # typer exits with code 1 in that case.
+    assert result.exit_code != 0
+    # The error text should indicate the fail-closed refusal
+    full_output = (result.output or "") + str(result.exception or "")
+    assert "checksums" in full_output.lower() or "unverified" in full_output.lower()
 
 
 def test_native_frontdoor_download_helpers_use_timeouts(monkeypatch, tmp_path):
@@ -10291,12 +10515,14 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
     monkeypatch.setattr("sys.executable", "python")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
         lambda: "0.32.0",
         raising=False,
     )
+    _allow_native_frontdoor_checksum(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])

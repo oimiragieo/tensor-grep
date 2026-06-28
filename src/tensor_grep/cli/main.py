@@ -1453,21 +1453,36 @@ def _schedule_windows_native_frontdoor_refresh(
 ) -> Path:
     import textwrap
 
-    asset_payload = json.dumps([
-        {
+    # Audit HIGH (2026-06-28): fetch checksums on the parent side and embed the
+    # expected sha256 into each payload entry so the detached helper can verify
+    # each download WITHOUT importing main.py.  Fail-closed: skip any candidate
+    # whose sha256 can't be resolved; refuse to schedule if none remain.
+    checksums_text = _fetch_native_frontdoor_checksums(expected_version)
+    if checksums_text is None:
+        raise RuntimeError(
+            "release-native front-door asset refresh refused: could not fetch "
+            f"CHECKSUMS.txt for v{expected_version}; refusing to schedule an unverified native binary refresh"
+        )
+    verifiable_entries: list[dict[str, str]] = []
+    for candidate, url in _native_frontdoor_download_candidates(expected_version):
+        sha256 = _expected_asset_sha256(checksums_text, candidate.asset_name)
+        if sha256 is None:
+            continue
+        verifiable_entries.append({
             "url": url,
             "flavor": candidate.flavor,
             "asset_name": candidate.asset_name,
             "requested_flavor": _requested_native_frontdoor_flavor(),
-        }
-        for candidate, url in _native_frontdoor_download_candidates(expected_version)
-    ])
-    if asset_payload == "[]":
+            "sha256": sha256,
+        })
+    if not verifiable_entries:
         raise RuntimeError("no release-native front-door asset is available for this platform")
+    asset_payload = json.dumps(verifiable_entries)
     bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
 
     helper_code = textwrap.dedent(
         """
+        import hashlib
         import json
         import os
         import shutil
@@ -1526,6 +1541,20 @@ def _schedule_windows_native_frontdoor_refresh(
                         urllib.request.urlretrieve(url, temp_path)
                     except Exception as exc:
                         errors.append(f"{flavor} asset unavailable: {exc}")
+                        continue
+                    sha256 = asset_candidate.get("sha256", "")
+                    if not sha256:
+                        errors.append(
+                            f"{flavor} asset has no published checksum; "
+                            "refusing to install unverified binary"
+                        )
+                        continue
+                    actual_sha256 = hashlib.sha256(temp_path.read_bytes()).hexdigest().lower()
+                    if actual_sha256 != sha256.lower():
+                        errors.append(
+                            f"{flavor} asset checksum mismatch "
+                            f"(expected {sha256}, got {actual_sha256})"
+                        )
                         continue
                     temp_version = _version(temp_path)
                     if expected_version not in temp_version:
@@ -9940,6 +9969,7 @@ def upgrade() -> None:
         bridge_payload = json.dumps([str(path) for path in bridge_paths or []])
         helper_code = textwrap.dedent(
             """
+            import hashlib
             import json
             import os
             import shutil
@@ -10254,6 +10284,20 @@ def upgrade() -> None:
                                 except Exception as exc:
                                     errors.append(f"{flavor} asset unavailable: {exc}")
                                     continue
+                                sha256 = asset.get("sha256", "")
+                                if not sha256:
+                                    errors.append(
+                                        f"{flavor} asset has no published checksum; "
+                                        "refusing to install unverified binary"
+                                    )
+                                    continue
+                                actual_sha256 = hashlib.sha256(temp_path.read_bytes()).hexdigest().lower()
+                                if actual_sha256 != sha256.lower():
+                                    errors.append(
+                                        f"{flavor} asset checksum mismatch "
+                                        f"(expected {sha256}, got {actual_sha256})"
+                                    )
+                                    continue
                                 temp_version = _version(temp_path)
                                 if not _version_matches(temp_version):
                                     raise RuntimeError(
@@ -10528,14 +10572,35 @@ def upgrade() -> None:
                 if native_path is not None
                 else None
             )
-            native_assets = [
-                {"url": url, "flavor": candidate.flavor}
-                for candidate, url in (
-                    _native_frontdoor_download_candidates(expected_version)
-                    if expected_version
-                    else []
-                )
-            ]
+            if expected_version:
+                # Audit HIGH (2026-06-28): embed the expected sha256 into each payload
+                # entry on the parent side so the detached helper can verify each
+                # download WITHOUT importing main.py.  Fail-closed: skip any candidate
+                # whose sha256 can't be resolved; refuse to schedule if none remain.
+                _native_checksums = _fetch_native_frontdoor_checksums(expected_version)
+                if _native_checksums is None:
+                    raise RuntimeError(
+                        "release-native front-door asset refresh refused: could not fetch "
+                        f"CHECKSUMS.txt for v{expected_version}; refusing to schedule "
+                        "an unverified native binary refresh"
+                    ) from None
+                native_assets = []
+                for _cand, _url in _native_frontdoor_download_candidates(expected_version):
+                    _sha256 = _expected_asset_sha256(_native_checksums, _cand.asset_name)
+                    if _sha256 is None:
+                        continue
+                    native_assets.append({
+                        "url": _url,
+                        "flavor": _cand.flavor,
+                        "asset_name": _cand.asset_name,
+                        "sha256": _sha256,
+                    })
+                if not native_assets:
+                    raise RuntimeError(
+                        "no release-native front-door asset is available for this platform"
+                    ) from None
+            else:
+                native_assets = []
             bridge_paths = (
                 _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
                 if expected_version and native_path is not None
