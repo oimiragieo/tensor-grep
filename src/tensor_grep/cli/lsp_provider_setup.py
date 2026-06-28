@@ -24,6 +24,32 @@ _NODE_PACKAGE_SPECS = (
     "intelephense@1.18.0",
 )
 
+# Pin + verify the managed Node runtime archive (fail-closed). SHA-256 from the official
+# nodejs.org SHASUMS256.txt for v{_NODE_VERSION}, keyed by the exact archive filename
+# _node_archive_name() requests (Linux .tar.xz, macOS .tar.gz, Windows .zip). Update this table
+# together with _NODE_VERSION; a CI test asserts no entry is empty.
+_NODE_SHA256: dict[str, str] = {
+    f"node-v{_NODE_VERSION}-win-x64.zip": (
+        "55b639295920b219bb2acbcfa00f90393a2789095b7323f79475c9f34795f217"
+    ),
+    f"node-v{_NODE_VERSION}-linux-x64.tar.xz": (
+        "69b09dba5c8dcb05c4e4273a4340db1005abeafe3927efda2bc5b249e80437ec"
+    ),
+    f"node-v{_NODE_VERSION}-linux-arm64.tar.xz": (
+        "08bfbf538bad0e8cbb0269f0173cca28d705874a67a22f60b57d99dc99e30050"
+    ),
+    f"node-v{_NODE_VERSION}-darwin-x64.tar.gz": (
+        "6698587713ab565a94a360e091df9f6d91c8fadda6d00f0cf6526e9b40bed250"
+    ),
+    f"node-v{_NODE_VERSION}-darwin-arm64.tar.gz": (
+        "e9404633bc02a5162c5c573b1e2490f5fb44648345d64a958b17e325729a5e42"
+    ),
+}
+
+# Cap toolchain downloads so a malicious/oversized response can't exhaust memory or disk before
+# the checksum is verified (mirrors the native front-door + npm install posture).
+_MAX_TOOLCHAIN_DOWNLOAD_BYTES = 256 * 1024 * 1024
+
 # audit S5: pin rust-analyzer to an exact release instead of "latest".
 # SHA-256 hashes come from the official GitHub release assets page for this tag.
 # To update: download the new release artifacts, run sha256sum, update both
@@ -188,8 +214,66 @@ def _node_archive_name() -> str:
 
 
 def _download(url: str, destination: Path) -> None:
+    total = 0
     with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as output:
-        shutil.copyfileobj(response, output)
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
+                raise RuntimeError(
+                    f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
+                    f"(possible oversized or malicious response): {url}"
+                )
+            output.write(chunk)
+
+
+def _allow_unverified_toolchain() -> bool:
+    """Explicit opt-out for air-gapped/offline installs: TG_ALLOW_UNVERIFIED_TOOLCHAIN=1 skips
+    integrity verification (fail-OPEN by consent). The default posture is fail-CLOSED."""
+    return os.environ.get("TG_ALLOW_UNVERIFIED_TOOLCHAIN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_node_archive(archive_path: Path, archive_name: str) -> None:
+    """Fail-closed: verify the downloaded Node archive against its pinned SHA-256 BEFORE extraction.
+
+    Refuses (raises) when no pinned hash exists or the hash mismatches, unless the explicit
+    TG_ALLOW_UNVERIFIED_TOOLCHAIN opt-out is set.
+    """
+    if _allow_unverified_toolchain():
+        import warnings
+
+        warnings.warn(
+            f"TG_ALLOW_UNVERIFIED_TOOLCHAIN set; skipping checksum verification of {archive_name}",
+            stacklevel=2,
+        )
+        return
+    expected = _NODE_SHA256.get(archive_name, "")
+    if not expected:
+        raise RuntimeError(
+            f"No pinned SHA-256 for Node archive {archive_name}; refusing to install an unverified "
+            "runtime (set TG_ALLOW_UNVERIFIED_TOOLCHAIN=1 to override)."
+        )
+    actual = _sha256_file(archive_path)
+    if actual.lower() != expected.lower():
+        raise RuntimeError(
+            f"Node archive {archive_name} failed checksum verification (expected {expected}, "
+            f"got {actual}); refusing to install a tampered runtime."
+        )
 
 
 def _safe_extract_tar(archive: tarfile.TarFile, destination: Path) -> None:
@@ -262,6 +346,7 @@ def _ensure_node_runtime(root: Path) -> Path:
         temp_dir = Path(temp_dir_raw)
         archive_path = temp_dir / archive_name
         _download(url, archive_path)
+        _verify_node_archive(archive_path, archive_name)
         extracted_dir = _extract_archive(archive_path, temp_dir / "extract")
         if runtime_dir.exists():
             shutil.rmtree(runtime_dir)
