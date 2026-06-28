@@ -326,6 +326,11 @@ def _ensure_node_packages(root: Path) -> None:
             "install",
             "--no-fund",
             "--no-audit",
+            # --ignore-scripts blocks dependency lifecycle scripts (pre/postinstall) AND node-gyp
+            # binding.gyp execution — the #1 npm code-exec vector (the 2026 node-gyp worm). The
+            # managed providers (pyright / typescript-language-server / intelephense) are pure JS
+            # with no native build step, so disabling scripts is safe and needs no selective rebuild.
+            "--ignore-scripts",
             *list(_NODE_PACKAGE_SPECS),
         ],
         cwd=_node_packages_dir(root),
