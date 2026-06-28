@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.17.4 (2026-06-28)
+
+### Bug Fixes
+
+- Supply-chain hardening batch 1 (zip-slip, download timeouts/cap, dead surface)
+  ([#285](https://github.com/oimiragieo/tensor-grep/pull/285),
+  [`e186aa4`](https://github.com/oimiragieo/tensor-grep/commit/e186aa47d2dd041b22faa7b5db7413a41c65f62a))
+
+Adversarially-verified audit findings, contained + non-tamper-prevention slice of the wave: - #4
+  SECURITY (zip-slip): both benchmark rg.zip extractors called extractall() without validating
+  member paths -> a crafted rg.zip could write outside benchmarks_dir. Add the proven member-path
+  guard (mirrors _safe_extract_zip) before extraction. TDD: rejects an escaping member, both
+  scripts. - #3 patch-bakeoff: scenario validation commands ran with no timeout (docs promise 60s)
+  -> a hung command stalled the bakeoff. Add a 60s timeout + TimeoutExpired handling; shell kept
+  (scenarios are trusted, maintainer-authored fixtures, documented as such). - #5 npm/install.js:
+  download() had no request timeout and buffered unbounded. Add a 60s socket timeout + 256MiB byte
+  cap (still verifies checksum after download, fail-closed). - #6 LOW: semantic_index pointed users
+  to a nonexistent `tg index --rank`; messages now describe the real in-memory fallback + a
+  docstring notes the persisted path is not yet CLI-wired.
+
+HIGH items (native-refresh checksum two-path + LSP toolchain SHAs) follow in batch 2.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.3 (2026-06-28)
 
 ### Bug Fixes
