@@ -110,6 +110,8 @@ echo "=========================================================="
 # 1. Install or locate uv
 # Pin uv to an exact version for reproducible, supply-chain-safe installs: the versioned astral
 # installer downloads that exact uv release and verifies its checksum. Bump deliberately.
+# NOTE: On Linux/macOS the versioned astral installer self-verifies the downloaded uv binary before
+# use; no additional checksum step is required here (contrast: install.ps1 + uv_checksums.json).
 UV_VERSION="0.11.25"
 if ! command -v uv &> /dev/null; then
     echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION})..."
