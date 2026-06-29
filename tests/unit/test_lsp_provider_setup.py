@@ -130,6 +130,122 @@ def test_csharp_ls_install_failure_raises(tmp_path: Path, monkeypatch: pytest.Mo
         provider_setup._ensure_csharp_ls(root)
 
 
+def test_ensure_gopls_ignores_path_binary_without_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A PATH gopls must NOT be copied as the managed provider by default (could be stale/shadowed);
+    # tg installs the pinned version instead.
+    root = tmp_path / "providers"
+    monkeypatch.delenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", raising=False)
+    monkeypatch.setattr(
+        provider_setup.shutil,
+        "which",
+        lambda c: {"gopls": "/usr/bin/gopls", "go": "/usr/bin/go"}.get(c),
+    )
+    copied: list[str] = []
+    monkeypatch.setattr(
+        provider_setup, "_copy_binary_to_managed", lambda b, dest: (copied.append(str(b)), dest)[1]
+    )
+    ran: dict[str, list[str]] = {}
+    monkeypatch.setattr(provider_setup, "_run_checked", lambda cmd, **_k: ran.update(cmd=cmd))
+    built = tmp_path / "gopls"
+    built.write_text("", encoding="utf-8")
+    monkeypatch.setattr(provider_setup, "_find_go_binary_name", lambda *_a: built)
+
+    provider_setup._ensure_gopls(root)
+
+    assert f"golang.org/x/tools/gopls@{provider_setup._GOPLS_VERSION}" in ran["cmd"]
+    assert "/usr/bin/gopls" not in copied  # the PATH binary was rejected
+
+
+def test_ensure_gopls_accepts_path_binary_with_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    monkeypatch.setenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", "1")
+    monkeypatch.setattr(
+        provider_setup.shutil, "which", lambda c: "/usr/bin/gopls" if c == "gopls" else None
+    )
+    copied: list[str] = []
+    monkeypatch.setattr(
+        provider_setup, "_copy_binary_to_managed", lambda b, dest: (copied.append(str(b)), dest)[1]
+    )
+    provider_setup._ensure_gopls(root)
+    assert copied == ["/usr/bin/gopls"]  # opt-in accepts the PATH binary
+
+
+def test_ensure_csharp_ls_ignores_path_binary_without_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    monkeypatch.delenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", raising=False)
+    monkeypatch.setattr(
+        provider_setup.shutil,
+        "which",
+        lambda c: {"csharp-ls": "/usr/bin/csharp-ls", "dotnet": "/usr/bin/dotnet"}.get(c),
+    )
+    copied: list[str] = []
+    monkeypatch.setattr(
+        provider_setup, "_copy_binary_to_managed", lambda b, dest: (copied.append(str(b)), dest)[1]
+    )
+
+    def _fake_run(cmd, **_kw):
+        captured = " ".join(cmd)
+        assert "--version" in captured  # installs the pinned version, not the PATH binary
+        dest = provider_setup._managed_bin_binary(root, "csharp-ls")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("", encoding="utf-8")
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(provider_setup.subprocess, "run", _fake_run)
+    provider_setup._ensure_csharp_ls(root)
+    assert "/usr/bin/csharp-ls" not in copied
+
+
+def test_ensure_rust_analyzer_uses_pinned_download_without_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    monkeypatch.delenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", raising=False)
+    calls = {"rustup": 0, "download": 0}
+
+    def _rustup(dest):
+        calls["rustup"] += 1
+        dest.write_text("", encoding="utf-8")
+        return True
+
+    def _download(dest):
+        calls["download"] += 1
+        dest.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(provider_setup, "_copy_rust_analyzer_from_rustup", _rustup)
+    monkeypatch.setattr(provider_setup, "_download_rust_analyzer", _download)
+    provider_setup._ensure_rust_analyzer(root)
+    assert calls["rustup"] == 0  # rustup/PATH not trusted by default
+    assert calls["download"] == 1  # pinned, checksum-verified download used
+
+
+def test_ensure_rust_analyzer_allows_rustup_with_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    monkeypatch.setenv("TG_ALLOW_UNVERIFIED_TOOLCHAIN", "1")
+    calls = {"download": 0}
+
+    def _rustup(dest):
+        dest.write_text("", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(provider_setup, "_copy_rust_analyzer_from_rustup", _rustup)
+    monkeypatch.setattr(
+        provider_setup,
+        "_download_rust_analyzer",
+        lambda dest: calls.__setitem__("download", calls["download"] + 1),
+    )
+    provider_setup._ensure_rust_analyzer(root)
+    assert calls["download"] == 0  # opt-in: rustup used, pinned download skipped
+
+
 def test_node_sha256_table_is_fully_populated() -> None:
     # CI completeness gate: every pinned Node archive must carry a real SHA-256. An empty entry
     # would silently defeat fail-closed verification (this is the gate that would have caught the
