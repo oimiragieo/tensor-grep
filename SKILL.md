@@ -17,7 +17,7 @@ Recent v1.13.40-v1.13.42 hardening (newest behavior agents should rely on):
 - **MCP apply safety:** the `tg_rewrite_apply` MCP tool refuses free-form `lint_cmd` / `test_cmd` (which shell-execute on the host) unless the operator opts in with `TG_MCP_ALLOW_VALIDATION_COMMANDS=1`; otherwise it returns `code="unsupported_option"`.
 - **grep parity:** `tg search --cpu -v` now includes blank lines, and `--json` / `--vimgrep` columns are byte offsets (ripgrep-accurate on non-ASCII lines).
 - **Agentic-edit integrity:** the audit-manifest chain records only verified manifests (a tampered manifest is no longer folded into the tamper-evident history), and the trigram index deserializer is hardened against a preallocation/OOM DoS from a crafted `.tensor-grep` index.
-- **Supply chain:** the `[tool.uv].constraint-dependencies` security floors track the latest patched releases, all third-party GitHub Actions are SHA-pinned, and the `Dependency & License Audit` gate is green.
+- **Supply chain:** the `[tool.uv].constraint-dependencies` security floors track the latest patched releases, third-party GitHub Actions are SHA-pinned (the one allow-listed exception is `dtolnay/rust-toolchain@stable`, intentionally channel-pinned — see the validator exemption in `scripts/validate_release_assets.py`), and the `Dependency & License Audit` gate is green.
 
 Current release facts:
 
