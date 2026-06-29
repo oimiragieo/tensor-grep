@@ -5,3 +5,7 @@
 # release's `cargo generate-lockfile`). Bump deliberately, in tandem with a green CI matrix.
 [toolchain]
 channel = "1.96.0"
+# Include the components CI uses, so pinning the channel doesn't drop rustfmt/clippy: the
+# "Check Rust Formatting" (cargo fmt) + clippy jobs need them, and a channel-only pin installs
+# the toolchain without them on minimal-profile runners.
+components = ["rustfmt", "clippy"]
