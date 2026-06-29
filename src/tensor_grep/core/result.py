@@ -25,6 +25,12 @@ class SearchResult:
     routing_gpu_chunk_plan_mb: list[tuple[int, int]] = field(default_factory=list)
     routing_distributed: bool = False
     routing_worker_count: int = 0
+    # GPU execution telemetry — optional; None when not measured or not applicable.
+    # Populated by GPU backends that instrument their kernel and transfer timing.
+    kernel_time_ms: float | None = None
+    transfer_time_ms: float | None = None
+    staging_bytes: int | None = None
+    fallback_reason: str | None = None
 
     @property
     def is_empty(self) -> bool:
