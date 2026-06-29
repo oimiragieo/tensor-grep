@@ -277,6 +277,15 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     if uv_bootstrap_count < 2:
         errors.append("CI workflow should bootstrap uv in package-manager/release validation paths")
 
+    # Supply-chain: every `pip install uv` must pin an exact version. An unpinned install pulls a
+    # moving "latest" uv into release-sensitive CI jobs (audit MEDIUM). The lookahead allows
+    # `uv==<version>` and unrelated packages like `uvloop` while rejecting a bare `uv`.
+    if re.search(r"pip install uv(?![=\w])", ci_workflow):
+        errors.append(
+            "CI workflow must pin uv (`pip install uv==<version>`); unpinned `pip install uv` "
+            "is not allowed in release-sensitive jobs"
+        )
+
     if "--pypi-wait-seconds" not in ci_workflow:
         errors.append("CI workflow must pass --pypi-wait-seconds to release parity validation")
 

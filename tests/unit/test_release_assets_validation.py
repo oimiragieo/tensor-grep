@@ -515,6 +515,37 @@ def test_should_require_ci_pypi_parity_retry_arguments():
     assert any("--pypi-poll-interval-seconds" in err for err in errors)
 
 
+def test_should_reject_unpinned_uv_bootstrap_in_ci():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    unpinned = """
+    jobs:
+      x:
+        steps:
+          - run: python -m pip install uv
+          - run: python -m pip install uv
+    """
+    assert any(
+        "must pin uv" in err for err in module.validate_ci_workflow_content(ci_workflow=unpinned)
+    )
+
+    pinned = """
+    jobs:
+      x:
+        steps:
+          - run: python -m pip install uv==0.11.25
+          - run: python -m pip install uv==0.11.25
+    """
+    assert not any(
+        "must pin uv" in err for err in module.validate_ci_workflow_content(ci_workflow=pinned)
+    )
+
+
 def test_should_require_dependabot_config_targets_and_branch_separator():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
