@@ -792,6 +792,47 @@ def _infer_total_files(payload: dict[str, object]) -> int:
     return len(files)
 
 
+def cpu_oracle_search(
+    patterns: list[str] | tuple[str, ...],
+    corpus_dir: Path,
+) -> list[tuple[str, int, str]]:
+    """Independent, obviously-correct CPU oracle for fixed-string multi-pattern search.
+
+    Walks every file under corpus_dir using plain Python string iteration and
+    the built-in ``in`` operator (str.find semantics).  This function is the
+    ground-truth reference that BOTH the existing brute-force GPU kernel and
+    the future PFAC kernel must agree with.  It is intentionally written with
+    no dependency on rg, the GPU kernel, or any search library so it can serve
+    as an independent third party in correctness comparisons.
+
+    Returns sorted (normalized_path, line_number, normalized_line_text) tuples
+    using the same normalization helpers used by _extract_tg_match_signatures
+    and _extract_rg_json_match_signatures.  Each line is reported at most once,
+    regardless of how many of the supplied patterns it matches — matching the
+    semantics of ``rg -F -e p1 -e p2 …``.
+
+    Line numbers are 1-indexed, consistent with rg --json output.
+    """
+    if not patterns:
+        return []
+    signatures: list[tuple[str, int, str]] = []
+    for file_path in sorted(corpus_dir.rglob("*")):
+        if not file_path.is_file():
+            continue
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        path_str = _normalized_match_path(str(file_path))
+        for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+            line_text = _normalized_match_text(raw_line)
+            for pattern in patterns:
+                if pattern in raw_line:
+                    signatures.append((path_str, line_number, line_text))
+                    break  # each line reported at most once (rg -F -e … -e … semantics)
+    return sorted(signatures)
+
+
 def run_correctness_check(
     *,
     tg_binary: Path,
@@ -888,6 +929,16 @@ def run_correctness_check(
     cpu_gpu_files_equal = cpu_total_files == gpu_total_files
     rg_matches_equal = rg_signatures == gpu_signatures
     rg_files_equal = _signature_file_count(rg_signatures) == gpu_total_files
+    # Independent CPU oracle: plain Python fixed-string search, no dependency on rg
+    # or the GPU kernel.  oracle_status is PASS iff the oracle agrees with rg.
+    try:
+        oracle_signatures = cpu_oracle_search([pattern], corpus_dir)
+        oracle_matches_equal = oracle_signatures == rg_signatures
+        oracle_status: str = "PASS" if oracle_matches_equal else "FAIL"
+    except Exception:
+        oracle_signatures = []
+        oracle_matches_equal = False
+        oracle_status = "ERROR"
     return {
         "status": (
             "PASS"
@@ -896,6 +947,7 @@ def run_correctness_check(
             and cpu_gpu_files_equal
             and rg_matches_equal
             and rg_files_equal
+            and oracle_status == "PASS"
             else "FAIL"
         ),
         "cpu_total_matches": cpu_total_matches,
@@ -909,6 +961,10 @@ def run_correctness_check(
         "rg_matches_equal": rg_matches_equal,
         "rg_files_equal": rg_files_equal,
         "rg_match_identity_equal": rg_matches_equal,
+        "oracle_status": oracle_status,
+        "oracle_total_matches": len(oracle_signatures),
+        "oracle_total_files": _signature_file_count(oracle_signatures),
+        "oracle_matches_equal": oracle_matches_equal,
     }
 
 
@@ -1042,11 +1098,25 @@ def run_many_pattern_correctness_check(
     cpu_gpu_files_equal = _signature_files(cpu_signatures) == _signature_files(gpu_signatures)
     rg_matches_equal = rg_signatures == gpu_signatures
     rg_files_equal = _signature_files(rg_signatures) == _signature_files(gpu_signatures)
+    # Independent CPU oracle: plain Python fixed-string search, no dependency on rg
+    # or the GPU kernel.  oracle_status is PASS iff the oracle agrees with rg.
+    try:
+        oracle_signatures = cpu_oracle_search(list(patterns), corpus_dir)
+        oracle_matches_equal = oracle_signatures == rg_signatures
+        oracle_status: str = "PASS" if oracle_matches_equal else "FAIL"
+    except Exception:
+        oracle_signatures = []
+        oracle_matches_equal = False
+        oracle_status = "ERROR"
     return {
         **base_payload,
         "status": (
             "PASS"
-            if cpu_gpu_matches_equal and cpu_gpu_files_equal and rg_matches_equal and rg_files_equal
+            if cpu_gpu_matches_equal
+            and cpu_gpu_files_equal
+            and rg_matches_equal
+            and rg_files_equal
+            and oracle_status == "PASS"
             else "FAIL"
         ),
         "cpu_total_matches": len(cpu_signatures),
@@ -1060,6 +1130,10 @@ def run_many_pattern_correctness_check(
         "rg_matches_equal": rg_matches_equal,
         "rg_files_equal": rg_files_equal,
         "rg_match_identity_equal": rg_matches_equal,
+        "oracle_status": oracle_status,
+        "oracle_total_matches": len(oracle_signatures),
+        "oracle_total_files": _signature_file_count(oracle_signatures),
+        "oracle_matches_equal": oracle_matches_equal,
     }
 
 
