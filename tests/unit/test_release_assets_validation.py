@@ -546,6 +546,26 @@ def test_should_reject_unpinned_uv_bootstrap_in_ci():
     )
 
 
+def test_should_reject_unpinned_uv_in_public_gpu_proof_workflow():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    unpinned = "steps:\n  - run: python -m pip install uv\n"
+    assert any(
+        "pin uv" in err
+        for err in module.validate_public_gpu_proof_workflow_content(workflow_content=unpinned)
+    )
+    pinned = "steps:\n  - run: python -m pip install uv==0.11.25\n"
+    assert not any(
+        "pin uv" in err
+        for err in module.validate_public_gpu_proof_workflow_content(workflow_content=pinned)
+    )
+
+
 def test_should_require_dependabot_config_targets_and_branch_separator():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
