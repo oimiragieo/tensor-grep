@@ -1458,6 +1458,15 @@ def validate_dependabot_config(*, dependabot_content: str) -> list[str]:
 def validate_public_gpu_proof_workflow_content(*, workflow_content: str) -> list[str]:
     workflow_content = _normalize_pinned_actions(workflow_content)
     errors: list[str] = []
+
+    # Supply-chain: pin uv like the main CI bootstrap (audit MEDIUM). The lookahead allows
+    # `uv==<version>` and unrelated packages (uvloop) while rejecting a bare `uv`.
+    if re.search(r"pip install uv(?![=\w])", workflow_content):
+        errors.append(
+            "Public GPU proof workflow must pin uv (`pip install uv==<version>`); unpinned uv "
+            "is not allowed"
+        )
+
     try:
         parsed = yaml.safe_load(workflow_content) or {}
     except yaml.YAMLError as exc:
