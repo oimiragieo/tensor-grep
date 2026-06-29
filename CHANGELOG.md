@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.17.9 (2026-06-29)
+
+### Bug Fixes
+
+- **install**: Pin uv to an exact version in the installers (supply-chain)
+  ([#293](https://github.com/oimiragieo/tensor-grep/pull/293),
+  [`96fdc92`](https://github.com/oimiragieo/tensor-grep/commit/96fdc92060bb8eccf5a8a2242b8c03fba370c3c6))
+
+Audit MEDIUM: the installers bootstrapped uv via the UNPINNED astral URL (curl
+  https://astral.sh/uv/install.sh | sh ; Invoke-WebRequest .../uv/install.ps1), so each run fetched
+  whatever "latest" uv was published. Switch to the VERSIONED astral installer URL
+  (astral.sh/uv/0.11.25/install.{sh,ps1}) via a single UV_VERSION/$uvVersion constant: the versioned
+  installer downloads that exact uv release AND verifies its checksum, giving reproducible,
+  supply-chain-safe installs. Verified both versioned URLs resolve (200) before pinning. Bump the
+  constant deliberately.
+
+Regression tests assert both installers use the versioned (pinned) URL and not the bare "latest"
+  one.
+
+NOTE (separate, deferred): the semantic-release build_command (pyproject.toml:133) also bootstraps
+  unpinned rustup + `pip install uv` — that path is load-bearing for publishing and untestable
+  locally, so it is handled separately/attended rather than risk reddening the release pipeline.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.8 (2026-06-29)
 
 ### Bug Fixes
