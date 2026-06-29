@@ -39,7 +39,7 @@ def test_cpu_oracle_single_pattern_finds_matching_lines(tmp_path):
     sigs = module.cpu_oracle_search(["ERROR kernel crash"], tmp_path)
 
     assert len(sigs) == 2
-    for path, lineno, text in sigs:
+    for _path, _lineno, text in sigs:
         assert "ERROR kernel crash" in text
     # rg -F matches 2nd line of a.log (1-indexed) and 2nd line of b.log
     path_a = module._normalized_match_path(str(tmp_path / "a.log"))
@@ -188,9 +188,7 @@ def test_cpu_oracle_matches_expected_rg_output_multi_pattern(tmp_path):
     """Multi-pattern oracle matches the expected signatures for rg -F -e p1 -e p2."""
     module = _load_module("oracle_vs_rg_multi")
     file_a = tmp_path / "a.log"
-    file_a.write_text(
-        "INFO boot\nERROR alpha\nINFO mid\nERROR beta\nINFO end\n", encoding="utf-8"
-    )
+    file_a.write_text("INFO boot\nERROR alpha\nINFO mid\nERROR beta\nINFO end\n", encoding="utf-8")
 
     path_a = module._normalized_match_path(str(file_a))
     expected_rg_sigs = sorted([
@@ -218,8 +216,6 @@ def test_run_correctness_check_includes_oracle_status_on_pass(monkeypatch, tmp_p
     corpus_file = corpus_dir / "data.log"
     corpus_file.write_text("INFO noise\nERROR sentinel match\nINFO noise\n", encoding="utf-8")
     pattern = "ERROR sentinel match"
-    path_str = module._normalized_match_path(str(corpus_file))
-    expected_sig = (path_str, 2, "ERROR sentinel match")
 
     def _fake_run_command(command, **_kwargs):
         command_text = " ".join(str(part) for part in command)
@@ -341,7 +337,6 @@ def test_run_many_pattern_correctness_check_includes_oracle_status(monkeypatch, 
     pattern_a = "ERROR alpha sentinel"
     pattern_b = "ERROR beta sentinel"
     corpus_file.write_text(f"{pattern_a}\n{pattern_b}\n", encoding="utf-8")
-    path_str = module._normalized_match_path(str(corpus_file))
 
     def _fake_run_command(command, **_kwargs):
         command_text = " ".join(str(part) for part in command)
