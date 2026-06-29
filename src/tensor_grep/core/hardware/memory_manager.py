@@ -100,18 +100,21 @@ class MemoryManager:
             return detected_ids
 
         detected_set = set(detected_ids)
-        normalized: list[int] = []
+        # De-dup requested IDs, preserving order.
+        requested: list[int] = []
         seen: set[int] = set()
         for device_id in preferred_ids:
-            if device_id in seen:
-                continue
-            if device_id in detected_set:
-                normalized.append(device_id)
+            if device_id not in seen:
+                requested.append(device_id)
                 seen.add(device_id)
 
-        # Preserve backward-compatible behavior: if all requested IDs are invalid,
-        # fall back to the detected routable set instead of disabling GPU usage.
-        return normalized if normalized else detected_ids
+        # Fail closed (audit HIGH): explicit device IDs must ALL be routable. Returning the detected
+        # set — or a partial subset — when a requested ID is invalid would silently route work to a
+        # different GPU than asked (e.g. `--gpu-device-ids 9,11` running on `[3,5]`). Returning []
+        # makes the explicit-GPU pipeline raise a clear configuration error instead of mis-routing.
+        if any(device_id not in detected_set for device_id in requested):
+            return []
+        return requested
 
     def get_device_chunk_plan_mb(
         self, preferred_ids: list[int] | None = None
