@@ -24,22 +24,44 @@ _NODE_PACKAGE_SPECS = (
     "intelephense@1.18.0",
 )
 
-# audit S5: pin rust-analyzer to an exact release instead of "latest".
-# SHA-256 hashes come from the official GitHub release assets page for this tag.
-# To update: download the new release artifacts, run sha256sum, update both
-# _RUST_ANALYZER_VERSION and _RUST_ANALYZER_SHA256 together.
+# Pin + verify the managed Node runtime archive (fail-closed). SHA-256 from the official
+# nodejs.org SHASUMS256.txt for v{_NODE_VERSION}, keyed by the exact archive filename
+# _node_archive_name() requests (Linux .tar.xz, macOS .tar.gz, Windows .zip). Update this table
+# together with _NODE_VERSION; a CI test asserts no entry is empty.
+_NODE_SHA256: dict[str, str] = {
+    f"node-v{_NODE_VERSION}-win-x64.zip": (
+        "55b639295920b219bb2acbcfa00f90393a2789095b7323f79475c9f34795f217"
+    ),
+    f"node-v{_NODE_VERSION}-linux-x64.tar.xz": (
+        "69b09dba5c8dcb05c4e4273a4340db1005abeafe3927efda2bc5b249e80437ec"
+    ),
+    f"node-v{_NODE_VERSION}-linux-arm64.tar.xz": (
+        "08bfbf538bad0e8cbb0269f0173cca28d705874a67a22f60b57d99dc99e30050"
+    ),
+    f"node-v{_NODE_VERSION}-darwin-x64.tar.gz": (
+        "6698587713ab565a94a360e091df9f6d91c8fadda6d00f0cf6526e9b40bed250"
+    ),
+    f"node-v{_NODE_VERSION}-darwin-arm64.tar.gz": (
+        "e9404633bc02a5162c5c573b1e2490f5fb44648345d64a958b17e325729a5e42"
+    ),
+}
+
+# Cap toolchain downloads so a malicious/oversized response can't exhaust memory or disk before
+# the checksum is verified (mirrors the native front-door + npm install posture).
+_MAX_TOOLCHAIN_DOWNLOAD_BYTES = 256 * 1024 * 1024
+
+# audit S5: pin rust-analyzer to an exact release + verify each artifact's SHA-256 (fail-closed).
+# Hashes are the sha256 of the downloaded release asset (the .gz on Unix, the .zip on Windows) for
+# this tag, taken from https://github.com/rust-lang/rust-analyzer/releases/tag/2025-01-13. Update
+# _RUST_ANALYZER_VERSION and these hashes together; a CI test asserts none is empty.
 _RUST_ANALYZER_VERSION = "2025-01-13"
 _RUST_ANALYZER_SHA256: dict[str, str] = {
-    # (system, machine) -> sha256 of the .gz artifact
-    # TODO(S5): populate from https://github.com/rust-lang/rust-analyzer/releases/tag/2025-01-13
-    # SHASUMS are not published as a detached file for rust-analyzer; hashes below are
-    # placeholders — replace with values obtained by sha256sum on the downloaded artifact.
-    # Until replaced, the installer will skip the integrity check and log a warning.
-    "windows/x86_64": "",
-    "linux/x86_64": "",
-    "linux/arm64": "",
-    "darwin/x86_64": "",
-    "darwin/arm64": "",
+    # platform_key -> sha256 of the downloaded artifact (.zip on Windows, .gz elsewhere)
+    "windows/x86_64": "61188792c6d9aea497c0de071b5df28bb31a265b99796c2ca314ca4541605dab",
+    "linux/x86_64": "c0583d4f57b14f001d74ff187d9c266e0ebe9b07a8d8ba3ac3dd4a658f780707",
+    "linux/arm64": "e6e69ec26dc079df5e8431db851806fe0d5da9b9f17d115ad5d527004878e3d6",
+    "darwin/x86_64": "490c66314989b37f795e41ada5f59f182e13aa762d0c6b527041e5e3b8f4cc1d",
+    "darwin/arm64": "8092463bff864116b52b4c6c9153a24f7d41659dfc3c8485130430341f534d28",
 }
 
 # Pin gopls + csharp-ls to exact versions instead of "latest"/unversioned. Once the version is
@@ -188,8 +210,66 @@ def _node_archive_name() -> str:
 
 
 def _download(url: str, destination: Path) -> None:
+    total = 0
     with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as output:
-        shutil.copyfileobj(response, output)
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
+                raise RuntimeError(
+                    f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
+                    f"(possible oversized or malicious response): {url}"
+                )
+            output.write(chunk)
+
+
+def _allow_unverified_toolchain() -> bool:
+    """Explicit opt-out for air-gapped/offline installs: TG_ALLOW_UNVERIFIED_TOOLCHAIN=1 skips
+    integrity verification (fail-OPEN by consent). The default posture is fail-CLOSED."""
+    return os.environ.get("TG_ALLOW_UNVERIFIED_TOOLCHAIN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_node_archive(archive_path: Path, archive_name: str) -> None:
+    """Fail-closed: verify the downloaded Node archive against its pinned SHA-256 BEFORE extraction.
+
+    Refuses (raises) when no pinned hash exists or the hash mismatches, unless the explicit
+    TG_ALLOW_UNVERIFIED_TOOLCHAIN opt-out is set.
+    """
+    if _allow_unverified_toolchain():
+        import warnings
+
+        warnings.warn(
+            f"TG_ALLOW_UNVERIFIED_TOOLCHAIN set; skipping checksum verification of {archive_name}",
+            stacklevel=2,
+        )
+        return
+    expected = _NODE_SHA256.get(archive_name, "")
+    if not expected:
+        raise RuntimeError(
+            f"No pinned SHA-256 for Node archive {archive_name}; refusing to install an unverified "
+            "runtime (set TG_ALLOW_UNVERIFIED_TOOLCHAIN=1 to override)."
+        )
+    actual = _sha256_file(archive_path)
+    if actual.lower() != expected.lower():
+        raise RuntimeError(
+            f"Node archive {archive_name} failed checksum verification (expected {expected}, "
+            f"got {actual}); refusing to install a tampered runtime."
+        )
 
 
 def _safe_extract_tar(archive: tarfile.TarFile, destination: Path) -> None:
@@ -262,6 +342,7 @@ def _ensure_node_runtime(root: Path) -> Path:
         temp_dir = Path(temp_dir_raw)
         archive_path = temp_dir / archive_name
         _download(url, archive_path)
+        _verify_node_archive(archive_path, archive_name)
         extracted_dir = _extract_archive(archive_path, temp_dir / "extract")
         if runtime_dir.exists():
             shutil.rmtree(runtime_dir)
@@ -355,7 +436,8 @@ def _rust_analyzer_artifact_name() -> tuple[str, str]:
     system = sys_platform()
     machine = _normalized_machine()
     if system == "windows" and machine == "x86_64":
-        return "rust-analyzer-x86_64-pc-windows-msvc.gz", "windows/x86_64"
+        # Windows ships a .zip (containing rust-analyzer.exe), not a .gz like the Unix targets.
+        return "rust-analyzer-x86_64-pc-windows-msvc.zip", "windows/x86_64"
     if system == "linux" and machine == "x86_64":
         return "rust-analyzer-x86_64-unknown-linux-gnu.gz", "linux/x86_64"
     if system == "linux" and machine == "arm64":
@@ -378,27 +460,27 @@ def _rust_analyzer_download_url() -> str:
 
 
 def _verify_rust_analyzer_checksum(archive_path: Path) -> None:
-    """Verify SHA-256 of the downloaded rust-analyzer archive (audit S5).
-
-    If the expected hash for this platform is an empty string the function
-    logs a warning and returns without error — this makes it safe to ship
-    before all per-platform hashes have been collected while still enforcing
-    integrity once hashes are filled in.
+    """Fail-closed: verify SHA-256 of the downloaded rust-analyzer archive BEFORE decompressing
+    (audit S5). Raises on a missing pin or a checksum mismatch, unless the explicit
+    TG_ALLOW_UNVERIFIED_TOOLCHAIN opt-out is set.
     """
-    _, platform_key = _rust_analyzer_artifact_name()
-    expected = _RUST_ANALYZER_SHA256.get(platform_key, "")
-    if not expected:
-        # TODO(S5): populate _RUST_ANALYZER_SHA256 with verified hashes.
+    if _allow_unverified_toolchain():
         import warnings
 
         warnings.warn(
-            f"rust-analyzer checksum not configured for {platform_key}; "
-            "skipping integrity check. Set _RUST_ANALYZER_SHA256 entries to harden.",
-            stacklevel=3,
+            "TG_ALLOW_UNVERIFIED_TOOLCHAIN set; skipping rust-analyzer checksum verification",
+            stacklevel=2,
         )
         return
-    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-    if digest != expected:
+    _, platform_key = _rust_analyzer_artifact_name()
+    expected = _RUST_ANALYZER_SHA256.get(platform_key, "")
+    if not expected:
+        raise RuntimeError(
+            f"No pinned SHA-256 for rust-analyzer {platform_key}; refusing to install an "
+            "unverified binary (set TG_ALLOW_UNVERIFIED_TOOLCHAIN=1 to override)."
+        )
+    digest = _sha256_file(archive_path)
+    if digest.lower() != expected.lower():
         raise RuntimeError(
             f"rust-analyzer archive checksum mismatch for {platform_key}: "
             f"expected {expected}, got {digest}"
@@ -429,16 +511,37 @@ def _copy_rust_analyzer_from_rustup(destination: Path) -> bool:
     return True
 
 
+def _extract_rust_analyzer_exe_from_zip(archive_path: Path, destination: Path) -> None:
+    # Windows rust-analyzer ships as a .zip with rust-analyzer.exe (+ a .pdb we ignore). Extract
+    # ONLY the single top-level .exe member, matched by basename (never a path with separators),
+    # so a malicious zip cannot traverse outside the destination.
+    with zipfile.ZipFile(archive_path) as bundle:
+        exe_members = [
+            name
+            for name in bundle.namelist()
+            if name.lower().endswith(".exe") and "/" not in name and "\\" not in name
+        ]
+        if not exe_members:
+            raise RuntimeError(f"rust-analyzer archive {archive_path.name} has no .exe member")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with bundle.open(exe_members[0]) as source, destination.open("wb") as output:
+            shutil.copyfileobj(source, output)
+
+
 def _download_rust_analyzer(destination: Path) -> None:
+    artifact, _ = _rust_analyzer_artifact_name()
     url = _rust_analyzer_download_url()
     with tempfile.TemporaryDirectory(prefix="tg-rust-analyzer-") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
-        archive_path = temp_dir / "rust-analyzer.gz"
+        archive_path = temp_dir / artifact
         _download(url, archive_path)
         # audit S5: verify checksum before decompressing/executing the binary.
         _verify_rust_analyzer_checksum(archive_path)
-        with gzip.open(archive_path, "rb") as compressed, destination.open("wb") as output:
-            shutil.copyfileobj(compressed, output)
+        if artifact.endswith(".zip"):
+            _extract_rust_analyzer_exe_from_zip(archive_path, destination)
+        else:
+            with gzip.open(archive_path, "rb") as compressed, destination.open("wb") as output:
+                shutil.copyfileobj(compressed, output)
     if not is_windows():
         _mark_executable(destination)
 
