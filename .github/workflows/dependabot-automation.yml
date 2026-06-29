@@ -88,10 +88,12 @@ jobs:
           safe="false"
           reason="manual-review"
 
-          if [[ "$PACKAGE_ECOSYSTEM" == "github-actions" && "$UPDATE_TYPE" =~ ^version-update:semver-(minor|patch)$ ]]; then
-            safe="true"
-            reason="github-actions-safe"
-          elif [[ ( "$PACKAGE_ECOSYSTEM" == "uv" || "$PACKAGE_ECOSYSTEM" == "cargo" || "$PACKAGE_ECOSYSTEM" == "npm" ) \
+          # github-actions updates are deliberately NOT auto-merged (supply-chain hardening): an
+          # action/workflow bump changes code that runs in CI AND the release pipeline with repo
+          # write permissions. Even though actions are SHA-pinned, a Dependabot bump repoints the
+          # pin at a new commit, so it must get explicit human review. Direct:production library
+          # updates likewise fall through to manual-review below.
+          if [[ ( "$PACKAGE_ECOSYSTEM" == "uv" || "$PACKAGE_ECOSYSTEM" == "cargo" || "$PACKAGE_ECOSYSTEM" == "npm" ) \
                && ( "$DEPENDENCY_TYPE" == "direct:development" || "$DEPENDENCY_TYPE" == "indirect" ) \
                && "$UPDATE_TYPE" =~ ^version-update:semver-(minor|patch)$ ]]; then
             safe="true"
