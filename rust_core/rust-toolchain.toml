@@ -1,0 +1,11 @@
+# Pin the Rust toolchain for reproducible, supply-chain-safe builds (audit MEDIUM). Without this,
+# `rustup default stable` (CI + the semantic-release build_command) picked up "whatever stable is
+# newest that day". 1.96.0 is the stable release the pipeline already builds with — pinning it
+# locks that in. cargo auto-applies this to every invocation in the crate (the CI matrix and the
+# release's `cargo generate-lockfile`). Bump deliberately, in tandem with a green CI matrix.
+[toolchain]
+channel = "1.96.0"
+# Include the components CI uses, so pinning the channel doesn't drop rustfmt/clippy: the
+# "Check Rust Formatting" (cargo fmt) + clippy jobs need them, and a channel-only pin installs
+# the toolchain without them on minimal-profile runners.
+components = ["rustfmt", "clippy"]
