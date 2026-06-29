@@ -108,9 +108,12 @@ echo "           TENSOR-GREP LINUX/MACOS INSTALLER              "
 echo "=========================================================="
 
 # 1. Install or locate uv
+# Pin uv to an exact version for reproducible, supply-chain-safe installs: the versioned astral
+# installer downloads that exact uv release and verifies its checksum. Bump deliberately.
+UV_VERSION="0.11.25"
 if ! command -v uv &> /dev/null; then
-    echo "[1/4] Downloading uv package manager..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION})..."
+    curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
     export PATH="$HOME/.local/bin:$PATH"
 else
     echo "[1/4] Found existing uv installation."

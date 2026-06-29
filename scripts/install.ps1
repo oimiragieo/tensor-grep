@@ -450,10 +450,13 @@ Write-Host "=========================================================="
 
 try {
     # 1. Install or locate uv
+    # Pin uv to an exact version for reproducible, supply-chain-safe installs: the versioned astral
+    # installer downloads that exact uv release and verifies its checksum. Bump deliberately.
+    $uvVersion = "0.11.25"
     $uvPath = "uv"
     if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
-        Write-Host "[1/4] Downloading uv package manager..."
-        Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -OutFile "$env:TEMP\uv_install.ps1"
+        Write-Host "[1/4] Downloading uv package manager (pinned $uvVersion)..."
+        Invoke-WebRequest -Uri "https://astral.sh/uv/$uvVersion/install.ps1" -OutFile "$env:TEMP\uv_install.ps1"
         & "$env:TEMP\uv_install.ps1"
         $uvPath = "$env:USERPROFILE\.local\bin\uv.exe"
     } else {
