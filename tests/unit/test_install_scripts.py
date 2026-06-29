@@ -477,8 +477,9 @@ def test_install_ps1_pins_uv_version():
     assert "astral.sh/uv/$uvVersion/install.ps1" not in content
     assert '$uvVersion = "' in content
     assert "github.com/astral-sh/uv/releases/download/$uvVersion" in content
-    assert "uv-x86_64-pc-windows-msvc" in content
-    assert "uv-aarch64-pc-windows-msvc" in content
+    # The artifact name is arch-templated (uv-$uvArch-pc-windows-msvc) with both Windows arches.
+    assert "uv-$uvArch-pc-windows-msvc" in content
+    assert '"aarch64"' in content and '"x86_64"' in content
     assert "OSArchitecture" in content
     assert "Get-FileHash" in content
     assert "MISMATCH" in content
@@ -590,7 +591,7 @@ def test_install_ps1_downloads_uv_binary_directly_and_verifies_checksum():
 
     # Must clean up the extract dir in the outer finally block.
     assert "$uvExtractDir" in content
-    finally_block = content[content.rindex("finally {"):]
+    finally_block = content[content.rindex("finally {") :]
     assert "$uvExtractDir" in finally_block
 
 
