@@ -108,7 +108,7 @@ class CuDFBackend(ComputeBackend):
         # parent process the env-var is a no-op.  Use _device_context() for in-process
         # GPU binding, and _configure_cuda_worker_environment() for subprocess workers.
 
-    def _device_context(self):
+    def _device_context(self) -> Any:
         """
         Return a cupy.cuda.Device context manager for the first configured device (or
         device 0 when no device IDs are set).  Importing cupy lazily avoids a hard
@@ -119,12 +119,12 @@ class CuDFBackend(ComputeBackend):
         is the strong multi-device guarantee for the distributed process-pool path.
         """
         try:
-            import cupy  # noqa: PLC0415
+            import cupy
         except ImportError:
             # No cupy/CUDA in this environment (CPU-only, tests, or the distributed path that pins
             # the device out-of-process via CUDA_VISIBLE_DEVICES). Nothing to bind in-process, so
             # the wrapper degrades to a no-op rather than forcing a cupy dependency on every path.
-            import contextlib  # noqa: PLC0415
+            import contextlib
 
             return contextlib.nullcontext()
 
