@@ -109,17 +109,24 @@ class TestMemoryManager:
         mock_detect.return_value = mock_instance
 
         manager = MemoryManager()
-        assert manager.get_device_ids(preferred_ids=[7, 2, 2, 99]) == [7, 2]
+        # All-valid request is de-duplicated, order preserved.
+        assert manager.get_device_ids(preferred_ids=[7, 2, 2]) == [7, 2]
 
     @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
-    def test_should_fallback_to_detected_device_ids_when_preferred_ids_invalid(self, mock_detect):
+    def test_should_fail_closed_when_any_preferred_id_is_invalid(self, mock_detect):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
         mock_instance.list_devices.return_value = [MagicMock(device_id=3), MagicMock(device_id=5)]
         mock_detect.return_value = mock_instance
 
         manager = MemoryManager()
-        assert manager.get_device_ids(preferred_ids=[9, 11]) == [3, 5]
+        # All requested IDs invalid -> [] (was the fail-OPEN bug: returned all detected [3, 5],
+        # silently routing `--gpu-device-ids 9,11` to GPUs 3 and 5).
+        assert manager.get_device_ids(preferred_ids=[9, 11]) == []
+        # ANY invalid -> [] (no silent partial routing).
+        assert manager.get_device_ids(preferred_ids=[3, 9]) == []
+        # All valid -> the exact requested set.
+        assert manager.get_device_ids(preferred_ids=[5, 3]) == [5, 3]
 
     @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
     def test_should_prefer_public_device_id_enumeration_when_available(self, mock_detect):
