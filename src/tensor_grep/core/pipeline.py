@@ -1,4 +1,5 @@
 import re
+import warnings
 from contextlib import nullcontext
 from typing import Any
 
@@ -26,8 +27,9 @@ class Pipeline:
     ) -> None:
         requested_ids = list(config.gpu_device_ids or []) if config is not None else []
         message = (
-            "Explicit GPU device selection "
-            f"{requested_ids} could not initialize a GPU backend: {detail}"
+            "GPU acceleration is experimental. "
+            f"Explicit GPU device selection {requested_ids} "
+            f"could not initialize a GPU backend: {detail}"
         )
         if cause is not None:
             raise ConfigurationError(message) from cause
@@ -139,6 +141,7 @@ class Pipeline:
         selected_backend_reason = "unknown"
         selected_gpu_device_ids: list[int] = []
         selected_gpu_chunk_plan_mb: list[tuple[int, int]] = []
+        fallback_reason: str | None = None
         span_ctx: Any = nullcontext()
 
         try:
@@ -327,6 +330,12 @@ class Pipeline:
                 selected_gpu_chunk_plan_mb = list(device_chunk_plan)
 
                 if not chunk_sizes:
+                    fallback_reason = (
+                        "GPU backend unavailable (experimental); running on CPU. "
+                        "Reason: no routable GPU chunk plan returned "
+                        "(CUDA device enumeration failed or CUDA is unavailable)."
+                    )
+                    warnings.warn(fallback_reason, stacklevel=2)
                     self.backend = fallback_backend
                     selected_backend_reason = "gpu_selected_no_chunk_sizes_fallback"
                 else:
@@ -348,9 +357,19 @@ class Pipeline:
                                 selected_backend_reason = "gpu_heuristic_torch"
                                 selected_gpu_device_ids = list(device_ids)
                             else:
+                                fallback_reason = (
+                                    "GPU backend unavailable (experimental); running on CPU. "
+                                    "Reason: neither cuDF nor Torch GPU backend was available."
+                                )
+                                warnings.warn(fallback_reason, stacklevel=2)
                                 self.backend = fallback_backend
                                 selected_backend_reason = "gpu_heuristic_no_gpu_backend_fallback"
                         except ImportError:
+                            fallback_reason = (
+                                "GPU backend unavailable (experimental); running on CPU. "
+                                "Reason: Torch backend import failed."
+                            )
+                            warnings.warn(fallback_reason, stacklevel=2)
                             self.backend = fallback_backend
                             selected_backend_reason = "gpu_heuristic_torch_import_error_fallback"
             elif rust_available and not needs_python_cpu:
@@ -382,6 +401,7 @@ class Pipeline:
         self.selected_backend_reason = selected_backend_reason
         self.selected_gpu_device_ids = selected_gpu_device_ids
         self.selected_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
+        self.fallback_reason = fallback_reason
 
     def get_backend(self) -> ComputeBackend:
         return self.backend
