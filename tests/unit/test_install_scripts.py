@@ -456,6 +456,22 @@ def test_install_sh_should_refresh_tensor_grep_uv_cache_before_stable_install():
     )
 
 
+def test_install_sh_pins_uv_version():
+    # Supply-chain: bootstrap uv via the versioned (pinned) astral installer URL, never the
+    # unpinned "latest" URL. The versioned installer fetches that exact uv release + verifies it.
+    content = _read_script("scripts/install.sh")
+    assert "astral.sh/uv/install.sh" not in content
+    assert 'UV_VERSION="' in content
+    assert "astral.sh/uv/${UV_VERSION}/install.sh" in content
+
+
+def test_install_ps1_pins_uv_version():
+    content = _read_script("scripts/install.ps1")
+    assert "astral.sh/uv/install.ps1" not in content
+    assert '$uvVersion = "' in content
+    assert "astral.sh/uv/$uvVersion/install.ps1" in content
+
+
 def test_install_sh_should_stage_install_before_replacing_existing_managed_dir():
     content = _read_script("scripts/install.sh")
 
