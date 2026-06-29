@@ -1,6 +1,97 @@
 # CHANGELOG
 
 
+## v1.17.11 (2026-06-29)
+
+### Bug Fixes
+
+- **gpu**: Fail closed on invalid explicit --gpu-device-ids (audit HIGH)
+  ([#300](https://github.com/oimiragieo/tensor-grep/pull/300),
+  [`cb7d7d6`](https://github.com/oimiragieo/tensor-grep/commit/cb7d7d625a368a49283762a6cd95c30bc510a9f3))
+
+MemoryManager.get_device_ids() fell back to ALL detected GPUs when every requested explicit ID was
+  invalid (and silently dropped invalid IDs in a partial list), so `--gpu-device-ids 9,11` could
+  route to `[3,5]` instead of failing. Fix: explicit IDs must ALL be routable; if any requested ID
+  is not in the detected set, return [] (fail-closed). The explicit-GPU pipeline already converts an
+  empty chunk plan into a clear configuration error (_raise_explicit_gpu_configuration_error), so
+  the user gets a visible error instead of mis-routed execution. None/auto-detect path is unchanged.
+
+Tests: all-invalid -> []; any-invalid -> []; all-valid -> exact requested set (de-duped). Flipped
+  the former preserve-the-fallback test to assert fail-closed.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Continuous Integration
+
+- Pin uv (==0.11.25) + Rust toolchain in CI jobs + reject unpinned uv in the validator
+  ([#298](https://github.com/oimiragieo/tensor-grep/pull/298),
+  [`7475a56`](https://github.com/oimiragieo/tensor-grep/commit/7475a56dcee886dec986c20492b2b28a1b9e7864))
+
+Audit MEDIUM: CI/release bootstrap was partly moving-source — 10x bare `python -m pip install uv`
+  and 3x `rustup default stable` across ci.yml pulled "latest" uv/rust into release-sensitive jobs,
+  and validate_release_assets.py only checked that uv was bootstrapped, not pinned.
+
+- ci.yml: `python -m pip install uv` -> `uv==0.11.25` (10x, matches installer #293 + release-build
+  #295); `rustup default stable` -> `rustup default 1.96.0` (3x, matches
+  rust_core/rust-toolchain.toml from #295). PR CI matrix validates the pinned bootstrap. -
+  validate_release_assets.validate_ci_workflow_content: REJECT any unpinned `pip install uv` (regex
+  `pip install uv(?![=\w])` — allows uv==<ver> and uvloop, rejects a bare uv). Test added.
+
+ci: => no release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- Pin uv in public-gpu-proof workflow + reject unpinned uv there in the validator
+  ([#301](https://github.com/oimiragieo/tensor-grep/pull/301),
+  [`2a7b6f5`](https://github.com/oimiragieo/tensor-grep/commit/2a7b6f563a3eabc00d5eb90d75ee6a8585b598d0))
+
+Audit MEDIUM (follow-up to #298): #298 pinned uv in ci.yml but missed public-gpu-proof.yml, which
+  still ran bare `python -m pip install uv`, and its validator passed regardless. Pin it to
+  uv==0.11.25 and add the same reject-unpinned check to validate_public_gpu_proof_workflow_content.
+
+Regression test added; real public-gpu-proof.yml validates clean. ci: => no release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **dependabot**: Restrict auto-merge to direct:development only (drop indirect)
+  ([#299](https://github.com/oimiragieo/tensor-grep/pull/299),
+  [`a4ffc41`](https://github.com/oimiragieo/tensor-grep/commit/a4ffc41bb73981b608ccc8e00546182403efe7de))
+
+Audit LOW/MEDIUM follow-up to #294: after removing github-actions from auto-merge, uv/cargo/npm
+  INDIRECT (transitive) minor/patch bumps were still auto-approved + auto-merged. Transitive deps
+  can land in the install, release, benchmark, or provider-setup paths, so they should get human
+  review. Narrow the auto-merge-safe policy to direct:development minor/patch only; indirect (and
+  the already-excluded direct:production + github-actions) now route to manual-review.
+
+Validator contract intact (automerge:eligible + manual-review both present); real workflow validates
+  clean. ci: => no release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Remove stale manual release-proof ledger fields (resolves recurring staleness)
+  ([#297](https://github.com/oimiragieo/tensor-grep/pull/297),
+  [`1d5004b`](https://github.com/oimiragieo/tensor-grep/commit/1d5004b701079997498c02474a95a4bd86d3bf04))
+
+Audit MEDIUM (recurring): the "Latest verified release proof PR/merge/commit" + "Latest merged
+  fix/feature commit" fields in AGENTS.md, docs/SESSION_HANDOFF.md, and docs/CONTINUATION_PLAN.md
+  were hand-maintained and drifted badly (SESSION_HANDOFF stuck at #285/v1.17.4, CONTINUATION_PLAN
+  at test_public_docs_governance.py enforce them.
+
+Per the auditor's "remove these fields entirely OR validate them" — REMOVE (the simple, honest
+  option): making them auto-stamped would just duplicate the already-correct
+  `release_docs_current_tag` / PyPI fields, and a post-publish commit-back step to keep a manual
+  ledger current carries real release-workflow footguns (infinite-loop / push-race) for a cosmetic
+  field. Kept: the auto-stamped current-tag + PyPI lines, and the incident caveats with concrete CI
+  run IDs (the real "confirmed-published" signal). 183 governance/validator/stamper tests still
+  pass.
+
+Resolves the proof-ledger half of the release-pipeline hardening (release-build pin shipped #295).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.10 (2026-06-29)
 
 ### Bug Fixes
