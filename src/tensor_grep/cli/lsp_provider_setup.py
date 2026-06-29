@@ -551,7 +551,11 @@ def _ensure_rust_analyzer(root: Path) -> Path:
     if destination.is_file():
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if not _copy_rust_analyzer_from_rustup(destination):
+    # Default to tg's own pinned, checksum-verified download. Only trust the user's rustup/PATH
+    # rust-analyzer under the explicit unsafe opt-in: `_copy_rust_analyzer_from_rustup` resolves the
+    # binary via `shutil.which`, which a shadowed/stale rust-analyzer on PATH could hijack into
+    # becoming the "managed" provider, bypassing the pin.
+    if not (_allow_unverified_toolchain() and _copy_rust_analyzer_from_rustup(destination)):
         _download_rust_analyzer(destination)
     if not destination.is_file():
         raise RuntimeError(f"Managed rust-analyzer install failed: missing {destination}")
@@ -583,8 +587,11 @@ def _ensure_gopls(root: Path) -> Path:
     destination = _managed_bin_binary(root, "gopls")
     if destination.is_file():
         return destination
+    # Only accept a pre-existing PATH binary under the explicit unsafe opt-in: otherwise a stale or
+    # shadowed `gopls` on PATH would silently become the "managed" provider, bypassing the version
+    # pin. By default, install the pinned (GOSUMDB-verified) version below.
     existing = shutil.which("gopls")
-    if existing:
+    if existing and _allow_unverified_toolchain():
         return _copy_binary_to_managed(existing, destination)
     go = shutil.which("go")
     if not go:
@@ -600,8 +607,10 @@ def _ensure_csharp_ls(root: Path) -> Path:
     destination = _managed_bin_binary(root, "csharp-ls")
     if destination.is_file():
         return destination
+    # Only accept a pre-existing PATH binary under the explicit unsafe opt-in (see _ensure_gopls):
+    # by default install the pinned, NuGet-verified version below.
     existing = shutil.which("csharp-ls")
-    if existing:
+    if existing and _allow_unverified_toolchain():
         return _copy_binary_to_managed(existing, destination)
     dotnet = shutil.which("dotnet")
     if not dotnet:
