@@ -6206,6 +6206,7 @@ def search_command(
     all_results.requested_gpu_device_ids = list(parsed_gpu_device_ids or [])
     all_results.routing_gpu_device_ids = selected_gpu_device_ids
     all_results.routing_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
+    all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
     search_start = time.perf_counter()
     matched_file_paths: set[str] = set()
     matched_file_paths_ordered: list[str] = []
@@ -6234,6 +6235,8 @@ def search_command(
         all_results.routing_worker_count = max(
             all_results.routing_worker_count, result.routing_worker_count
         )
+        if result.fallback_reason is not None:
+            all_results.fallback_reason = result.fallback_reason
 
     def _merge_count_metadata(result: SearchResult) -> None:
         for file_path, count in result.match_counts_by_file.items():

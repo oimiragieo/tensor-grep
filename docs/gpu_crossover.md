@@ -113,8 +113,8 @@ GPU can produce a credible speed win over `rg`.
 When the GPU backend is unavailable or the request falls outside the supported lane,
 `tg` falls back to CPU and emits a `UserWarning` with a human-readable explanation.
 The `fallback_reason` attribute on the `Pipeline` object captures the same text for
-programmatic inspection (callers reading the pipeline result can surface it in the
-JSON route envelope via the `fallback_reason` field).
+programmatic inspection; it is surfaced in the JSON route envelope via the
+`fallback_reason` field so callers can observe it without parsing log output.
 
 GPU routing is **explicit and opt-in** (`--gpu-device-ids`). Heuristic auto-routing
 is disabled until the public managed binary passes the promotion proof gate described

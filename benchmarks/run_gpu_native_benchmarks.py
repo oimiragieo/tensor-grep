@@ -819,12 +819,34 @@ def cpu_oracle_search(
     for file_path in sorted(corpus_dir.rglob("*")):
         if not file_path.is_file():
             continue
+        # Skip dot-prefixed files and files inside dot-prefixed directories,
+        # matching rg's default behaviour of ignoring hidden paths.
+        if any(part.startswith(".") for part in file_path.parts):
+            continue
+        # Skip binary files: rg skips files whose content contains a NUL byte.
         try:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
+            probe = file_path.read_bytes()[:8192]
+        except OSError:
+            continue
+        if b"\x00" in probe:
+            continue
+        # Decode as latin-1 (never raises; each byte maps 1-to-1 to a Unicode code
+        # point).  errors="replace" diverges from rg's match text for invalid UTF-8
+        # sequences because it rewrites them to U+FFFD, whereas rg surfaces the raw
+        # bytes; latin-1 preserves the raw byte values faithfully.
+        try:
+            text = file_path.read_text(encoding="latin-1")
         except OSError:
             continue
         path_str = _normalized_match_path(str(file_path))
-        for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+        # Split on \n only, matching rg's line-splitting behaviour.
+        # str.splitlines() also splits on \r, \v, \f, \x1c-\x1e, \x85,
+        # U+2028, U+2029 — none of which rg treats as line boundaries.
+        # Drop the trailing empty element produced by a final \n.
+        raw_lines = text.split("\n")
+        if raw_lines and raw_lines[-1] == "":
+            raw_lines = raw_lines[:-1]
+        for line_number, raw_line in enumerate(raw_lines, start=1):
             line_text = _normalized_match_text(raw_line)
             for pattern in patterns:
                 if pattern in raw_line:

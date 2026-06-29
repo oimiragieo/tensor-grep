@@ -324,26 +324,30 @@ class CuDFBackend(ComputeBackend):
         import os
         import re
 
-        with self._device_context():
-            import cudf
+        # Routing setup does not allocate GPU memory — keep outside any device context
+        # so that _search_distributed (which forks via ProcessPoolExecutor) can be called
+        # without a live CUDA context in the parent process.
+        file_size = os.path.getsize(file_path)
+        matches: list[MatchLine] = []
+        device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
+        if not device_chunks_mb:
+            _fallback_device_id = self.device_ids[0] if self.device_ids else 0
+            device_chunks_mb = [(_fallback_device_id, 512)]
+        normalized_device_chunks = self._normalize_device_chunks(device_chunks_mb)
+        routing_gpu_device_ids = [device_id for device_id, _ in normalized_device_chunks]
 
-            file_size = os.path.getsize(file_path)
-            matches: list[MatchLine] = []
-            device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
-            if not device_chunks_mb:
-                _fallback_device_id = self.device_ids[0] if self.device_ids else 0
-                device_chunks_mb = [(_fallback_device_id, 512)]
-            normalized_device_chunks = self._normalize_device_chunks(device_chunks_mb)
-            routing_gpu_device_ids = [device_id for device_id, _ in normalized_device_chunks]
+        total_capacity_bytes = sum(self.chunk_sizes_mb) * 1024 * 1024
 
-            total_capacity_bytes = sum(self.chunk_sizes_mb) * 1024 * 1024
+        flags = 0
+        if config and (config.ignore_case or (config.smart_case and pattern.islower())):
+            flags |= re.IGNORECASE
 
-            flags = 0
-            if config and (config.ignore_case or (config.smart_case and pattern.islower())):
-                flags |= re.IGNORECASE
+        if file_size <= total_capacity_bytes and len(self.chunk_sizes_mb) == 1:
+            # PHASE 3: Zero-Copy ingestion via PyCapsule if tensor-grep rust core is available.
+            # Scoped device context: covers only in-process cuDF allocations; no fork happens here.
+            with self._device_context():
+                import cudf
 
-            if file_size <= total_capacity_bytes and len(self.chunk_sizes_mb) == 1:
-                # PHASE 3: Zero-Copy ingestion via PyCapsule if tensor-grep rust core is available
                 try:
                     import pyarrow as pa
 
@@ -409,70 +413,78 @@ class CuDFBackend(ComputeBackend):
                             MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                         )
 
+            return SearchResult(
+                matches=matches,
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
+                routing_backend="CuDFBackend",
+                routing_reason="cudf_single_gpu_read_text",
+                routing_gpu_device_ids=routing_gpu_device_ids,
+                routing_gpu_chunk_plan_mb=normalized_device_chunks,
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+        else:
+            # PHASE 3.1: VRAM Chunking for Large Files
+
+            # For multi-GPU configurations, distributed fanout is the primary runtime path.
+            # _search_distributed forks via ProcessPoolExecutor; run it OUTSIDE any device
+            # context to avoid CUDA-fork hazards in child processes.
+            if len(device_chunks_mb) > 1:
+                matches, worker_count = self._search_distributed(
+                    file_path=file_path,
+                    pattern=pattern,
+                    file_size=file_size,
+                    device_chunks_mb=device_chunks_mb,
+                    config=config,
+                )
                 return SearchResult(
                     matches=matches,
                     total_files=1 if matches else 0,
                     total_matches=len(matches),
                     routing_backend="CuDFBackend",
-                    routing_reason="cudf_single_gpu_read_text",
+                    routing_reason=self._multi_worker_routing_reason(worker_count=worker_count),
                     routing_gpu_device_ids=routing_gpu_device_ids,
                     routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                    routing_distributed=False,
-                    routing_worker_count=1,
+                    routing_distributed=worker_count > 1,
+                    routing_worker_count=worker_count,
                 )
 
-            else:
-                # PHASE 3.1: VRAM Chunking for Large Files
+            chunked_processing_succeeded = False
+            try:
+                import pyarrow as pa
 
-                # For multi-GPU configurations, distributed fanout is the primary runtime path.
-                if len(device_chunks_mb) > 1:
-                    matches, worker_count = self._search_distributed(
-                        file_path=file_path,
-                        pattern=pattern,
-                        file_size=file_size,
-                        device_chunks_mb=device_chunks_mb,
-                        config=config,
-                    )
-                    return SearchResult(
-                        matches=matches,
-                        total_files=1 if matches else 0,
-                        total_matches=len(matches),
-                        routing_backend="CuDFBackend",
-                        routing_reason=self._multi_worker_routing_reason(worker_count=worker_count),
-                        routing_gpu_device_ids=routing_gpu_device_ids,
-                        routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                        routing_distributed=worker_count > 1,
-                        routing_worker_count=worker_count,
-                    )
+                from tensor_grep.core.hardware.memory_manager import MemoryManager
+                from tensor_grep.rust_core import read_mmap_to_arrow_chunked
 
-                chunked_processing_succeeded = False
+                # Dynamically calculate VRAM chunk sizes to prevent CUDA Out-Of-Memory exceptions
+                memory_manager = MemoryManager()
+                # Default to 80% of free VRAM if NVML is available, otherwise fallback to configured size
+                vram_budget = memory_manager.get_vram_budget_mb()
+
+                if vram_budget > 0:
+                    chunk_bytes = vram_budget * 1024 * 1024
+                else:
+                    chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
+
+                if chunk_bytes == 0:
+                    chunk_bytes = 1024 * 1024
+
                 try:
-                    import pyarrow as pa
+                    from opentelemetry import trace
 
-                    from tensor_grep.core.hardware.memory_manager import MemoryManager
-                    from tensor_grep.rust_core import read_mmap_to_arrow_chunked
-
-                    # Dynamically calculate VRAM chunk sizes to prevent CUDA Out-Of-Memory exceptions
-                    memory_manager = MemoryManager()
-                    # Default to 80% of free VRAM if NVML is available, otherwise fallback to configured size
-                    vram_budget = memory_manager.get_vram_budget_mb()
-
-                    if vram_budget > 0:
-                        chunk_bytes = vram_budget * 1024 * 1024
-                    else:
-                        chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
-
-                    if chunk_bytes == 0:
-                        chunk_bytes = 1024 * 1024
-
-                    try:
-                        from opentelemetry import trace
-
-                        tracer = trace.get_tracer(__name__)
-                        with tracer.start_as_current_span("read_mmap_to_arrow_chunked"):
-                            pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
-                    except ImportError:
+                    tracer = trace.get_tracer(__name__)
+                    with tracer.start_as_current_span("read_mmap_to_arrow_chunked"):
                         pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+                except ImportError:
+                    pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+
+                # Scoped device context: covers only in-process cuDF chunk allocations.
+                # The fallback _search_distributed call below runs OUTSIDE this context
+                # to avoid the CUDA-fork hazard.
+                with self._device_context():
+                    import cudf
 
                     line_offset = 0
                     for capsule in pycapsule_chunks:
@@ -518,62 +530,52 @@ class CuDFBackend(ComputeBackend):
                         del mask
                         gc.collect()
 
-                    chunked_processing_succeeded = True
+                chunked_processing_succeeded = True
 
-                except ImportError:
-                    # Fallback to pure Python multi-processing CPU mapping
-                    logger.debug(
-                        "Chunked PyArrow/cudf path unavailable for %s, falling back", file_path
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Chunked PyArrow/cudf path failed for %s, falling back to process pool: %s",
-                        file_path,
-                        exc,
-                    )
-
-                if chunked_processing_succeeded:
-                    matches.sort(key=lambda m: m.line_number)
-                    return SearchResult(
-                        matches=matches,
-                        total_files=1 if matches else 0,
-                        total_matches=len(matches),
-                        routing_backend="CuDFBackend",
-                        routing_reason="cudf_chunked_zero_copy",
-                        routing_gpu_device_ids=routing_gpu_device_ids,
-                        routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                        routing_distributed=False,
-                        routing_worker_count=1,
-                    )
-                matches, worker_count = self._search_distributed(
-                    file_path=file_path,
-                    pattern=pattern,
-                    file_size=file_size,
-                    device_chunks_mb=device_chunks_mb,
-                    config=config,
+            except ImportError:
+                # Fallback to pure Python multi-processing CPU mapping
+                logger.debug(
+                    "Chunked PyArrow/cudf path unavailable for %s, falling back", file_path
                 )
+            except Exception as exc:
+                logger.warning(
+                    "Chunked PyArrow/cudf path failed for %s, falling back to process pool: %s",
+                    file_path,
+                    exc,
+                )
+
+            if chunked_processing_succeeded:
+                matches.sort(key=lambda m: m.line_number)
                 return SearchResult(
                     matches=matches,
                     total_files=1 if matches else 0,
                     total_matches=len(matches),
                     routing_backend="CuDFBackend",
-                    routing_reason=self._multi_worker_routing_reason(
-                        worker_count=worker_count, fallback=True
-                    ),
+                    routing_reason="cudf_chunked_zero_copy",
                     routing_gpu_device_ids=routing_gpu_device_ids,
                     routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                    routing_distributed=worker_count > 1,
-                    routing_worker_count=worker_count,
+                    routing_distributed=False,
+                    routing_worker_count=1,
                 )
-
+            # _search_distributed forks via ProcessPoolExecutor; run OUTSIDE any device
+            # context to avoid the CUDA-fork hazard.
+            matches, worker_count = self._search_distributed(
+                file_path=file_path,
+                pattern=pattern,
+                file_size=file_size,
+                device_chunks_mb=device_chunks_mb,
+                config=config,
+            )
             return SearchResult(
                 matches=matches,
                 total_files=1 if matches else 0,
                 total_matches=len(matches),
                 routing_backend="CuDFBackend",
-                routing_reason="cudf_single_gpu_read_text",
+                routing_reason=self._multi_worker_routing_reason(
+                    worker_count=worker_count, fallback=True
+                ),
                 routing_gpu_device_ids=routing_gpu_device_ids,
                 routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                routing_distributed=False,
-                routing_worker_count=1,
+                routing_distributed=worker_count > 1,
+                routing_worker_count=worker_count,
             )

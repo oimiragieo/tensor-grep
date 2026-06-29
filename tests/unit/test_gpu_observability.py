@@ -12,6 +12,68 @@ import pytest
 from tensor_grep.cli.formatters.json_fmt import JsonFormatter, NdjsonFormatter
 from tensor_grep.core.result import MatchLine, SearchResult
 
+# ---------------------------------------------------------------------------
+# Pipeline fallback_reason wired into the JSON envelope (MF2)
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineFallbackReasonInJsonEnvelope:
+    """A real Pipeline that CPU-falls-back sets fallback_reason; that reason
+    must appear in the JSON envelope after it is copied to SearchResult."""
+
+    def _make_cpu_fallback_pipeline(self):
+        """Return a Pipeline whose fallback_reason is set.
+
+        Forces the heuristic-GPU path by:
+        - disabling rg (so the rg_default_fast_path branch is skipped)
+        - supplying a large input_total_bytes + complex regex (so should_try_gpu=True)
+        - patching MemoryManager to return no GPU chunk plan
+        """
+        from tensor_grep.core.config import SearchConfig
+        from tensor_grep.core.pipeline import Pipeline
+
+        config = SearchConfig(
+            # complex regex: >= 3 metacharacters AND >= 32 chars satisfies _is_complex_regex
+            query_pattern=r"(?i)(?:ERROR|WARN|CRIT).*\d{4}.*\[thread-\d+\]",
+            input_total_bytes=512 * 1024 * 1024,  # 512 MB > 256 MB threshold
+        )
+        with (
+            patch(
+                "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+                return_value=False,
+            ),
+            patch(
+                "tensor_grep.core.hardware.memory_manager.MemoryManager.get_device_chunk_plan_mb",
+                return_value=[],
+            ),
+        ):
+            pipeline = Pipeline(config=config)
+        return pipeline
+
+    def test_pipeline_sets_fallback_reason_on_cpu_fallback(self):
+        """Pipeline must expose a non-None fallback_reason when it falls back to CPU."""
+        pipeline = self._make_cpu_fallback_pipeline()
+        assert pipeline.fallback_reason is not None
+        assert len(pipeline.fallback_reason) > 0
+
+    def test_pipeline_fallback_reason_surfaced_in_json_envelope(self):
+        """Full pipeline→result→json chain: fallback_reason from a real Pipeline
+        must appear in the JSON envelope when copied to SearchResult."""
+        pipeline = self._make_cpu_fallback_pipeline()
+        assert pipeline.fallback_reason is not None  # guard: pipeline path exercised
+
+        # Simulate what main.py does after the MF2 fix
+        result = SearchResult(
+            matches=[MatchLine(line_number=1, text="MATCH sentinel", file="a.log")],
+            total_files=1,
+            total_matches=1,
+        )
+        result.fallback_reason = pipeline.fallback_reason
+
+        parsed = json.loads(JsonFormatter().format(result))
+        assert "fallback_reason" in parsed, "fallback_reason must be present in JSON envelope"
+        assert parsed["fallback_reason"] == pipeline.fallback_reason
+
 
 # ---------------------------------------------------------------------------
 # SearchResult GPU telemetry fields
@@ -291,9 +353,7 @@ class TestDoctorGpuPromotion:
     must match search_ready after the assignment that _build_doctor_payload performs.
     """
 
-    def _apply_probe(
-        self, probe_status: str
-    ) -> tuple[dict, bool]:
+    def _apply_probe(self, probe_status: str) -> tuple[dict, bool]:
         """Simulate the _build_doctor_payload lines that update gpu_status."""
         gpu_status: dict = {
             "available": True,
@@ -378,7 +438,13 @@ class TestRenderDoctorGpuTiers:
             "resident_worker": {"port_file_exists": False, "port": None, "responding": False},
             "env": {},
             "session_daemon": {"running": False},
-            "lsp": {"enabled": False, "schema_version": 2, "probe_timeout_seconds": None, "providers": [], "providers_by_language": {}},
+            "lsp": {
+                "enabled": False,
+                "schema_version": 2,
+                "probe_timeout_seconds": None,
+                "providers": [],
+                "providers_by_language": {},
+            },
             "lsp_provider_items": [],
             "lsp_providers": {},
         }

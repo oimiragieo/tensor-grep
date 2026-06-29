@@ -1,3 +1,4 @@
+import logging
 import re
 import warnings
 from contextlib import nullcontext
@@ -12,6 +13,8 @@ from tensor_grep.backends.stringzilla_backend import StringZillaBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigurationError(RuntimeError):
@@ -335,6 +338,7 @@ class Pipeline:
                         "Reason: no routable GPU chunk plan returned "
                         "(CUDA device enumeration failed or CUDA is unavailable)."
                     )
+                    logger.warning(fallback_reason)
                     warnings.warn(fallback_reason, stacklevel=2)
                     self.backend = fallback_backend
                     selected_backend_reason = "gpu_selected_no_chunk_sizes_fallback"
@@ -361,6 +365,7 @@ class Pipeline:
                                     "GPU backend unavailable (experimental); running on CPU. "
                                     "Reason: neither cuDF nor Torch GPU backend was available."
                                 )
+                                logger.warning(fallback_reason)
                                 warnings.warn(fallback_reason, stacklevel=2)
                                 self.backend = fallback_backend
                                 selected_backend_reason = "gpu_heuristic_no_gpu_backend_fallback"
@@ -369,6 +374,7 @@ class Pipeline:
                                 "GPU backend unavailable (experimental); running on CPU. "
                                 "Reason: Torch backend import failed."
                             )
+                            logger.warning(fallback_reason)
                             warnings.warn(fallback_reason, stacklevel=2)
                             self.backend = fallback_backend
                             selected_backend_reason = "gpu_heuristic_torch_import_error_fallback"
