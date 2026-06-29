@@ -2515,6 +2515,37 @@ def _doctor_tg_foreign_remediation(
     )
 
 
+def _doctor_gpu_tier_installed() -> bool:
+    """Tier 1 — is the cuDF GPU library findable in the current environment?
+
+    Uses ``importlib.util.find_spec`` so we can detect installation without actually
+    importing cuDF (which may allocate GPU memory).  Returns False if cuDF is not
+    installed or if the spec lookup itself raises.
+    """
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("cudf") is not None
+    except Exception:
+        return False
+
+
+def _doctor_gpu_tier_usable() -> bool:
+    """Tier 2 — does CuDFBackend.is_available() confirm live GPU allocation?
+
+    Imports CuDFBackend *by name* (orthogonal to any cudf-device-bind slice that may
+    also touch CuDFBackend) and calls is_available(), which physically allocates a GPU
+    tensor.  Returns False on any exception so a missing CUDA driver or GPU is reported
+    cleanly.
+    """
+    try:
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        return CuDFBackend().is_available()
+    except Exception:
+        return False
+
+
 def _doctor_gpu_status() -> dict[str, Any]:
     status: dict[str, Any] = {"available": False, "devices": [], "error": None}
     try:
@@ -2532,6 +2563,13 @@ def _doctor_gpu_status() -> dict[str, Any]:
         status["error"] = "PyTorch/cuDF not installed"
     except Exception as e:
         status["error"] = str(e)
+    # Observability tiers — installed and usable are computed here; promotion_proof is
+    # filled in by _build_doctor_payload() after the search_runtime_probe runs.
+    status["tier"] = {
+        "installed": _doctor_gpu_tier_installed(),
+        "usable": _doctor_gpu_tier_usable(),
+        "promotion_proof": False,
+    }
     return status
 
 
@@ -2851,6 +2889,9 @@ def _build_doctor_payload(
     gpu_status["search_ready"] = (
         cast(dict[str, Any], gpu_status["search_runtime_probe"]).get("status") == "supported"
     )
+    # Complete the promotion_proof tier now that the runtime probe result is available.
+    # This is the highest tier: GPU search actually routed through NativeGpuBackend.
+    cast(dict[str, Any], gpu_status["tier"])["promotion_proof"] = gpu_status["search_ready"]
     payload: dict[str, Any] = {
         "schema_version": _DOCTOR_SCHEMA_VERSION,
         "doctor_schema_version": _DOCTOR_SCHEMA_VERSION,
@@ -3095,7 +3136,17 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         )
 
     gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
-    lines.append(f"gpu: available={gpu_payload.get('available', False)}")
+    gpu_tier = cast(dict[str, Any], gpu_payload.get("tier", {}))
+    lines.append(
+        f"gpu: available={gpu_payload.get('available', False)} "
+        f"search_ready={gpu_payload.get('search_ready', False)}"
+    )
+    if gpu_tier:
+        lines.append(
+            f"  tier: installed={gpu_tier.get('installed', False)} "
+            f"usable={gpu_tier.get('usable', False)} "
+            f"promotion_proof={gpu_tier.get('promotion_proof', False)}"
+        )
     if gpu_payload.get("error"):
         lines.append(f"  error: {gpu_payload['error']}")
     for dev in gpu_payload.get("devices", []):
