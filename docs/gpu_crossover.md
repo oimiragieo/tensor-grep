@@ -13,9 +13,9 @@ The post-`v1.17.11` dogfood keeps public GPU not promotion-ready. Single-pattern
 - Native CUDA correctness and the local high-intensity multi-pattern lane remain implementation evidence, but GPU remains explicit/opt-in until public managed binaries produce qualifying `NativeGpuBackend`, `sidecar_used = false`, declared workload class, correctness, and speed artifacts.
 - Public promotion additionally requires managed NVIDIA release provenance: the installed front door must include `tg-native-metadata.json`, and `benchmarks/run_gpu_native_benchmarks.py --public-managed-proof` must emit `public_managed_promotion_ready = true` and `public_gpu_proof = true`.
 - Public managed proof must compare route/correctness directly with `rg --json`, not only with `tg --cpu`. Required 1GB and 5GB scale rows must pass match identity, file-set identity, `NativeGpuBackend`, and `sidecar_used = false`; public speed proof comes from the advanced many fixed-string proof gate against the fair single-invocation `rg -F -e ... -e ...` baseline.
-- Current GPU artifacts expose `promotion_evidence_contract`, `fallback_or_sidecar_counts_as_gpu_proof`, `promotion_blockers`, `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, `not_gpu_proof_reason`, and top-level `gpu_proof_summary` so sidecar routing, CPU fallback, missing correctness, missing speed proof, or failed public managed NVIDIA proof is machine-readable instead of buried in prose.
+- Current GPU artifacts expose `promotion_evidence_contract`, `fallback_or_sidecar_counts_as_gpu_proof`, `requires_independent_oracle`, `promotion_blockers`, `gpu_evidence_status`, `gpu_proof`, `native_gpu_unavailable`, `not_gpu_proof_reason`, and top-level `gpu_proof_summary` so sidecar routing, CPU fallback, missing correctness, missing speed proof, or failed public managed NVIDIA proof is machine-readable instead of buried in prose.
 
-Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary.
+Native CUDA correctness passed locally, but public managed speed/promotion failed remains the current promotion summary. The public managed binary routes GPU requests through `GpuSidecar`, not `NativeGpuBackend`; that is sidecar/CPU fallback, not production GPU acceleration.
 
 Current benchmark taxonomy:
 
@@ -35,6 +35,19 @@ Current native evidence:
 | Prior 5GB single-pattern scale | RTX 4070 / RTX 5070 local CUDA native | `35.46x` / `29.91x` slower than `rg` in latest `v1.9.11` dogfood read | superseded as a single-pattern caution |
 
 The latest user dogfood also reported the native harness as `passed = false` because the speed target and error-test expectations did not pass. That is the intended decision: correctness evidence is necessary, but it is not enough to enable or market GPU auto-routing.
+
+## 2026-06-29 Wave-2 Promotion-Schema Audit
+
+A structured audit of the promotion-gate schema and `public-gpu-proof.yml` workflow was performed as part of the wave-2 hardening cycle.
+
+**Audit findings (all conforming):**
+
+- All promotion fields (`public_gpu_proof`, `promotion_evidence`, `public_managed_promotion_ready`, `gpu_proof`, `gpu_evidence_status`) default to `false` / `EXPERIMENTAL` / `UNSUPPORTED` on every missing-hardware path.  The `build_public_managed_gpu_proof_gate(requested=False)` path returns `public_gpu_proof = false`; `_gpu_proof_status_from_native_summary({})` returns `gpu_proof = false, gpu_evidence_status = "unsupported", native_gpu_unavailable = true`.  No path silently promotes.
+- `public-gpu-proof.yml` correctly gates on the Python script exit code (via `set -euo pipefail`).  The script exits `1` when `public_managed_gpu_proof_gate.status != "PASS"`, so the workflow fails when proof is absent.  Artifacts are uploaded with `if: always()` so failed runs still produce inspectable output.
+- `FAIR_RG_MULTI_PATTERN_BASELINE = "rg -F -e ... -e ..."` (single-invocation multi-pattern) already exists in `run_gpu_benchmarks.py` and is wired into `_promotion_evidence_contract` and `build_many_pattern_proof_gate`.  The fair-bench does not need to be rebuilt.
+- The `_promotion_evidence_contract` schema was extended with `requires_independent_oracle: True` (wave-2 addition).  The C1 agent will wire `oracle_status` into the `correctness_gate` output once the independent CPU oracle is implemented; this field makes the requirement machine-readable in the contract before that ships.
+
+**Current promotion status (as of 2026-06-29):** unchanged from the post-`v1.17.11` read above.  The public managed binary still routes GPU requests through `GpuSidecar` / `NativeCpuBackend`, not `NativeGpuBackend`.  Sidecar and CPU fallback are not GPU acceleration proof.  No public managed `public_gpu_proof = true` artifact exists.  GPU remains EXPERIMENTAL / explicit-opt-in only.
 
 ## 2026-05-11 Route And CPU-Staging Audit
 

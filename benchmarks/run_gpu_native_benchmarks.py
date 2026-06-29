@@ -1337,6 +1337,12 @@ def _promotion_evidence_contract(required_labels: list[str]) -> dict[str, object
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
         "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
+        # Wave-2 hardening (2026-06-29): an independent CPU oracle that verifies
+        # correctness against `rg -F -e ... -e ...` without mirroring the GPU kernel
+        # is required before promotion.  The C1 agent wires oracle_status into
+        # correctness_gate; this field makes the requirement machine-readable in the
+        # contract so audit tooling can assert it before the oracle ships.
+        "requires_independent_oracle": True,
     }
 
 
