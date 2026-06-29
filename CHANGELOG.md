@@ -1,6 +1,90 @@
 # CHANGELOG
 
 
+## v1.17.10 (2026-06-29)
+
+### Bug Fixes
+
+- **lsp**: Do not accept unverified PATH/rustup provider binaries by default (audit HIGH)
+  ([#296](https://github.com/oimiragieo/tensor-grep/pull/296),
+  [`dcf75ac`](https://github.com/oimiragieo/tensor-grep/commit/dcf75acb9a2e8d73015b543c9af9d01fe2a92b56))
+
+The pinned-toolchain model could be bypassed: _ensure_gopls / _ensure_csharp_ls accepted ANY
+  `gopls`/`csharp-ls` found on PATH, and _ensure_rust_analyzer tried
+  `_copy_rust_analyzer_from_rustup` (which resolves via `shutil.which`) before the pinned download —
+  so a stale or shadowed local binary could silently become the "managed" provider, defeating the
+  version pin + checksum verification.
+
+Fix (consistent with the existing opt-in): by DEFAULT install the pinned, verified provider (go
+  install gopls@vX / dotnet tool install --version / the checksum-verified rust-analyzer download).
+  Accept a pre-existing PATH/rustup binary ONLY when TG_ALLOW_UNVERIFIED_TOOLCHAIN=1 is explicitly
+  set.
+
+BEHAVIOR CHANGE: users who relied on their own PATH gopls/csharp-ls/rust-analyzer now get tg's
+  pinned version unless they set TG_ALLOW_UNVERIFIED_TOOLCHAIN=1. This is the intended fail-safe
+  posture. Node was already always-pinned (no PATH branch).
+
+Tests: each provider ignores a PATH binary by default + accepts it under the opt-in.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Build System
+
+- Pin Rust toolchain (1.96.0) + uv (0.11.25) in the release pipeline
+  ([#295](https://github.com/oimiragieo/tensor-grep/pull/295),
+  [`b9abcc0`](https://github.com/oimiragieo/tensor-grep/commit/b9abcc0cec0fd965654397290f1eb95ddb378c3a))
+
+* build: pin Rust toolchain (1.96.0) + uv (0.11.25) in the release pipeline (supply-chain)
+
+Audit MEDIUM: the semantic-release build_command bootstrapped MOVING toolchains — `rustup default
+  stable` + `pip install uv` (latest) — so each release built against whatever was newest that day
+  (non-reproducible, supply-chain-exposed).
+
+- Add rust_core/rust-toolchain.toml `channel = "1.96.0"` (current stable = what the pipeline already
+  builds with) — cargo auto-applies it to the CI matrix AND the release `cargo generate-lockfile`,
+  so the PR's own CI matrix validates the pin. - build_command: `rustup default stable` -> `rustup
+  default 1.96.0`; `pip install uv` -> `pip install uv==0.11.25` (matches the installer pin in
+  #293).
+
+Pins are the EXACT versions the pipeline already uses successfully, so this locks in known-good, not
+  a version jump. build: => no release; the next routine release exercises the pinned commands. Bump
+  deliberately, gated on a green CI matrix.
+
+Partially addresses Task #2 (release-pipeline hardening); proof-ledger post-publish automation is
+  the separate remaining half.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* build: add rustfmt+clippy components to the pinned Rust toolchain
+
+CI caught it: pinning rust-toolchain.toml to channel 1.96.0 installed the toolchain WITHOUT rustfmt
+  on the runner, so the "Check Rust Formatting" (cargo fmt) job failed ("cargo-fmt is not installed
+  for the toolchain 1.96.0"). Declare components = [rustfmt, clippy] so the pinned channel keeps the
+  components CI needs.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Continuous Integration
+
+- **dependabot**: Require manual review for github-actions updates (no auto-merge)
+  ([#294](https://github.com/oimiragieo/tensor-grep/pull/294),
+  [`e1604b4`](https://github.com/oimiragieo/tensor-grep/commit/e1604b40b47723b91663ecc61a52b059ed46fb27))
+
+Audit LOW/MEDIUM: the Dependabot automation auto-approved + auto-merged github-actions
+  semver-minor/patch bumps. An action/workflow update changes code that runs in CI AND the release
+  pipeline with repo write permissions; even SHA-pinned, a Dependabot bump repoints the pin at a new
+  commit, so it should get explicit human review. Drop github-actions from the auto-merge-safe
+  policy so those PRs route to `manual-review`. uv/cargo/npm dev+indirect semver-minor/patch still
+  auto-merge; direct:production already required review.
+
+Validator contract unchanged (automerge:eligible + manual-review both still present); the real
+  workflow validates clean. No package change -> ci: (no release).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.9 (2026-06-29)
 
 ### Bug Fixes
