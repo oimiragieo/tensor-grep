@@ -19,13 +19,17 @@ logger = logging.getLogger(__name__)
 
 def _configure_cuda_worker_environment(device_id: int) -> int:
     """
-    Windows spawn() workers must pin CUDA visibility before importing cudf/rmm.
+    Pin CUDA visibility before importing cudf/rmm in worker subprocesses.
     After pinning a single physical device via CUDA_VISIBLE_DEVICES, CUDA exposes it
     to the worker as logical device 0.
-    """
-    if os.name != "nt":
-        return device_id
 
+    This function is called inside *subprocesses* spawned by ProcessPoolExecutor and
+    applies on all platforms (Linux and Windows alike).
+
+    Note: in-process cupy.cuda.Device() binding (used by CuDFBackend._device_context)
+    is best-effort for single-process paths; setting CUDA_VISIBLE_DEVICES here is the
+    strong multi-device guarantee for the distributed process-pool path.
+    """
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     return 0
@@ -100,6 +104,24 @@ class CuDFBackend(ComputeBackend):
     ):
         self.chunk_sizes_mb = chunk_sizes_mb or [512]
         self.device_ids = device_ids or list(range(len(self.chunk_sizes_mb)))
+        # Do NOT set CUDA_VISIBLE_DEVICES here: once any CUDA context exists in the
+        # parent process the env-var is a no-op.  Use _device_context() for in-process
+        # GPU binding, and _configure_cuda_worker_environment() for subprocess workers.
+
+    def _device_context(self):
+        """
+        Return a cupy.cuda.Device context manager for the first configured device (or
+        device 0 when no device IDs are set).  Importing cupy lazily avoids a hard
+        dependency on CUDA.
+
+        Note: in-process cupy.cuda.Device is best-effort for single-process paths.
+        The subprocess pin via CUDA_VISIBLE_DEVICES in _configure_cuda_worker_environment
+        is the strong multi-device guarantee for the distributed process-pool path.
+        """
+        import cupy  # noqa: PLC0415
+
+        device_id = self.device_ids[0] if self.device_ids else 0
+        return cupy.cuda.Device(device_id)
 
     @staticmethod
     def _read_text_series(file_path: str) -> Any:
@@ -171,14 +193,15 @@ class CuDFBackend(ComputeBackend):
             if not importlib.util.find_spec("cudf"):
                 return False
 
-            # Attempt a physical import to catch cudaErrorInsufficientDriver on systems
-            # where the library is installed but the physical GPU drivers are missing.
-            import cudf
+            with self._device_context():
+                # Attempt a physical import to catch cudaErrorInsufficientDriver on systems
+                # where the library is installed but the physical GPU drivers are missing.
+                import cudf
 
-            # Actually allocate a GPU tensor to force the RMM initialization hook.
-            # If the driver is missing, this will throw CUDARuntimeError.
-            cudf.Series([1])
-            return True
+                # Actually allocate a GPU tensor to force the RMM initialization hook.
+                # If the driver is missing, this will throw CUDARuntimeError.
+                cudf.Series([1])
+                return True
         except Exception:
             return False
 
@@ -293,100 +316,221 @@ class CuDFBackend(ComputeBackend):
         import os
         import re
 
-        import cudf
+        with self._device_context():
+            import cudf
 
-        file_size = os.path.getsize(file_path)
-        matches: list[MatchLine] = []
-        device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
-        if not device_chunks_mb:
-            device_chunks_mb = [(0, 512)]
-        normalized_device_chunks = self._normalize_device_chunks(device_chunks_mb)
-        routing_gpu_device_ids = [device_id for device_id, _ in normalized_device_chunks]
+            file_size = os.path.getsize(file_path)
+            matches: list[MatchLine] = []
+            device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
+            if not device_chunks_mb:
+                _fallback_device_id = self.device_ids[0] if self.device_ids else 0
+                device_chunks_mb = [(_fallback_device_id, 512)]
+            normalized_device_chunks = self._normalize_device_chunks(device_chunks_mb)
+            routing_gpu_device_ids = [device_id for device_id, _ in normalized_device_chunks]
 
-        total_capacity_bytes = sum(self.chunk_sizes_mb) * 1024 * 1024
+            total_capacity_bytes = sum(self.chunk_sizes_mb) * 1024 * 1024
 
-        flags = 0
-        if config and (config.ignore_case or (config.smart_case and pattern.islower())):
-            flags |= re.IGNORECASE
+            flags = 0
+            if config and (config.ignore_case or (config.smart_case and pattern.islower())):
+                flags |= re.IGNORECASE
 
-        if file_size <= total_capacity_bytes and len(self.chunk_sizes_mb) == 1:
-            # PHASE 3: Zero-Copy ingestion via PyCapsule if tensor-grep rust core is available
-            try:
-                import pyarrow as pa
+            if file_size <= total_capacity_bytes and len(self.chunk_sizes_mb) == 1:
+                # PHASE 3: Zero-Copy ingestion via PyCapsule if tensor-grep rust core is available
+                try:
+                    import pyarrow as pa
 
-                from tensor_grep.rust_core import read_mmap_to_arrow
+                    from tensor_grep.rust_core import read_mmap_to_arrow
 
-                # 1. Rust memory maps the file and returns an Arrow PyCapsule
-                pycapsule = read_mmap_to_arrow(file_path)
-                zero_copy_array = pa.array(pycapsule)
+                    # 1. Rust memory maps the file and returns an Arrow PyCapsule
+                    pycapsule = read_mmap_to_arrow(file_path)
+                    zero_copy_array = pa.array(pycapsule)
 
-                # 2. cuDF ingests the Arrow memory directly into VRAM
-                series = cudf.Series.from_arrow(zero_copy_array)
+                    # 2. cuDF ingests the Arrow memory directly into VRAM
+                    series = cudf.Series.from_arrow(zero_copy_array)
 
-                if config and config.use_jit:
-                    try:
-                        # Attempt to use JIT compilation for complex string patterns
-                        compiled_pattern = cudf.core.column.string.compile_regex_jit(
-                            pattern, flags=flags
-                        )
-                        mask = series.str.contains(compiled_pattern, regex=True)
-                    except AttributeError:
+                    if config and config.use_jit:
+                        try:
+                            # Attempt to use JIT compilation for complex string patterns
+                            compiled_pattern = cudf.core.column.string.compile_regex_jit(
+                                pattern, flags=flags
+                            )
+                            mask = series.str.contains(compiled_pattern, regex=True)
+                        except AttributeError:
+                            mask = series.str.contains(pattern, regex=True, flags=flags)
+                    else:
                         mask = series.str.contains(pattern, regex=True, flags=flags)
-                else:
+
+                    if config and config.invert_match:
+                        mask = ~mask
+                    matched = series[mask]
+                    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                        matches.append(
+                            MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                        )
+                except ImportError:
+                    # Fallback to cuDF's native text reader if the rust bridge isn't compiled
+                    # or if the PyCapsule conversion fails during testing environments
+                    series = self._read_text_series(file_path)
                     mask = series.str.contains(pattern, regex=True, flags=flags)
+                    if config and config.invert_match:
+                        mask = ~mask
+                    matched = series[mask]
+                    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                        matches.append(
+                            MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Zero-copy Rust bridge failed for %s, using native cudf.read_text fallback: %s",
+                        file_path,
+                        exc,
+                    )
+                    series = self._read_text_series(file_path)
+                    mask = series.str.contains(pattern, regex=True, flags=flags)
+                    if config and config.invert_match:
+                        mask = ~mask
+                    matched = series[mask]
+                    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                        matches.append(
+                            MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                        )
 
-                if config and config.invert_match:
-                    mask = ~mask
-                matched = series[mask]
-                for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
-                    matches.append(
-                        MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
-                    )
-            except ImportError:
-                # Fallback to cuDF's native text reader if the rust bridge isn't compiled
-                # or if the PyCapsule conversion fails during testing environments
-                series = self._read_text_series(file_path)
-                mask = series.str.contains(pattern, regex=True, flags=flags)
-                if config and config.invert_match:
-                    mask = ~mask
-                matched = series[mask]
-                for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
-                    matches.append(
-                        MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Zero-copy Rust bridge failed for %s, using native cudf.read_text fallback: %s",
-                    file_path,
-                    exc,
+                return SearchResult(
+                    matches=matches,
+                    total_files=1 if matches else 0,
+                    total_matches=len(matches),
+                    routing_backend="CuDFBackend",
+                    routing_reason="cudf_single_gpu_read_text",
+                    routing_gpu_device_ids=routing_gpu_device_ids,
+                    routing_gpu_chunk_plan_mb=normalized_device_chunks,
+                    routing_distributed=False,
+                    routing_worker_count=1,
                 )
-                series = self._read_text_series(file_path)
-                mask = series.str.contains(pattern, regex=True, flags=flags)
-                if config and config.invert_match:
-                    mask = ~mask
-                matched = series[mask]
-                for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
-                    matches.append(
-                        MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+
+            else:
+                # PHASE 3.1: VRAM Chunking for Large Files
+
+                # For multi-GPU configurations, distributed fanout is the primary runtime path.
+                if len(device_chunks_mb) > 1:
+                    matches, worker_count = self._search_distributed(
+                        file_path=file_path,
+                        pattern=pattern,
+                        file_size=file_size,
+                        device_chunks_mb=device_chunks_mb,
+                        config=config,
+                    )
+                    return SearchResult(
+                        matches=matches,
+                        total_files=1 if matches else 0,
+                        total_matches=len(matches),
+                        routing_backend="CuDFBackend",
+                        routing_reason=self._multi_worker_routing_reason(worker_count=worker_count),
+                        routing_gpu_device_ids=routing_gpu_device_ids,
+                        routing_gpu_chunk_plan_mb=normalized_device_chunks,
+                        routing_distributed=worker_count > 1,
+                        routing_worker_count=worker_count,
                     )
 
-            return SearchResult(
-                matches=matches,
-                total_files=1 if matches else 0,
-                total_matches=len(matches),
-                routing_backend="CuDFBackend",
-                routing_reason="cudf_single_gpu_read_text",
-                routing_gpu_device_ids=routing_gpu_device_ids,
-                routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                routing_distributed=False,
-                routing_worker_count=1,
-            )
+                chunked_processing_succeeded = False
+                try:
+                    import pyarrow as pa
 
-        else:
-            # PHASE 3.1: VRAM Chunking for Large Files
+                    from tensor_grep.core.hardware.memory_manager import MemoryManager
+                    from tensor_grep.rust_core import read_mmap_to_arrow_chunked
 
-            # For multi-GPU configurations, distributed fanout is the primary runtime path.
-            if len(device_chunks_mb) > 1:
+                    # Dynamically calculate VRAM chunk sizes to prevent CUDA Out-Of-Memory exceptions
+                    memory_manager = MemoryManager()
+                    # Default to 80% of free VRAM if NVML is available, otherwise fallback to configured size
+                    vram_budget = memory_manager.get_vram_budget_mb()
+
+                    if vram_budget > 0:
+                        chunk_bytes = vram_budget * 1024 * 1024
+                    else:
+                        chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
+
+                    if chunk_bytes == 0:
+                        chunk_bytes = 1024 * 1024
+
+                    try:
+                        from opentelemetry import trace
+
+                        tracer = trace.get_tracer(__name__)
+                        with tracer.start_as_current_span("read_mmap_to_arrow_chunked"):
+                            pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+                    except ImportError:
+                        pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+
+                    line_offset = 0
+                    for capsule in pycapsule_chunks:
+                        try:
+                            from opentelemetry import trace
+
+                            tracer = trace.get_tracer(__name__)
+                            with tracer.start_as_current_span("cudf.Series.from_arrow"):
+                                zero_copy_array = pa.array(capsule)
+                                series = cudf.Series.from_arrow(zero_copy_array)
+
+                                mask = series.str.contains(pattern, regex=True, flags=flags)
+                        except ImportError:
+                            zero_copy_array = pa.array(capsule)
+                            series = cudf.Series.from_arrow(zero_copy_array)
+
+                            mask = series.str.contains(pattern, regex=True, flags=flags)
+
+                        if config and config.invert_match:
+                            mask = ~mask
+                        matched = series[mask]
+
+                        chunk_lines_count = len(series)
+                        for idx, text in zip(
+                            matched.index.to_pandas(), matched.to_pandas(), strict=False
+                        ):
+                            matches.append(
+                                MatchLine(
+                                    line_number=int(idx) + 1 + line_offset,
+                                    text=str(text),
+                                    file=file_path,
+                                )
+                            )
+
+                        line_offset += chunk_lines_count
+
+                        # audit B6: the old bare acquire-spill-lock call was a no-op (it is a
+                        # context-manager factory whose return value was discarded). Explicit
+                        # del + gc actually releases Python references so cuDF/RMM can reclaim
+                        # VRAM before loading the next chunk.
+                        del series
+                        del matched
+                        del mask
+                        gc.collect()
+
+                    chunked_processing_succeeded = True
+
+                except ImportError:
+                    # Fallback to pure Python multi-processing CPU mapping
+                    logger.debug(
+                        "Chunked PyArrow/cudf path unavailable for %s, falling back", file_path
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Chunked PyArrow/cudf path failed for %s, falling back to process pool: %s",
+                        file_path,
+                        exc,
+                    )
+
+                if chunked_processing_succeeded:
+                    matches.sort(key=lambda m: m.line_number)
+                    return SearchResult(
+                        matches=matches,
+                        total_files=1 if matches else 0,
+                        total_matches=len(matches),
+                        routing_backend="CuDFBackend",
+                        routing_reason="cudf_chunked_zero_copy",
+                        routing_gpu_device_ids=routing_gpu_device_ids,
+                        routing_gpu_chunk_plan_mb=normalized_device_chunks,
+                        routing_distributed=False,
+                        routing_worker_count=1,
+                    )
                 matches, worker_count = self._search_distributed(
                     file_path=file_path,
                     pattern=pattern,
@@ -399,142 +543,23 @@ class CuDFBackend(ComputeBackend):
                     total_files=1 if matches else 0,
                     total_matches=len(matches),
                     routing_backend="CuDFBackend",
-                    routing_reason=self._multi_worker_routing_reason(worker_count=worker_count),
+                    routing_reason=self._multi_worker_routing_reason(
+                        worker_count=worker_count, fallback=True
+                    ),
                     routing_gpu_device_ids=routing_gpu_device_ids,
                     routing_gpu_chunk_plan_mb=normalized_device_chunks,
                     routing_distributed=worker_count > 1,
                     routing_worker_count=worker_count,
                 )
 
-            chunked_processing_succeeded = False
-            try:
-                import pyarrow as pa
-
-                from tensor_grep.core.hardware.memory_manager import MemoryManager
-                from tensor_grep.rust_core import read_mmap_to_arrow_chunked
-
-                # Dynamically calculate VRAM chunk sizes to prevent CUDA Out-Of-Memory exceptions
-                memory_manager = MemoryManager()
-                # Default to 80% of free VRAM if NVML is available, otherwise fallback to configured size
-                vram_budget = memory_manager.get_vram_budget_mb()
-
-                if vram_budget > 0:
-                    chunk_bytes = vram_budget * 1024 * 1024
-                else:
-                    chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
-
-                if chunk_bytes == 0:
-                    chunk_bytes = 1024 * 1024
-
-                try:
-                    from opentelemetry import trace
-
-                    tracer = trace.get_tracer(__name__)
-                    with tracer.start_as_current_span("read_mmap_to_arrow_chunked"):
-                        pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
-                except ImportError:
-                    pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
-
-                line_offset = 0
-                for capsule in pycapsule_chunks:
-                    try:
-                        from opentelemetry import trace
-
-                        tracer = trace.get_tracer(__name__)
-                        with tracer.start_as_current_span("cudf.Series.from_arrow"):
-                            zero_copy_array = pa.array(capsule)
-                            series = cudf.Series.from_arrow(zero_copy_array)
-
-                            mask = series.str.contains(pattern, regex=True, flags=flags)
-                    except ImportError:
-                        zero_copy_array = pa.array(capsule)
-                        series = cudf.Series.from_arrow(zero_copy_array)
-
-                        mask = series.str.contains(pattern, regex=True, flags=flags)
-
-                    if config and config.invert_match:
-                        mask = ~mask
-                    matched = series[mask]
-
-                    chunk_lines_count = len(series)
-                    for idx, text in zip(
-                        matched.index.to_pandas(), matched.to_pandas(), strict=False
-                    ):
-                        matches.append(
-                            MatchLine(
-                                line_number=int(idx) + 1 + line_offset,
-                                text=str(text),
-                                file=file_path,
-                            )
-                        )
-
-                    line_offset += chunk_lines_count
-
-                    # audit B6: the old bare acquire-spill-lock call was a no-op (it is a
-                    # context-manager factory whose return value was discarded). Explicit
-                    # del + gc actually releases Python references so cuDF/RMM can reclaim
-                    # VRAM before loading the next chunk.
-                    del series
-                    del matched
-                    del mask
-                    gc.collect()
-
-                chunked_processing_succeeded = True
-
-            except ImportError:
-                # Fallback to pure Python multi-processing CPU mapping
-                logger.debug(
-                    "Chunked PyArrow/cudf path unavailable for %s, falling back", file_path
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Chunked PyArrow/cudf path failed for %s, falling back to process pool: %s",
-                    file_path,
-                    exc,
-                )
-
-            if chunked_processing_succeeded:
-                matches.sort(key=lambda m: m.line_number)
-                return SearchResult(
-                    matches=matches,
-                    total_files=1 if matches else 0,
-                    total_matches=len(matches),
-                    routing_backend="CuDFBackend",
-                    routing_reason="cudf_chunked_zero_copy",
-                    routing_gpu_device_ids=routing_gpu_device_ids,
-                    routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                    routing_distributed=False,
-                    routing_worker_count=1,
-                )
-            matches, worker_count = self._search_distributed(
-                file_path=file_path,
-                pattern=pattern,
-                file_size=file_size,
-                device_chunks_mb=device_chunks_mb,
-                config=config,
-            )
             return SearchResult(
                 matches=matches,
                 total_files=1 if matches else 0,
                 total_matches=len(matches),
                 routing_backend="CuDFBackend",
-                routing_reason=self._multi_worker_routing_reason(
-                    worker_count=worker_count, fallback=True
-                ),
+                routing_reason="cudf_single_gpu_read_text",
                 routing_gpu_device_ids=routing_gpu_device_ids,
                 routing_gpu_chunk_plan_mb=normalized_device_chunks,
-                routing_distributed=worker_count > 1,
-                routing_worker_count=worker_count,
+                routing_distributed=False,
+                routing_worker_count=1,
             )
-
-        return SearchResult(
-            matches=matches,
-            total_files=1 if matches else 0,
-            total_matches=len(matches),
-            routing_backend="CuDFBackend",
-            routing_reason="cudf_single_gpu_read_text",
-            routing_gpu_device_ids=routing_gpu_device_ids,
-            routing_gpu_chunk_plan_mb=normalized_device_chunks,
-            routing_distributed=False,
-            routing_worker_count=1,
-        )
