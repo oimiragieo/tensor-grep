@@ -2207,6 +2207,7 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
         "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
+        "requires_independent_oracle": True,
     }
     assert summary["native_cuda_runtime_gate"] == {
         "status": "PASS",
