@@ -88,13 +88,15 @@ jobs:
           safe="false"
           reason="manual-review"
 
-          # github-actions updates are deliberately NOT auto-merged (supply-chain hardening): an
-          # action/workflow bump changes code that runs in CI AND the release pipeline with repo
-          # write permissions. Even though actions are SHA-pinned, a Dependabot bump repoints the
-          # pin at a new commit, so it must get explicit human review. Direct:production library
-          # updates likewise fall through to manual-review below.
+          # Auto-merge is restricted to DIRECT:DEVELOPMENT minor/patch bumps only (supply-chain
+          # hardening). Excluded -> manual review:
+          #  - github-actions: an action/workflow bump runs code in CI + the release pipeline with
+          #    repo write perms (even SHA-pinned, a Dependabot bump repoints the pin at a new commit).
+          #  - direct:production: ships in the package / install path.
+          #  - indirect (transitive): can land anywhere — install, release, benchmark, or provider
+          #    setup paths — so it gets human review rather than silent auto-merge.
           if [[ ( "$PACKAGE_ECOSYSTEM" == "uv" || "$PACKAGE_ECOSYSTEM" == "cargo" || "$PACKAGE_ECOSYSTEM" == "npm" ) \
-               && ( "$DEPENDENCY_TYPE" == "direct:development" || "$DEPENDENCY_TYPE" == "indirect" ) \
+               && "$DEPENDENCY_TYPE" == "direct:development" \
                && "$UPDATE_TYPE" =~ ^version-update:semver-(minor|patch)$ ]]; then
             safe="true"
             reason="non-production-safe"
