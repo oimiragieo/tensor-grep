@@ -199,3 +199,71 @@ class TestSidecarGpuSearchDispatch:
         assert payload["routing_gpu_device_ids"] == [0]
         assert payload["matches"][0]["file"].endswith("keep.txt")
         assert captured_configs[0].glob == ["*.txt"]
+
+    def test_gpu_search_json_reports_runtime_cpu_fallback_and_contract_fields(
+        self, tmp_path, monkeypatch
+    ):
+        """Audit HIGH #1+#2: when the backend falls back to CPU at runtime, the sidecar JSON
+        must report the RUNTIME routing (not the selected GPU route) and expose the GPU
+        proof/unsupported contract fields (docs/CONTRACTS.md) — not a hand-built subset."""
+        from tensor_grep import sidecar as sidecar_mod
+        from tensor_grep.core.result import MatchLine, SearchResult
+
+        corpus_dir = tmp_path / "corpus"
+        corpus_dir.mkdir()
+        (corpus_dir / "a.log").write_text("ERROR boom\n", encoding="utf-8")
+
+        class CpuFallbackBackend:
+            def search(self, current_file: str, current_pattern: str, config=None):
+                return SearchResult(
+                    matches=[MatchLine(line_number=1, text="ERROR boom", file=current_file)],
+                    total_files=1,
+                    total_matches=1,
+                    routing_backend="NativeCpuBackend",
+                    routing_reason="gpu-auto-fallback-cpu",
+                )
+
+        class FakePipeline:
+            def __init__(self, config):
+                self.selected_backend_name = "FakeGpuBackend"
+                self.selected_backend_reason = "gpu-device-ids-explicit"
+                self.selected_gpu_device_ids = [0]
+                self._backend = CpuFallbackBackend()
+
+            def get_backend(self):
+                return self._backend
+
+        monkeypatch.setattr(sidecar_mod, "_detect_available_gpu_device_ids", lambda: [0])
+        monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", FakePipeline)
+
+        request: dict[str, Any] = {
+            "command": "gpu_search",
+            "args": [],
+            "payload": {
+                "pattern": "ERROR",
+                "path": str(corpus_dir),
+                "gpu_device_ids": [0],
+                "ignore_case": False,
+                "fixed_strings": False,
+                "invert_match": False,
+                "count": False,
+                "word_regexp": False,
+                "no_ignore": False,
+                "json": True,
+            },
+        }
+
+        stdout, stderr, exit_code = sidecar_mod._dispatch_request(request)
+
+        assert exit_code == 0, stderr
+        payload = json.loads(stdout)
+        # #1: runtime routing is authoritative over the selected GPU route
+        assert payload["routing_backend"] == "NativeCpuBackend"
+        assert payload["routing_reason"] == "gpu-auto-fallback-cpu"
+        # #2: GPU proof/unsupported contract fields are present and correct
+        assert payload["sidecar_used"] is True
+        assert payload["gpu_evidence_status"] == "unsupported"
+        assert payload["gpu_proof"] is False
+        assert payload["native_gpu_unavailable"] is True
+        assert payload["not_gpu_proof_reason"]
+        assert payload["requested_gpu_device_ids"] == [0]
