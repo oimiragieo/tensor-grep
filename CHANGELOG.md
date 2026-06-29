@@ -1,6 +1,78 @@
 # CHANGELOG
 
 
+## v1.17.8 (2026-06-29)
+
+### Bug Fixes
+
+- **lsp**: Fail-closed Node + rust-analyzer integrity (+ fix broken Windows rust-analyzer install)
+  ([#291](https://github.com/oimiragieo/tensor-grep/pull/291),
+  [`f1ce5bb`](https://github.com/oimiragieo/tensor-grep/commit/f1ce5bb92b635b76e376b7859d43425d0782eda6))
+
+* fix(lsp): fail-closed Node runtime checksum + download byte-cap + opt-out helper
+
+LSP integrity Phase 2a (council-vetted, audit HIGH #2). The managed Node runtime was downloaded from
+  nodejs.org with NO checksum and NO byte cap, then extracted directly. Now: - _NODE_SHA256:
+  committed per-platform SHA-256 table (from the official nodejs.org SHASUMS256.txt for v22.14.0,
+  keyed by the exact archive _node_archive_name() requests — Linux .tar.xz, macOS .tar.gz, Windows
+  .zip; verified against the real filenames). - _verify_node_archive(): FAIL-CLOSED before
+  extraction — raises on missing pin OR mismatch. - _download(): chunked with a 256MiB cap
+  (_MAX_TOOLCHAIN_DOWNLOAD_BYTES) so an oversized/malicious response can't exhaust memory/disk
+  before verification. - _allow_unverified_toolchain(): the shared TG_ALLOW_UNVERIFIED_TOOLCHAIN=1
+  opt-out (GONOSUMDB model) for air-gapped installs — the rust-analyzer flip (Phase 2b) will reuse
+  it. - CI completeness gate: test asserts every _NODE_SHA256 entry is a real 64-hex SHA (the gate
+  that would have caught the all-empty rust-analyzer table).
+
+Council resolution: committed table beats runtime-fetch (same-CDN fetch = no protection vs CDN
+  compromise; committed table is git-auditable + bumps atomically with _NODE_VERSION). Phase 2b
+  (next): populate the 5 rust-analyzer SHAs + atomic warn->raise flip, pin gopls/csharp-ls versions
+  + csharp-ls silent-accept fix.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(lsp): rust-analyzer fail-closed checksum + fix broken Windows install (.zip not .gz)
+
+LSP integrity Phase 2b (council #1 must-fix). rust-analyzer verified NOTHING: _RUST_ANALYZER_SHA256
+  was 5 empty strings and _verify_rust_analyzer_checksum did warn+return on empty — fail-OPEN while
+  appearing to enforce. ALSO found: the Windows artifact name was .gz, but the 2025-01-13 release
+  ships a .zip → tg's Windows rust-analyzer install 404'd (broken today) and would gzip.open a zip.
+
+- Populate all 5 _RUST_ANALYZER_SHA256 (sha256 of the downloaded asset: .gz on Unix, .zip on
+  Windows; hashed from the official github release for tag 2025-01-13; Windows zip contains
+  rust-analyzer.exe). - _verify_rust_analyzer_checksum: FAIL-CLOSED — raise on missing pin OR
+  mismatch (was warn+return); reuse the shared TG_ALLOW_UNVERIFIED_TOOLCHAIN opt-out; chunked
+  _sha256_file. - Windows artifact name -> .zip; new _extract_rust_analyzer_exe_from_zip extracts
+  ONLY the top-level .exe member by basename (zip-slip-safe); _download_rust_analyzer branches gz vs
+  zip. - CI completeness gate test for the rust-analyzer table (mirrors Node).
+
+Next (Phase 2c): pin gopls (@latest -> @vX.Y.Z) + csharp-ls --version + the csharp-ls "already
+  installed" silent-accept fix.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **lsp**: Pin gopls + csharp-ls versions + fix csharp-ls silent-accept of any version
+  ([#292](https://github.com/oimiragieo/tensor-grep/pull/292),
+  [`740b887`](https://github.com/oimiragieo/tensor-grep/commit/740b887fc0f7bb33621a738555eee3e4b54e9448))
+
+LSP integrity Phase 2c (audit HIGH #2, final piece). gopls was installed @latest and csharp-ls
+  unversioned, so a mutated upstream "latest" silently changed the installed binary. Once the
+  version is pinned, integrity is enforced fail-closed by each ecosystem's checksum DB (Go GOSUMDB /
+  sum.golang.org for gopls; NuGet package signing for csharp-ls).
+
+- _GOPLS_VERSION = v0.22.0; gopls install @latest -> @v0.22.0. - _CSHARP_LS_VERSION = 0.25.0; dotnet
+  tool install gains --version. - csharp-ls "already installed" branch FIX: it previously did
+  nothing on already-installed (silently accepting ANY pre-existing version) and only ran `update`
+  on OTHER failures. Now it converges to the pinned version on already-installed and RAISES on any
+  other install failure (was silently swallowed).
+
+Completes the LSP fail-closed integrity solution alongside #290 (npm --ignore-scripts) and #291
+  (Node + rust-analyzer).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.17.7 (2026-06-28)
 
 ### Bug Fixes
