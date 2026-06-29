@@ -474,9 +474,7 @@ class TestCuDFBackend:
             assert skipif_marks, f"{test_name} should skip on non-Windows platforms"
             assert any(mark.args == (os.name != "nt",) for mark in skipif_marks)
 
-    def test_configure_cuda_worker_environment_sets_env_vars_on_all_platforms(
-        self, monkeypatch
-    ):
+    def test_configure_cuda_worker_environment_sets_env_vars_on_all_platforms(self, monkeypatch):
         """_configure_cuda_worker_environment pins CUDA_VISIBLE_DEVICES on every platform."""
         from tensor_grep.backends import cudf_backend
 
@@ -591,9 +589,7 @@ class TestCuDFBackend:
 
         mock_cupy = MagicMock()
         mock_device = MagicMock()
-        mock_device.__enter__ = MagicMock(
-            side_effect=lambda *_a: call_order.append("device_enter")
-        )
+        mock_device.__enter__ = MagicMock(side_effect=lambda *_a: call_order.append("device_enter"))
         mock_device.__exit__ = MagicMock(return_value=False)
         mock_cupy.cuda.Device.return_value = mock_device
 
@@ -625,9 +621,7 @@ class TestCuDFBackend:
 
         mock_cupy = MagicMock()
         mock_device = MagicMock()
-        mock_device.__enter__ = MagicMock(
-            side_effect=lambda *_a: call_order.append("device_enter")
-        )
+        mock_device.__enter__ = MagicMock(side_effect=lambda *_a: call_order.append("device_enter"))
         mock_device.__exit__ = MagicMock(return_value=False)
         mock_cupy.cuda.Device.return_value = mock_device
 
@@ -657,7 +651,9 @@ class TestCuDFBackend:
             from tensor_grep.backends import cudf_backend
             from tensor_grep.backends.cudf_backend import CuDFBackend
 
-            with patch.object(cudf_backend.CuDFBackend, "_read_text_series", side_effect=track_allocation):
+            with patch.object(
+                cudf_backend.CuDFBackend, "_read_text_series", side_effect=track_allocation
+            ):
                 backend = CuDFBackend(device_ids=[4])
                 backend.search("test.log", "ERROR")
 

@@ -118,7 +118,15 @@ class CuDFBackend(ComputeBackend):
         The subprocess pin via CUDA_VISIBLE_DEVICES in _configure_cuda_worker_environment
         is the strong multi-device guarantee for the distributed process-pool path.
         """
-        import cupy  # noqa: PLC0415
+        try:
+            import cupy  # noqa: PLC0415
+        except ImportError:
+            # No cupy/CUDA in this environment (CPU-only, tests, or the distributed path that pins
+            # the device out-of-process via CUDA_VISIBLE_DEVICES). Nothing to bind in-process, so
+            # the wrapper degrades to a no-op rather than forcing a cupy dependency on every path.
+            import contextlib  # noqa: PLC0415
+
+            return contextlib.nullcontext()
 
         device_id = self.device_ids[0] if self.device_ids else 0
         return cupy.cuda.Device(device_id)
@@ -363,7 +371,9 @@ class CuDFBackend(ComputeBackend):
                     if config and config.invert_match:
                         mask = ~mask
                     matched = series[mask]
-                    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                    for idx, text in zip(
+                        matched.index.to_pandas(), matched.to_pandas(), strict=False
+                    ):
                         matches.append(
                             MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                         )
@@ -375,7 +385,9 @@ class CuDFBackend(ComputeBackend):
                     if config and config.invert_match:
                         mask = ~mask
                     matched = series[mask]
-                    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                    for idx, text in zip(
+                        matched.index.to_pandas(), matched.to_pandas(), strict=False
+                    ):
                         matches.append(
                             MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                         )
@@ -390,7 +402,9 @@ class CuDFBackend(ComputeBackend):
                     if config and config.invert_match:
                         mask = ~mask
                     matched = series[mask]
-                    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                    for idx, text in zip(
+                        matched.index.to_pandas(), matched.to_pandas(), strict=False
+                    ):
                         matches.append(
                             MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                         )
