@@ -79,6 +79,41 @@ Do not promote GPU speed from device discovery, sidecar availability, or correct
 
 Until those are true, the public routing decision is explicit GPU search only.
 
+## Supported semantics
+
+The native GPU backend uses a PFAC (Parallel Failureless Aho-Corasick) algorithm optimized for
+**fixed-string multi-pattern** search over large corpora. This is the only workload class where
+GPU can produce a credible speed win over `rg`.
+
+| Semantic | GPU support | Fallback |
+| --- | --- | --- |
+| Fixed-string multi-pattern (`-F -e PAT1 -e PAT2 …`) over large corpora | Supported (PFAC CUDA kernel) | — |
+| General regex (non-literal patterns) | Not supported | CPU |
+| Case-insensitive or smart-case matching (`-i`, `-S`) | Not supported | CPU |
+| Multiline mode (`-U`, `--multiline`) | Not supported | CPU |
+| Binary file search (`--text`, `--binary`) | Not supported | CPU |
+| Hidden-file or no-ignore overrides (`--hidden`, `--no-ignore`) | Not supported | CPU |
+| Context-line output (`-A`, `-B`, `-C`) | Not supported | CPU |
+| Line or word anchoring (`-x`, `-w`) | Not supported | CPU |
+| Count / counting mode (`-c`, `--count`) | Not supported | CPU |
+
+When the GPU backend is unavailable or the request falls outside the supported lane,
+`tg` falls back to CPU and emits a `UserWarning` with a human-readable explanation.
+The `fallback_reason` attribute on the `Pipeline` object captures the same text for
+programmatic inspection (callers reading the pipeline result can surface it in the
+JSON route envelope via the `fallback_reason` field).
+
+GPU routing is **explicit and opt-in** (`--gpu-device-ids`). Heuristic auto-routing
+is disabled until the public managed binary passes the promotion proof gate described
+in [Required Promotion Rule](#required-promotion-rule).
+
+**Python pipeline note:** the Python-layer pipeline (`pipeline.py`) additionally
+routes explicit `--gpu-device-ids` requests through a CuDF/Torch sidecar path for
+complex regex when `rg` is unavailable. That path has the same CPU-fallback taxonomy
+and emits the same `fallback_reason`/`UserWarning` when the sidecar is unavailable.
+Fixed-string patterns (`-F`) in the Python pipeline are served by the StringZilla
+SIMD backend, not the GPU path; the PFAC semantics above apply to the native CUDA route.
+
 ## Historical v1.7 Artifact (Superseded)
 
 Earlier `v1.7.0` native GPU crossover work used:
