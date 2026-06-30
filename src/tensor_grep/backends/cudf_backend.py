@@ -17,6 +17,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _strip_line_ending(text: str) -> str:
+    """Strip a single trailing line terminator so cuDF zero-copy line text matches
+    ripgrep/CPU parity. The Rust Arrow line offsets include the delimiter byte
+    (rust_core/src/mmap_arrow.rs idx+1), unlike the cudf.read_text(strip_delimiters=True)
+    paths which already drop it. Idempotent on already-stripped text."""
+    return text.removesuffix("\n").removesuffix("\r")
+
+
 def _configure_cuda_worker_environment(device_id: int) -> int:
     """
     Pin CUDA visibility before importing cudf/rmm in worker subprocesses.
@@ -90,7 +98,7 @@ def _process_chunk_on_device(
         matches.append(
             MatchLine(
                 line_number=int(idx) + 1,
-                text=str(text),
+                text=_strip_line_ending(str(text)),
                 file=file_path,
             )
         )
@@ -379,7 +387,11 @@ class CuDFBackend(ComputeBackend):
                         matched.index.to_pandas(), matched.to_pandas(), strict=False
                     ):
                         matches.append(
-                            MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                            MatchLine(
+                                line_number=int(idx) + 1,
+                                text=_strip_line_ending(str(text)),
+                                file=file_path,
+                            )
                         )
                 except ImportError:
                     # Fallback to cuDF's native text reader if the rust bridge isn't compiled
@@ -393,7 +405,11 @@ class CuDFBackend(ComputeBackend):
                         matched.index.to_pandas(), matched.to_pandas(), strict=False
                     ):
                         matches.append(
-                            MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                            MatchLine(
+                                line_number=int(idx) + 1,
+                                text=_strip_line_ending(str(text)),
+                                file=file_path,
+                            )
                         )
                 except Exception as exc:
                     logger.warning(
@@ -410,7 +426,11 @@ class CuDFBackend(ComputeBackend):
                         matched.index.to_pandas(), matched.to_pandas(), strict=False
                     ):
                         matches.append(
-                            MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                            MatchLine(
+                                line_number=int(idx) + 1,
+                                text=_strip_line_ending(str(text)),
+                                file=file_path,
+                            )
                         )
 
             return SearchResult(
@@ -514,7 +534,7 @@ class CuDFBackend(ComputeBackend):
                             matches.append(
                                 MatchLine(
                                     line_number=int(idx) + 1 + line_offset,
-                                    text=str(text),
+                                    text=_strip_line_ending(str(text)),
                                     file=file_path,
                                 )
                             )

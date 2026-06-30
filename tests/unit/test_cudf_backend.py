@@ -487,6 +487,18 @@ class TestCuDFBackend:
         assert os.environ["CUDA_VISIBLE_DEVICES"] == "7"
         assert os.environ["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
 
+    def test_strip_line_ending_matches_rg_parity(self):
+        """Audit MEDIUM: cuDF zero-copy line text must not carry the Arrow delimiter byte
+        (rust mmap offsets are idx+1), so it matches ripgrep/CPU parity."""
+        from tensor_grep.backends.cudf_backend import _strip_line_ending
+
+        assert _strip_line_ending("ERROR boom\n") == "ERROR boom"
+        assert _strip_line_ending("ERROR boom\r\n") == "ERROR boom"
+        assert _strip_line_ending("ERROR boom") == "ERROR boom"
+        assert _strip_line_ending("") == ""
+        # only ONE terminator is stripped (a line cannot contain the delimiter itself)
+        assert _strip_line_ending("ab\r") == "ab"
+
     @WINDOWS_ONLY_WORKER_ISOLATION
     def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(self, monkeypatch):
         from tensor_grep.backends import cudf_backend
