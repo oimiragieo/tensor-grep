@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.17.12 (2026-06-30)
+
+### Bug Fixes
+
+- **sidecar**: Merge runtime routing + emit GPU proof contract fields (audit HIGH 1&2)
+  ([#304](https://github.com/oimiragieo/tensor-grep/pull/304),
+  [`b70e4d8`](https://github.com/oimiragieo/tensor-grep/commit/b70e4d8d3543f421a03e4f2904d1a3ca41ccfdf8))
+
+### Documentation
+
+- Capture 2026-06-29 session learnings (pipeline + verification gate, IDF fragility, tg-session
+  currency) ([#303](https://github.com/oimiragieo/tensor-grep/pull/303),
+  [`2401b2a`](https://github.com/oimiragieo/tensor-grep/commit/2401b2a7677cb04d76b416628d6138b8abd46002))
+
+* docs: capture 2026-06-29 session learnings (convergence pipeline + worktree verification gate, IDF
+  fragility, installer SHA, tg session/blast-radius-render currency)
+
+* docs: bootstrap trust-boundary note (audit #3a) + historicize stale release-proof block (audit #5)
+
+- Generic issue-template version placeholder + honest dtolnay action-pin exception (audit #4/#6)
+  ([#305](https://github.com/oimiragieo/tensor-grep/pull/305),
+  [`312c61a`](https://github.com/oimiragieo/tensor-grep/commit/312c61ab4ae54bce1156a580f28a8766c294e6ab))
+
+- **gpu**: Label Dockerfile.gpu as experimental sidecar + clarify gpu extras vs managed installer
+  (audit MED #2/#3) ([#306](https://github.com/oimiragieo/tensor-grep/pull/306),
+  [`03193fa`](https://github.com/oimiragieo/tensor-grep/commit/03193fafca7d1358a0f18d263a4786ac0b3fe096))
+
+
 ## v1.17.11 (2026-06-29)
 
 ### Bug Fixes
