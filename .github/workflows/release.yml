@@ -1,8 +1,12 @@
 name: Release
+# Manual/backfill release-asset pipeline ONLY. The authoritative release path is ci.yml
+# semantic-release on `main`. This is workflow_dispatch (NOT tag-push) so a manually-pushed
+# v* tag can no longer bypass semantic-release and auto-publish npm/assets (audit HIGH).
+# To backfill a published tag's assets, dispatch this workflow TARGETING that tag ref
+# (`gh workflow run release.yml --ref vX.Y.Z`); GITHUB_REF then resolves to refs/tags/vX.Y.Z
+# and every `${GITHUB_REF#refs/tags/...}` step below works unchanged.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 jobs:
   validate-release-assets:
