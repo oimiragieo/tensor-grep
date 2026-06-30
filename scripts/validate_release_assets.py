@@ -2351,8 +2351,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     errors: list[str] = []
     for expected in (
         "on:",
-        "tags:",
-        "- 'v*'",
+        # release.yml is workflow_dispatch-only (NOT tag-push) so a manually-pushed v* tag
+        # cannot bypass semantic-release and auto-publish (audit HIGH, 2026-06-29). Backfill is
+        # via `gh workflow run release.yml --ref vX.Y.Z`; the body still uses ${GITHUB_REF#refs/tags/}.
+        "workflow_dispatch:",
         "validate-release-assets:",
         "validate-package-managers:",
         "build-binaries:",
