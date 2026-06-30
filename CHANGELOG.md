@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.17.16 (2026-06-30)
+
+### Bug Fixes
+
+- Allow typer 0.25 to unblock Python 3.14 installs
+  ([#310](https://github.com/oimiragieo/tensor-grep/pull/310),
+  [`20d22c8`](https://github.com/oimiragieo/tensor-grep/commit/20d22c8c2b2e405e8978088235d9ff00edefe61f))
+
+Bumps typer cap <0.25 -> <0.26 so py3.14 installs no longer silently resolve to stale 1.13.35. See
+  PR #310.
+
+
 ## v1.17.15 (2026-06-30)
 
 ### Bug Fixes
