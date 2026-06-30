@@ -1396,6 +1396,13 @@ def build_agent_capsule(
             ambiguity["resolution_evidence"] = targeted_validation_evidence
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
+    # Degrade-to-ask safety floor: if ranking buried the implementation so the swap helper found no
+    # candidate to promote and the post-swap primary is STILL an unrequested marker-helper, never
+    # confidently auto-edit it — gate behind ask-user. No-op once the swap promoted the impl.
+    if _primary_target_is_unrequested_marker_helper(query, target):
+        ask_reasons.append(
+            "primary target is an unrequested marker-helper; confirm the intended edit target"
+        )
     if tied_alternatives:
         ask_reasons.append("alternative target confidence ties primary target")
     if not validation_commands:
