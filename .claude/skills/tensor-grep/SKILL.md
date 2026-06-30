@@ -15,6 +15,7 @@ Use this skill when you need to locate code precisely, understand likely edit im
 - You are preparing a patch and want a smaller, more accurate context bundle.
 - You need a fast codebase orientation capsule (central files, entry points, symbol map) before diving into symbol lookup.
 - You need to find code by text/content relevance rather than an exact symbol name.
+- You need to resume or persist cross-session repo-map context — use `tg session` to cache the repo-map, then call session-scoped commands (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) without re-indexing on each invocation.
 
 ## Argument Order
 
@@ -44,6 +45,16 @@ prefer the canonical path-first form.
    - `tg blast-radius-plan REPO_PATH SYMBOL`
 5. Use the returned file/span candidates to make the smallest correct edit.
 6. Run only the most relevant validation commands after the edit.
+7. For repeated-edit loops or memory-backed work across sessions, open a cached session first:
+   - `tg session open --json REPO_PATH` returns a `session_id` — capture it.
+   Then pass that `session_id` as the required first argument to the session-scoped variants
+   (instead of the equivalent top-level commands):
+   `tg session context-render SESSION_ID`, `tg session edit-plan SESSION_ID`,
+   `tg session blast-radius-render SESSION_ID`, `tg session blast-radius-plan SESSION_ID`,
+   `tg session blast-radius SESSION_ID`.
+   Refresh the cache after file changes with `tg session refresh SESSION_ID`.
+   Inspect cached sessions with `tg session list` / `tg session show`.
+   Manage the warm localhost daemon with `tg session daemon`.
 
 ## Registration-Audit Workflow (blast-radius before claiming done)
 

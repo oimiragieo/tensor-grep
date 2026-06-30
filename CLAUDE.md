@@ -21,5 +21,5 @@ Claude Code guidance for the **tensor-grep** repository.
 
 - **Using `tg`**: `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`).
 - **Build/release discipline** (global, `~/.claude/skills/`): `dogfood-the-shipped-artifact`,
-  `verify-plan-against-code`, `supply-chain-hardening`.
+  `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`.
 - **Post-release dogfood harness**: `scripts/dogfood/`.
