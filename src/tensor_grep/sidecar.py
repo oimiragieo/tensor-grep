@@ -361,7 +361,7 @@ def _gpu_runtime_error(requested_ids: Sequence[int], exc: Exception) -> str:
 def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.pipeline import ConfigurationError, Pipeline
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import SearchResult, merge_runtime_routing
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     pattern = payload.get("pattern", "")
@@ -454,6 +454,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         candidate_files = list(scanner.walk(path))
 
         all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+        all_results.sidecar_used = True
         all_results.requested_gpu_device_ids = list(requested_gpu_device_ids)
         all_results.routing_backend = getattr(
             pipeline, "selected_backend_name", backend.__class__.__name__
@@ -469,6 +470,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         for current_file in candidate_files:
             for pattern_id, current_pattern in enumerate(search_patterns):
                 result = backend.search(current_file, current_pattern, config=config)
+                merge_runtime_routing(all_results, result)
                 all_results.matches.extend(result.matches)
                 all_results.total_matches += result.total_matches
                 for fp, count in result.match_counts_by_file.items():
@@ -495,13 +497,16 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
     if payload.get("json"):
         import json as json_mod
 
+        from tensor_grep.cli.formatters.json_fmt import _routing_envelope
+
+        # Reuse the canonical routing envelope so the sidecar emits the SAME routing +
+        # GPU proof/unsupported contract fields as the CLI/MCP JSON path (sidecar_used,
+        # gpu_evidence_status, gpu_proof, native_gpu_unavailable, not_gpu_proof_reason)
+        # instead of a hand-built subset that silently drifts from docs/CONTRACTS.md.
         response = {
+            **_routing_envelope(all_results),
             "total_matches": all_results.total_matches,
             "total_files": all_results.total_files,
-            "routing_backend": all_results.routing_backend,
-            "routing_reason": all_results.routing_reason,
-            "requested_gpu_device_ids": all_results.requested_gpu_device_ids,
-            "routing_gpu_device_ids": all_results.routing_gpu_device_ids,
             "matches": serialized_matches,
         }
         return json_mod.dumps(response) + "\n", "", 0

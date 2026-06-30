@@ -39,7 +39,7 @@ from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
-from tensor_grep.core.result import SearchResult
+from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
@@ -1389,19 +1389,7 @@ def _selected_gpu_execution_defaults(
 
 
 def _merge_runtime_routing(all_results: SearchResult, result: SearchResult) -> None:
-    if result.routing_backend:
-        all_results.routing_backend = result.routing_backend
-        all_results.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
-        all_results.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
-    elif result.routing_gpu_device_ids or result.routing_gpu_chunk_plan_mb:
-        all_results.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
-        all_results.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
-    if result.routing_reason:
-        all_results.routing_reason = result.routing_reason
-    all_results.routing_distributed = all_results.routing_distributed or result.routing_distributed
-    all_results.routing_worker_count = max(
-        all_results.routing_worker_count, result.routing_worker_count
-    )
+    merge_runtime_routing(all_results, result)
 
 
 def _merge_count_metadata(all_results: SearchResult, result: SearchResult) -> None:
