@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -466,10 +468,22 @@ def test_install_sh_pins_uv_version():
 
 
 def test_install_ps1_pins_uv_version():
+    # Supply-chain: download the pinned uv release zip directly from GitHub and verify its SHA-256
+    # against a committed checksum table (scripts/uv_checksums.json) before use.  We do NOT run
+    # the remote astral.sh installer script, which lacks binary checksum verification on Windows
+    # (see https://github.com/astral-sh/uv/issues/13074).
     content = _read_script("scripts/install.ps1")
     assert "astral.sh/uv/install.ps1" not in content
+    assert "astral.sh/uv/$uvVersion/install.ps1" not in content
     assert '$uvVersion = "' in content
-    assert "astral.sh/uv/$uvVersion/install.ps1" in content
+    assert "github.com/astral-sh/uv/releases/download/$uvVersion" in content
+    # The artifact name is arch-templated (uv-$uvArch-pc-windows-msvc) with both Windows arches.
+    assert "uv-$uvArch-pc-windows-msvc" in content
+    assert '"aarch64"' in content and '"x86_64"' in content
+    assert "OSArchitecture" in content
+    assert "Get-FileHash" in content
+    assert "MISMATCH" in content
+    assert "uv_checksums.json" in content or "$uvKnownSha256" in content
 
 
 def test_install_sh_should_stage_install_before_replacing_existing_managed_dir():
@@ -496,3 +510,96 @@ def test_install_sh_should_refresh_managed_lsp_providers_via_frontdoor():
     assert "Installing managed external LSP providers" in content
     assert 'if "$INSTALL_DIR/bin/tg" lsp-setup --json > /dev/null; then' in content
     assert "Managed external LSP provider setup failed; run 'tg lsp-setup' manually." in content
+
+
+# ---------------------------------------------------------------------------
+# uv_checksums.json integrity tests (installer-uv-sha slice)
+# ---------------------------------------------------------------------------
+
+
+def test_uv_checksums_json_has_both_arch_shas_with_64_hex_digits():
+    """Both committed SHAs must be present and be valid 64-character lowercase hex strings.
+
+    These are the SHA-256 digests of uv-<triple>-pc-windows-msvc.zip for uv 0.11.25,
+    fetched from the official GitHub release sidecar files (.zip.sha256).  They are
+    used by install.ps1 to verify the downloaded zip BEFORE extracting or running uv.
+    """
+    checksums_path = ROOT / "scripts" / "uv_checksums.json"
+    assert checksums_path.exists(), "scripts/uv_checksums.json is missing"
+    data = json.loads(checksums_path.read_text(encoding="utf-8"))
+
+    for arch in ("x86_64", "aarch64"):
+        key = f"0.11.25/{arch}"
+        assert key in data, f"Missing key '{key}' in uv_checksums.json"
+        sha = data[key]
+        assert isinstance(sha, str), f"SHA for '{key}' must be a string, got {type(sha)}"
+        assert len(sha) == 64, (
+            f"SHA for '{key}' must be 64 hex chars (SHA-256), got {len(sha)}: {sha!r}"
+        )
+        assert re.fullmatch(r"[0-9a-f]{64}", sha), (
+            f"SHA for '{key}' must be lowercase hex, got: {sha!r}"
+        )
+
+
+def test_install_ps1_uv_embedded_shas_match_checksums_json():
+    """The SHAs embedded in install.ps1 must match scripts/uv_checksums.json exactly.
+
+    Both must be updated together when bumping uv; this test catches drift.
+    """
+    checksums_path = ROOT / "scripts" / "uv_checksums.json"
+    data = json.loads(checksums_path.read_text(encoding="utf-8"))
+    content = _read_script("scripts/install.ps1")
+
+    for arch in ("x86_64", "aarch64"):
+        sha = data[f"0.11.25/{arch}"]
+        assert sha in content, (
+            f"SHA for uv 0.11.25/{arch} ({sha}) is in uv_checksums.json but not embedded in "
+            f"install.ps1. Update the $uvKnownSha256 table in install.ps1."
+        )
+
+
+def test_install_ps1_downloads_uv_binary_directly_and_verifies_checksum():
+    """install.ps1 must download uv as a zip from GitHub and verify SHA-256 before use.
+
+    It must NOT run the remote astral.sh installer script, which lacks binary checksum
+    verification on Windows (https://github.com/astral-sh/uv/issues/13074).
+    """
+    content = _read_script("scripts/install.ps1")
+
+    # Must NOT run the remote astral.sh PowerShell installer.
+    assert "astral.sh/uv/$uvVersion/install.ps1" not in content
+    assert "uv_install.ps1" not in content
+
+    # Must detect OS architecture for multi-arch support.
+    assert "[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture" in content
+    assert '"aarch64"' in content
+    assert '"x86_64"' in content
+
+    # Must download the release zip from GitHub and verify SHA-256 before use.
+    assert "github.com/astral-sh/uv/releases/download/$uvVersion" in content
+    assert "pc-windows-msvc.zip" in content
+    assert "Get-FileHash" in content
+    assert "SHA256" in content
+    assert "Expand-Archive" in content
+
+    # Must fail closed: abort if checksum does not match.
+    assert "MISMATCH" in content
+    assert "Aborting" in content
+
+    # Must clean up the temporary zip even on failure (inner try/finally).
+    assert "Remove-Item -LiteralPath $uvZipPath" in content
+
+    # Must clean up the extract dir in the outer finally block.
+    assert "$uvExtractDir" in content
+    finally_block = content[content.rindex("finally {") :]
+    assert "$uvExtractDir" in finally_block
+
+
+def test_install_sh_notes_self_verification_of_astral_installer():
+    """install.sh must carry a comment explaining that the versioned astral installer
+    self-verifies on Linux/macOS (so no extra checksum step is needed there).
+    """
+    content = _read_script("scripts/install.sh")
+    # The comment should reference the self-verification property and contrast with install.ps1.
+    assert "self-verif" in content
+    assert "uv_checksums.json" in content or "install.ps1" in content

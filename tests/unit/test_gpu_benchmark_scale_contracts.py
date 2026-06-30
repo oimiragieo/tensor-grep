@@ -267,6 +267,16 @@ def test_gpu_native_many_pattern_correctness_uses_single_invocation_rg_json(monk
         return module.subprocess.CompletedProcess(command, 0, json.dumps(tg_payload), "")
 
     monkeypatch.setattr(module, "_run_command", _fake_run_command)
+    # The corpus_dir has no actual files; patch the oracle to agree with the
+    # fake rg output so the oracle gate does not block the PASS verdict.
+    monkeypatch.setattr(
+        module,
+        "cpu_oracle_search",
+        lambda patterns, corpus_dir: sorted([
+            (module._normalized_match_path(str(match_file)), 1, pattern_a),
+            (module._normalized_match_path(str(match_file)), 2, pattern_b),
+        ]),
+    )
 
     check = module.run_many_pattern_correctness_check(
         tg_binary=tg_binary,
@@ -284,6 +294,8 @@ def test_gpu_native_many_pattern_correctness_uses_single_invocation_rg_json(monk
     assert check["status"] == "PASS"
     assert check["rg_match_identity_equal"] is True
     assert check["fair_rg_baseline"] == "single_invocation_rg_fixed_multi_pattern"
+    assert check["oracle_status"] == "PASS"
+    assert check["oracle_matches_equal"] is True
 
 
 def test_gpu_native_summary_should_report_workload_scoped_speed_blocker():
@@ -1559,6 +1571,12 @@ def test_run_gpu_native_correctness_should_compare_direct_rg_identity(monkeypatc
         return module.subprocess.CompletedProcess(command, 0, stdout=rg_stdout, stderr="")
 
     monkeypatch.setattr(module, "_run_command", _fake_run_command)
+    # The corpus_dir is empty; patch the oracle to agree with the fake rg output.
+    monkeypatch.setattr(
+        module,
+        "cpu_oracle_search",
+        lambda patterns, corpus_dir: [("sample.log", 2, "ERROR sentinel")],
+    )
 
     result = module.run_correctness_check(
         tg_binary=tg_binary,
@@ -1578,6 +1596,8 @@ def test_run_gpu_native_correctness_should_compare_direct_rg_identity(monkeypatc
     assert result["rg_match_identity_equal"] is True
     assert result["rg_total_matches"] == 1
     assert result["gpu_total_matches"] == 1
+    assert result["oracle_status"] == "PASS"
+    assert result["oracle_matches_equal"] is True
 
 
 def test_run_gpu_native_correctness_should_accept_direct_rg_no_match_identity(
@@ -2187,6 +2207,7 @@ def test_run_gpu_native_benchmarks_should_separate_correctness_pass_from_speed_f
         "fallback_or_sidecar_counts_as_gpu_proof": False,
         "public_managed_rows_must_not_be_sidecar": True,
         "many_pattern_claim_requires_fair_rg_multi_pattern_baseline": True,
+        "requires_independent_oracle": True,
     }
     assert summary["native_cuda_runtime_gate"] == {
         "status": "PASS",

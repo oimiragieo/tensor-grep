@@ -94,6 +94,17 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
         "routing_worker_count": result.routing_worker_count,
     }
     envelope.update(_gpu_proof_payload(result))
+    # GPU execution telemetry — only emitted when the backend measured them; omit
+    # entirely (not null) when not applicable so consumers can detect presence via key
+    # existence rather than null checks.
+    if result.kernel_time_ms is not None:
+        envelope["kernel_time_ms"] = result.kernel_time_ms
+    if result.transfer_time_ms is not None:
+        envelope["transfer_time_ms"] = result.transfer_time_ms
+    if result.staging_bytes is not None:
+        envelope["staging_bytes"] = result.staging_bytes
+    if result.fallback_reason is not None:
+        envelope["fallback_reason"] = result.fallback_reason
     return envelope
 
 
@@ -149,6 +160,10 @@ class JsonFormatter(OutputFormatter):
             "gpu_proof",
             "native_gpu_unavailable",
             "not_gpu_proof_reason",
+            "kernel_time_ms",
+            "transfer_time_ms",
+            "staging_bytes",
+            "fallback_reason",
         ):
             if key in envelope:
                 data[key] = envelope[key]

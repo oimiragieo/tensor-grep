@@ -474,20 +474,30 @@ class TestCuDFBackend:
             assert skipif_marks, f"{test_name} should skip on non-Windows platforms"
             assert any(mark.args == (os.name != "nt",) for mark in skipif_marks)
 
-    def test_configure_cuda_worker_environment_preserves_device_id_on_non_windows(
-        self, monkeypatch
-    ):
+    def test_configure_cuda_worker_environment_sets_env_vars_on_all_platforms(self, monkeypatch):
+        """_configure_cuda_worker_environment pins CUDA_VISIBLE_DEVICES on every platform."""
         from tensor_grep.backends import cudf_backend
 
-        monkeypatch.setattr(cudf_backend.os, "name", "posix", raising=False)
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "existing-device")
-        monkeypatch.setenv("CUDA_DEVICE_ORDER", "existing-order")
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
 
         local_device_id = cudf_backend._configure_cuda_worker_environment(7)
 
-        assert local_device_id == 7
-        assert os.environ["CUDA_VISIBLE_DEVICES"] == "existing-device"
-        assert os.environ["CUDA_DEVICE_ORDER"] == "existing-order"
+        assert local_device_id == 0
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "7"
+        assert os.environ["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
+
+    def test_strip_line_ending_matches_rg_parity(self):
+        """Audit MEDIUM: cuDF zero-copy line text must not carry the Arrow delimiter byte
+        (rust mmap offsets are idx+1), so it matches ripgrep/CPU parity."""
+        from tensor_grep.backends.cudf_backend import _strip_line_ending
+
+        assert _strip_line_ending("ERROR boom\n") == "ERROR boom"
+        assert _strip_line_ending("ERROR boom\r\n") == "ERROR boom"
+        assert _strip_line_ending("ERROR boom") == "ERROR boom"
+        assert _strip_line_ending("") == ""
+        # only ONE terminator is stripped (a line cannot contain the delimiter itself)
+        assert _strip_line_ending("ab\r") == "ab"
 
     @WINDOWS_ONLY_WORKER_ISOLATION
     def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(self, monkeypatch):
@@ -553,3 +563,133 @@ class TestCuDFBackend:
 
         assert mock_pool.call_args.kwargs["max_workers"] == 2
         assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
+
+    # ------------------------------------------------------------------
+    # _device_context tests (CPU-only, no GPU required, no importorskip)
+    # ------------------------------------------------------------------
+
+    def test_device_context_returns_cupy_device_for_configured_id(self):
+        """_device_context() constructs cupy.cuda.Device with device_ids[0]."""
+        mock_cupy = MagicMock()
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend(device_ids=[5])
+            ctx = backend._device_context()
+
+        mock_cupy.cuda.Device.assert_called_once_with(5)
+        assert ctx is mock_cupy.cuda.Device.return_value
+
+    def test_device_context_falls_back_to_device_0_when_device_ids_empty(self):
+        """_device_context() uses device 0 when self.device_ids is empty."""
+        mock_cupy = MagicMock()
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend()
+            # Force empty list to exercise the guard (init normally populates it).
+            backend.device_ids = []
+            backend._device_context()
+
+        mock_cupy.cuda.Device.assert_called_once_with(0)
+
+    def test_device_context_degrades_to_nullcontext_when_device_unusable(self):
+        """cupy installed but GPU unusable (probe raises, e.g. cudaErrorInsufficientDriver on a CI
+        runner) → _device_context degrades to a no-op rather than crashing every search."""
+        import contextlib
+        from unittest.mock import PropertyMock
+
+        mock_cupy = MagicMock()
+        type(mock_cupy.cuda.Device.return_value).compute_capability = PropertyMock(
+            side_effect=RuntimeError("cudaErrorInsufficientDriver")
+        )
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend(device_ids=[0])
+            ctx = backend._device_context()
+
+        assert isinstance(ctx, contextlib.nullcontext)
+
+    def test_is_available_enters_device_context_before_cudf_probe(self):
+        """cupy.cuda.Device(device_ids[0]) must be entered before cudf.Series is probed."""
+        import importlib.util
+
+        call_order: list[str] = []
+
+        mock_cupy = MagicMock()
+        mock_device = MagicMock()
+        mock_device.__enter__ = MagicMock(side_effect=lambda *_a: call_order.append("device_enter"))
+        mock_device.__exit__ = MagicMock(return_value=False)
+        mock_cupy.cuda.Device.return_value = mock_device
+
+        mock_cudf = MagicMock()
+
+        def track_series(*args, **kwargs):
+            call_order.append("series_probe")
+
+        mock_cudf.Series.side_effect = track_series
+
+        with patch.dict("sys.modules", {"cupy": mock_cupy, "cudf": mock_cudf}):
+            with patch.object(importlib.util, "find_spec", return_value=object()):
+                from tensor_grep.backends.cudf_backend import CuDFBackend
+
+                backend = CuDFBackend(device_ids=[2])
+                backend.is_available()
+
+        mock_cupy.cuda.Device.assert_called_with(2)
+        assert "device_enter" in call_order, "device context was never entered"
+        assert "series_probe" in call_order, "cudf.Series probe was never called"
+        assert call_order.index("device_enter") < call_order.index("series_probe"), (
+            "device context must be entered before any cuDF allocation"
+        )
+
+    @patch("os.path.getsize", return_value=1024)
+    def test_search_enters_device_context_before_gpu_allocation(self, _mock_getsize):
+        """_device_context() must be entered before _read_text_series allocates GPU memory."""
+        call_order: list[str] = []
+
+        mock_cupy = MagicMock()
+        mock_device = MagicMock()
+        mock_device.__enter__ = MagicMock(side_effect=lambda *_a: call_order.append("device_enter"))
+        mock_device.__exit__ = MagicMock(return_value=False)
+        mock_cupy.cuda.Device.return_value = mock_device
+
+        mock_series = MagicMock()
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = []
+        mock_matched.to_pandas.return_value = []
+        mock_series.__getitem__.return_value = mock_matched
+        mock_series.str.contains.return_value = MagicMock()
+
+        def track_allocation(*_args, **_kwargs):
+            call_order.append("gpu_alloc")
+            return mock_series
+
+        mock_cudf = MagicMock()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "cupy": mock_cupy,
+                "cudf": mock_cudf,
+                # Force ImportError on the Rust bridge so code falls through to
+                # _read_text_series, which we can intercept below.
+                "tensor_grep.rust_core": None,
+            },
+        ):
+            from tensor_grep.backends import cudf_backend
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            with patch.object(
+                cudf_backend.CuDFBackend, "_read_text_series", side_effect=track_allocation
+            ):
+                backend = CuDFBackend(device_ids=[4])
+                backend.search("test.log", "ERROR")
+
+        mock_cupy.cuda.Device.assert_called_with(4)
+        assert "device_enter" in call_order, "device context was never entered"
+        assert "gpu_alloc" in call_order, "GPU allocation (_read_text_series) was never made"
+        assert call_order.index("device_enter") < call_order.index("gpu_alloc"), (
+            "device context must be entered before any cuDF GPU allocation"
+        )

@@ -5331,10 +5331,11 @@ def test_agent_capsule_unrequested_marker_helper_tie_requires_confirmation(monke
 
     assert payload["ambiguity"]["status"] == "tie_requires_confirmation"
     assert payload["ask_user_before_editing"]["required"] is True
-    assert (
-        "primary target is an unrequested marker helper with equal-confidence alternatives"
-        in payload["context_consistency"]["downgrade_reasons"]
-    )
+    # The unrequested marker-helper primary is now PROMOTED to the implementation candidate
+    # (is_managed_windows_exe_bridge); the marker is demoted to a tied alternative, so the
+    # ambiguity is still flagged for confirmation (the safety contract holds). Previously the
+    # marker stayed primary with an "unrequested marker helper" downgrade reason.
+    assert payload["primary_target"]["symbol"] == "is_managed_windows_exe_bridge"
 
 
 def test_agent_capsule_exact_camel_symbol_stays_above_snake_case_bridge(tmp_path):

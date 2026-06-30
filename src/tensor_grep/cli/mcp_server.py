@@ -1390,6 +1390,8 @@ def _selected_gpu_execution_defaults(
 
 def _merge_runtime_routing(all_results: SearchResult, result: SearchResult) -> None:
     merge_runtime_routing(all_results, result)
+    if result.fallback_reason is not None:
+        all_results.fallback_reason = result.fallback_reason
 
 
 def _merge_count_metadata(all_results: SearchResult, result: SearchResult) -> None:
@@ -2578,6 +2580,7 @@ def tg_search(
     all_results.routing_gpu_chunk_plan_mb = list(
         getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
+    all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
     try:
         if isinstance(backend, RipgrepBackend):
             all_results = backend.search(path, search_pattern, config=config)
@@ -2768,6 +2771,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
     all_results.routing_gpu_chunk_plan_mb = list(
         getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
+    all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
     try:
         for current_file in scanner.walk(path):
             result = backend.search(current_file, pattern, config=config)

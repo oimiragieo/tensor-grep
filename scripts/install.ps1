@@ -448,17 +448,61 @@ Write-Host "=========================================================="
 Write-Host "           TENSOR-GREP WINDOWS INSTALLER                  "
 Write-Host "=========================================================="
 
+$uvExtractDir = $null
+
 try {
     # 1. Install or locate uv
-    # Pin uv to an exact version for reproducible, supply-chain-safe installs: the versioned astral
-    # installer downloads that exact uv release and verifies its checksum. Bump deliberately.
+    # Pin uv to an exact version and verify its SHA-256 before execution. We download the release
+    # zip directly from GitHub and check it against a committed checksum table
+    # (scripts/uv_checksums.json) instead of running the astral.sh remote installer, which lacks
+    # binary checksum verification on Windows (see https://github.com/astral-sh/uv/issues/13074).
+    # Bump both $uvVersion and the committed checksums together when upgrading.
     $uvVersion = "0.11.25"
+    # SHA-256 of uv-<triple>-pc-windows-msvc.zip — source of truth: scripts/uv_checksums.json.
+    $uvKnownSha256 = @{
+        "x86_64"  = "15bfd1423b7eaa7aae949922d4712ebaac2bb44a81af64ab59bbe007090cb0d0"
+        "aarch64" = "40d65c29c4d97db6a0993df665d3727700bb799b3618992ce9a4dc533c6d1a31"
+    }
     $uvPath = "uv"
     if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
         Write-Host "[1/4] Downloading uv package manager (pinned $uvVersion)..."
-        Invoke-WebRequest -Uri "https://astral.sh/uv/$uvVersion/install.ps1" -OutFile "$env:TEMP\uv_install.ps1"
-        & "$env:TEMP\uv_install.ps1"
-        $uvPath = "$env:USERPROFILE\.local\bin\uv.exe"
+        # Detect CPU architecture to pick the correct release artifact.
+        $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        $uvArch = switch ($osArch) {
+            "Arm64" { "aarch64" }
+            default { "x86_64" }
+        }
+        $uvTriple = "uv-$uvArch-pc-windows-msvc"
+        $uvZipName = "$uvTriple.zip"
+        $uvZipUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvZipName"
+        $uvExpectedSha = $uvKnownSha256[$uvArch]
+        if (!$uvExpectedSha) {
+            throw "No committed SHA-256 for uv arch '$uvArch' (version $uvVersion). Update scripts/uv_checksums.json and the embedded table in install.ps1."
+        }
+        $uvZipPath = Join-Path $env:TEMP "uv_${uvVersion}_${uvArch}.zip"
+        $uvExtractDir = Join-Path $env:TEMP "uv_${uvVersion}_${uvArch}"
+        try {
+            Invoke-WebRequest -Uri $uvZipUrl -OutFile $uvZipPath
+            $actualSha = (Get-FileHash -LiteralPath $uvZipPath -Algorithm SHA256).Hash.ToLower()
+            if ($actualSha -ne $uvExpectedSha) {
+                throw "uv zip checksum MISMATCH for $uvZipName (expected $uvExpectedSha, got $actualSha). Aborting installation."
+            }
+            Write-Host "      uv zip checksum verified OK ($uvZipName)."
+            Remove-Item -LiteralPath $uvExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive -LiteralPath $uvZipPath -DestinationPath $uvExtractDir -Force
+        } finally {
+            Remove-Item -LiteralPath $uvZipPath -Force -ErrorAction SilentlyContinue
+        }
+        # The zip extracts to a subdirectory named after the triple; fall back to a recursive search.
+        $uvExePath = Join-Path $uvExtractDir "$uvTriple\uv.exe"
+        if (!(Test-Path -LiteralPath $uvExePath)) {
+            $uvExePath = Get-ChildItem -LiteralPath $uvExtractDir -Filter "uv.exe" -Recurse `
+                -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+        }
+        if (!$uvExePath -or !(Test-Path -LiteralPath $uvExePath)) {
+            throw "uv.exe not found in extracted zip at $uvExtractDir."
+        }
+        $uvPath = $uvExePath
     } else {
         Write-Host "[1/4] Found existing uv installation."
     }
@@ -880,6 +924,9 @@ exec "`$TG_FRONTDOOR" "`$@"
     Write-Host "=========================================================="
 }
 finally {
+    if ($uvExtractDir -and (Test-Path -LiteralPath $uvExtractDir)) {
+        Remove-Item -LiteralPath $uvExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if ($stagingInstallDir -and (Test-Path -LiteralPath $stagingInstallDir)) {
         Remove-Item -LiteralPath $stagingInstallDir -Recurse -Force -ErrorAction SilentlyContinue
     }

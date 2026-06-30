@@ -9400,7 +9400,12 @@ def _attach_edit_plan_metadata(
                 primary_file,
                 limit=max_files,
             ),
-            "symbols": ranked_symbols[:max_symbols],
+            # Widen the candidate-edit symbol POOL beyond the render cap so a query-relevant
+            # implementation symbol cannot be crowded entirely out of `candidate_edit_targets`
+            # by same-tier symbols from a large file (Task #4 / agent-capsule moat). The
+            # token-bearing `payload["symbols"]` stays at `max_symbols`; only the alternative
+            # pool widens, and the capsule's marker-helper swap can then promote the impl.
+            "symbols": ranked_symbols[: max(max_symbols, 8)],
             "tests": list(payload.get("tests", []))[:max_files],
             "ranking_quality": str(
                 payload.get(
@@ -9554,7 +9559,10 @@ def _attach_lightweight_navigation_metadata(
             str(primary_file) if primary_file is not None else None,
             limit=max_files,
         ),
-        "symbols": ranked_symbols[:max_symbols],
+        # Widen the candidate-edit symbol pool beyond the render cap (Task #4 / agent-capsule
+        # moat) — same rationale as build_context_render: don't let a large file's same-tier
+        # symbols crowd a query-relevant implementation out of the candidate pool.
+        "symbols": ranked_symbols[: max(max_symbols, 8)],
         "tests": list(payload.get("tests", []))[:max_files],
         "ranking_quality": ranking_quality,
         "coverage_summary": coverage_summary,
