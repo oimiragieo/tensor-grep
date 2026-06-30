@@ -137,7 +137,18 @@ class CuDFBackend(ComputeBackend):
             return contextlib.nullcontext()
 
         device_id = self.device_ids[0] if self.device_ids else 0
-        return cupy.cuda.Device(device_id)
+        try:
+            device = cupy.cuda.Device(device_id)
+            # Probe usability: with cupy installed but no usable GPU (e.g. a CI runner reporting
+            # cudaErrorInsufficientDriver) creating the Device succeeds, but querying it raises a
+            # CUDARuntimeError. Degrade to a no-op rather than crashing every search. With a mocked
+            # cupy this attribute access is a harmless no-op.
+            _ = device.compute_capability
+            return device
+        except Exception:
+            import contextlib
+
+            return contextlib.nullcontext()
 
     @staticmethod
     def _read_text_series(file_path: str) -> Any:

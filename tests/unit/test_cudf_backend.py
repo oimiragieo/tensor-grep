@@ -593,6 +593,24 @@ class TestCuDFBackend:
 
         mock_cupy.cuda.Device.assert_called_once_with(0)
 
+    def test_device_context_degrades_to_nullcontext_when_device_unusable(self):
+        """cupy installed but GPU unusable (probe raises, e.g. cudaErrorInsufficientDriver on a CI
+        runner) → _device_context degrades to a no-op rather than crashing every search."""
+        import contextlib
+        from unittest.mock import PropertyMock
+
+        mock_cupy = MagicMock()
+        type(mock_cupy.cuda.Device.return_value).compute_capability = PropertyMock(
+            side_effect=RuntimeError("cudaErrorInsufficientDriver")
+        )
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend(device_ids=[0])
+            ctx = backend._device_context()
+
+        assert isinstance(ctx, contextlib.nullcontext)
+
     def test_is_available_enters_device_context_before_cudf_probe(self):
         """cupy.cuda.Device(device_ids[0]) must be entered before cudf.Series is probed."""
         import importlib.util
