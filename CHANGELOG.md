@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.17.13 (2026-06-30)
+
+### Bug Fixes
+
+- **gpu**: Close 3 parked audit items — cuDF device-bind, installer SHA, GPU Phase-0
+  ([#302](https://github.com/oimiragieo/tensor-grep/pull/302),
+  [`9ff727e`](https://github.com/oimiragieo/tensor-grep/commit/9ff727e93680a4ef50d9295371b48f85ffc535da))
+
+Closes the 3 parked 2026-06-29 audit items plus the thinktank-verified agent-capsule moat fix and a
+  cuDF device-context robustness fix. See PR #302.
+
+### Continuous Integration
+
+- **release**: Gate release.yml behind workflow_dispatch (audit HIGH)
+  ([#307](https://github.com/oimiragieo/tensor-grep/pull/307),
+  [`c58cb96`](https://github.com/oimiragieo/tensor-grep/commit/c58cb96425fb1c1089aaece36156cf82000464dd))
+
+* ci(release): gate release.yml behind workflow_dispatch so a manual tag can't bypass
+  semantic-release (audit HIGH)
+
+* ci(release): validator expects workflow_dispatch trigger (matches release.yml gating)
+
+
 ## v1.17.12 (2026-06-30)
 
 ### Bug Fixes
