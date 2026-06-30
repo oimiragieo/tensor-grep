@@ -9,6 +9,9 @@ release_docs_current_tag: v1.17.11
 - Latest tagged version: `v1.17.11`
 - Latest complete PyPI version: `v1.17.11`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.17.11>
+
+**Historical release proof (pre-v1.17.11 — retained for the audit trail; the run IDs below are OLD and are NOT proof of the current v1.17.11 release):**
+
 - `v1.11.0` publication caveat: main CI run `25834508800` passed the pre-release matrix and semantic-release, but release-native asset publication was cancelled; `publish-success-gate` failed, `publish-github-release-assets` / `publish-pypi` did not complete, and PyPI latest remains `1.10.10`.
 - Main CI run `26513809791`: passed the pre-release matrix, semantic-release, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Latest main dynamic/CodeQL proof run `26513808787`: passed on the `3c0c213` merge commit
