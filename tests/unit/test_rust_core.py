@@ -140,6 +140,50 @@ def test_rust_backend_limit_passthrough_reports_found_via_exit_code(monkeypatch,
     assert empty.is_empty
 
 
+def test_rust_limit_passthrough_forwards_previously_dropped_rg_flags(monkeypatch, tmp_path: Path):
+    """The PyO3 execute_ripgrep bridge must FORWARD path_separator/vimgrep/sort_files/max_depth/null/
+    null_data and the resolved no_line_number, not hardcode them — rg_passthrough.rs already supports
+    them. Audit #3 (the bug was the Python<->Rust bridge, not the rg command builder)."""
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    captured: dict[str, tuple] = {}
+
+    class FakeNativeRustBackend:
+        def execute_ripgrep(self, *args, **kwargs):
+            captured["args"] = args
+            return 0
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "app.log"
+    log_file.write_text("ERROR boom\n", encoding="utf-8")
+    config = SearchConfig(
+        no_ignore_vcs=True,
+        line_number=False,
+        path_separator="/",
+        vimgrep=True,
+        sort_files=True,
+        max_depth=5,
+        null=True,
+        null_data=True,
+    )
+
+    backend.search(str(log_file), "ERROR", config=config)
+    args = captured["args"]
+    # The 7 previously-dropped fields are appended after the existing 36 positional bridge args, in
+    # order: no_line_number (= not line_number), path_separator, vimgrep, sort_files, max_depth, null,
+    # null_data. rg_passthrough.rs checks no_line_number before line_number, so a resolved "hide" must
+    # arrive as no_line_number=True.
+    assert args[-7:] == (True, "/", True, True, 5, True, True)
+    # globs (idx 16) and file_types (idx 29) must be [] not None: rg's PyO3 Vec<String> rejects None,
+    # which silently fell the whole passthrough back to a flag-dropping path (config.glob and
+    # config.file_type both default to None). This guard is what makes #2/#3 actually take effect.
+    assert args[16] == [] and args[29] == []
+
+
 def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     monkeypatch, tmp_path: Path
 ):
