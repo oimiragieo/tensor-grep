@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.17.15 (2026-06-30)
+
+### Bug Fixes
+
+- Forward dropped rg flags through PyO3 bridge + revive the passthrough (audit #3)
+  ([#309](https://github.com/oimiragieo/tensor-grep/pull/309),
+  [`fd30e6d`](https://github.com/oimiragieo/tensor-grep/commit/fd30e6d821ace1abe081b0bac9f68b1c3bb5f03e))
+
+Audit #3 + the dead-passthrough None-guard. See PR #309.
+
+
 ## v1.17.14 (2026-06-30)
 
 ### Bug Fixes
