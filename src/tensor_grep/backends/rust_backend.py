@@ -233,11 +233,14 @@ class RustCoreBackend(ComputeBackend):
                     pcre2,
                     max_filesize,
                 )
-                # Results are emitted directly to stdout by ripgrep binary
+                # Results are emitted directly to stdout by the ripgrep binary, so the exact match
+                # count is unknowable here. Reflect FOUND-vs-NOT-FOUND via rg's exit code (0 = at
+                # least one match) so the CLI reports the correct exit status / is_empty instead of
+                # treating a non-empty passthrough result as empty (and exiting 1 on a real match).
                 return SearchResult(
                     matches=[],
                     total_files=1 if exit_code == 0 else 0,
-                    total_matches=0,  # Unknown without parsing
+                    total_matches=1 if exit_code == 0 else 0,
                     routing_backend="RustCoreBackend",
                     routing_reason="rust_pcre2_passthrough" if pcre2 else "rust_limit_passthrough",
                     routing_distributed=False,

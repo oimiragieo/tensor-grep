@@ -107,6 +107,39 @@ def test_rust_backend_skips_file_over_max_filesize(monkeypatch, tmp_path: Path):
     assert result.routing_reason == "rust_max_filesize_skipped"
 
 
+def test_rust_backend_limit_passthrough_reports_found_via_exit_code(monkeypatch, tmp_path: Path):
+    """The limit/pcre2 passthrough streams matches straight to stdout, so the exact count is
+    unknowable; it must still report non-empty via rg's exit code (0 = matched). Otherwise the CLI's
+    `is_empty` check treats a real match as empty and exits 1 with the wrong status. Audit #2."""
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    exit_code = {"value": 0}
+
+    class FakeNativeRustBackend:
+        def execute_ripgrep(self, *args, **kwargs):
+            return exit_code["value"]
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "app.log"
+    log_file.write_text("ERROR boom\n", encoding="utf-8")
+    config = SearchConfig(no_ignore_vcs=True)
+
+    exit_code["value"] = 0  # ripgrep emitted at least one match
+    found = backend.search(str(log_file), "ERROR", config=config)
+    assert found.routing_reason == "rust_limit_passthrough"
+    assert found.total_matches > 0
+    assert not found.is_empty
+
+    exit_code["value"] = 1  # ripgrep matched nothing
+    empty = backend.search(str(log_file), "ERROR", config=config)
+    assert empty.total_matches == 0
+    assert empty.is_empty
+
+
 def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     monkeypatch, tmp_path: Path
 ):

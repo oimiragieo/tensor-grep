@@ -2837,6 +2837,35 @@ def test_cli_should_delegate_native_rg_output_flags(monkeypatch):
     assert seen["check"] is False
 
 
+def test_native_delegation_forwards_resolved_line_number():
+    """The native argv builder must forward the resolved line-number decision (-n when shown, -N when
+    suppressed). Otherwise an explicit --line-number/--no-line-number is silently dropped: the native
+    subprocess re-derives line numbers from its own tty heuristic and ignores tg's resolved choice."""
+    from tensor_grep.cli.main import _build_native_tg_search_command
+    from tensor_grep.core.config import SearchConfig
+
+    def _cmd(line_number: bool) -> list[str]:
+        return _build_native_tg_search_command(
+            Path("tg.exe"),
+            pattern="needle",
+            paths=["file.txt"],
+            config=SearchConfig(force_cpu=True, line_number=line_number, line_number_explicit=True),
+            ndjson=False,
+        )
+
+    assert "-n" in _cmd(True) and "-N" not in _cmd(True)
+    assert "-N" in _cmd(False) and "-n" not in _cmd(False)
+    # auto (non-explicit) must NOT forward — the native binary inherits tg's tty heuristic
+    auto_cmd = _build_native_tg_search_command(
+        Path("tg.exe"),
+        pattern="needle",
+        paths=["file.txt"],
+        config=SearchConfig(force_cpu=True, line_number=False),
+        ndjson=False,
+    )
+    assert "-n" not in auto_cmd and "-N" not in auto_cmd
+
+
 def test_search_help_should_describe_json_as_aggregate_json() -> None:
     result = CliRunner().invoke(app, ["search", "--help"])
 

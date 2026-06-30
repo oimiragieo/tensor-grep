@@ -114,6 +114,10 @@ class SearchConfig:
     line_buffered: bool = False
     no_line_buffered: bool = False
     line_number: bool = True
+    # True when the user explicitly set --line-number/-n or --no-line-number/-N (vs tty-auto). Used by
+    # native delegation to forward the explicit choice; the auto case is left to the native binary's
+    # own (inherited-stdout) tty heuristic.
+    line_number_explicit: bool = False
     max_columns: int | None = None
     max_columns_preview: bool = False
     no_max_columns_preview: bool = False

@@ -3277,6 +3277,11 @@ def _build_native_tg_search_command(
         command.append("-v")
     if config.count:
         command.append("-c")
+    # Forward an EXPLICIT line-number choice only. The native subprocess inherits tg's stdout, so its
+    # own tty heuristic already matches tg's auto decision; we only need to forward when the user
+    # explicitly set --line-number/-n or --no-line-number/-N (otherwise that choice is dropped).
+    if config.line_number_explicit:
+        command.append("-n" if config.line_number else "-N")
     if config.column:
         command.append("--column")
     if config.context is not None:
@@ -5837,6 +5842,9 @@ def search_command(
                     )
                 sys.exit(2)
 
+    # Capture whether the user explicitly chose a line-number mode BEFORE auto-resolving (so native
+    # delegation can forward only an explicit -n/-N and leave the auto case to the native binary).
+    line_number_explicit = bool(no_line_number) or line_number is True
     if no_line_number:
         line_number = False
     elif line_number is None:
@@ -5967,6 +5975,7 @@ def search_command(
         line_buffered=line_buffered,
         no_line_buffered=no_line_buffered,
         line_number=line_number,
+        line_number_explicit=line_number_explicit,
         max_columns=max_columns,
         max_columns_preview=max_columns_preview,
         no_max_columns_preview=no_max_columns_preview,
