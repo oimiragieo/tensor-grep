@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.17.14 (2026-06-30)
+
+### Bug Fixes
+
+- Native delegation line-number + rust passthrough exit status + drop dead scanner path (audit
+  #1/#2/#4) ([#308](https://github.com/oimiragieo/tensor-grep/pull/308),
+  [`e527eae`](https://github.com/oimiragieo/tensor-grep/commit/e527eae8b864b6952a59545d9c5653f9084e96bf))
+
+Audit findings #1/#2/#4 fixed + verified. See PR #308.
+
+
 ## v1.17.13 (2026-06-30)
 
 ### Bug Fixes
