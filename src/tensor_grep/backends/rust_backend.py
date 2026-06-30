@@ -212,7 +212,7 @@ class RustCoreBackend(ComputeBackend):
                     config.max_count if config else None,
                     config.word_regexp if config else False,
                     config.smart_case if config else False,
-                    config.glob if config else [],
+                    (config.glob or []) if config else [],
                     config.no_ignore if config else False,
                     config.no_ignore_dot if config else False,
                     config.no_ignore_exclude if config else False,
@@ -225,13 +225,23 @@ class RustCoreBackend(ComputeBackend):
                     config.text if config else False,
                     False,  # files_with_matches
                     False,  # files_without_match
-                    config.file_type if config else [],
+                    (config.file_type or []) if config else [],
                     config.color if config else None,
                     config.replace_str if config else None,
                     config.passthru if config else False,
                     config.no_config if config else False,
                     pcre2,
                     max_filesize,
+                    # Previously hardcoded in the PyO3 bridge (audit #3) — forward them so a
+                    # passthrough search honors these flags. no_line_number carries the resolved
+                    # "hide" decision (rg_passthrough checks no_line_number before line_number).
+                    not (config.line_number if config else True),
+                    config.path_separator if config else None,
+                    config.vimgrep if config else False,
+                    config.sort_files if config else False,
+                    config.max_depth if config else None,
+                    config.null if config else False,
+                    config.null_data if config else False,
                 )
                 # Results are emitted directly to stdout by the ripgrep binary, so the exact match
                 # count is unknowable here. Reflect FOUND-vs-NOT-FOUND via rg's exit code (0 = at
