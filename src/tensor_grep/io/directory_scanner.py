@@ -1,6 +1,5 @@
 import fnmatch
 import os
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,17 +27,12 @@ _GENERATED_RELATIVE_DIRS = {
     ".claude/context",
 }
 
-# Attempt to load the blazing fast Rust PyO3 gitignore scanner
-try:
-    if "pytest" not in sys.modules:
-        from tensor_grep.rust_core import RustDirectoryScanner
-
-        HAS_RUST_SCANNER = True
-    else:
-        # Avoid linking errors in mocked test environments
-        HAS_RUST_SCANNER = False
-except (ImportError, ModuleNotFoundError):
-    HAS_RUST_SCANNER = False
+# The Rust PyO3 directory scanner (`RustDirectoryScanner`) is NOT exported by the `rust_core`
+# extension (only `RustBackend` + functions are), so the old `from rust_core import
+# RustDirectoryScanner` always raised and this flag was permanently False — the Python walk below was
+# always the only scan path. Kept as a documented flag so a future native scanner can re-enable a
+# fast path (which must also export the class) without re-plumbing the call site.
+HAS_RUST_SCANNER = False
 
 
 class DirectoryScanner:
@@ -91,23 +85,8 @@ class DirectoryScanner:
                 yield str(base_path)
             return
 
-        # Use the highly-optimized Rust PyO3 `ignore` crate if available
-        if (
-            HAS_RUST_SCANNER
-            and not self.config.glob
-            and not self.config.file_type
-            and not self.config.type_not
-            and not self._requires_python_guardrails(base_path)
-        ):
-            # Keep Python-side walking only for direct files or Python-only filters.
-            scanner = RustDirectoryScanner(
-                hidden=self.config.hidden, max_depth=self.config.max_depth
-            )
-            for file_path in scanner.walk(path_str):
-                yield file_path
-            return
-
-        # Python Fallback Path
+        # Python scan path (the only path — the native RustDirectoryScanner fast path was never
+        # exported by rust_core; see HAS_RUST_SCANNER above).
         max_depth = self.config.max_depth
         base_depth = len(base_path.parts)
         ignore_spec = self._load_ignore_spec(base_path)
