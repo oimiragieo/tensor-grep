@@ -315,9 +315,12 @@ readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 dependencies = [
     # Upper bound: typer 0.26 dropped click.testing.CliRunner inheritance, removing
-    # CliRunner.isolated_filesystem() that the CLI test suite relies on. Pin to the
-    # locked, tested 0.24.x line until the tests migrate off that API.
-    "typer>=0.12,<0.25",
+    # CliRunner.isolated_filesystem() that the CLI test suite relies on (49 usages). typer 0.25
+    # KEEPS that API (verified: full CLI suite green on 0.25.1) AND — unlike the older <0.25 pin —
+    # resolves on Python 3.14; pinning <0.25 forced py3.14 `pip`/`uv tool` installs to silently
+    # resolve DOWN to the stale 1.13.35 (the typer<0.25 range has no py3.14-compatible click). Allow
+    # 0.25, still block 0.26 until the tests migrate off isolated_filesystem().
+    "typer>=0.12,<0.26",
     "rich>=13.0",
     "mcp>=1.2.0",
     "pathspec>=1.0.4",
