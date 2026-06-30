@@ -134,6 +134,41 @@ def _primary_target_is_unrequested_marker_helper(
     return "marker" in symbol_terms and "marker" not in query_terms
 
 
+def _prefer_implementation_over_marker_helper(
+    query: str,
+    primary_target: dict[str, Any],
+    alternatives: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Promote a genuine implementation over an unrequested marker-helper primary.
+
+    Corpus-IDF shifts can transiently rank a ``*_marker`` helper above the implementation it
+    marks (the BM25 score gap is sensitive to the whole corpus, not just the two symbols). When
+    the primary target is an unrequested marker-helper AND a non-marker implementation candidate
+    exists among the alternatives, swap them: the implementation becomes primary and the marker
+    becomes an alternative — being higher-confidence it then surfaces as a *tied* alternative, so
+    the ambiguity is still flagged for confirmation instead of the marker being confidently picked.
+    This keeps the "prefer implementation over marker" contract robust to corpus growth.
+    """
+    if not _primary_target_is_unrequested_marker_helper(query, primary_target):
+        return primary_target, alternatives
+    best_index = -1
+    best_confidence = -1.0
+    for index, alternative in enumerate(alternatives):
+        alt_symbol = str(alternative.get("symbol") or "")
+        if not alt_symbol or "marker" in set(split_terms(alt_symbol)):
+            continue
+        alt_confidence = _numeric_confidence(alternative.get("confidence"), 0.0)
+        if alt_confidence > best_confidence:
+            best_confidence = alt_confidence
+            best_index = index
+    if best_index < 0:
+        return primary_target, alternatives
+    implementation = alternatives[best_index]
+    demoted = [*alternatives[:best_index], *alternatives[best_index + 1 :]]
+    demoted.insert(0, primary_target)
+    return implementation, demoted
+
+
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
@@ -1189,6 +1224,7 @@ def build_agent_capsule(
     )
     target = _primary_target(payload)
     alternatives = _alternative_targets(payload, target)
+    target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
     snippets, omitted_sources, _used_tokens = _build_snippets(
         payload,
         query=query,

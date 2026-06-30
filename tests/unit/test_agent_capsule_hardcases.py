@@ -291,6 +291,66 @@ def test_agent_capsule_live_repo_prefers_exe_bridge_implementation_over_marker_h
     assert payload["ask_user_before_editing"]["required"] is True
 
 
+def test_prefer_implementation_over_marker_helper_swaps_marker_primary():
+    """IDF-robust (the deterministic unit behind the live-repo test): a `*_marker` primary is
+    demoted below a non-marker implementation candidate, and the marker stays as an alternative
+    so the tie is still flagged."""
+    from tensor_grep.cli.agent_capsule import _prefer_implementation_over_marker_helper
+
+    marker = {
+        "file": "src/main.py",
+        "symbol": "_write_windows_exe_bridge_marker",
+        "confidence": 0.9,
+    }
+    impl = {
+        "file": "rust/python_sidecar.rs",
+        "symbol": "is_managed_windows_exe_bridge",
+        "confidence": 0.7,
+    }
+    primary, alternatives = _prefer_implementation_over_marker_helper(
+        "harden Windows subprocess exe bridge", marker, [impl]
+    )
+    assert primary["symbol"] == "is_managed_windows_exe_bridge"
+    assert primary["file"].endswith("python_sidecar.rs")
+    assert alternatives[0]["symbol"] == "_write_windows_exe_bridge_marker"
+
+
+def test_prefer_implementation_no_swap_when_primary_is_implementation():
+    from tensor_grep.cli.agent_capsule import _prefer_implementation_over_marker_helper
+
+    impl = {
+        "file": "rust/python_sidecar.rs",
+        "symbol": "is_managed_windows_exe_bridge",
+        "confidence": 0.9,
+    }
+    marker = {
+        "file": "src/main.py",
+        "symbol": "_write_windows_exe_bridge_marker",
+        "confidence": 0.7,
+    }
+    primary, alternatives = _prefer_implementation_over_marker_helper(
+        "harden Windows subprocess exe bridge", impl, [marker]
+    )
+    assert primary["symbol"] == "is_managed_windows_exe_bridge"
+    assert alternatives == [marker]
+
+
+def test_prefer_implementation_no_swap_when_no_implementation_candidate():
+    from tensor_grep.cli.agent_capsule import _prefer_implementation_over_marker_helper
+
+    marker = {
+        "file": "src/main.py",
+        "symbol": "_write_windows_exe_bridge_marker",
+        "confidence": 0.9,
+    }
+    other_marker = {"file": "src/x.py", "symbol": "write_path_marker", "confidence": 0.8}
+    primary, alternatives = _prefer_implementation_over_marker_helper(
+        "harden Windows subprocess exe bridge", marker, [other_marker]
+    )
+    assert primary["symbol"] == "_write_windows_exe_bridge_marker"
+    assert alternatives == [other_marker]
+
+
 def test_agent_capsule_prefers_ripgrep_resolver_for_binary_resolution_query(tmp_path):
     project = tmp_path / "workspace"
     cli_src = project / "src" / "tensor_grep" / "cli"
