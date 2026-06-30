@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: tensor-grep version
-      placeholder: "tensor-grep 1.13.26"
+      placeholder: "output of tg --version (e.g. tensor-grep 1.17.x)"
     validations:
       required: false
   - type: dropdown

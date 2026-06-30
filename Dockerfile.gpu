@@ -1,3 +1,9 @@
+# EXPERIMENTAL — cuDF GPU *sidecar* image, NOT the production native-GPU front door.
+# This builds the Python cuDF/Torch sidecar path (CUDA 12.4 runtime, no `--features cuda`),
+# which routes as GpuSidecar (sidecar_used=true), NOT NativeGpuBackend. The production
+# "public managed NVIDIA front door" proof path is the native CUDA build (rust_core / cudarc
+# cuda-13010) + the public-gpu-proof workflow — see docs/gpu_crossover.md and docs/CONTRACTS.md.
+# A successful build of this image is NOT native-GPU promotion proof.
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
 
 # Set up non-interactive build environment

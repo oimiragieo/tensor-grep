@@ -35,3 +35,26 @@ class SearchResult:
     @property
     def is_empty(self) -> bool:
         return self.total_matches == 0
+
+
+def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None:
+    """Merge a backend's runtime routing metadata into an aggregate result.
+
+    Runtime routing is authoritative when a backend internally falls back (for example
+    Torch -> CPU for unsupported regex paths), so an aggregate seeded from the *selected*
+    backend must adopt the runtime values rather than keep reporting the planned route.
+    Shared by the CLI, MCP, and GPU-sidecar paths so the merge semantics cannot drift.
+    """
+    if result.routing_backend:
+        aggregate.routing_backend = result.routing_backend
+        aggregate.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
+        aggregate.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
+    elif result.routing_gpu_device_ids or result.routing_gpu_chunk_plan_mb:
+        aggregate.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
+        aggregate.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
+    if result.routing_reason:
+        aggregate.routing_reason = result.routing_reason
+    aggregate.routing_distributed = aggregate.routing_distributed or result.routing_distributed
+    aggregate.routing_worker_count = max(
+        aggregate.routing_worker_count, result.routing_worker_count
+    )

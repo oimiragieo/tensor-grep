@@ -303,9 +303,10 @@ version_variables = [
 
 
 
+
 [project]
 name = "tensor-grep"
-version = "1.17.11"
+version = "1.17.12"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -326,6 +327,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# NOTE: these `gpu`/`gpu-win` extras are UNPINNED convenience deps and may resolve to a CPU-only
+# or CUDA-mismatched torch. The SUPPORTED GPU runtime path is the managed installer
+# (scripts/install.sh / install.ps1), which deliberately installs pinned CUDA 12.8 wheels.
+# `pip install tensor-grep[gpu]` is best-effort experimental, not the supported managed GPU path.
 gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "torch_geometric>=2.5.0"]
 gpu-win = ["torch>=2.0", "torch_geometric>=2.5.0"]
 nlp = ["transformers>=4.40", "tritonclient[http]"]

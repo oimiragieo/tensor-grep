@@ -15,6 +15,8 @@ tg refs REPO_PATH SYMBOL
 tg callers REPO_PATH SYMBOL
 tg blast-radius REPO_PATH SYMBOL
 tg blast-radius-plan REPO_PATH SYMBOL
+tg blast-radius-render REPO_PATH SYMBOL
+tg session open REPO_PATH
 tg search PATTERN PATH
 tg search PATTERN PATH --rank
 tg orient REPO_PATH
@@ -67,6 +69,27 @@ tg source C:\repo <symbol-from-top-hit>
 ```
 
 Use when the symbol name is unknown but the concept or text is known. `--rank` (alias `--bm25`) re-ranks ripgrep hits by BM25 content relevance — pure Python, no API key, no GPU.
+
+## Session Memory
+
+`tg session` caches the repo-map so repeated context-render, edit-plan, and blast-radius calls do not re-index from scratch. Real subcommands (from `tg session --help`):
+
+```powershell
+tg session open REPO_PATH            # creates the session; run with --json to get the session_id, then pass it below
+tg session list                      # list cached sessions for the current root (no SESSION_ID)
+tg session show SESSION_ID           # show the cached repo-map payload
+tg session refresh SESSION_ID        # refresh after file changes
+tg session context SESSION_ID [PATH] [QUERY]              # context pack from the cached session
+tg session context-render SESSION_ID [PATH] [QUERY]       # prompt-ready render bundle from cache
+tg session edit-plan SESSION_ID [PATH] [QUERY]            # cached edit-planning bundle (2nd positional is query text)
+tg session blast-radius SESSION_ID [PATH] [SYMBOL]        # cached-session blast radius
+tg session blast-radius-render SESSION_ID [PATH] [SYMBOL] # prompt-ready cached blast radius
+tg session blast-radius-plan SESSION_ID [PATH] [SYMBOL]   # cached blast-radius planning bundle
+tg session serve SESSION_ID [PATH]   # serve repeated requests from a single session
+tg session daemon                    # run and inspect the warm localhost session daemon
+```
+
+Use the session-scoped variants (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) in place of the top-level equivalents when working in a repeated-edit loop across invocations. The `session_id` comes from `tg session open --json` and is the required first argument for every subcommand except `open`/`list`/`daemon`. Refresh with `tg session refresh SESSION_ID` after non-trivial file changes.
 
 ## Known Issues
 
