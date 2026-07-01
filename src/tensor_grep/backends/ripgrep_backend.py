@@ -53,6 +53,20 @@ class RipgrepBackend(ComputeBackend):
     def search(
         self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
+        # Audit MED: an explicitly-empty file_path list means "no candidate files" and must
+        # yield no matches. Without this guard, _append_search_paths no-ops on the empty list,
+        # leaving rg with zero path args -> rg defaults to a full recursive CWD scan (a
+        # scope-widening footgun + misleading --stats), instead of an empty search.
+        if isinstance(file_path, list) and not file_path:
+            return SearchResult(
+                matches=[],
+                matched_file_paths=[],
+                match_counts_by_file={},
+                total_files=0,
+                total_matches=0,
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_empty_paths",
+            )
         if config and (config.count or config.count_matches):
             return self._search_counts(file_path=file_path, pattern=pattern, config=config)
         if config and config.files_with_matches:
@@ -504,11 +518,16 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--max-columns-preview")
             if config.no_max_columns_preview and not json_mode:
                 cmd.append("--no-max-columns-preview")
-            if config.sort_by != "none" and not json_mode:
+            # Audit MED: --sort/--sortr/--sort-files change the RESULT ORDER (unlike
+            # --max-columns/--trim, which only affect text rendering and are legitimately
+            # json-gated), and rg honors them with --json. Forward unconditionally so the
+            # default search() (always json_mode) and --json callers get the requested
+            # ordering instead of silently dropping it.
+            if config.sort_by != "none":
                 cmd.extend(["--sort", config.sort_by])
-            if config.sort_files and not json_mode:
+            if config.sort_files:
                 cmd.append("--sort-files")
-            if config.sort_by_reverse != "none" and not json_mode:
+            if config.sort_by_reverse != "none":
                 cmd.extend(["--sortr", config.sort_by_reverse])
             if config.trim and not json_mode:
                 cmd.append("--trim")
