@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.17.18 (2026-07-01)
+
+### Bug Fixes
+
+- Checksum-gate the Unix uv installer (drop curl|sh remote-script exec) (audit #3)
+  ([#312](https://github.com/oimiragieo/tensor-grep/pull/312),
+  [`1223640`](https://github.com/oimiragieo/tensor-grep/commit/1223640d98f713972840c96d445ebdd97cad22f5))
+
+Brings Linux/macOS uv install to the Windows checksum-gated archive model. See PR #312. Closes the
+  2026-06-30 audit.
+
+
 ## v1.17.17 (2026-07-01)
 
 ### Bug Fixes
