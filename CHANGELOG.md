@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.17.17 (2026-07-01)
+
+### Bug Fixes
+
+- Harden rust-bridge fallback + uv-tool-aware upgrade + historical release-facts heading (audit)
+  ([#311](https://github.com/oimiragieo/tensor-grep/pull/311),
+  [`00373cc`](https://github.com/oimiragieo/tensor-grep/commit/00373cc4e36d7292a620ba9f9c3137a8aa5d0d4f))
+
+Audit #1 (fail-closed rust bridge) + #2 (uv-tool-aware upgrade) + #4 (historical release-facts
+  heading). See PR #311.
+
+
 ## v1.17.16 (2026-06-30)
 
 ### Bug Fixes
