@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v1.17.19 (2026-07-01)
+
+### Bug Fixes
+
+- Harden MCP/session/checkpoint security boundaries (audit ranks 1-3)
+  ([#313](https://github.com/oimiragieo/tensor-grep/pull/313),
+  [`6e0d5b6`](https://github.com/oimiragieo/tensor-grep/commit/6e0d5b6947aa821b573a054a03d5ccff5224a834))
+
+* fix: harden MCP/session/checkpoint security boundaries (audit ranks 1-3)
+
+Edge-case audit of subsystems not covered by the batch A/B audits surfaced three HIGH findings, all
+  adversarially verified against the real code and fixed with TDD.
+
+- rank 1 (RCE): the MCP `tg_rewrite_apply` `policy` param loaded `lint_cmd`/ `test_cmd` from a
+  caller-supplied JSON file and executed them via subprocess, bypassing the
+  `TG_MCP_ALLOW_VALIDATION_COMMANDS` gate (which only guarded the direct params, not a policy path).
+  Enforcement now lives at the `apply_policy` module boundary: `load_apply_policy` fails closed with
+  `PolicyCommandsNotAllowedError` when a policy carries validation commands and the caller has not
+  opted in. `execute_rewrite_apply_json` defaults the flag to False (secure); the MCP tool passes
+  the operator opt-in, the trusted local CLI (ast_workflows) passes True. Safe ruleset-scan /
+  rollback-only policies are NOT over-blocked (a blanket `policy is not None` rejection would have
+  regressed them).
+
+- ranks 2+3 (path traversal): `session_id` and `checkpoint_id` were joined straight into filesystem
+  paths, so an absolute or `..`-shaped id escaped the store (arbitrary `.json` read + destructive
+  overwrite, and an attacker-controlled snapshot SOURCE on `tg checkpoint undo`), reachable via the
+  CLI, MCP, and the token-authenticated daemon. Both path builders now resolve-and-assert
+  containment (checkpoint reuses the existing `_resolve_within_root` guard). Generated ids
+  (`session-<ts>-<root>-<hex>` / `ckpt-<ts>-<hex>`) always pass.
+
+Tests: policy-file RCE gate at the module boundary and end-to-end through `tg_rewrite_apply`;
+  session/checkpoint traversal containment including the external-file read and overwrite vectors;
+  and confirmation that safe ruleset/rollback-only policies still load.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: widen session cleanup catches to tolerate the new traversal guard
+
+The path-traversal guard raises ValueError; _prune_session_records and the daemon
+  _remove_implicit_session_payload only caught OSError, so a locally-tampered index.json record with
+  a traversal-shaped id would crash pruning/cleanup instead of skipping it. Widen both to (OSError,
+  ValueError) - fails closed, no security impact. Surfaced by the opus adversarial review of #313.
+
+* fix: bump transformers to >=5.3.0 (CVE-2026-4372)
+
+pip-audit flags transformers 5.2.0 for CVE-2026-4372 (fixed in 5.3.0); the Dependency and License
+  Audit gate correctly fails on this fixable finding. Bump the nlp-extra floor and re-lock (resolves
+  transformers 5.12.1). transformers is an optional (nlp) dependency; the typer/click CLI pin is
+  unaffected (typer stays 0.25.1).
+
+* test: align nlp-extra pin assertion with transformers>=5.3.0 (CVE-2026-4372)
+
+The governance test hardcodes the expected transformers pin string; update it to match the
+  CVE-2026-4372 bump in pyproject.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.17.18 (2026-07-01)
 
 ### Bug Fixes
