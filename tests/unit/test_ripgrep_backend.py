@@ -371,6 +371,49 @@ def test_should_raise_on_rg_fatal_error():
             backend.search("test.log", "(")
 
 
+def test_count_with_filename_single_file_parses_path_prefixed_output():
+    """Audit HIGH: a single-file ``--count -H`` makes rg emit ``path:count``, but the
+    count parser only path-split on the list/dir heuristic (ignoring ``with_filename``),
+    so ``int('test.log:3')`` raised and the line was silently dropped -> false 0 matches.
+    """
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True, with_filename=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "test.log:3\n"
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch("tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result),
+    ):
+        result = backend.search("test.log", "ERROR", config=config)
+
+    assert result.total_matches == 3
+    assert result.total_files == 1
+    assert result.match_counts_by_file == {"test.log": 3}
+
+
+def test_count_single_file_without_filename_parses_bare_count():
+    """Regression guard: the common single-file bare-count path must keep parsing."""
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "5\n"
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch("tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result),
+    ):
+        result = backend.search("test.log", "ERROR", config=config)
+
+    assert result.total_matches == 5
+
+
 def test_passthrough_should_forward_count_flag_and_exit_code():
     backend = RipgrepBackend()
     config = SearchConfig(count=True, no_ignore=True)

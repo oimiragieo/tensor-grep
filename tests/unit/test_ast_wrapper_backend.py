@@ -5,7 +5,37 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.core.config import SearchConfig
+
+
+def test_raise_for_nonzero_raises_on_truncated_json_from_killed_subprocess():
+    """Audit HIGH: a killed/OOM'd sg subprocess emits TRUNCATED JSON that still starts
+    with '[' with empty stderr. The old waiver (``stdout.startswith('[')``) masked that as
+    a clean 0-match scan; the later json.loads then failed and was swallowed downstream. A
+    FULL parse must be required before waiving the nonzero exit."""
+    backend = AstGrepWrapperBackend()
+    result = subprocess.CompletedProcess(
+        args=["sg", "scan"],
+        returncode=137,  # 128 + SIGKILL(9): OOM-killer / container memory limit
+        stdout='[{"file": "a.py", "range"',  # truncated, invalid JSON
+        stderr="",
+    )
+    with pytest.raises(BackendExecutionError):
+        backend._raise_for_nonzero(result)
+
+
+def test_raise_for_nonzero_waives_complete_json_with_nonzero_exit():
+    """A COMPLETE JSON payload with a nonzero exit and no stderr is a real (if quirky)
+    result and must still be waived — the fix must not over-raise on valid output."""
+    backend = AstGrepWrapperBackend()
+    result = subprocess.CompletedProcess(
+        args=["sg", "scan"],
+        returncode=1,
+        stdout="[]",
+        stderr="",
+    )
+    backend._raise_for_nonzero(result)  # must not raise
 
 
 def test_ast_wrapper_backend_should_use_resolved_binary_path():

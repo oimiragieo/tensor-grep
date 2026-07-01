@@ -5,6 +5,25 @@ import numpy as np
 import pytest
 
 
+def test_search_surfaces_heuristic_fallback_reason(tmp_path):
+    """Audit HIGH: search() swallowed classify() failures with a bare `except Exception`
+    and returned keyword-heuristic matches labeled as real CyBERT output
+    (routing_reason='nlp_cybert', fallback_reason=None) — a silent engine downgrade. When
+    the CyBERT provider is unavailable it must surface the swap: a distinct routing_reason
+    plus a non-empty fallback_reason. (tritonclient is not installed in the test env, so the
+    classifier degrades to the keyword heuristic naturally.)"""
+    from tensor_grep.backends.cybert_backend import CybertBackend
+    from tensor_grep.core.config import SearchConfig
+
+    log = tmp_path / "app.log"
+    log.write_text("this is an error line\nall good here\n", encoding="utf-8")
+
+    result = CybertBackend().search(str(log), "error", config=SearchConfig())
+
+    assert result.routing_reason == "nlp_cybert_heuristic_fallback"
+    assert result.fallback_reason
+
+
 class TestCybertBackend:
     @patch.dict(
         "sys.modules",
@@ -380,13 +399,19 @@ class TestCybertBackend:
         log_path.write_text("warning: latency is high\ninfo: startup ok\n", encoding="utf-8")
 
         backend = CybertBackend()
+        # search() consumes classify_with_metadata (results + provider metadata) so it can
+        # surface a fallback signal; here the CyBERT model succeeds (provider_status=provider)
+        # so no fallback is reported and routing_reason stays "nlp_cybert".
         with patch.object(
             backend,
-            "classify",
-            return_value=[
-                {"label": "warn", "confidence": 0.85},
-                {"label": "info", "confidence": 0.20},
-            ],
+            "classify_with_metadata",
+            return_value=(
+                [
+                    {"label": "warn", "confidence": 0.85},
+                    {"label": "info", "confidence": 0.20},
+                ],
+                {"provider_used": "cybert", "provider_status": "provider", "fallback_reason": None},
+            ),
         ):
             result = backend.search(
                 str(log_path),
@@ -400,5 +425,6 @@ class TestCybertBackend:
         assert result.match_counts_by_file == {str(log_path): 1}
         assert result.routing_backend == "CybertBackend"
         assert result.routing_reason == "nlp_cybert"
+        assert result.fallback_reason is None
         assert result.matches[0].line_number == 1
         assert result.matches[0].text == "[warn 0.850] warning: latency is high"

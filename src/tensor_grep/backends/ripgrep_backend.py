@@ -203,11 +203,16 @@ class RipgrepBackend(ComputeBackend):
                     and Path(file_path[0]).is_dir()
                 )
             )
+            # Audit HIGH: rg emits `path:count` whenever it prints the filename, which is
+            # driven by -H/--no-filename (config.with_filename/no_filename), NOT only by the
+            # multi-file heuristic. A single-file `--count -H` yielded `path:count`, hit the
+            # bare-count branch, `int()` raised, and the line was silently dropped -> false 0.
+            path_prefixed = (multi_file or config.with_filename) and not config.no_filename
             for line in lines:
                 matched_path: str | None = None
                 if config.null and "\0" in line:
                     matched_path, count_text = line.rsplit("\0", 1)
-                elif multi_file and ":" in line:
+                elif path_prefixed and ":" in line:
                     matched_path, count_text = line.rsplit(":", 1)
                 else:
                     count_text = line
