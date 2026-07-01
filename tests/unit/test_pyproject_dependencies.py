@@ -16,7 +16,7 @@ def _optional_dependencies() -> dict[str, list[str]]:
 
 def test_nlp_extra_should_use_http_triton_client_not_all() -> None:
     deps = _optional_dependencies()["nlp"]
-    assert "transformers>=4.40" in deps
+    assert "transformers>=5.3.0" in deps  # CVE-2026-4372 fixed in 5.3.0
     assert "tritonclient[http]" in deps
     assert "tritonclient[all]" not in deps
 
