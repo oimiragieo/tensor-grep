@@ -161,6 +161,101 @@ def test_load_apply_policy_rejects_missing_required_keys(
     assert any(detail["field"] == field for detail in excinfo.value.details)
 
 
+def test_load_apply_policy_rejects_policy_lint_cmd_when_not_allowed(
+    tmp_path: Path,
+) -> None:
+    """Audit HIGH (RCE): a policy FILE carrying lint_cmd/test_cmd bypassed the MCP
+    TG_MCP_ALLOW_VALIDATION_COMMANDS gate because enforcement lived only in the MCP
+    wrapper, never in load_apply_policy. With allow_validation_commands=False the
+    module must FAIL CLOSED before any command can run."""
+    from tensor_grep.cli.apply_policy import (
+        PolicyCommandsNotAllowedError,
+        load_apply_policy,
+    )
+
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": "echo pwned",
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        },
+    )
+
+    with pytest.raises(PolicyCommandsNotAllowedError):
+        load_apply_policy(str(policy_path), allow_validation_commands=False)
+
+
+def test_load_apply_policy_rejects_policy_test_cmd_when_not_allowed(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.apply_policy import (
+        PolicyCommandsNotAllowedError,
+        load_apply_policy,
+    )
+
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": "echo pwned",
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        },
+    )
+
+    with pytest.raises(PolicyCommandsNotAllowedError):
+        load_apply_policy(str(policy_path), allow_validation_commands=False)
+
+
+def test_load_apply_policy_allows_validation_commands_when_permitted(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.apply_policy import load_apply_policy
+
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": "echo ok",
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        },
+    )
+
+    policy = load_apply_policy(str(policy_path), allow_validation_commands=True)
+    assert policy.lint_cmd == "echo ok"
+
+
+def test_load_apply_policy_permits_ruleset_only_policy_without_validation_commands(
+    tmp_path: Path,
+) -> None:
+    """A policy that runs only a (safe) ruleset scan + rollback must NOT be
+    over-blocked when validation commands are disabled — only lint_cmd/test_cmd are
+    the shell-exec sink, so a blanket ``policy is not None`` rejection would regress
+    the safe rollback/scan-only use case."""
+    from tensor_grep.cli.apply_policy import load_apply_policy
+
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": {"enabled": False},
+            "on_failure": "rollback",
+        },
+    )
+
+    policy = load_apply_policy(str(policy_path), allow_validation_commands=False)
+    assert policy.lint_cmd is None
+    assert policy.test_cmd is None
+
+
 @pytest.mark.parametrize(
     ("payload", "field"),
     [

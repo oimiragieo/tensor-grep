@@ -12,6 +12,7 @@ policy rollback).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -98,3 +99,38 @@ def test_undo_refuses_absolute_entries(tmp_path: Path) -> None:
 
     assert victim.exists()
     assert victim.read_text(encoding="utf-8") == "SECRET\n"
+
+
+@pytest.mark.parametrize(
+    "evil_id",
+    ["../escape", "../../escape", "sub/../../escape", ".."],
+)
+def test_checkpoint_dir_refuses_traversal_id(tmp_path: Path, evil_id: str) -> None:
+    """Audit HIGH: checkpoint_id itself (not just entry keys) was joined to the store
+    with no validation, so an absolute/`..` id escaped the checkpoint store."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    with pytest.raises(ValueError):
+        checkpoint_store._checkpoint_dir(root, evil_id)
+
+
+def test_load_metadata_refuses_traversal_to_external_file(tmp_path: Path) -> None:
+    """Audit HIGH: an unvalidated checkpoint_id let load_checkpoint_metadata read a
+    metadata.json OUTSIDE the checkpoint store (arbitrary metadata disclosure)."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    external = tmp_path / "external_store"
+    external.mkdir()
+    (external / "metadata.json").write_text(json.dumps({"secret": "leak"}), encoding="utf-8")
+
+    storage = checkpoint_store._checkpoint_storage_dir(root)
+    evil_id = os.path.relpath(external, storage)  # ..(/..)+/external_store
+    with pytest.raises(ValueError):
+        checkpoint_store.load_checkpoint_metadata(evil_id, str(root))
+
+
+def test_undo_refuses_traversal_checkpoint_id(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    with pytest.raises(ValueError):
+        checkpoint_store.undo_checkpoint("../../evil-ckpt", str(root))

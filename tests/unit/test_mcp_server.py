@@ -1786,6 +1786,42 @@ def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
     assert mock_execute.call_args.kwargs["policy"] == str(policy_path)
 
 
+def test_tg_rewrite_apply_gates_policy_file_validation_commands(tmp_path, monkeypatch):
+    """Audit HIGH (RCE): a policy FILE carrying lint_cmd bypassed the
+    TG_MCP_ALLOW_VALIDATION_COMMANDS gate — the 3141 guard only checked the direct
+    lint_cmd/test_cmd params, not a policy path that loads them from JSON. With the
+    gate OFF the policy's lint_cmd must be refused (code=unsupported_option) BEFORE
+    any command runs (load_apply_policy fails closed before native/command execution).
+    """
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.delenv("TG_MCP_ALLOW_VALIDATION_COMMANDS", raising=False)
+
+    policy_path = tmp_path / "apply-policy.json"
+    policy_path.write_text(
+        json.dumps({
+            "version": 1,
+            "lint_cmd": "echo pwned",
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        }),
+        encoding="utf-8",
+    )
+
+    out = mcp_server.tg_rewrite_apply(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path=str(tmp_path),
+        policy=str(policy_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "unsupported_option"
+    assert parsed["error"]["retryable"] is False
+
+
 def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
     from tensor_grep.cli import mcp_server
 

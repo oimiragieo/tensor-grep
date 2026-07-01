@@ -326,7 +326,21 @@ def _index_path(root: Path) -> Path:
 
 
 def _session_payload_path(root: Path, session_id: str) -> Path:
-    return _sessions_dir(root) / f"{session_id}.json"
+    # Audit HIGH (path traversal): session_id reaches this join from the CLI, the MCP
+    # tg_session_show/refresh tools, and the token-authenticated daemon. An absolute or
+    # `..`-shaped id resets pathlib's join and escapes the sessions dir — arbitrary .json
+    # read via get_session, destructive overwrite via refresh_session. Refuse absolute /
+    # `..` ids and assert the resolved payload path stays inside the sessions dir before
+    # any read/write. Generated ids (`session-<ts>-<root>-<hex>`) always pass.
+    candidate = Path(session_id)
+    if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+        raise ValueError(f"Refusing session id outside sessions dir: {session_id!r}")
+    sessions_dir = _sessions_dir(root)
+    sessions_dir_resolved = sessions_dir.resolve()
+    resolved = (sessions_dir / f"{session_id}.json").resolve()
+    if resolved != sessions_dir_resolved and sessions_dir_resolved not in resolved.parents:
+        raise ValueError(f"Refusing session id outside sessions dir: {session_id!r}")
+    return resolved
 
 
 def _session_root_for_payload(session_id: str, path: str = ".") -> Path:

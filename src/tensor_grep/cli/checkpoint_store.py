@@ -556,7 +556,14 @@ def _snapshot_entries(scope: _CheckpointScope) -> dict[str, bool]:
 
 
 def _checkpoint_dir(root: Path, checkpoint_id: str) -> Path:
-    return _checkpoint_storage_dir(root) / checkpoint_id
+    # Audit HIGH (path traversal): checkpoint_id reaches here from the CLI, the MCP
+    # tg_checkpoint_undo tool, and policy rollback. An absolute or `..`-shaped id would
+    # escape the checkpoint store — arbitrary metadata.json read (load_checkpoint_metadata)
+    # and, on undo, an attacker-controlled snapshot SOURCE dir. Reuse the entry-key
+    # containment guard so the id can never leave the store. Generated ids
+    # (`ckpt-<ts>-<hex>`) are plain segments and always pass.
+    storage_dir = _checkpoint_storage_dir(root)
+    return _resolve_within_root(storage_dir, storage_dir.resolve(), checkpoint_id)
 
 
 def _snapshot_path(root: Path, checkpoint_id: str) -> Path:
