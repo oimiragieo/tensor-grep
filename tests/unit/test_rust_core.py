@@ -184,6 +184,54 @@ def test_rust_limit_passthrough_forwards_previously_dropped_rg_flags(monkeypatch
     assert args[16] == [] and args[29] == []
 
 
+def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):
+    """Audit #1: if the native ripgrep bridge fails for a PCRE2 search, RustCoreBackend must FAIL
+    CLOSED (raise), never silently fall back to the Python-regex engine, which cannot preserve PCRE2
+    semantics (that would return wrong matches)."""
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def execute_ripgrep(self, *args, **kwargs):
+            raise RuntimeError("bridge boom")
+
+        def search(self, *args, **kwargs):
+            return []
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "a.log"
+    log_file.write_text("ERROR\n", encoding="utf-8")
+    with pytest.raises(BackendExecutionError, match="PCRE2"):
+        backend.search(str(log_file), "ERROR", config=SearchConfig(pcre2=True))
+
+
+def test_rust_limit_bridge_failure_records_fallback_reason(monkeypatch, tmp_path: Path):
+    """Audit #1: if the native bridge fails for a limit-flag search, the fallback must record a
+    VISIBLE fallback_reason instead of silently downgrading the flag contract to another engine."""
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def execute_ripgrep(self, *args, **kwargs):
+            raise RuntimeError("bridge boom")
+
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match=False):
+            return [(1, "ERROR line")]
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "a.log"
+    log_file.write_text("ERROR line\n", encoding="utf-8")
+    result = backend.search(str(log_file), "ERROR", config=SearchConfig(no_ignore_vcs=True))
+    assert result.routing_reason == "rust_regex"
+    assert result.fallback_reason is not None
+    assert "passthrough failed" in result.fallback_reason
+
+
 def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     monkeypatch, tmp_path: Path
 ):
