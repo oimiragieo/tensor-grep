@@ -22,6 +22,31 @@ def _write_config(tmp_path: Path, group: dict) -> str:
     return str(cfg)
 
 
+def test_extract_members_ignores_symbol_in_python_comment_line(tmp_path: Path) -> None:
+    """Audit HIGH: `# _COMMANDS = {...}` in a comment matched the declaration regex (the
+    `[^\\n=#]*` only blocked a `#` BETWEEN symbol and `=`, not one starting the line), so
+    extract_members read the comment's (wrong) member set — a false result in the very
+    CI-gating registration tool this file exists to keep honest."""
+    f = tmp_path / "mod.py"
+    f.write_text(
+        "# _COMMANDS = {'ghost'}\n_COMMANDS = {'real_a', 'real_b'}\n",
+        encoding="utf-8",
+    )
+    assert extract_members(str(f), "_COMMANDS") == {"real_a", "real_b"}
+
+
+def test_extract_members_ignores_symbol_in_rust_line_comment(tmp_path: Path) -> None:
+    """The fix must handle Rust `//` comments AND keep matching a `const SYMBOL: &[&str] =`
+    declaration whose symbol is NOT the first token — so a naive `^[ \\t]*SYMBOL` anchor is
+    insufficient (it would break real Rust registration sites)."""
+    f = tmp_path / "mod.rs"
+    f.write_text(
+        '// SYMBOLS = &["ghost"]\nconst SYMBOLS: &[&str] = &["real_a", "real_b"];\n',
+        encoding="utf-8",
+    )
+    assert extract_members(str(f), "SYMBOLS") == {"real_a", "real_b"}
+
+
 def test_entity_scoped_config_ignores_legit_asymmetry(tmp_path: Path) -> None:
     a = tmp_path / "a.py"
     a.write_text('FLAGS = {"--x", "--rank"}\n', encoding="utf-8")

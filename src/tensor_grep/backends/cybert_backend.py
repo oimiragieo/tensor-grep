@@ -8,7 +8,7 @@ import urllib.parse
 from dataclasses import replace
 from typing import Any
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.io.reader_fallback import FallbackReader
@@ -246,10 +246,19 @@ class CybertBackend(ComputeBackend):
         if config is not None and threshold > 0.0:
             classify_config = replace(config, nlp_threshold=0.0)
 
+        # Audit HIGH (silent-fallback): the old `try: classify() except Exception:
+        # heuristic()` swallowed EVERY failure (Triton down, tokenization/inference error,
+        # or an unvalidated logits-shape IndexError) into keyword-heuristic hits labeled as
+        # real CyBERT output with no signal. Use classify_with_metadata so an EXPECTED
+        # provider outage degrades gracefully WITH a fallback_reason we surface below, and
+        # re-raise a genuinely unexpected error as BackendExecutionError (per base.py's
+        # contract) so the search loop falls back to CPU visibly instead of faking success.
         try:
-            classifications = self.classify(lines, config=classify_config)
-        except Exception:
-            classifications = self._heuristic_classify(lines)
+            classifications, classify_metadata = self.classify_with_metadata(
+                lines, config=classify_config
+            )
+        except Exception as exc:
+            raise BackendExecutionError(f"CyBERT classification failed: {exc}") from exc
 
         matches: list[MatchLine] = []
         for line_number, (line, classification) in enumerate(
@@ -269,6 +278,15 @@ class CybertBackend(ComputeBackend):
             )
 
         matched_file_paths = [file_path] if matches else []
+        fallback_reason: str | None = None
+        routing_reason = "nlp_cybert"
+        if classify_metadata.get("provider_status") != "provider":
+            # Results came from the keyword heuristic, not the CyBERT model — signal the
+            # engine swap so a JSON/CLI consumer never trusts these as model confidences.
+            routing_reason = "nlp_cybert_heuristic_fallback"
+            fallback_reason = str(
+                classify_metadata.get("fallback_reason") or "CyBERT provider unavailable"
+            )
         return SearchResult(
             matches=matches,
             matched_file_paths=matched_file_paths,
@@ -276,7 +294,8 @@ class CybertBackend(ComputeBackend):
             total_files=1 if matches else 0,
             total_matches=len(matches),
             routing_backend="CybertBackend",
-            routing_reason="nlp_cybert",
+            routing_reason=routing_reason,
+            fallback_reason=fallback_reason,
         )
 
     def classify_with_metadata(
@@ -377,11 +396,30 @@ class CybertBackend(ComputeBackend):
             # Using mock np if actual np fails here
             pass
 
+        # Audit HIGH: `self.labels` is a fixed 3-entry list; a Triton model swapped for one
+        # with a different class count made `self.labels[idx]` raise an UNCAUGHT IndexError
+        # (this loop sits outside every try/except in this method). Validate the shape and
+        # degrade to the heuristic (or raise, per the caller's contract) before indexing.
+        n_labels = len(self.labels)
+        probs_shape = getattr(probs, "shape", None)
+        if probs_shape is not None and len(probs_shape) >= 1 and probs_shape[-1] != n_labels:
+            reason = (
+                f"CyBERT model returned {probs_shape[-1]} classes but "
+                f"{n_labels} labels are configured"
+            )
+            if not raise_on_provider_error:
+                return self._heuristic_classify(lines), {
+                    "provider_used": "heuristic",
+                    "provider_status": "fallback",
+                    "fallback_reason": reason,
+                }
+            raise RuntimeError(reason)
+
         for prob in probs:
             idx = int(np.argmax(prob))
             confidence = float(prob[idx])
 
-            if confidence >= threshold:
+            if confidence >= threshold and idx < n_labels:
                 results.append({"label": self.labels[idx], "confidence": confidence})
 
         return results, {

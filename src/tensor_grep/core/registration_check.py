@@ -34,7 +34,17 @@ def _declaration_re(symbol: str) -> re.Pattern[str]:
     """
     pattern = _DECL_RE_CACHE.get(symbol)
     if pattern is None:
-        pattern = re.compile(rf"(?<![\w]){re.escape(symbol)}\b[^\n=#]*(?<![!<>=])=(?!=)")
+        # Audit HIGH: the old pattern only forbade a `#` BETWEEN the symbol and the `=`, so
+        # a `# SYMBOL = ...` comment (or Rust `// SYMBOL = ...`) matched as the declaration
+        # and extract_members returned the comment's wrong member set — corrupting the very
+        # CI-gating registration tool. Anchor to line-start (re.MULTILINE) and require the
+        # line-prefix before the symbol to carry NO comment marker (`#` or `//`), while still
+        # allowing real declaration keywords (`const `/`pub `/type annotations), so a Rust
+        # `const SYMBOL: &[&str] =` — where the symbol is not the first token — still matches.
+        pattern = re.compile(
+            rf"^(?:[^\n#/]|/(?!/))*?(?<![\w]){re.escape(symbol)}\b[^\n=#]*(?<![!<>=])=(?!=)",
+            re.MULTILINE,
+        )
         _DECL_RE_CACHE[symbol] = pattern
     return pattern
 

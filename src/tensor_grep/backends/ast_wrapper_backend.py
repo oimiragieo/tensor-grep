@@ -158,7 +158,12 @@ class AstGrepWrapperBackend(ComputeBackend):
 
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
-        if not stderr and stdout.startswith("["):
+        # Audit HIGH: `stdout.startswith("[")` waived ANY nonzero exit whose stdout merely
+        # began with `[`, so a killed/OOM'd sg subprocess emitting TRUNCATED JSON was masked
+        # as a clean 0-match scan (the later json.loads then raised and was swallowed
+        # downstream). Require a COMPLETE, parseable JSON list before waiving — a truncated
+        # payload fails the parse and falls through to raise BackendExecutionError.
+        if not stderr and _stdout_is_json_payload(stdout):
             return
 
         # ast-grep exits nonzero when it cannot read an individual path (a
