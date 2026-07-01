@@ -61,3 +61,32 @@ def test_session_payload_path_allows_legit_id(tmp_path: Path) -> None:
     )
     sessions_dir_resolved = session_store._sessions_dir(root).resolve()
     assert sessions_dir_resolved in payload_path.parents
+
+
+def test_cleanup_paths_tolerate_traversal_id_without_raising(tmp_path: Path) -> None:
+    """The traversal guard raises ValueError, so cleanup paths that only caught OSError
+    would crash on a locally-tampered index.json record instead of skipping it. Both the
+    session-store prune and the daemon implicit-cleanup must degrade gracefully."""
+    from tensor_grep.cli.session_daemon import _remove_implicit_session_payload
+
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    # Must not raise even though "../../evil" is refused by _session_payload_path.
+    _remove_implicit_session_payload(str(root), "../../evil")
+
+    def _record(session_id: str) -> session_store.SessionRecord:
+        return session_store.SessionRecord(
+            version=1,
+            session_id=session_id,
+            root=str(root),
+            created_at="2026-01-01T00:00:00+00:00",
+            file_count=0,
+            symbol_count=0,
+        )
+
+    # Two records so the traversal-shaped one lands in the dropped tail and its payload
+    # unlink is attempted (records are newest-first; max_records clamps to a minimum of 1).
+    records = [_record("session-keep"), _record("../../evil")]
+    retained = session_store._prune_session_records(root, records, max_records=1)
+    assert [r.session_id for r in retained] == ["session-keep"]

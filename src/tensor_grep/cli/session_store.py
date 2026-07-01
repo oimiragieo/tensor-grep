@@ -428,7 +428,9 @@ def _prune_session_records(
     for dropped in records[limit:]:
         try:
             _session_payload_path(root, dropped.session_id).unlink(missing_ok=True)
-        except OSError:
+        except (OSError, ValueError):
+            # ValueError: a locally-tampered index.json record with a traversal-shaped
+            # id is refused by _session_payload_path — skip it rather than break pruning.
             pass
     return retained
 
