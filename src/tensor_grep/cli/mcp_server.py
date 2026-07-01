@@ -1106,8 +1106,10 @@ def execute_rewrite_apply_json(
     policy: str | None = None,
     expected_plan_digest: str | None = None,
     expected_match_count: int | None = None,
+    allow_validation_commands: bool = False,
 ) -> tuple[str, int]:
     from tensor_grep.cli.apply_policy import (
+        PolicyCommandsNotAllowedError,
         PolicyValidationError,
         evaluate_apply_policy,
         load_apply_policy,
@@ -1141,7 +1143,13 @@ def execute_rewrite_apply_json(
                 policy,
                 legacy_lint_cmd=lint_cmd,
                 legacy_test_cmd=test_cmd,
+                allow_validation_commands=allow_validation_commands,
             )
+        except PolicyCommandsNotAllowedError as exc:
+            # Audit HIGH (RCE): a policy file that carries lint_cmd/test_cmd is refused
+            # on the gate-off surface with the same code as the direct-param rejection,
+            # BEFORE any native binary or subprocess is reached.
+            return _rewrite_error(str(exc), code="unsupported_option", retryable=False), 1
         except FileNotFoundError as exc:
             return _rewrite_error(str(exc), code="not_found"), 1
         except PolicyValidationError as exc:
@@ -3160,6 +3168,10 @@ def tg_rewrite_apply(
         policy=policy,
         expected_plan_digest=expected_plan_digest,
         expected_match_count=expected_match_count,
+        # Audit HIGH (RCE): a policy file's lint_cmd/test_cmd is a shell-exec sink on
+        # the (agent-steerable) MCP boundary; gate it on the same operator opt-in as
+        # the direct lint_cmd/test_cmd params above.
+        allow_validation_commands=_mcp_validation_commands_allowed(),
     )
     return payload
 

@@ -36,6 +36,25 @@ class PolicyValidationError(ValueError):
         self.details = details
 
 
+class PolicyCommandsNotAllowedError(PolicyValidationError):
+    """A policy file defines ``lint_cmd``/``test_cmd`` (a shell-exec sink) but the
+    caller has not opted into running validation commands.
+
+    Audit HIGH (RCE): the MCP ``TG_MCP_ALLOW_VALIDATION_COMMANDS`` gate previously
+    lived only in the ``tg_rewrite_apply`` wrapper and checked the *direct* lint_cmd/
+    test_cmd arguments, so a policy JSON file that carried those commands slipped
+    past it and reached ``subprocess`` in the default (gate-off) posture. Enforcement
+    now lives here at the module boundary so every caller — not just the MCP wrapper
+    — fails closed. Trusted callers (the local CLI apply path) opt in explicitly.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "lint_cmd/test_cmd", "message": message}],
+        )
+
+
 CommandRunner = Callable[[str, str, Path, int], dict[str, object]]
 ScanRunner = Callable[[RulesetScanPolicy, Path, Path], dict[str, object]]
 
@@ -166,7 +185,18 @@ def load_apply_policy(
     *,
     legacy_lint_cmd: str | None = None,
     legacy_test_cmd: str | None = None,
+    allow_validation_commands: bool = True,
 ) -> ApplyPolicy:
+    """Load and validate an apply policy JSON file.
+
+    ``allow_validation_commands`` gates the shell-exec sink: when False, a policy
+    that defines ``lint_cmd``/``test_cmd`` fails closed with
+    :class:`PolicyCommandsNotAllowedError` before any command can run. It defaults
+    to True for the trusted local CLI path (a user who typed ``tg run --policy`` is
+    trusted). Untrusted callers — the MCP surface — MUST pass the operator's opt-in
+    (``_mcp_validation_commands_allowed()``); ``execute_rewrite_apply_json`` defaults
+    this to False so a forgetful future caller also fails closed.
+    """
     path = _resolved_path(policy_path)
     if not path.exists():
         raise FileNotFoundError(f"Policy file not found: {path}")
@@ -187,6 +217,17 @@ def load_apply_policy(
 
     lint_cmd = _coerce_optional_string(payload.get("lint_cmd"), field="lint_cmd") or legacy_lint_cmd
     test_cmd = _coerce_optional_string(payload.get("test_cmd"), field="test_cmd") or legacy_test_cmd
+
+    # Audit HIGH (RCE): fail closed before any command can run. A policy that only
+    # performs a (safe) ruleset scan / rollback has lint_cmd == test_cmd == None and
+    # is intentionally NOT blocked here — only the shell-exec sink is gated.
+    if not allow_validation_commands and (lint_cmd is not None or test_cmd is not None):
+        raise PolicyCommandsNotAllowedError(
+            "This apply policy defines lint_cmd/test_cmd, which execute a shell "
+            "command. That capability is disabled for this caller by default. On the "
+            "MCP surface, set TG_MCP_ALLOW_VALIDATION_COMMANDS=1 in the server "
+            "environment to opt in (the agent-safe edit loop does not require it)."
+        )
 
     on_failure = payload.get("on_failure")
     if not isinstance(on_failure, str) or on_failure not in _FAILURE_ACTIONS:

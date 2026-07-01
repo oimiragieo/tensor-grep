@@ -682,6 +682,9 @@ def run_command(
             lint_cmd=lint_cmd,
             test_cmd=test_cmd,
             policy=policy,
+            # Trusted local CLI: a user who typed `tg run --apply --policy` is trusted
+            # to run its lint_cmd/test_cmd (unlike the agent-steerable MCP surface).
+            allow_validation_commands=True,
         )
         _safe_stdout_line(_inject_run_json_fields(rewrite_json, "apply"))
         return exit_code
@@ -821,6 +824,9 @@ def run_command(
                 lint_cmd=lint_cmd,
                 test_cmd=test_cmd,
                 policy=policy,
+                # Trusted local CLI (interactive apply): user-invoked, so validation
+                # commands are permitted here — the MCP boundary is gated separately.
+                allow_validation_commands=True,
             )
             if exit_code != 0:
                 apply_failed = True

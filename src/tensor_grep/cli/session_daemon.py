@@ -711,7 +711,9 @@ def _remove_implicit_session_payload(path: str, session_id: str) -> None:
         _session_payload_path(root, session_id).unlink(missing_ok=True)
         records = [record for record in _load_index(root) if record.session_id != session_id]
         _write_index(root, records)
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError: a traversal-shaped session_id is refused by _session_payload_path;
+        # treat implicit cleanup as best-effort (fails closed) rather than raising.
         pass
 
 
