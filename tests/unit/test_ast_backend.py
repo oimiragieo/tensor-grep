@@ -115,8 +115,13 @@ class TestAstBackend:
         assert result is not None
         assert isinstance(result.total_matches, int)
 
-    def test_should_return_empty_result_on_invalid_ast_query(self, tmp_path, mocker):
+    def test_should_raise_on_invalid_ast_query(self, tmp_path, mocker):
+        """Audit MED: a broad `except Exception` around tree-sitter query compilation
+        silently converted an invalid/malformed AST pattern into a look-alike 0-match
+        result. It must raise BackendExecutionError so run_command surfaces a real
+        'invalid pattern' error instead of a silent 0-match (a silent-fallback sibling)."""
         from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.base import BackendExecutionError
 
         backend = AstBackend()
         mocker.patch.object(backend, "is_available", return_value=True)
@@ -144,12 +149,10 @@ class TestAstBackend:
         file_path = tmp_path / "test.py"
         file_path.write_text("def hello():\n    print('world')\n", encoding="utf-8")
 
-        result = backend.search(
-            str(file_path), "not a valid ast query", SearchConfig(ast=True, lang="python")
-        )
-
-        assert result.total_matches == 0
-        assert result.matches == []
+        with pytest.raises(BackendExecutionError):
+            backend.search(
+                str(file_path), "not a valid ast query", SearchConfig(ast=True, lang="python")
+            )
 
     def test_should_support_dict_capture_shape(self, tmp_path, mocker):
         from tensor_grep.backends.ast_backend import AstBackend
