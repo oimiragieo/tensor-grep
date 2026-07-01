@@ -261,7 +261,10 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
     if content and not lines:
         lines = [content]
     if not lines:
-        return "", "", 1
+        # Audit MED: this branch (empty content, e.g. a zero-byte file) previously returned
+        # exit 1 with NO stdout AND no stderr — a silent failure, unlike every other
+        # early-return in this function. Populate stderr with an explanatory message.
+        return "", "no content to classify (input is empty)\n", 1
 
     budgeted_lines, line_budget = _apply_classify_line_budget(lines, max_lines)
     results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
