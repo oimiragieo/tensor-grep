@@ -108,15 +108,63 @@ echo "           TENSOR-GREP LINUX/MACOS INSTALLER              "
 echo "=========================================================="
 
 # 1. Install or locate uv
-# Pin uv to an exact version for reproducible, supply-chain-safe installs: the versioned astral
-# installer downloads that exact uv release and verifies its checksum. Bump deliberately.
-# NOTE: On Linux/macOS the versioned astral installer self-verifies the downloaded uv binary before
-# use; no additional checksum step is required here (contrast: install.ps1 + uv_checksums.json).
+# Pin uv to an exact version AND verify its SHA-256 before use. We download the uv release archive
+# directly from GitHub and check it against a committed, inlined checksum table (mirrored in
+# scripts/uv_checksums.json) instead of piping the astral.sh remote installer *script* to a shell,
+# which executes an unverified remote script (audit: bring Linux/macOS to install.ps1 parity;
+# see https://github.com/astral-sh/uv/issues/13074). Bump UV_VERSION + every checksum together.
 UV_VERSION="0.11.25"
 if ! command -v uv &> /dev/null; then
-    echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION})..."
-    curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
+    echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION}, checksum-verified)..."
+    uv_os="$(uname -s)"
+    uv_machine="$(uname -m)"
+    case "${uv_os}-${uv_machine}" in
+        Linux-x86_64)              uv_triple="x86_64-unknown-linux-gnu" ;;
+        Linux-aarch64|Linux-arm64) uv_triple="aarch64-unknown-linux-gnu" ;;
+        Darwin-x86_64)             uv_triple="x86_64-apple-darwin" ;;
+        Darwin-arm64)              uv_triple="aarch64-apple-darwin" ;;
+        *)
+            echo "ERROR: unsupported platform '${uv_os}-${uv_machine}' for the pinned uv install." >&2
+            echo "Install uv ${UV_VERSION} manually (https://docs.astral.sh/uv/) and re-run." >&2
+            exit 1
+            ;;
+    esac
+    # SHA-256 of uv-<triple>.tar.gz (source of truth: scripts/uv_checksums.json). Inlined so this
+    # script self-verifies even when run via `curl ... | sh`.
+    case "${uv_triple}" in
+        x86_64-unknown-linux-gnu)  uv_expected_sha="1db18b5e76fa645a7f3865773139bdec8e2d46adbdbb35e7410b34fa8015ccd2" ;;
+        aarch64-unknown-linux-gnu) uv_expected_sha="e0e9d73f74e06a7dcd53910d5962146ab48f0af9c92cc8df33a37baa0121014d" ;;
+        x86_64-apple-darwin)       uv_expected_sha="65ff85b33212f75d34d7c0f0724aba9a742c74f62559f67dc0d6c543dc2fc52f" ;;
+        aarch64-apple-darwin)      uv_expected_sha="5fc334bb25d19806262efd1f6e7d380155c7e817d89bf426df4ba7ae873c9471" ;;
+    esac
+    uv_url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_triple}.tar.gz"
+    uv_tmp="$(mktemp -d)"
+    if ! curl -fLsS "${uv_url}" -o "${uv_tmp}/uv.tar.gz"; then
+        echo "ERROR: failed to download uv archive from ${uv_url}" >&2
+        rm -rf "${uv_tmp}"; exit 1
+    fi
+    if command -v sha256sum &> /dev/null; then
+        uv_actual_sha="$(sha256sum "${uv_tmp}/uv.tar.gz" | awk '{print $1}')"
+    else
+        uv_actual_sha="$(shasum -a 256 "${uv_tmp}/uv.tar.gz" | awk '{print $1}')"
+    fi
+    if [ "${uv_actual_sha}" != "${uv_expected_sha}" ]; then
+        echo "ERROR: uv archive checksum mismatch for ${uv_triple}." >&2
+        echo "  expected ${uv_expected_sha}" >&2
+        echo "  actual   ${uv_actual_sha}" >&2
+        rm -rf "${uv_tmp}"; exit 1
+    fi
+    tar -xzf "${uv_tmp}/uv.tar.gz" -C "${uv_tmp}"
+    mkdir -p "$HOME/.local/bin"
+    find "${uv_tmp}" -type f -name uv -exec cp {} "$HOME/.local/bin/uv" \;
+    find "${uv_tmp}" -type f -name uvx -exec cp {} "$HOME/.local/bin/uvx" \;
+    chmod +x "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx" 2>/dev/null || true
+    rm -rf "${uv_tmp}"
     export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv &> /dev/null; then
+        echo "ERROR: uv install completed but 'uv' is not on PATH ($HOME/.local/bin)." >&2
+        exit 1
+    fi
 else
     echo "[1/4] Found existing uv installation."
 fi

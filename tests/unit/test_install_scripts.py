@@ -459,12 +459,31 @@ def test_install_sh_should_refresh_tensor_grep_uv_cache_before_stable_install():
 
 
 def test_install_sh_pins_uv_version():
-    # Supply-chain: bootstrap uv via the versioned (pinned) astral installer URL, never the
-    # unpinned "latest" URL. The versioned installer fetches that exact uv release + verifies it.
+    # Supply-chain: download the pinned uv release archive directly from GitHub and verify its
+    # SHA-256 against committed, inlined checksums before use. We do NOT pipe the remote astral.sh
+    # installer script to a shell (that executes an unverified remote script); this brings Linux/
+    # macOS to install.ps1 parity (see https://github.com/astral-sh/uv/issues/13074).
     content = _read_script("scripts/install.sh")
     assert "astral.sh/uv/install.sh" not in content
+    assert "astral.sh/uv/${UV_VERSION}/install.sh" not in content
     assert 'UV_VERSION="' in content
-    assert "astral.sh/uv/${UV_VERSION}/install.sh" in content
+    assert "github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-" in content
+    for triple in (
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ):
+        assert triple in content
+    assert "sha256sum" in content or "shasum" in content
+    assert "MISMATCH" in content
+
+    # The inlined checksums must match the committed source of truth (scripts/uv_checksums.json) so
+    # the two cannot drift. Unix triples contain '-'; the arch-only keys are for install.ps1.
+    checksums = json.loads(Path("scripts/uv_checksums.json").read_text(encoding="utf-8"))
+    for key, sha in checksums.items():
+        if "-" in key.split("/", 1)[1]:
+            assert sha in content, f"install.sh missing inlined uv checksum for {key}"
 
 
 def test_install_ps1_pins_uv_version():
