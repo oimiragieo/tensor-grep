@@ -193,6 +193,7 @@ class RustCoreBackend(ComputeBackend):
             )
 
         # PCRE2 or advanced limits always route to ripgrep passthrough via Rust
+        bridge_fallback_reason: str | None = None
         if pcre2 or max_filesize or no_ignore_vcs:
             try:
                 exit_code = self.inner.execute_ripgrep(
@@ -256,9 +257,25 @@ class RustCoreBackend(ComputeBackend):
                     routing_distributed=False,
                     routing_worker_count=1,
                 )
-            except (AttributeError, Exception):
-                # Fallback to standard Python-regex path if bridge fails
-                pass
+            except Exception as exc:
+                if _is_invalid_regex_error(exc):
+                    raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
+                if pcre2:
+                    # PCRE2 semantics differ from Python `re`; the fall-through native engine cannot
+                    # preserve them, so FAIL CLOSED rather than silently returning wrong matches
+                    # through a different engine (audit #1).
+                    raise BackendExecutionError(
+                        f"PCRE2 search could not run through the native ripgrep bridge "
+                        f"({type(exc).__name__}: {exc}); refusing to fall back to an engine that "
+                        f"does not implement PCRE2 semantics."
+                    ) from exc
+                # max_filesize / no_ignore_vcs / null / sort_files: the Python-regex fallback cannot
+                # apply these, so record a VISIBLE fallback reason so routing metadata reflects the
+                # engine swap instead of a silent contract downgrade (audit #1).
+                bridge_fallback_reason = (
+                    f"native ripgrep passthrough failed ({type(exc).__name__}: {exc}); "
+                    "limit/sort flags may not be honored by the Python fallback"
+                )
 
         try:
             if count_only and not invert_match:
@@ -275,6 +292,7 @@ class RustCoreBackend(ComputeBackend):
                     routing_reason="rust_count",
                     routing_distributed=False,
                     routing_worker_count=1,
+                    fallback_reason=bridge_fallback_reason,
                 )
 
             # Support older signature and new signature smoothly
@@ -312,4 +330,5 @@ class RustCoreBackend(ComputeBackend):
             routing_reason="rust_regex",
             routing_distributed=False,
             routing_worker_count=1,
+            fallback_reason=bridge_fallback_reason,
         )

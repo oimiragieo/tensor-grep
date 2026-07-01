@@ -2866,6 +2866,20 @@ def test_native_delegation_forwards_resolved_line_number():
     assert "-n" not in auto_cmd and "-N" not in auto_cmd
 
 
+def test_uv_tool_managed_python_detection():
+    """Audit #2: `tg upgrade` must recognize a uv-tool-managed launcher so it upgrades via the
+    uv-tool front door (`uv tool install --force`) rather than `uv pip`/`pip` into the isolated tool
+    venv, which cannot upgrade it and strands the launcher at a stale version."""
+    from tensor_grep.cli.main import _is_uv_tool_managed_python
+
+    assert _is_uv_tool_managed_python("/home/james/.local/share/uv/tools/tensor-grep/bin/python")
+    assert _is_uv_tool_managed_python(
+        r"C:\Users\x\AppData\Local\uv\tools\tensor-grep\Scripts\python.exe"
+    )
+    assert not _is_uv_tool_managed_python("/usr/bin/python3")
+    assert not _is_uv_tool_managed_python(r"C:\Python312\python.exe")
+
+
 def test_search_help_should_describe_json_as_aggregate_json() -> None:
     result = CliRunner().invoke(app, ["search", "--help"])
 

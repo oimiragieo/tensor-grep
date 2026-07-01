@@ -9927,6 +9927,14 @@ def doctor(
     typer.echo(_render_doctor_payload(payload))
 
 
+def _is_uv_tool_managed_python(executable: str) -> bool:
+    """True when `executable` belongs to a `uv tool install`-managed tool venv (path under
+    `.../uv/tools/`). Such launchers live in an isolated venv that `uv pip`/`pip install` into that
+    same interpreter cannot upgrade correctly; the source-aware path is `uv tool install --force`
+    (audit #2 — matches the WSL uv-tool pin that stranded tg at a stale version)."""
+    return "/uv/tools/" in executable.replace("\\", "/").lower()
+
+
 @app.command()
 def upgrade() -> None:
     """Upgrade tensor-grep to the latest version published on PyPI."""
@@ -9942,7 +9950,7 @@ def upgrade() -> None:
             "--no-cache-dir",
             package_spec,
         ]
-        return [
+        attempts: list[tuple[str, list[str]]] = [
             (
                 "uv",
                 [
@@ -9959,6 +9967,11 @@ def upgrade() -> None:
             ),
             ("pip", pip_cmd),
         ]
+        # A uv-tool-managed launcher must be upgraded via the uv-tool front door, not `uv pip`/`pip`
+        # into its isolated interpreter — try it first when detected (audit #2).
+        if _is_uv_tool_managed_python(sys.executable):
+            attempts.insert(0, ("uv-tool", ["uv", "tool", "install", "--force", package_spec]))
+        return attempts
 
     def _run_upgrade(
         attempts: list[tuple[str, list[str]]],
