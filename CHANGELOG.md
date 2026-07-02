@@ -1,6 +1,76 @@
 # CHANGELOG
 
 
+## v1.17.24 (2026-07-02)
+
+### Bug Fixes
+
+- Session/checkpoint round-3 security (symlink disclosure, pre-auth daemon DoS, 0600 temp window)
+  ([#321](https://github.com/oimiragieo/tensor-grep/pull/321),
+  [`a0cda52`](https://github.com/oimiragieo/tensor-grep/commit/a0cda527765b9140b4bdc83061204859829c57d6))
+
+* fix: don't follow symlinks when snapshotting/restoring checkpoints (round-3 SEC)
+
+create_checkpoint followed symlinks, copying the CONTENT of files OUTSIDE the checkpoint root into
+  the repo's snapshot (out-of-root disclosure; could re-materialize into the tree on undo).
+  Multi-site fix (per thinktank): _filesystem_snapshot_entries now walks with
+  os.walk(followlinks=False) and skips symlinked files (no descent into symlinked dirs), and all
+  three copy sites (create snapshot, undo staging, undo restore) use follow_symlinks=False.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: bound pre-auth daemon reads + create sensitive temp files 0600 (round-3 SEC)
+
+COR#2 (pre-auth DoS): _SessionDaemonHandler.handle read one request line with an unbounded
+  self.rfile.readline() BEFORE the token check, so a hostile local client could stream unbounded
+  bytes with no newline (memory exhaustion) or connect and stall (pin a worker thread) — all
+  unauthenticated. Extract a bounded, timeout-safe _read_bounded_request_line (reads max_bytes+1,
+  refuses over-cap / empty / read error) and set a 30s handler socket timeout. Session requests are
+  small JSON, cap is 1 MiB.
+
+COR#4 (permission window): _write_json_atomic wrote the temp via write_text (default umask perms,
+  world-readable) and THEN chmod'd to the requested mode — a window where the sensitive file (e.g.
+  the 0600 daemon token) was readable by other local users. Create the temp AT the restrictive mode
+  via os.open(O_CREAT|O_EXCL, mode) so it is never briefly world-readable; O_EXCL also refuses a
+  pre-existing temp/symlink. The default-mode path (index/session payloads) is unchanged.
+
+TDD: 7 new tests (bounded-read accept/refuse-oversized/empty/read-error, handler timeout;
+  atomic-write create-mode/final-mode-posix/default-unchanged). Full session+checkpoint sweep 166
+  passed, 1 skipped; ruff + mypy clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Record push-race + Windows dev gotchas so agents don't re-learn them
+  ([#320](https://github.com/oimiragieo/tensor-grep/pull/320),
+  [`50da443`](https://github.com/oimiragieo/tensor-grep/commit/50da4430c4d8a3e6bd1922a6680e4475e9774512))
+
+Two AGENTS.md additions + a CLAUDE.md pointer, capturing lessons that each cost a real cycle:
+
+- Push Discipline: correct the "docs/chore PRs can interleave safely" claim. The real publish is the
+  `Semantic Release` job in ci.yml and it runs ~6 min (native-asset compile); merging ANYTHING to
+  main during that window — even a no-release docs PR — rejects the in-flight release's push (`!
+  [rejected] main -> main`). Receipt: v1.17.23 (#318) failed to publish when the #319 docs PR merged
+  mid-run. Self-heals on the next push (tag-derived); don't panic-rerun. Diagnose by decoding the
+  job result, not the traceback.
+
+- New "Local Dev Gotchas (Windows, hard-won)" section: backticks in `git commit -m` run command
+  substitution (use -F/heredoc); cargo/rustc off PATH + a "hanging" Rust build is slow LTO that
+  finishes; verify FFI/bridge changes against the REAL extension not mocks; apply post-merge fixes
+  by SYMBOL not line number; a dependency upper-cap silently downgrades the whole install on a newer
+  Python; Windows symlink tests must skip on OSError; stray `nul` is a 2>nul artifact; CRLF
+  false-alarms bare `ruff format --check`.
+
+Docs-only; no release. Governance test suite green (43 passed).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.23 (2026-07-02)
 
 ### Bug Fixes
