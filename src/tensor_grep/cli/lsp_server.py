@@ -98,6 +98,40 @@ def _resolve_repo_root(path: Path) -> Path:
     return path.parent.resolve()
 
 
+def _path_within_root(path: str | Path, root: Path) -> bool:
+    """Whether ``path`` resolves inside (or is) ``root`` — used to confine LSP edits."""
+    try:
+        target = Path(path).resolve()
+    except (OSError, ValueError):
+        return False
+    root_resolved = root.resolve()
+    return target == root_resolved or root_resolved in target.parents
+
+
+def _uri_within_root(uri: str, root: Path) -> bool:
+    try:
+        return _path_within_root(_uri_to_path(uri), root)
+    except (OSError, ValueError):
+        return False
+
+
+def _workspace_edit_target_uris(result: dict[str, Any]) -> list[str]:
+    """Collect every edited document URI from an external provider's WorkspaceEdit response
+    (both the ``changes`` map and the ``documentChanges`` list) so they can be confined."""
+    uris: list[str] = []
+    changes = result.get("changes")
+    if isinstance(changes, dict):
+        uris.extend(str(key) for key in changes)
+    document_changes = result.get("documentChanges")
+    if isinstance(document_changes, list):
+        for entry in document_changes:
+            if isinstance(entry, dict):
+                text_document = entry.get("textDocument")
+                if isinstance(text_document, dict) and text_document.get("uri"):
+                    uris.append(str(text_document["uri"]))
+    return uris
+
+
 def _invalidate_repo_map_cache(ls: TensorGrepLSPServer, uri: str) -> None:
     try:
         repo_root = _resolve_repo_root(_uri_to_path(uri))
@@ -671,6 +705,9 @@ def _workspace_edit_for_symbol(
     if resolved is None:
         return None
     symbol, _ = resolved
+    # Audit MED (edit-outside-workspace): confine every rename edit — external provider OR
+    # native — to the resolved workspace root, so a rename can never write to a file outside it.
+    workspace_root = _resolve_repo_root(_uri_to_path(uri))
     if ls.provider_mode != "native":
         deadline_monotonic = repo_map._lsp_operation_deadline()
         client = _external_client_for_uri(ls, uri, deadline_monotonic=deadline_monotonic)
@@ -694,10 +731,14 @@ def _workspace_edit_for_symbol(
             except LSPTransportError:
                 result = None
             if isinstance(result, dict) and result:
-                try:
-                    return WorkspaceEdit(**result)
-                except Exception:
-                    pass
+                edit_uris = _workspace_edit_target_uris(result)
+                if edit_uris and all(
+                    _uri_within_root(edit_uri, workspace_root) for edit_uri in edit_uris
+                ):
+                    try:
+                        return WorkspaceEdit(**result)
+                    except Exception:
+                        pass
     current_repo_map = _get_repo_map(ls, uri)
     defs_payload = repo_map.build_symbol_defs_from_map(current_repo_map, symbol)
     refs_payload = repo_map.build_symbol_refs_from_map(current_repo_map, symbol)
@@ -707,6 +748,8 @@ def _workspace_edit_for_symbol(
 
     document_changes: list[TextDocumentEdit] = []
     for current_file, entries in sorted(entries_by_file.items()):
+        if not _path_within_root(current_file, workspace_root):
+            continue  # never emit an edit for a file outside the workspace root
         edits: list[TextEdit] = []
         seen_ranges: set[tuple[int, int, int, int]] = set()
         for entry in sorted(
