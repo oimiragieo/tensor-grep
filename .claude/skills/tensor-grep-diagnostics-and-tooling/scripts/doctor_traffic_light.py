@@ -72,7 +72,7 @@ KNOWN_LAUNCHER_KINDS = {
 
 
 class Check:
-    __slots__ = ("name", "status", "detail")
+    __slots__ = ("detail", "name", "status")
 
     def __init__(self, name: str, status: str, detail: str) -> None:
         self.name = name
@@ -228,7 +228,9 @@ def build_checklist(payload: dict[str, Any]) -> list[Check]:
             )
         )
     else:
-        checks.append(Check("lsp", "INFO", "disabled (ran with --no-lsp / doctor default probe skipped)"))
+        checks.append(
+            Check("lsp", "INFO", "disabled (ran with --no-lsp / doctor default probe skipped)")
+        )
 
     ast_grep = payload.get("ast_grep") if isinstance(payload.get("ast_grep"), dict) else {}
     checks.append(
@@ -269,7 +271,9 @@ def render_human(checks: list[Check], *, source: str) -> str:
     lines = [f"tg doctor traffic light -- source: {source}"]
     width = max((len(c.name) for c in checks), default=0)
     for check in checks:
-        lines.append(f"{glyph.get(check.status, '[????]')} {check.name.ljust(width)}  {check.detail}")
+        lines.append(
+            f"{glyph.get(check.status, '[????]')} {check.name.ljust(width)}  {check.detail}"
+        )
     fails = [c for c in checks if c.status == "FAIL"]
     warns = [c for c in checks if c.status == "WARN"]
     if fails:
@@ -297,15 +301,23 @@ def main(argv: list[str] | None = None) -> int:
             "Supplements, does not replace, scripts/agent_readiness.py and `tg dogfood`."
         )
     )
-    parser.add_argument("--root", type=Path, default=Path("."), help="cwd for the doctor subprocess.")
-    parser.add_argument("--tg-bin", default="tg", help="tg executable to invoke (default: tg on PATH).")
+    parser.add_argument(
+        "--root", type=Path, default=Path("."), help="cwd for the doctor subprocess."
+    )
+    parser.add_argument(
+        "--tg-bin", default="tg", help="tg executable to invoke (default: tg on PATH)."
+    )
     parser.add_argument(
         "--with-lsp",
         action="store_true",
         help="Include LSP provider probes (slower; default runs --no-lsp for speed).",
     )
-    parser.add_argument("--timeout", type=float, default=30.0, help="Subprocess timeout in seconds.")
-    parser.add_argument("--json", action="store_true", help="Print the JSON summary instead of a table.")
+    parser.add_argument(
+        "--timeout", type=float, default=30.0, help="Subprocess timeout in seconds."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Print the JSON summary instead of a table."
+    )
     parser.add_argument(
         "--output", type=Path, default=None, help="Also write the JSON summary to this path."
     )
@@ -356,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     return 1 if summary["overall"] == "FAIL" else 0
 
