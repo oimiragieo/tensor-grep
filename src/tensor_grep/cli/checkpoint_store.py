@@ -532,19 +532,25 @@ def _git_snapshot_entries(root: Path) -> dict[str, bool]:
 
 def _filesystem_snapshot_entries(root: Path) -> dict[str, bool]:
     entries: dict[str, bool] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_dir():
-            if path.name in _NON_GIT_IGNORED_DIRS:
+    # Audit HIGH (symlink disclosure): os.walk with followlinks=False (the default) does NOT
+    # descend symlinked directories, so a symlink pointing OUTSIDE the checkpoint root cannot pull
+    # out-of-root file CONTENT into the snapshot. Symlinked files are skipped too — a checkpoint
+    # restores content, and copying a link's target would disclose out-of-root data (and could
+    # re-materialize it into the tree on undo). rglob previously followed symlinked dirs.
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(name for name in dirnames if name not in _NON_GIT_IGNORED_DIRS)
+        for filename in sorted(filenames):
+            full = Path(dirpath) / filename
+            if full.is_symlink():
                 continue
-            continue
-        try:
-            relative = path.relative_to(root)
-        except ValueError:
-            continue
-        if any(part in _NON_GIT_IGNORED_DIRS for part in relative.parts):
-            continue
-        entries[relative.as_posix()] = True
-    return entries
+            try:
+                relative = full.relative_to(root)
+            except ValueError:
+                continue
+            if any(part in _NON_GIT_IGNORED_DIRS for part in relative.parts):
+                continue
+            entries[relative.as_posix()] = True
+    return dict(sorted(entries.items()))
 
 
 def _snapshot_entries(scope: _CheckpointScope) -> dict[str, bool]:
@@ -614,7 +620,9 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         source = root / rel_path
         destination = snapshot_dir / rel_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        # follow_symlinks=False: store a symlink AS a link, never copy its (possibly
+        # out-of-root) target content into the snapshot (audit HIGH — symlink disclosure).
+        shutil.copy2(source, destination, follow_symlinks=False)
 
     result = CheckpointCreateResult(
         checkpoint_id=checkpoint_id,
@@ -1009,7 +1017,9 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 staged = staging_root / Path(rel_path)
                 staged.parent.mkdir(parents=True, exist_ok=True)
                 # This copy is safe: source existence was verified in pre-flight.
-                shutil.copy2(source, staged)
+                # follow_symlinks=False: a stored symlink stays a link and is never followed to
+                # re-materialize out-of-root content on undo (audit HIGH — symlink disclosure).
+                shutil.copy2(source, staged, follow_symlinks=False)
                 staging_pairs.append((staged, target))
                 restored_files += 1
 
@@ -1052,7 +1062,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                         prior_bytes = None
 
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(staged, target)
+                shutil.copy2(staged, target, follow_symlinks=False)
                 if prior_bytes is not None:
                     committed_overwrites.append((target, prior_bytes))
 

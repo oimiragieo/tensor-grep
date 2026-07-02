@@ -58,6 +58,12 @@ _DAEMON_START_LOCK_STALE_SECONDS = _DAEMON_START_TIMEOUT_SECONDS * 2
 # at startup and written to daemon.json with 0600 perms; clients echo it back on every request.
 _DAEMON_TOKEN_FIELD = "token"
 _DAEMON_METADATA_MODE = 0o600
+# audit (round-3 pre-auth DoS): the handler reads one request line from an UNTRUSTED client
+# before the token check. An unbounded readline() lets a hostile local client stream bytes with
+# no newline and exhaust daemon memory, and a silent/slow client can pin a worker thread forever.
+# Bound the read (session requests are small JSON) and time out the connection.
+_MAX_DAEMON_REQUEST_BYTES = 1 * 1024 * 1024  # 1 MiB pre-auth request cap
+_DAEMON_HANDLER_TIMEOUT_SECONDS = 30.0  # socket read timeout for a single request
 # audit I7: bound daemon lifetime so a forgotten daemon does not linger forever. Either an idle
 # stretch (no requests) or a hard max uptime triggers a cooperative self-shutdown. Both are
 # env-configurable; non-positive values disable the corresponding limit.
@@ -904,10 +910,36 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
         return hmac.compare_digest(provided, self.token)
 
 
+def _read_bounded_request_line(
+    rfile: Any, max_bytes: int = _MAX_DAEMON_REQUEST_BYTES
+) -> str | None:
+    """Read one request line from an untrusted client, bounded to ``max_bytes``.
+
+    audit (round-3 pre-auth DoS): ``rfile.readline()`` with no size argument buffers the
+    entire line into memory before the caller can authenticate, so a hostile local client
+    can stream unbounded bytes with no newline and exhaust the daemon. Reading ``max_bytes + 1``
+    caps the allocation, and a line that exceeds the cap (or a read that errors/times out) is
+    refused as ``None`` before any parse or token check. Returns the decoded, stripped line, or
+    ``None`` when the client sent nothing, exceeded the cap, or the read failed.
+    """
+    try:
+        raw: bytes = rfile.readline(max_bytes + 1)
+    except (TimeoutError, OSError):
+        return None
+    if not raw or len(raw) > max_bytes:
+        return None
+    return raw.decode("utf-8", errors="replace").strip()
+
+
 class _SessionDaemonHandler(socketserver.StreamRequestHandler):
+    # audit (round-3 pre-auth DoS): time out a silent/slow client so it cannot pin a worker
+    # thread indefinitely before authenticating. StreamRequestHandler.setup() applies this via
+    # connection.settimeout().
+    timeout = _DAEMON_HANDLER_TIMEOUT_SECONDS
+
     def handle(self) -> None:
         server = cast(_ThreadedSessionDaemon, self.server)
-        line = self.rfile.readline().decode("utf-8").strip()
+        line = _read_bounded_request_line(self.rfile)
         if not line:
             return
         response: dict[str, Any]
