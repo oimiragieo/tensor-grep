@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.17.21 (2026-07-02)
+
+### Bug Fixes
+
+- Silent-output + scope correctness in backends/sidecar (audit MED batch)
+  ([#315](https://github.com/oimiragieo/tensor-grep/pull/315),
+  [`8ab4238`](https://github.com/oimiragieo/tensor-grep/commit/8ab4238ffa0c1e58aa2bb8f9882407b25285d6f3))
+
+* fix: forward rg sort flags in json mode + guard empty path list (audit ranks 9,13)
+
+rank 9: --sort/--sortr/--sort-files change result ORDER and rg honors them with --json, but they
+  were gated behind not-json_mode; search() always uses json_mode so the ordering was silently
+  dropped. Forward them unconditionally.
+
+rank 13: an explicitly-empty file_path list left rg with zero path args -> full recursive CWD scan.
+  Guard search() to return an empty result for an empty list.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: raise on invalid AST query instead of silent 0-match (audit rank 10)
+
+A broad except around tree-sitter query compilation converted a malformed AST node-type pattern into
+  a look-alike 0-match result with no logging (silent-fallback sibling). Raise BackendExecutionError
+  per base.py's contract so run_command reports a real invalid-pattern error. Updated the test that
+  asserted the old silent-empty behavior.
+
+* fix: emit diagnostic when classifying empty content (audit sidecar:263)
+
+Classifying empty content (e.g. a zero-byte file) returned exit 1 with no stdout AND no stderr - a
+  silent failure unlike every other early-return in _classify_payload. Populate stderr with an
+  explanatory message.
+
+* style: prefix unused stdout unpack in sidecar empty-content test (RUF059)
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.17.20 (2026-07-02)
 
 ### Bug Fixes
