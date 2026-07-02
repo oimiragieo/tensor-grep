@@ -157,3 +157,27 @@ def test_create_checkpoint_does_not_disclose_symlink_target(tmp_path: Path) -> N
     for path in snapshot.rglob("*"):
         if path.is_file() and not path.is_symlink():
             assert "SECRET-OUT-OF-ROOT" not in path.read_text(encoding="utf-8", errors="ignore")
+
+
+def test_create_checkpoint_prunes_to_retention_cap(tmp_path: Path, monkeypatch) -> None:
+    """Round-4 DoS: the checkpoint store had no retention cap, so every `tg checkpoint create`
+    copied the whole scope into a new snapshot dir with unbounded disk growth. Retain only the
+    newest TG_CHECKPOINT_MAX; drop older checkpoints (metadata + snapshot) entirely."""
+    monkeypatch.setenv("TG_CHECKPOINT_MAX", "3")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "f.py").write_text("x\n", encoding="utf-8")
+
+    ids: list[str] = []
+    for i in range(6):
+        (root / "f.py").write_text(f"x{i}\n", encoding="utf-8")
+        ids.append(checkpoint_store.create_checkpoint(str(root)).checkpoint_id)
+
+    records = checkpoint_store._load_index(root)
+    assert len(records) == 3, "index must be bounded to TG_CHECKPOINT_MAX"
+    assert {r.checkpoint_id for r in records} == set(ids[-3:]), "keep the 3 newest"
+
+    for dropped in ids[:-3]:
+        assert not checkpoint_store._checkpoint_dir(root, dropped).exists()  # snapshot removed
+    for kept in ids[-3:]:
+        assert checkpoint_store._checkpoint_dir(root, kept).exists()

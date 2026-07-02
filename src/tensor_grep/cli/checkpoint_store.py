@@ -26,6 +26,10 @@ _DISCOVERY_CACHE_VERSION = 2
 _DISCOVERY_MAX_DEPTH = 6
 _DISCOVERY_MAX_DIRECTORIES = 10_000
 _DISCOVERY_CACHE_TTL_SECONDS = 300.0
+# round-4 DoS: bound on-disk checkpoint retention. Each checkpoint copies the WHOLE scope into a
+# new snapshot dir, so an uncapped store grows without limit. Keep only the newest N.
+_CHECKPOINT_MAX_ENV = "TG_CHECKPOINT_MAX"
+_DEFAULT_CHECKPOINT_MAX = 64
 _NON_GIT_IGNORED_DIRS = {
     ".git",
     ".hg",
@@ -603,6 +607,42 @@ def _write_checkpoint_metadata(
     _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload)
 
 
+def _configured_checkpoint_max() -> int:
+    raw = os.environ.get(_CHECKPOINT_MAX_ENV)
+    if raw is None:
+        return _DEFAULT_CHECKPOINT_MAX
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_CHECKPOINT_MAX
+    return value if value > 0 else _DEFAULT_CHECKPOINT_MAX
+
+
+def _prune_checkpoint_records(
+    root: Path,
+    records: list[CheckpointRecord],
+    *,
+    max_records: int | None = None,
+) -> list[CheckpointRecord]:
+    """Bound on-disk checkpoint retention (round-4 DoS).
+
+    Keep at most ``max_records`` newest records (``records`` must already be newest-first). Each
+    dropped checkpoint's entire directory (metadata.json + the full snapshot copy) is removed so
+    disk usage stays bounded — an uncapped store grows by ~one full scope copy per checkpoint.
+    """
+    limit = _configured_checkpoint_max() if max_records is None else max(1, int(max_records))
+    if len(records) <= limit:
+        return records
+    retained = records[:limit]
+    for dropped in records[limit:]:
+        try:
+            shutil.rmtree(_checkpoint_dir(root, dropped.checkpoint_id), ignore_errors=True)
+        except (OSError, ValueError):
+            # ValueError: a traversal-shaped id in a tampered index is refused by _checkpoint_dir.
+            pass
+    return retained
+
+
 def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     scope = _detect_checkpoint_scope(Path(path))
     root = scope.root
@@ -653,6 +693,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
             file_count=len(entries),
         ),
     )
+    records = _prune_checkpoint_records(root, records)
     _write_index(root, records)
     _prime_bounded_discovery_caches_for_root(root)
     return result
