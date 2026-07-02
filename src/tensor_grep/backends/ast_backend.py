@@ -11,7 +11,7 @@ import os
 import re
 from pathlib import Path
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -696,14 +696,15 @@ class AstBackend(ComputeBackend):
 
         try:
             query = self._get_query(parser, lang, pattern)
-        except Exception:
-            return SearchResult(
-                matches=[],
-                total_files=0,
-                total_matches=0,
-                routing_backend="AstBackend",
-                routing_reason="ast-native",
-            )
+        except Exception as exc:
+            # Audit MED: a broad `except Exception` here converted a malformed/misspelled AST
+            # node-type pattern into a look-alike 0-match result with zero logging — a
+            # silent false negative (sibling of the SILENT-FALLBACK class). Raise per base.py's
+            # contract so run_command's except-BackendExecutionError handler reports a real
+            # "invalid pattern" error instead of "0 matches".
+            raise BackendExecutionError(
+                f"AST query compilation failed (invalid pattern for language {lang!r}?): {exc}"
+            ) from exc
 
         matches = []
         seen_lines = set()

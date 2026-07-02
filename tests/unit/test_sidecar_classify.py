@@ -5,6 +5,20 @@ import types
 from typer.testing import CliRunner
 
 
+def test_sidecar_classify_empty_content_reports_diagnostic(monkeypatch):
+    """Audit MED: classifying empty content returned exit 1 with NO stdout AND no stderr —
+    zero diagnostic, unlike every other early-return branch in _classify_payload. It must
+    populate stderr so a caller (e.g. classifying a zero-byte log) gets a real message."""
+    from tensor_grep.sidecar import _classify_payload
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    _stdout, stderr, exit_code = _classify_payload(["--format", "json"], {"content": ""})
+
+    assert exit_code == 1
+    assert stderr.strip()  # a non-empty explanatory message, not a silent failure
+
+
 def test_sidecar_classify_defaults_to_fast_local_heuristics(monkeypatch):
     from tensor_grep.sidecar import _classify_payload
 

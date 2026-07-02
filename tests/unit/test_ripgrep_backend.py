@@ -414,6 +414,44 @@ def test_count_single_file_without_filename_parses_bare_count():
     assert result.total_matches == 5
 
 
+def test_should_forward_sort_flags_in_json_mode():
+    """Audit MED: --sort/--sortr/--sort-files change RESULT ORDER and rg honors them with
+    --json, but they were gated behind `not json_mode` — and search() always uses json_mode,
+    so the requested ordering was silently dropped."""
+    backend = RipgrepBackend()
+    config = SearchConfig(sort_by="path")
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result
+        ) as run,
+    ):
+        backend.search("test.log", "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--sort" in cmd and "path" in cmd
+
+
+def test_empty_file_path_list_returns_empty_not_cwd_scan():
+    """Audit MED: an explicitly-empty file_path list means 'no candidate files'. Without a
+    guard, _append_search_paths no-ops and rg runs with zero path args -> a full recursive
+    CWD scan (scope-widening footgun), instead of an empty search."""
+    backend = RipgrepBackend()
+
+    with patch("tensor_grep.backends.ripgrep_backend.run_subprocess") as run:
+        result = backend.search([], "ERROR", config=SearchConfig())
+
+    run.assert_not_called()  # no path-less rg command emitted
+    assert result.total_matches == 0
+    assert result.total_files == 0
+
+
 def test_passthrough_should_forward_count_flag_and_exit_code():
     backend = RipgrepBackend()
     config = SearchConfig(count=True, no_ignore=True)
