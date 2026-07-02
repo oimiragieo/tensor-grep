@@ -16,6 +16,11 @@ Claude Code guidance for the **tensor-grep** repository.
   building.
 - **Backend Fail-Closed Contract** — raise `BackendExecutionError` on failure; never return an empty
   result or silently swap engines for a contract flag (e.g. `--pcre2`).
+- **Security Hardening Patterns (Round-3 audit lens)** — four sweep targets when touching those areas:
+  symlink-follow disclosure (no `followlinks`); pre-auth unbounded-read DoS (bound + timeout before
+  auth); atomic-write permission window (`os.open(O_CREAT\|O_EXCL, mode)`, not write-then-chmod); and
+  native-argv flag injection (`--` sentinel before user positionals; list-argv blocks shell but not
+  flag injection — CWE-88 / the MCP-276 CVE class).
 - **Push Discipline / the push-race** — the real publish is the `Semantic Release` job in `ci.yml`, and
   it runs ~6 min (native-asset compile). Merging *anything* onto `main` during that window — even a
   no-release `docs:`/`chore:` PR — rejects the in-flight release's push (`! [rejected] main -> main`).

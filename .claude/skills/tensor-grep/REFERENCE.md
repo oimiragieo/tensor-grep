@@ -86,11 +86,11 @@ tg session blast-radius SESSION_ID [PATH] [SYMBOL]        # cached-session blast
 tg session blast-radius-render SESSION_ID [PATH] [SYMBOL] # prompt-ready cached blast radius
 tg session blast-radius-plan SESSION_ID [PATH] [SYMBOL]   # cached blast-radius planning bundle
 tg session serve SESSION_ID [PATH]   # serve repeated requests from a single session
-tg session daemon                    # run and inspect the warm localhost session daemon
+tg session daemon start|status|stop  # manage the warm localhost session daemon (sub-group; needs a subcommand)
 ```
 
 Use the session-scoped variants (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) in place of the top-level equivalents when working in a repeated-edit loop across invocations. The `session_id` comes from `tg session open --json` and is the required first argument for every subcommand except `open`/`list`/`daemon`. Refresh with `tg session refresh SESSION_ID` after non-trivial file changes.
 
 ## Known Issues
 
-**Whole-repo search hang** — `tg search PATTERN` with no path (or `--glob` without a path prefix) hangs ~600 s then errors; tg's own index dirs and vendored benchmark trees are not excluded from the scan. WORKAROUND: always supply a path — `tg search PATTERN C:\repo` completes in ~0.4 s.
+**Whole-repo search is slow** — `tg search PATTERN` with no path (or `--glob` without a path prefix) **fails fast after ~60 s** (`TG_RG_TIMEOUT_SECONDS` default, lowered from 600 s in #288) with a scope-to-a-path hint; full-tree search is slow regardless because tg's own index dirs and vendored benchmark trees aren't excluded. WORKAROUND: always supply a path — `tg search PATTERN C:\repo` completes in ~0.4 s.
