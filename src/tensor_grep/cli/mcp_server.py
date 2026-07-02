@@ -1457,7 +1457,6 @@ def tg_rulesets() -> str:
     return _inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
 
 
-@mcp.tool()  # type: ignore
 def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
     """Resolve an MCP-supplied write path and refuse anything outside ``anchor`` (round-4).
 
@@ -1476,6 +1475,7 @@ def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
     return resolved
 
 
+@mcp.tool()  # type: ignore
 def tg_ruleset_scan(
     ruleset: str,
     path: str = ".",
