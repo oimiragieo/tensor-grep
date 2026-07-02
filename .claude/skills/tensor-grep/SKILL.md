@@ -62,7 +62,7 @@ When you add an entity that must be registered in multiple places (a command, a 
 
 1. **Blast radius** — `tg callers PATH SYMBOL --json` lists every call site (file:line). On a real billing repo it surfaced 2 webhook handlers + 1 reconcile cron in ~1s — a 10-minute grep-and-read became a one-second decision.
    When the JSON has `"result_incomplete": true`, the call-site list was TRUNCATED by a scan/output cap — treat coverage as partial; do not conclude unlisted sites are safe. Human mode emits a loud stderr caveat.
-2. **Pattern bugs** — `tg scan PATH --config RULESET` runs the AST structural rules across those sites (see `tg rulesets` for available rule packs).
+2. **Pattern bugs** — `tg scan PATH --ruleset RULESET` runs a built-in security/compliance rule pack across those sites (see `tg rulesets` for pack names). `--config sgconfig.yml` and `--rule FILE` are separate options for a custom ast-grep config or a single rule file — not for built-in packs.
 3. **Diagnostics** — `tg doctor --with-lsp`.
 
 For registration-completeness specifically: `tg callers PATH REGISTRATION_FUNCTION` lists *callable* registrations — but the call graph can't see set/list/decorator registrations (allow-lists, `@router.post`, dispatch tables), which are often the missed site, so grep / `tg scan` those too. Your new entry must appear in ALL sites. (General principle: `verify-plan-against-code` Hard Rule 6; call-graph blind spots: `tensor-grep-code-audit` P7.)
@@ -87,7 +87,7 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Whole-repo search hang.** `tg search PATTERN` with no path (or `tg search --glob X -l` without a scoped path) hangs ~600 s then errors — tg's own index dirs (`.tensor-grep/`, `_tg_refs/`, `.tg_semantic_index/`) and vendored `benchmarks/external_repos/` are not auto-excluded and hit the default `TG_RG_TIMEOUT_SECONDS=600`. WORKAROUND: always scope to a path — `tg search PATTERN C:\repo` completes in ~0.4 s. Fix planned (own-dir excludes + fail-fast timeout + trigram-hybrid index).
+**Whole-repo search is slow.** `tg search PATTERN` with no path (or `tg search --glob X -l` without a scoped path) now **fails fast after ~60 s** (`TG_RG_TIMEOUT_SECONDS` default, lowered from 600 s in #288) with an actionable stderr hint to scope to a path or raise the env var. Full-tree search is still slow even before the timeout because tg's own index dirs (`.tensor-grep/`, `_tg_refs/`, `.tg_semantic_index/`) and vendored `benchmarks/external_repos/` aren't excluded. WORKAROUND: always scope to a path — `tg search PATTERN C:\repo` completes in ~0.4 s. Remaining planned fix: trigram-hybrid index (own-dir excludes were tried in #288 and didn't fully resolve full-tree speed).
 
 ## Provider Modes
 
