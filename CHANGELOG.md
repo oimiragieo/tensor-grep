@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.17.27 (2026-07-02)
+
+### Bug Fixes
+
+- Confine MCP write-tool paths to a per-tool anchor (round-4 arbitrary write, HIGH)
+  ([#327](https://github.com/oimiragieo/tensor-grep/pull/327),
+  [`0dc6618`](https://github.com/oimiragieo/tensor-grep/commit/0dc6618da69765d31fc35d5241b16eadb623df28))
+
+* fix: confine MCP write-tool paths to a per-tool anchor (round-4 arbitrary write, HIGH)
+
+tg_ruleset_scan (write_baseline / write_suppressions) and tg_review_bundle_create (output_path)
+  forwarded an LLM/attacker-supplied path straight to disk with NO confinement — an
+  arbitrary-file-write primitive reachable from any MCP client (write to /etc/cron.d, ~/.bashrc, a
+  startup script, etc.).
+
+Fix: a `_confine_write_path(candidate, anchor, label)` helper resolves the path (relative joins the
+  anchor; `..` and parent symlinks normalized) and raises ValueError unless the result is the anchor
+  or a descendant — fail closed. Wired in BEFORE any scan/write: tg_ruleset_scan confines both write
+  paths to the scan root; tg_review_bundle_create confines output_path to cwd (the project
+  boundary). An escape returns an `invalid_input` error and writes nothing.
+
+TDD: 3 new tests (helper refuses relative + absolute escape, allows within-anchor; each tool fails
+  closed on an escaping path with no file written). 13/13 (incl. 10 existing ruleset/review-bundle
+  tests); ruff + mypy clean. Round-4 #29 slice-2.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: restore @mcp.tool() on tg_ruleset_scan (decorator split by the confinement helper)
+
+Inserting _confine_write_path directly above tg_ruleset_scan orphaned the `@mcp.tool()` decorator
+  onto the helper — so _confine_write_path was wrongly registered as an MCP tool and tg_ruleset_scan
+  lost its registration. Caught by test_tg_mcp_capabilities_registry_covers_public_tools (which my
+  earlier -k subset did not run — lesson: run the full file, not a filtered subset, before pushing).
+
+Move the decorator back to tg_ruleset_scan; the private helper is undecorated. Full
+  tests/unit/test_mcp_server.py: 132 passed. ruff + mypy clean.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.26 (2026-07-02)
 
 ### Bug Fixes
