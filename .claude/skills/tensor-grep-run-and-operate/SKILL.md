@@ -297,7 +297,7 @@ only when you own that binary.
 | `.tensor-grep/sessions/` | `index.json` + per-session repo-map payloads | `tg session open` | No — `/.tensor-grep/` is gitignored (`.gitignore:51`) |
 | `.tensor-grep/checkpoints/` | `index.json`, per-checkpoint `metadata.json` + `snapshot/` tree | `tg checkpoint create` | No — same `.tensor-grep/` ignore rule |
 | `.tg_semantic_index/` (or `$TG_SEMANTIC_INDEX_DIR`) | Experimental semantic (dense) index shards | opt-in semantic-search paths | Not committed; experimental subsystem |
-| `artifacts/` | `--output` JSON from `tg dogfood`, `scripts/agent_readiness.py`, `benchmarks/run_*.py` | explicit `--output PATH` only — nothing is written here by default | No — `/artifacts/` (via `artifacts/` in `.gitignore:61`) is gitignored |
+| `artifacts/` | `--output` JSON from `tg dogfood`, `scripts/agent_readiness.py`, `benchmarks/run_*.py` | explicit `--output PATH` only — nothing is written here by default | No — `/artifacts/` (via `artifacts/` in `.gitignore:63`) is gitignored |
 
 None of these directories are portable outputs to hand to another agent/process by default —
 treat them as local cache/scratch. If you need a durable artifact, pass an explicit `--output` and

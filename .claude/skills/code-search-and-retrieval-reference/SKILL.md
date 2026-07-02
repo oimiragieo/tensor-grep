@@ -1,6 +1,6 @@
 ---
 name: code-search-and-retrieval-reference
-description: Use when you need the domain theory behind tensor-grep's search/retrieval behavior, not just the command syntax — ripgrep exit codes/PCRE2/binary-NUL-detection/-uuu/-- sentinels, ast-grep + tree-sitter routing, BM25 vs the flat no-IDF capsule scorer, PageRank vs in-degree centrality, the trigram index, PyO3 + the GIL, MCP argv surface, LSP 3.17 framing, and Model2Vec/potion-code (planned). Load before explaining WHY tg behaves a certain way, reviewing a backend/router change, or writing docs that touch these subsystems. Not a how-to-run or how-to-debug guide — see the sibling table below for those.
+description: Use when you need the domain theory behind tensor-grep's search/retrieval behavior, not just the command syntax — ripgrep exit codes/PCRE2/binary-NUL-detection/-uuu/-- sentinels, ast-grep + tree-sitter routing, BM25 vs the flat no-IDF capsule scorer, PageRank vs in-degree centrality, the trigram index, PyO3 + the GIL, MCP argv surface, LSP 3.17 framing, and Model2Vec/potion-code (planned). Load before explaining WHY tg behaves a certain way, reasoning about the protocol/algorithm THEORY underneath a backend/router change (exit-code semantics, scoring math, wire framing), or writing docs that touch these subsystems — for the invariants a backend/router change must not break, use `tensor-grep-architecture-contract` instead (or in addition). Not a how-to-run or how-to-debug guide — see the sibling table below for those.
 ---
 
 # Code Search & Retrieval Reference
@@ -61,7 +61,8 @@ honor PCRE2 semantics must raise, never silently execute as a plain-regex search
 (or merely different) matches (`src/tensor_grep/backends/base.py:7-14`, `BackendExecutionError`;
 AGENTS.md "Fail closed" bullet, line 220). A prior incident shipped exactly this bug — a broad
 `except Exception: pass` around the Rust passthrough silently ran `--pcre2` through the non-PCRE2
-Python-regex engine — fixed in v1.17.17/18 (see `tensor-grep-failure-archaeology`).
+Python-regex engine — fixed in v1.17.17/18 (see `tensor-grep-change-control`, Part 4 — Backend
+fail-closed contract, lines 125-134).
 
 **Binary detection is NUL-byte sniffing, and it changes exit codes.** rg's default binary heuristic
 scans early file bytes for a `\0`; on a hit, the file is treated as binary and searched under the
@@ -130,7 +131,8 @@ parsed as an S-expression** — this fallback is deliberate, not a bug, and appl
 **Practical corollary:** on a machine with no CUDA device (most CI runners, most laptops without an
 NVIDIA GPU), every `tg run`/AST call silently uses the `ast-grep` CLI sidecar, not the native Rust
 path — this is why an earlier "AST probe" bug in CI traced back to `AstBackend` being GPU-gated (see
-`tensor-grep-failure-archaeology` for the incident). Don't assume native AST speed numbers apply
+`tensor-grep-docs-and-writing` Part 6, and project memory
+`tensor-grep-readme-release-blocker-2026-06-25`, for the incident). Don't assume native AST speed numbers apply
 unless you've confirmed `is_available()` is true on the box you're measuring.
 
 Measured (not marketing) ratios, `benchmarks/run_ast_benchmarks.py` /
@@ -194,7 +196,8 @@ personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LI
 relevant files (line 215), teleporting back to those seeds rather than to a uniform distribution.
 This feeds descriptive-query file ranking (`graph-centrality` reason) inside `repo_map`/capsule/edit-
 plan retrieval — pure Python, no `networkx` dependency (unlike Aider's repo-map, which uses
-`networkx`'s PageRank over the full import graph — see `docs/tool_comparison.md` competitive framing).
+`networkx`'s PageRank over the full import graph — an external comparison, not yet documented in this
+repo's `docs/tool_comparison.md`, which currently makes no Aider/networkx/PageRank claim).
 
 **`tg orient`'s "central files" list is explicitly NOT PageRank — it's raw import in-degree**
 (`src/tensor_grep/cli/orient_capsule.py:34-74`, `_central_files_from_map`). The code comment states

@@ -53,7 +53,7 @@ Five corollaries, all stated in AGENTS.md:
 | blast-radius latency | `benchmarks/run_blast_radius_benchmarks.py` | impact-analysis latency |
 | repo-map / retrieval quality (not speed) | `benchmarks/run_repo_retrieval_benchmarks.py` | recall/precision/MRR/nDCG/F1/token-budget, a quality metric, not a timing one |
 
-Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (20 scripts as of
+Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (19 scripts as of
 v1.17.25 — re-verify with the command in Provenance below, the list drifts).
 
 If your change does not obviously map to one row, run `benchmarks/run_benchmarks.py` first (the

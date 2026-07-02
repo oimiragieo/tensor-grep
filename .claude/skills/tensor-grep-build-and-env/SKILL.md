@@ -158,13 +158,22 @@ uv run mypy src/tensor_grep
 uv run pytest -q
 ```
 
-Rust equivalents of CI's `static-analysis` job (`.github/workflows/ci.yml`, job `static-analysis`):
+Rust equivalents of CI's `static-analysis` job (`.github/workflows/ci.yml:260-324`) — that job runs
+`cargo fmt`/`cargo clippy` only, **not** `cargo test`:
 
 ```bash
 cd rust_core
 cargo fmt -- --check
 cargo clippy -- -D warnings
-cargo test --no-default-features
+cd ..
+```
+
+Rust equivalent of CI's separate `test-rust-core` job (`ci.yml:392-439`, a 3 OS × stable/nightly
+matrix — not covered by the block above):
+
+```bash
+cd rust_core
+cargo test --verbose --no-default-features
 cd ..
 ```
 
@@ -266,13 +275,12 @@ before treating it as settled.
 
 ### 8. Mock-based FFI tests can pass green while the real bridge is dead
 
-Not a build step, but the verification step every Rust-side build change needs. A prior PyO3 bridge
-regression shipped with every *mocked* Python-side unit test green while the *real* compiled bridge
-silently dropped every forwarded flag and fell back to the Python engine. After any change touching
-`rust_core/src/*` and its Python caller (`src/tensor_grep/backends/rust_backend.py`), run a live call
-into the compiled extension — step 4's `import tensor_grep.rust_core` plus
-`tests/unit/test_rust_core.py` — not just mock-patched unit tests. See `dogfood-the-shipped-artifact`
-and `tensor-grep-debugging-playbook` for the general form of this rule.
+Not a build step, but the verification step every Rust-side build change needs — mechanism and
+receipt live in `tensor-grep-architecture-contract` ("The front door" / PyO3+GIL note) and the
+general procedure in the global skill `dogfood-the-shipped-artifact`; don't re-derive it here.
+Build-specific check: after any change touching `rust_core/src/*` and its Python caller
+(`src/tensor_grep/backends/rust_backend.py`), run a live call into the compiled extension — step 4's
+`import tensor_grep.rust_core` plus `tests/unit/test_rust_core.py` — not just mock-patched unit tests.
 
 ## CI parity cheat sheet
 
@@ -287,7 +295,8 @@ jobs are intentionally omitted here — see `tensor-grep-release-and-positioning
 | `test-rust-core` (3 OS × stable/nightly) | `cargo test --verbose --no-default-features` | `cargo test --manifest-path rust_core/Cargo.toml --no-default-features` |
 | `search-golden-parity` (windows) | `cargo test --test test_search_golden` | `cargo test --manifest-path rust_core/Cargo.toml --test test_search_golden` |
 | `native-build-smoke` (4 OS) | `cargo build --release --no-default-features` then `tg --version`/`--help`/one search on the built binary | same, run from `rust_core/` |
-| `agent-readiness` / `windows-agent-readiness` | `scripts/agent_readiness.py` (13-check contract gate) | `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`; see `tensor-grep-diagnostics-and-tooling` |
+| `agent-readiness` | `scripts/agent_readiness.py --no-shell-probes --no-wsl-probe` (the 13-check repo-local contract gate) | `python scripts/agent_readiness.py --no-shell-probes --no-wsl-probe --output artifacts/agent_readiness.json`; see `tensor-grep-diagnostics-and-tooling` |
+| `windows-agent-readiness` | `scripts/agent_readiness.py --only-shell-probes --no-wsl-probe` (public shell-probe gate only — a **disjoint** check set from `agent-readiness`, none of the 13 repo-local checks) | `python scripts/agent_readiness.py --only-shell-probes --no-wsl-probe --output artifacts/agent_readiness.json`; see `tensor-grep-diagnostics-and-tooling` |
 | `benchmark-regression` | perf regression gates vs. base revision | see `tensor-grep-benchmark-and-proof-toolkit` — do not eyeball timings without that skill's noise-floor rules |
 | `release` and everything after it | semantic-release + PyPI/GitHub/package-manager publish | see `tensor-grep-release-and-positioning` — not locally reproducible, don't try |
 

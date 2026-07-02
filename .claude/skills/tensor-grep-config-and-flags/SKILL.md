@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-config-and-flags
-description: Use when adding, changing, or auditing a tg environment variable, CLI flag, or provider mode (native/lsp/hybrid); when a search flag silently leaks to ripgrep or a command misroutes; when deciding whether a config axis (GPU, LSP, classify, semantic) is production or EXPERIMENTAL default-OFF; or before registering a new `tg search --flag` or `tg COMMAND`. Catalogs every TG_*/TENSOR_GREP_* env var with its default and guard, and the 2-front-door / 4-site registration checklist.
+description: Use when adding, changing, or auditing a tg environment variable, CLI flag, or provider mode (native/lsp/hybrid); when a search flag silently leaks to ripgrep or a command misroutes; when deciding whether a config axis (GPU, LSP, classify, semantic) is production or EXPERIMENTAL default-OFF; or before registering a new `tg search --flag` or `tg COMMAND`. Catalogs the load-bearing TG_*/TENSOR_GREP_* env vars (routing, timeouts, GPU, classify, session, MCP security, LSP) with their default and guard, and the 2-front-door / 4-site registration checklist.
 ---
 
 # tensor-grep config and flags
@@ -68,6 +68,8 @@ Boolean env vars in tg follow one convention everywhere (`env_flag_enabled`,
 | `TG_RUST_FIRST_SEARCH` | off | Opt-in: prefer the Rust native front door before Python bootstrap logic for search dispatch. | `bootstrap.py:242` |
 | `TG_RUST_EARLY_RG`, `TG_RUST_EARLY_POSITIONAL_RG` | off | Internal early-dispatch toggles surfaced by `tg doctor --json`; not documented in the public `--help` epilogs. | `main.rs:53-54`, `main.py:2761-2762` |
 | `TG_RESIDENT_AST` | off | Enables the resident AST worker path (see `docs/runbooks/resident-worker.md`); reported by `tg doctor --json`. | `main.py:2759`, `main.rs` (search `TG_RESIDENT_AST`) |
+| `TG_DISABLE_NATIVE_TG` | off | Kill-switch: forces `resolve_native_tg_binary()` to return `None`, fully bypassing the native `tg` binary front door (Python-backed commands fall back to pure-Python routing even if a compatible native binary is resolvable). | `runtime_paths.py:234` |
+| `TG_DISABLE_RG` | off | Kill-switch: forces the native binary's ripgrep resolver to return `None`, so the native front door treats `rg` as unavailable regardless of `TG_RG_PATH`/PATH. | `rust_core/src/rg_passthrough.rs:13,477` |
 
 ### Timeouts
 
@@ -171,6 +173,7 @@ cited module if you need the exact number) — this skill's job is to tell you *
 | Var | Default | Effect | Source |
 |---|---|---|---|
 | `TG_LSP_PROVIDER` | `native` | Overrides the LSP semantic-provider mode for editor/MCP clients; same value space as `--provider` (`native`/`lsp`/`hybrid`). Set by `tg lsp --provider ...` before calling `run_lsp()`. | `main.py:9772-9799`, `main.rs:51` |
+| `TG_ALLOW_UNVERIFIED_TOOLCHAIN` | off | Security opt-out: skips checksum verification of downloaded LSP-toolchain archives/binaries (rust-analyzer, etc.) for air-gapped/offline installs — same default-secure/opt-out-to-weaken pattern as `TG_MCP_ALLOW_VALIDATION_COMMANDS` below. Off by default; fails closed (refuses the unverified binary) unless set. | `lsp_provider_setup.py:229-265,465-480` |
 
 ## Provider modes: `native` / `lsp` / `hybrid`
 
@@ -219,23 +222,9 @@ when it carries `lsp_provider_response = true` from a completed provider request
 
 This is the single highest-value thing to get right in this repo — miss a registration site and the
 new flag/command **misroutes silently**, passing CliRunner tests while breaking the real published
-binary. Full narrative and the historical incident (`--rank` shipped broken) is in `AGENTS.md:178-196`
-and `tensor-grep-change-control`; the sites are:
-
-**New top-level `tg COMMAND`** — 4 sites:
-
-1. `KNOWN_COMMANDS` — `src/tensor_grep/cli/commands.py:9-54` (Python-side known-command registry).
-2. A `Commands::X` variant + dispatch arm — `rust_core/src/main.rs:838` (`enum Commands`) and its match arm.
-3. `PUBLIC_TOP_LEVEL_COMMANDS` — `tests/e2e/test_routing_parity.py:17` (the parity contract test).
-4. A `@app.command` function — `src/tensor_grep/cli/main.py` (the Typer entry point).
-
-**New `tg search --myflag`** — 2 sites:
-
-1. `SEARCH_PYTHON_PASSTHROUGH_FLAGS` — `rust_core/src/main.rs:160-272` (native binary's allowlist of
-   flags it hands off to the Python sidecar instead of rejecting).
-2. `_TG_ONLY_SEARCH_FLAGS` (+ `_TG_ONLY_SEARCH_FLAG_PREFIXES` for `--flag=value` forms) —
-   `src/tensor_grep/cli/bootstrap.py:23-58` (the Python bootstrap's allowlist so it doesn't forward the
-   flag raw to `rg` before the Typer app ever sees it).
+binary. **See `tensor-grep-architecture-contract` for the full 4-site command / 2-site search-flag
+registration table and the rationale for why each site exists**, and `tensor-grep-change-control` for
+the PR/merge gate around it (`AGENTS.md:178-196`) — this skill does not restate that table.
 
 Miss either search-flag site and the flag reaches `rg` unrecognized for users on the published binary
 — an `rg: unrecognized flag` crash that CliRunner-only tests cannot see, because CliRunner calls the

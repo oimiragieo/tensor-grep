@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-diagnostics-and-tooling
-description: Use when you need to MEASURE tensor-grep's health instead of eyeballing it -- interpreting a `tg doctor --json` field, reading a PASS/FAIL/SKIP from `tg dogfood` or `scripts/agent_readiness.py`, deciding which `benchmarks/*.py` script answers a given question, or explaining what a diagnostic field actually proves (and does not prove). Not for CLI syntax (tensor-grep-run-and-operate), fixing a found bug (tensor-grep-debugging-playbook), or constructing a claim-quality benchmark artifact (tensor-grep-benchmark-and-proof-toolkit).
+description: Use when you need to MEASURE tensor-grep's health instead of eyeballing it -- interpreting a `tg doctor --json` field, reading a PASS/FAIL/SKIP from `tg dogfood` or `scripts/agent_readiness.py`, or explaining what a diagnostic field actually proves (and does not prove). Not for CLI syntax (tensor-grep-run-and-operate), fixing a found bug (tensor-grep-debugging-playbook), or deciding which `benchmarks/*.py` script to run / constructing a claim-quality benchmark artifact (tensor-grep-benchmark-and-proof-toolkit).
 ---
 
 # tensor-grep Diagnostics and Tooling
@@ -81,7 +81,7 @@ gap.
 | `fresh_shell_path_tg_first_launcher_kind` / `*_version_matches` | same shape as above, but simulated for a **brand-new shell** (reads Windows registry `PATH` on Windows) | catches "your current shell is fixed but a fresh terminal still resolves the wrong `tg`" |
 | `python_subprocess_path_tg_first_*` (Windows only) | same shape | Python's own `subprocess.run(["tg", ...])` can resolve **differently** than your interactive shell (e.g. Windows `CreateProcess` picks `.exe` ahead of a `.com` bridge) — this is what MCP servers and other Python tooling actually see |
 | `rust_binary_version_status` | `matches` or `stale-skipped` | `missing` is often benign (no standalone native binary in play; check `search_acceleration_backend`). `stale` or `mismatch` is a real problem — see remediation below. |
-| `rust_binary_remediation` | `null` when healthy | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance |
+| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation`, `main.py:2153-2168`, unconditionally returns it on `stale-skipped`) |
 | `skipped_native_tg_binaries` | `[]`, or a list of correctly-ignored stale in-tree binaries | a non-empty list here is the **healthy** outcome when you have an old local dev build lying around — it means doctor correctly did NOT select it |
 | `mcp_stdio_launcher_warning` | `null` | non-null on Windows usually means a PowerShell shim (`tg.ps1`) is ambiguous for MCP stdio clients; the message tells you to point the MCP client at the native `tg.exe` directly |
 | `gpu.available` / `gpu.search_ready` / `gpu.tier.promotion_proof` | `available` reflects CUDA device presence; `search_ready` reflects whether a real search actually routed through `NativeGpuBackend` | **`gpu.available=true` does NOT mean GPU search works.** Always read `search_ready` and `tier.promotion_proof`, not just `available`. GPU is experimental-until-proven (see `docs/gpu_crossover.md`) — never a PASS/FAIL signal, always informational. |
@@ -320,7 +320,7 @@ source of truth.
 | `tg doctor` shows `path_tg_first_launcher_kind = foreign` | a different tool named `tg` is first on PATH | `tg repair-launcher` (see remediation above) |
 | `rust_binary_version_status = stale` (not `stale-skipped`) | a dev build in `rust_core/target/{debug,release}/` is stale **and selected** | rebuild via cargo (see remediation above); `tensor-grep-build-and-env` for full toolchain setup |
 | `ast-run-smoke` shows `SKIPPED` | AST deps/backend unavailable in this environment | expected, not a regression — do not treat as FAIL |
-| `docs-claim-check` FAILS right after a version bump | a doc still has stale `vX.Y.Z` prose, or is missing a required fragment | usually self-heals via `python scripts/stamp_release_assets.py`'s `version_variables` stamping during release; if hand-editing docs, match the exact prose patterns in `validate_docs_claims` |
+| `docs-claim-check` FAILS right after a version bump | a doc still has stale `vX.Y.Z` prose, or is missing a required fragment | usually self-heals via `python scripts/stamp_release_assets.py`'s `_stamp_release_doc` prose-pattern stamping during release (a separate mechanism from the `version_variables` list in `pyproject.toml`'s `[tool.semantic_release]` config, which `scripts/validate_release_assets.py` checks); if hand-editing docs, match the exact prose patterns in `validate_docs_claims` |
 | Unit/integration tests are all green, but the real published binary is broken | `CliRunner` bypasses `tensor_grep.cli.bootstrap:main_entry` (the real front door) | run Tool 4 (`scripts/dogfood/dogfood_features.py`) against the real binary; see `dogfood-the-shipped-artifact` |
 | `repo-cli-build-warmup` fails or times out | the repo-local `uv`/`tg` editable entrypoint is stale/unsynchronized | `uv sync`, or `uv run --refresh-package tensor-grep tg --version` |
 | `gpu.available = true` but you expected GPU search to actually run | `available` only reflects CUDA device presence | check `gpu.search_ready` and `gpu.tier.promotion_proof` instead — GPU is experimental-until-proven |
@@ -365,7 +365,7 @@ grep -n 'name="' scripts/agent_readiness.py
 grep -n 'world_class_readiness\|_build_verdict\|write_policy' src/tensor_grep/cli/dogfood.py
 
 # benchmark script -> change-area mapping, still current
-grep -n '^### ' AGENTS.md | sed -n '/Benchmark Rules/,/Performance Discipline/p'
+grep -n '^## ' AGENTS.md | sed -n '/Benchmark Rules/,/Performance Discipline/p'
 
 # does the traffic-light script still run clean against the live binary?
 python .claude/skills/tensor-grep-diagnostics-and-tooling/scripts/doctor_traffic_light.py --json

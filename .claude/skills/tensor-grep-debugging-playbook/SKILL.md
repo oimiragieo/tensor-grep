@@ -57,7 +57,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A pattern/path argument starting with `-` is silently interpreted as a flag by `rg`/`tg`/`git` (wrong output, not a crash) | A subprocess argv builder appended a user-controlled value as a bare positional with no `--` end-of-options sentinel | `tg search -- --weird-pattern PATH` vs `tg search --weird-pattern PATH` (should error) — same probe against any MCP tool call path | [§5](#5-argvflag-injection) |
 | A test suite is green but the real binary/extension does the wrong thing (dropped flags, dead code path) | Test mocked the boundary (a monkeypatched function, a stubbed PyO3 class) instead of exercising the compiled extension or the published binary | Run the same call through the *installed* `tg` (not `CliRunner`, not a mocked backend) and check `tg doctor --json` / `HAVE_RUST` | [§6](#6-mock-green-real-dead) |
 | A fresh Python install resolves `tensor-grep` to an old version with no error | An upper-bound dependency pin (e.g. `typer<0.26`) has no release compatible with the new Python, so the resolver silently downgrades the *whole package* | `pip index versions tensor-grep` vs what actually installed; check `pyproject.toml` for `<` pins on `typer`/`click`/`pydantic` | [§7](#7-dependency-cap-silent-downgrade) |
-| Ranked search / agent-capsule / semantic results flipped after an unrelated change (wrong file promoted to top) | The flat, no-IDF ranking scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie | Re-run `tg search PATTERN PATH --rank --json` before/after the change and diff the top candidate + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
+| Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
 
 ---
 
@@ -91,11 +91,9 @@ If the failing check is the `Semantic Release` job specifically, go to §2, not 
 
 ## 2. Release did not publish (push-race)
 
-The real publish step is the **`Semantic Release` job inside `.github/workflows/ci.yml`**, gated on
-`github.ref == 'refs/heads/main' && github.event_name == 'push'` — not `release.yml`, which is
-`workflow_dispatch`-only and cannot be triggered by a pushed tag (`AGENTS.md`, "Push Discipline").
-That job **compiles native assets before publishing**, so it runs for roughly 6 minutes, and that
-whole window is a race window.
+The real publish step is the **`Semantic Release` job inside `.github/workflows/ci.yml`**, which
+compiles native assets before publishing (~6 minutes) — that whole window is a race window where a
+second merge to `main` can knock out the first run's final push.
 
 **Discriminating experiment:**
 
@@ -104,23 +102,11 @@ gh run view <run-id> --json jobs                 # find the "Semantic Release" j
 gh run view <run-id> --log-failed                 # read its failed step only
 ```
 
-A line reading `! [rejected]  main -> main` is the push-race signature: another merge (even a
-no-release `docs:`/`chore:` PR) advanced `main` while this run's `Semantic Release` job was still
-compiling assets, so its final `git push origin main` (the `chore(release)` version-bump commit)
-was rejected non-fast-forward. This has a receipt: `v1.17.23` failed to publish because a
-GPU-pause `docs:` PR was merged while the prior release's job was still in flight (`AGENTS.md`,
-"Release publish is not instant").
-
-**Fix / recovery — do NOT panic-rerun.** The failure self-heals: the *next* push-to-`main` CI run
-re-runs `Semantic Release`, and because the version is derived from git tags (not the failed run's
-state), it recomputes the correct next version and covers the orphaned commit. Confirm the next
-run's `Semantic Release` job succeeds and the tag/PyPI version appears.
-
-**Discipline to prevent recurrence:** merge one release-bearing PR at a time; wait for its
-`chore(release): vX` commit to land on `main` **and** for PyPI to show the new version before
-merging the next PR — "PR CI green" is not the same as "published." Full procedure (including
-`docs/HOTFIX_PROCEDURE.md`'s squash-merge + verification steps) belongs to
-`tensor-grep-release-and-positioning`.
+A line reading `! [rejected]  main -> main` is the push-race signature. **Do not panic-rerun** — the
+failure self-heals on the next push-to-`main` (version is derived from git tags, not the failed
+run's state). Full mechanism, the `v1.17.23`/#318/#319 receipt, and the one-merge-per-tick
+discipline to prevent recurrence: `tensor-grep-release-and-positioning` §1.5 /
+`tensor-grep-failure-archaeology` Battle 6.
 
 ## 3. Search hangs/slow
 
@@ -278,29 +264,45 @@ If a fresh install on a new Python resolves to an old `tg --version`, do not ass
 
 ## 8. Ranking flip
 
-Ranking surfaces (`tg search --rank`, the agent capsule, semantic search) use a **flat, no-IDF**
-scorer plus a hard top-N candidate cap — an acknowledged, not-yet-fixed weak point. A small,
-unrelated corpus change can flip which candidate wins a near-tie, and that flip is invisible to the
-call graph (nothing "broke" in the traditional sense — the ranking function just picked a different
-winner). This produced a real incident: an unrelated GPU-code change flipped the agent capsule's
-top pick from "tied, ask the user" to "confidently pick the wrong marker/no-op function" with zero
-call-graph signal.
+The agent capsule's **primary-target candidate selection** (`score_term_overlap`,
+`src/tensor_grep/core/retrieval_lexical.py:15`, used by `repo_map.py:4899` to help pick the
+capsule's `primary_target`) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
+cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
+candidate wins a near-tie, and that flip is invisible to the call graph (nothing "broke" in the
+traditional sense — the ranking function just picked a different winner). This produced a real
+incident: an unrelated GPU-code change flipped the agent capsule's top pick from "tied, ask the
+user" to "confidently pick the wrong marker/no-op function" with zero call-graph signal.
 
-**Discriminating experiment:** re-run the same query before/after the suspect change with
-`--json`, and diff the top candidate plus the ambiguity metadata:
+Note: `tg search --rank` (`rerank_by_bm25()`, `src/tensor_grep/core/reranker.py`) and local semantic
+search (`src/tensor_grep/core/semantic_index.py`) both route through `Bm25Index`
+(`src/tensor_grep/core/retrieval_bm25.py`) — a real Okapi BM25 scorer **with IDF**, term-frequency
+saturation, and length normalization. They are a different, IDF-weighted scorer and are not known to
+share this specific flat-scorer fragility; don't assume a `--rank` reorder flip has the same root
+cause as an agent-capsule primary-target flip.
+
+**Discriminating experiment:** these are two different code paths — run whichever one matches the
+surface you're chasing, not both interchangeably:
 
 ```bash
+# BM25-reranked search order (src/tensor_grep/core/reranker.py) — top-match ordering only,
+# no ambiguity/candidate concept:
 tg search PATTERN PATH --rank --json > before.json   # on the pre-change commit
 tg search PATTERN PATH --rank --json > after.json     # on the post-change commit
+
+# Agent capsule (src/tensor_grep/cli/agent_capsule.py) — primary-target selection, the surface
+# that actually emits ambiguity/ask metadata:
+tg agent PATH QUERY --json > before.json              # on the pre-change commit
+tg agent PATH QUERY --json > after.json                # on the post-change commit
 ```
 
 For the agent capsule specifically, check the `ambiguity` / `ask_reasons` fields
-(`src/tensor_grep/cli/agent_capsule.py`) rather than only the top hit — a **degrade-to-ask safety
-floor** (`agent_capsule.py:1399-1405`) forces `ask_user`-style output whenever ranking buried the
-real implementation behind an unrequested marker/no-op helper, so a correctly-behaving flip should
-surface as `ask_user` metadata, not a silent wrong answer. If you see a confident wrong top pick
-with no ambiguity signal, that is a regression in the safety floor itself, not just scorer
-fragility — treat it as higher severity.
+(`src/tensor_grep/cli/agent_capsule.py`) rather than only the `primary_target` — a **degrade-to-ask
+safety floor** (`agent_capsule.py:1399-1405`) forces `ask_user`-style output whenever ranking
+buried the real implementation behind an unrequested marker/no-op helper, so a correctly-behaving
+flip should surface as `ambiguity`/`ask_user_before_editing` metadata, not a silent wrong answer.
+If you see a confident wrong `primary_target` with no ambiguity signal, that is a regression in the
+safety floor itself, not just scorer fragility — treat it as higher severity. `tg search --rank`
+has no equivalent safety floor to check; it only reorders matches.
 
 **What this is NOT:** a fix for the underlying flat scorer. The safety floor added in response to
 the incident above only prevents *silent* wrong picks; it does not make the ranking itself
