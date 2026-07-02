@@ -951,3 +951,42 @@ def test_ast_workflow_main_entry_preserves_nonzero_exit_for_policy_failures(
     payload = json.loads(capsys.readouterr().out)
     assert payload["policy_result"] == {"all_passed": False}
     assert payload["mode"] == "apply"
+
+
+def test_run_policy_command_fails_closed_when_executable_missing_from_path(
+    tmp_path: Path,
+) -> None:
+    # CWE-427: a policy command whose executable is not on PATH must fail closed, never run.
+    from tensor_grep.cli.apply_policy import _run_policy_command
+
+    result = _run_policy_command(
+        "lint", "tg-definitely-nonexistent-tool-xyz --check", tmp_path, timeout=10
+    )
+    assert result["passed"] is False
+    assert "not found on PATH" in str(result["detail"])
+
+
+def test_run_policy_command_resolves_relative_executable_to_absolute(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # CWE-427: a relative argv[0] must be resolved to an absolute PATH binary before spawning,
+    # so Windows CreateProcess never searches the untrusted target-repo cwd for a shadow tool.
+    from tensor_grep.cli import apply_policy
+
+    fake_abs = str(tmp_path / "trusted-bin" / "ruff")
+    monkeypatch.setattr(
+        apply_policy.shutil, "which", lambda cmd: fake_abs if cmd == "ruff" else None
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(apply_policy.subprocess, "run", _fake_run)
+    result = apply_policy._run_policy_command("lint", "ruff check .", tmp_path, timeout=10)
+
+    assert captured["argv"][0] == fake_abs  # absolute, PATH-resolved — not a cwd search
+    assert result["passed"] is True
