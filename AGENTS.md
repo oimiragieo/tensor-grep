@@ -223,6 +223,16 @@ This contract is violated repeatedly. The recurring anti-pattern is a bare `exce
 
 The same discipline applies beyond backends: any router/pipeline that can silently override an explicit user intent (e.g. an explicit `--gpu` request quietly routed to CPU) must instead raise `ConfigurationError` or emit a diagnostic. A systemic `SafeBackendMixin` + a fault-injection conformance CI gate (every registered backend must raise, not return empty, when its engine call fails) is the planned structural fix so this stops recurring one file at a time.
 
+## Roadmap Sequencing (2026-07-02)
+
+The GPU native-backend program (the P1 CUDA-PFAC kernel and beyond) is **held at the already-shipped P0 harness** — the correctness taxonomy, the loud non-promotional fallback, and the `doctor`/proof fields. Do **not** advance to P2–P4 (kernel, correctness gates, fair-bench, device/CI proof) until three CPU-only, every-install wins ship first:
+
+1. **Local hybrid semantic search** (BM25 + CPU dense embeddings fused with RRF, no API key) — the #1 validated user ask and the biggest competitive gap. Reference architecture: MinishLab `Semble` (tree-sitter chunking + `potion-code-16M` Model2Vec + BM25 + RRF, CPU-only, MIT).
+2. **`tg registration-check` productized** as a first-class command — a real-use-validated agent-native differentiator no plain grep/ast-grep offers.
+3. **A Bloom-filter n-gram chunk prefilter** for the slow non-literal-regex full-scan path in `rust_core`, which is far more broadly felt than the GPU program's narrow many-pattern-resident niche.
+
+Rationale: the project's own docs place raw search speed (where GPU competes) in the **parity tier, not the moat**; GPU is currently slower than CPU with no promotion-ready path; and the heuristic auto-GPU route is effectively dead code whenever ripgrep is installed (the common case). The moat is the **agent-native context layer** (`orient` / `callers` / blast-radius / the token-efficient capsule), so engineering capacity funds that first. Explicit `--gpu-device-ids` stays supported and must fail loud when it cannot be honored (see the Backend Fail-Closed Contract).
+
 ## Skills
 
 Two kinds of skills apply to this repo; load the relevant one before non-trivial work.
