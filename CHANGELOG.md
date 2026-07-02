@@ -1,6 +1,75 @@
 # CHANGELOG
 
 
+## v1.17.23 (2026-07-02)
+
+### Bug Fixes
+
+- Round-2 audit-manifest + LSP security/DoS batch (PR-A)
+  ([#318](https://github.com/oimiragieo/tensor-grep/pull/318),
+  [`41ff49f`](https://github.com/oimiragieo/tensor-grep/commit/41ff49fcea849429c2fe6d0d060086a6b7bfd61f))
+
+* fix: contain audit-manifest self-reported root path (round-2 SEC, audit_manifest:291)
+
+_resolve_manifest_root honored the manifest's attacker-controlled `path` field whenever it pointed
+  at any existing directory, redirecting audit-history writes / checkpoint reads to an arbitrary
+  root. Only honor the declared path when the manifest file actually lives under it (or IS it);
+  otherwise derive the root from the manifest file's own location.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: bound audit-manifest diff recursion depth (round-2 DoS, audit_manifest:311)
+
+_diff_manifest_values recursed to the full nesting depth of attacker-supplied manifest JSON, so a
+  maliciously deep manifest crashed tg audit diff with an uncaught RecursionError. Add a depth cap
+  (64) that raises a clean bounded ValueError instead.
+
+* fix: cap external-LSP-provider Content-Length + guard malformed header (round-2 DoS)
+
+_read_message trusted the framed Content-Length with no upper bound before reading the body from the
+  provider subprocess stdout — a malicious/buggy provider could force an unbounded read/allocation.
+  Refuse oversized (>64MB) and non-numeric Content-Length frames.
+
+* fix: evict _doc_versions on document close to bound memory (round-2 leak)
+
+_doc_versions grew unbounded across a long-lived external-LSP client because closed/evicted URIs
+  were never removed (unlike _opened_documents). Evict in _notify_document_closed, which both the
+  open-eviction and close_document paths funnel through.
+
+* fix: confine LSP rename edits to the workspace root (round-2 SEC, lsp_server:696)
+
+An external provider's rename WorkspaceEdit was applied verbatim with no check that the edited URIs
+  stayed inside the resolved workspace root, and the native document_changes builder was likewise
+  unconfined. Compute the workspace root once and confine BOTH branches: reject an external edit
+  whose targets escape the root, and skip out-of-root files in the native path.
+
+* fix: verify embedded manifest HMAC in review-bundle verify (round-2 SEC, audit_manifest:262)
+
+The keyless SHA256 self-checks in verify_review_bundle are cosmetic against a recomputing adversary.
+  Add a signing_key param (threaded through verify_review_bundle_json + the review-bundle verify CLI
+  --signing-key) that verifies the embedded audit_manifest's HMAC signature via the existing
+  verify_audit_manifest, and fold signature_valid into the bundle valid. A signed bundle now reports
+  valid only with the correct out-of-band key and fails closed without it.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Add roadmap sequencing — hold GPU P1 kernel, fund CPU-only moat first (approved)
+  ([#319](https://github.com/oimiragieo/tensor-grep/pull/319),
+  [`a735634`](https://github.com/oimiragieo/tensor-grep/commit/a735634f4c4dcef66d8875fb7be06af42f9ad23b))
+
+CEO-approved re-sequencing (reverses the 2026-06-28 GPU directive per the innovation review): hold
+  the GPU native-backend program at the shipped P0 harness; gate P2-P4 behind local semantic search,
+  tg registration-check productization, and a Bloom-filter regex prefilter. Rationale: raw speed is
+  parity-tier not moat, GPU is currently slower than CPU with no promotion path, and the
+  agent-native context layer is the actual moat.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.17.22 (2026-07-02)
 
 ### Bug Fixes
