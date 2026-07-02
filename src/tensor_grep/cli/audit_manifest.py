@@ -226,7 +226,9 @@ def create_review_bundle_json(
     )
 
 
-def verify_review_bundle(bundle_path: str | Path) -> dict[str, Any]:
+def verify_review_bundle(
+    bundle_path: str | Path, *, signing_key: str | Path | None = None
+) -> dict[str, Any]:
     resolved_bundle = Path(bundle_path).expanduser().resolve()
     bundle = _read_review_bundle_object(resolved_bundle)
     raw_checksums = bundle.get("checksums")
@@ -257,18 +259,46 @@ def verify_review_bundle(bundle_path: str | Path) -> dict[str, Any]:
         and expected_bundle_sha256 == actual_bundle_sha256,
     }
 
+    # Audit HIGH (integrity bypass): the SHA256 checks above are KEYLESS and cosmetic against a
+    # recomputing adversary (an attacker with write access to the bundle just recomputes them).
+    # Verify the embedded audit_manifest's HMAC signature with an out-of-band signing key: a
+    # SIGNED bundle then reports valid only when the correct key is supplied, and a signed bundle
+    # verified without the key fails closed. (Unsigned bundles have no signature to check.)
+    manifest_signature_valid = True
+    manifest_signature_error: str | None = None
+    embedded_manifest = bundle.get("audit_manifest")
+    if isinstance(embedded_manifest, dict):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="tg_bundle_verify_") as tmp_dir:
+            tmp_manifest = Path(tmp_dir) / "manifest.json"
+            tmp_manifest.write_text(json.dumps(embedded_manifest), encoding="utf-8")
+            manifest_result = verify_audit_manifest(tmp_manifest, signing_key=signing_key)
+        manifest_checks = manifest_result.get("checks", {})
+        manifest_signature_valid = bool(manifest_checks.get("signature_valid", False))
+        if not manifest_signature_valid:
+            errs = manifest_result.get("errors") or []
+            manifest_signature_error = errs[0] if errs else "Embedded manifest signature invalid."
+
     payload = _envelope(routing_reason="review-bundle-verify")
     payload["bundle_path"] = str(resolved_bundle)
-    payload["valid"] = bundle_integrity["valid"] and all(
-        bool(component_check["valid"]) for component_check in checks.values()
+    payload["valid"] = (
+        bundle_integrity["valid"]
+        and all(bool(component_check["valid"]) for component_check in checks.values())
+        and manifest_signature_valid
     )
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
+    payload["manifest_signature_valid"] = manifest_signature_valid
+    if manifest_signature_error is not None:
+        payload["manifest_signature_error"] = manifest_signature_error
     return payload
 
 
-def verify_review_bundle_json(bundle_path: str | Path) -> str:
-    return json.dumps(verify_review_bundle(bundle_path), indent=2)
+def verify_review_bundle_json(
+    bundle_path: str | Path, *, signing_key: str | Path | None = None
+) -> str:
+    return json.dumps(verify_review_bundle(bundle_path, signing_key=signing_key), indent=2)
 
 
 def _resolve_history_root(path: str | Path) -> Path:
