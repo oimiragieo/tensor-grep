@@ -246,6 +246,17 @@ class Pipeline:
                 # For pure counting, our Rust backend beats rg and everything else
                 self.backend = rust_backend
                 selected_backend_reason = "count_rust_fast_path"
+            elif config and config.fixed_strings and config.gpu_device_ids:
+                # Audit MED: `--gpu-device-ids` with fixed-string (-F) search is a user-explicit
+                # GPU request, but _should_honor_explicit_gpu_ids excludes fixed_strings (no GPU
+                # fixed-string backend exists yet), so without this guard the request silently
+                # falls through to the StringZilla/CPU fast path below — dropping the explicit GPU
+                # intent with no diagnostic. Fail loud, as pcre2/AST already do. Revisit to route
+                # to GPU once a fixed-string GPU kernel ships.
+                self._raise_explicit_gpu_configuration_error(
+                    config,
+                    "fixed-string (-F) search has no GPU backend",
+                )
             elif (
                 config
                 and config.fixed_strings

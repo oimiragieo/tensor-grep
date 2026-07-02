@@ -33,6 +33,27 @@ class TestPipeline:
         assert pipeline.backend == mock_ast_backend.return_value
         assert pipeline.selected_backend_reason == "ast_backend_available"
 
+    @patch("tensor_grep.core.pipeline.StringZillaBackend")
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_explicit_gpu_device_ids_with_fixed_strings_fails_loud_not_silent_cpu(
+        self, mock_rust, mock_rg, mock_sz
+    ):
+        """Audit MED: `--gpu-device-ids` + fixed-string (-F) search is an explicit GPU
+        request, but `_should_honor_explicit_gpu_ids` excludes fixed_strings (no GPU
+        fixed-string backend exists yet), so the request silently fell through to the
+        StringZilla/CPU fast path — dropping the explicit GPU intent with no diagnostic.
+        It must fail loud (ConfigurationError), like pcre2/AST already do."""
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_sz.return_value.is_available.return_value = True  # sz would win before the fix
+
+        with pytest.raises(ConfigurationError):
+            Pipeline(
+                force_cpu=False,
+                config=SearchConfig(fixed_strings=True, gpu_device_ids=[0]),
+            )
+
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
