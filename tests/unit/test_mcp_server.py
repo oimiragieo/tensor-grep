@@ -1235,6 +1235,8 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
         "--rewrite",
         "lambda $$$ARGS: $EXPR",
         "--json",
+        # round-3 security: `--` ends options so a pattern beginning with `-` is a positional.
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -1581,6 +1583,7 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
         "--apply",
         "--verify",
         "--json",
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -1664,6 +1667,7 @@ def test_tg_rewrite_apply_supports_optional_validation_commands(monkeypatch):
         "--test-cmd",
         "echo test-ok",
         "--json",
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -1916,6 +1920,7 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
         "--apply",
         "--checkpoint",
         "--json",
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -1977,6 +1982,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
         "--audit-manifest",
         "C:/repo/rewrite-audit.json",
         "--json",
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -2104,6 +2110,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
         "--audit-signing-key",
         "C:/repo/audit.key",
         "--json",
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -2851,6 +2858,7 @@ def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
         "--rewrite",
         "lambda $$$ARGS: $EXPR",
         "--diff",
+        "--",
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
@@ -2918,6 +2926,7 @@ def test_tg_index_search_returns_native_index_search_json_shape():
         "search",
         "--index",
         "--json",
+        "--",
         "ERROR",
         "src",
     ]
@@ -4724,3 +4733,62 @@ def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path
     assert rust_payload["sources"][0]["file"] == str(rust_path.resolve())
     assert rust_payload["sources"][0]["start_line"] == 2
     assert "1" in rust_payload["sources"][0]["source"]
+
+
+# --- round-3 security: native-argv flag-injection sentinel -------------------------
+#
+# The MCP rewrite/index-search tools build a native `tg` command that ends with the
+# user-controlled pattern (and path) as trailing positionals. Without an end-of-options
+# `--` sentinel, a pattern beginning with `-` is parsed by the native binary as a flag
+# (`error: unexpected argument '--weird' found`) — flag/argv injection AND a latent
+# correctness break. Verified against the real binary: `tg search -- --weird PATH` and
+# `tg run --lang python --rewrite bar --json -- -x PATH` both parse the value literally.
+
+
+def test_index_search_command_ends_options_before_user_positionals() -> None:
+    from tensor_grep.cli import mcp_server
+
+    with patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("/fake/tg")):
+        cmd = mcp_server._build_index_search_command(pattern="--weird", path="/tmp/x")
+
+    assert "--" in cmd, "user positionals must follow an end-of-options sentinel"
+    sentinel = cmd.index("--")
+    # Everything after `--` is the untrusted pattern/path, in order, and nothing else.
+    assert cmd[sentinel + 1 :] == ["--weird", "/tmp/x"]
+
+
+def test_rewrite_command_ends_options_before_user_positionals() -> None:
+    from tensor_grep.cli import mcp_server
+
+    with patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("/fake/tg")):
+        cmd = mcp_server._build_rewrite_command(
+            pattern="-x",
+            replacement="bar",
+            lang="python",
+            path="/tmp/x",
+            mode="plan",
+        )
+
+    assert "--" in cmd, "user positionals must follow an end-of-options sentinel"
+    sentinel = cmd.index("--")
+    assert cmd[sentinel + 1 :] == ["-x", "/tmp/x"]
+
+
+def test_rewrite_apply_command_still_sentinels_positionals() -> None:
+    # The apply mode adds flags (--apply/--verify/--json); the sentinel must still sit
+    # immediately before the pattern/path so those flags are unaffected but the user
+    # positionals cannot be re-interpreted as flags.
+    from tensor_grep.cli import mcp_server
+
+    with patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("/fake/tg")):
+        cmd = mcp_server._build_rewrite_command(
+            pattern="-rf",
+            replacement="bar",
+            lang="python",
+            path="/tmp/x",
+            mode="apply",
+            verify=True,
+        )
+
+    assert cmd[-3:] == ["--", "-rf", "/tmp/x"]
+    assert "--apply" in cmd and "--json" in cmd

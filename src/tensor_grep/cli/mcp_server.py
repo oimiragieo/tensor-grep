@@ -762,7 +762,9 @@ def _build_rewrite_command(
     else:
         raise ValueError(f"Unsupported rewrite mode: {mode}")
 
-    command.extend([pattern, path])
+    # round-3 security: end options before the user-controlled positionals so a pattern
+    # beginning with `-` cannot be parsed by the native binary as a flag (argv injection).
+    command.extend(["--", pattern, path])
     return command
 
 
@@ -772,6 +774,9 @@ def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
         "search",
         "--index",
         "--json",
+        # round-3 security: end options before the user-controlled positionals so a pattern
+        # beginning with `-` cannot be parsed by the native binary as a flag (argv injection).
+        "--",
         pattern,
         path,
     ]
