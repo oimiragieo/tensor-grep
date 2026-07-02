@@ -316,6 +316,9 @@ def _audit_diff_index_path(parent: str, index: int) -> str:
     return f"{parent}[{index}]" if parent else f"[{index}]"
 
 
+_MAX_MANIFEST_DIFF_DEPTH = 64
+
+
 def _diff_manifest_values(
     previous: Any,
     current: Any,
@@ -324,7 +327,15 @@ def _diff_manifest_values(
     added: dict[str, Any],
     removed: dict[str, Any],
     changed: dict[str, dict[str, Any]],
+    _depth: int = 0,
 ) -> None:
+    # Audit LOW (DoS): bound recursion over attacker-supplied manifest JSON so a maliciously
+    # deep manifest raises a clean, bounded error instead of an uncaught RecursionError crashing
+    # `tg audit diff`. Real audit manifests are shallow; 64 is generous headroom.
+    if _depth > _MAX_MANIFEST_DIFF_DEPTH:
+        raise ValueError(
+            f"Audit manifest nesting exceeds the maximum diff depth ({_MAX_MANIFEST_DIFF_DEPTH})."
+        )
     if isinstance(previous, dict) and isinstance(current, dict):
         for key in sorted(set(previous) | set(current)):
             if key in _AUDIT_DIFF_IGNORED_KEYS:
@@ -343,6 +354,7 @@ def _diff_manifest_values(
                 added=added,
                 removed=removed,
                 changed=changed,
+                _depth=_depth + 1,
             )
         return
 
@@ -356,6 +368,7 @@ def _diff_manifest_values(
                 added=added,
                 removed=removed,
                 changed=changed,
+                _depth=_depth + 1,
             )
         for index in range(shared_length, len(current)):
             added[_audit_diff_index_path(path, index)] = current[index]

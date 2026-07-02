@@ -12,11 +12,38 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli.audit_manifest import (
     _AUDIT_SUBDIR,
     _TG_DIRNAME,
+    _diff_manifest_values,
     _resolve_manifest_root,
 )
+
+
+def _deep_manifest(leaf: str, depth: int = 100) -> dict:
+    root: dict = {}
+    node = root
+    for _ in range(depth):
+        node["k"] = {}
+        node = node["k"]
+    node["v"] = leaf
+    return root
+
+
+def test_diff_manifest_values_bounds_recursion_depth() -> None:
+    """Audit LOW (DoS): a maliciously deep manifest must raise a clean bounded ValueError,
+    not crash `tg audit diff` with an uncaught RecursionError."""
+    with pytest.raises(ValueError):
+        _diff_manifest_values(
+            _deep_manifest("a"),
+            _deep_manifest("b"),
+            path="",
+            added={},
+            removed={},
+            changed={},
+        )
 
 
 def test_resolve_manifest_root_ignores_tampered_out_of_tree_path(tmp_path: Path) -> None:
