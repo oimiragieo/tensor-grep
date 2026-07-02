@@ -13,7 +13,7 @@ def test_sidecar_classify_empty_content_reports_diagnostic(monkeypatch):
 
     monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
 
-    stdout, stderr, exit_code = _classify_payload(["--format", "json"], {"content": ""})
+    _stdout, stderr, exit_code = _classify_payload(["--format", "json"], {"content": ""})
 
     assert exit_code == 1
     assert stderr.strip()  # a non-empty explanatory message, not a silent failure
