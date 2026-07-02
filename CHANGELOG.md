@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.17.28 (2026-07-02)
+
+### Bug Fixes
+
+- Cap checkpoint retention to bound unbounded disk growth (round-4 DoS)
+  ([#329](https://github.com/oimiragieo/tensor-grep/pull/329),
+  [`5566734`](https://github.com/oimiragieo/tensor-grep/commit/5566734778807ae4611711bc9b65daf630218f7a))
+
+create_checkpoint copied the WHOLE scope into a fresh snapshot dir and appended to the index with NO
+  cap and no pruning of old snapshots — so repeated `tg checkpoint create` (each ~one full copy of
+  every tracked/untracked file) grows disk without limit. The session store already caps retention
+  (I2 / TG_SESSION_MAX); checkpoints never got the same treatment.
+
+Fix: add TG_CHECKPOINT_MAX (default 64) + _prune_checkpoint_records() mirroring
+  _prune_session_records — after inserting the new record, keep the newest N and shutil.rmtree each
+  dropped checkpoint's whole directory (metadata + snapshot).
+
+TDD: new test creates 6 checkpoints with TG_CHECKPOINT_MAX=3 and asserts only the 3
+
+newest survive (index + snapshot dirs). Full checkpoint suites: 53 passed; ruff + mypy clean.
+  Round-4 (session-remainder HIGH), tracked in #32.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- Resolve apply-policy lint/test executables against PATH (round-4 CWE-427, HIGH)
+  ([#328](https://github.com/oimiragieo/tensor-grep/pull/328),
+  [`e7a0770`](https://github.com/oimiragieo/tensor-grep/commit/e7a07704d90b041516751eb0cfb055b498f05c83))
+
+_run_policy_command ran policy.lint_cmd / policy.test_cmd via subprocess.run(argv, shell=False,
+  cwd=<target repo root>) where argv[0] could be relative. On Windows, CreateProcess searches the
+  cwd, so an untrusted target repo could plant a shadow `pytest.exe` / `ruff.exe` in its root that
+  pre-empts the real tool on PATH — arbitrary code execution during an apply/validate (CWE-427,
+  uncontrolled search path element).
+
+Fix: resolve argv[0] with shutil.which() to an absolute PATH binary before spawning, so
+  CreateProcess uses that exact path and never searches the target-repo cwd; fail closed with "<exe>
+  not found on PATH" if unresolved. Absolute argv[0] (e.g. the configured sys.executable path the
+  existing tests use) resolves to itself.
+
+TDD: 2 new tests (fail-closed on a missing executable; a relative argv[0] is
+
+substituted with the absolute PATH-resolved path). Full tests/unit/test_apply_policy.py: 36 passed;
+  ruff + mypy clean. Round-4 #31.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.27 (2026-07-02)
 
 ### Bug Fixes
