@@ -134,3 +134,26 @@ def test_undo_refuses_traversal_checkpoint_id(tmp_path: Path) -> None:
     root.mkdir()
     with pytest.raises(ValueError):
         checkpoint_store.undo_checkpoint("../../evil-ckpt", str(root))
+
+
+def test_create_checkpoint_does_not_disclose_symlink_target(tmp_path: Path) -> None:
+    """Audit HIGH: create_checkpoint followed symlinks, copying the CONTENT of a file OUTSIDE
+    the checkpoint root into the snapshot (out-of-root disclosure, and it could re-materialize
+    into the tree on undo). Symlinks must not be followed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "real.py").write_text("in-repo content\n", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("SECRET-OUT-OF-ROOT\n", encoding="utf-8")
+    try:
+        (repo / "link.txt").symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+    created = checkpoint_store.create_checkpoint(str(repo))
+    snapshot = checkpoint_store._snapshot_path(repo, created.checkpoint_id)
+
+    # No snapshotted regular file may contain the out-of-root secret content.
+    for path in snapshot.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            assert "SECRET-OUT-OF-ROOT" not in path.read_text(encoding="utf-8", errors="ignore")
