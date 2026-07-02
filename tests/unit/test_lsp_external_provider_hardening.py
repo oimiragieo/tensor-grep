@@ -33,3 +33,17 @@ def test_read_message_refuses_malformed_content_length() -> None:
     stream = _FakeStream(["Content-Length: not-a-number\r\n", "\r\n"])
     assert _read_message(stream) is None
     assert stream.read_called_with is None
+
+
+def test_notify_document_closed_evicts_doc_version(tmp_path, monkeypatch) -> None:
+    """Audit LOW (leak): _doc_versions grew unbounded because closed URIs were never
+    evicted (unlike _opened_documents). Closing a document must drop its version entry."""
+    import tensor_grep.cli.lsp_external_provider as m
+
+    monkeypatch.setattr(m, "_provider_command", lambda language: ["dummy-lsp"])
+    client = m.ExternalLSPClient(language="python", workspace_root=tmp_path)
+
+    client._doc_versions["file:///x.py"] = 5
+    client._notify_document_closed("file:///x.py")
+
+    assert "file:///x.py" not in client._doc_versions

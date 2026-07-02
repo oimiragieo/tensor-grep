@@ -670,6 +670,12 @@ class ExternalLSPClient:
             self._notify_document_closed(evicted_uri)
 
     def _notify_document_closed(self, uri: str) -> None:
+        # Audit LOW (leak): evict the per-URI version counter on close, mirroring the
+        # _opened_documents cleanup. Both removal paths (open-eviction and close_document)
+        # funnel through here, so _doc_versions no longer grows unbounded across a
+        # long-lived client's lifetime. _doc_versions is _lock-guarded (see did_change).
+        with self._lock:
+            self._doc_versions.pop(uri, None)
         try:
             self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
         except Exception:
