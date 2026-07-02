@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -359,6 +360,18 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
             passed=False,
             detail=f"{name} command could not be parsed: {exc}.",
         )
+
+    # CWE-427: resolve argv[0] against PATH to an absolute path BEFORE spawning. subprocess.run
+    # with a relative argv[0] and cwd=<target repo> lets a shadow executable planted in the
+    # untrusted repo (which Windows CreateProcess searches) pre-empt the real tool. Passing an
+    # absolute PATH-resolved binary removes the cwd search; fail closed if the tool is not on PATH.
+    resolved_executable = shutil.which(argv[0]) if argv else None
+    if resolved_executable is None:
+        return _command_result(
+            passed=False,
+            detail=f"{name} command executable {(argv[0] if argv else command)!r} was not found on PATH.",
+        )
+    argv = [resolved_executable, *argv[1:]]
 
     try:
         completed = subprocess.run(
