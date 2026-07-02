@@ -1,0 +1,368 @@
+---
+name: tensor-grep-release-and-positioning
+description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-02, v1.17.25.
+---
+
+# tensor-grep: Release Mechanics and Public Positioning
+
+External-facing sibling of `tensor-grep-change-control` (which covers the seam-verification /
+council process for landing a change). This skill picks up **after code is merge-ready**: how a
+merge turns into a published release, and what you are and are not allowed to say about `tg`
+publicly once it ships.
+
+## When NOT to use this skill
+
+| Situation | Use instead |
+|---|---|
+| You're still designing/verifying a code change before merge | `tensor-grep-change-control` |
+| A CI job is red and you need to root-cause it | `tensor-grep-debugging-playbook` / `tensor-grep-failure-archaeology` |
+| You need to run or interpret a benchmark suite in detail | `tensor-grep-benchmark-and-proof-toolkit` |
+| You're writing docs prose, not making a release/positioning decision | `tensor-grep-docs-and-writing` |
+| You're deciding CLI flags/config, not release/claims | `tensor-grep-config-and-flags` |
+
+---
+
+## Part 1 — Release mechanics
+
+### 1.1 The actors (do not confuse these two workflows)
+
+- **`ci.yml`** is the *only* path that actually publishes. It runs on every push to `main`, every
+  PR, and weekly (`.github/workflows/ci.yml:3-9`). The `release` job (display name **`Semantic
+  Release`**, `ci.yml:860-880`) runs `python-semantic-release` and is gated on `github.ref ==
+  'refs/heads/main' && github.event_name == 'push' && !contains(commit message, 'skip release')`
+  (`ci.yml:863`).
+- **`release.yml`** is `workflow_dispatch`-only, targeting an *already-published* tag
+  (`gh workflow run release.yml --ref vX.Y.Z`). It is a manual/backfill artifact pipeline, **not**
+  triggered by a tag push — a manually-pushed `v*` tag cannot bypass semantic-release
+  (`docs/CI_PIPELINE.md:49`). If you're trying to "just push a tag" to force a release, stop: that
+  path was deliberately closed.
+
+### 1.2 The gate DAG on `main` (know this before saying "it's not published")
+
+```
+release-intent (PR-only title check)
+        │
+repo-hygiene → smoke → {release-readiness, agent-readiness, windows-agent-readiness,
+                         package-manager-readiness, static-analysis, test-python,
+                         test-rust-core, search-golden-parity, native-build-smoke,
+                         test-gpu-linux, benchmark-regression}
+        │  (ALL of the above must succeed — ci.yml:862)
+        ▼
+   release  ("Semantic Release" job — creates tag + chore(release) commit)
+        │
+        ├─ build-wheels-pypi / build-sdist-pypi  (only if publish_pypi == 'true')
+        ├─ build-release-native-assets            (only if released == 'true')
+        │        │
+        │        ▼
+        │  publish-github-release-assets  (needs: release, build-release-native-assets)
+        │        │
+        ▼        ▼
+   validate-pypi-artifacts → publish-pypi (needs release + both build jobs + publish-github-release-assets)
+        │
+        ▼
+   publish-success-gate  (needs: release, publish-pypi, publish-github-release-assets)
+        │
+        ▼
+   release-tag-smoke
+```
+(`ci.yml:862,936,981,1023,1049,1147,1149,1222,1224,1259-1261,1339-1341`)
+
+A release is **not** done just because `release` (Semantic Release) went green. It is done when
+`publish-success-gate` is green — that job re-verifies GitHub release asset coverage
+(`ci.yml:1311-1323`, `scripts/verify_github_release_assets.py`) and PyPI parity
+(`ci.yml:1324-1337`, `scripts/validate_release_version_parity.py`) for the exact tag semantic-release
+produced.
+
+### 1.3 PR title → release intent
+
+`scripts/validate_pr_title_semver.py:10-25` is the ground truth (enforced by the `release-intent`
+PR job, `ci.yml:20-30`). The regex accepts an optional `(scope)` and an optional `!`:
+
+| Prefix | Intent | Note |
+|---|---|---|
+| `feat:` | minor | |
+| `fix:` / `perf:` | patch | |
+| `refactor:` | patch | **Not listed in `AGENTS.md`'s prose table, but the validator script treats it as patch** — trust the script over the prose if they ever disagree. |
+| `feat!:` / `fix!:` (any type + `!`) | major | |
+| `docs:` / `test:` / `build:` / `ci:` / `chore:` | none | no release |
+
+Anything that doesn't match the pattern fails PR CI outright (`validate_pr_title_semver.py:84-93`).
+Squash-merge release-bearing PRs — the PR title becomes the `main` commit subject that
+semantic-release reads (`AGENTS.md:496`, `docs/RELEASE_CHECKLIST.md:54`).
+
+### 1.4 What `chore(release)` actually touches
+
+`pyproject.toml:127-149` (`[tool.semantic_release]`) is the contract:
+
+- `commit_message = "chore(release): v{version} [skip ci]"`
+- `version_toml` bumps `pyproject.toml:project.version` and `rust_core/Cargo.toml:package.version`
+- `version_variables` stamps: `src/tensor_grep/cli/main.py:pkg_version`, `npm/package.json:version`,
+  `scripts/tensor-grep.rb:TENSOR_GREP_VERSION`, `scripts/oimiragieo.tensor-grep.yaml`
+  (`PackageVersion` + `InstallerUrl`), and a `release_docs_current_tag` token in `AGENTS.md`,
+  `README.md`, `SKILL.md`, `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`,
+  `docs/CONTRACTS.md`.
+- `build_command` runs `scripts/stamp_release_assets.py`, stages the touched docs, bootstraps a
+  pinned `rustup` toolchain (`1.96.0`), regenerates `Cargo.lock` and `uv.lock` (`uv lock
+  --upgrade-package tensor-grep`), and runs `uv build` — all *inside* the semantic-release job,
+  which is why that job takes ~6 minutes (see push-race below).
+
+**Practical consequence**: after any release, your local `main` is stale until you fetch it. `git
+status` on a pre-release commit will show a version that PyPI has already moved past.
+
+```bash
+git fetch origin main --tags
+git pull --ff-only origin main
+```
+
+Do this **before** any post-release check — see the memory note
+`feedback-switch-to-main-after-merge`: a "dogfood FAIL" that was actually a stale local checkout on
+a merged branch, not a real regression.
+
+### 1.5 The push-race — the #1 reason a release "silently doesn't publish"
+
+The `Semantic Release` job **builds native assets before it publishes**, so its `git push origin
+main` (the `chore(release)` commit) doesn't land until ~6 minutes after the merge that triggered it.
+That whole window is a race window (`AGENTS.md:500-508`).
+
+If **any** other merge lands on `main` during that window — including a no-release `docs:`/`chore:`
+PR — the in-flight release's final push is rejected non-fast-forward (`! [rejected]  main -> main`)
+and **that version never publishes**. The CI `concurrency` group (`ci.yml:11-13`) serializes *runs*,
+not the human/agent act of clicking merge, so it does not prevent this.
+
+- **Receipt**: `v1.17.23` (security batch, #318) failed to publish because a GPU-pause `docs:` PR
+  (#319) was merged while #318's release job was still compiling assets (`AGENTS.md:504`).
+- **Recovery — do NOT panic-rerun.** The failure self-heals: the *next* push-to-`main` re-runs
+  `Semantic Release`, and because the version is derived from git tags (not the failed run's
+  in-memory state), it recomputes the correct next version and folds in the orphaned commit. The
+  code was already on `main` regardless — only the publish step was behind.
+- **Diagnose by decoding the structured job result first**: `gh run view <id> --json jobs` → find
+  `Semantic Release` → `--log-failed`. A `! [rejected]  main -> main` line is the push-race
+  signature; anything else is a different bug. Do not theorize from a traceback before reading this.
+
+**Discipline — one-merge-per-tick**: merge ONE release-bearing (or potentially-racing) PR, then wait
+for its `chore(release): vX` commit to appear on `main` **and** for PyPI to show the new version,
+before merging the next one. "Safe to interleave" means *after the prior release has fully
+published*, not merely after its PR CI went green (`AGENTS.md:498`).
+
+### 1.6 Publish surfaces and their gates
+
+| Surface | Package/formula identity | Gate/verify mechanism |
+|---|---|---|
+| PyPI | `tensor-grep` (`pyproject.toml`) | OIDC-based publish, only if `publish_pypi=true` (version not already on PyPI — `ci.yml:898-917`); `publish-success-gate` re-checks parity (`ci.yml:1324-1337`) |
+| npm | `tensor-grep` / bin `tg` (`npm/package.json:2,5-8`) | version stamped by semantic-release `version_variables` |
+| Homebrew | `scripts/tensor-grep.rb` (`class TensorGrep`, `TENSOR_GREP_VERSION`) | `ruby -c scripts/tensor-grep.rb` in CI; formula URL must point at the tag's GitHub release asset (`docs/RELEASE_CHECKLIST.md:130-132`) |
+| winget | `PackageIdentifier: oimiragieo.tensor-grep` (`scripts/oimiragieo.tensor-grep.yaml:5`) | `winget validate` on Windows, Python validator fallback; `InstallerSha256` stamped from `CHECKSUMS.txt` |
+| GitHub release assets | `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu` (built on Intel `macos-15-intel`, not `macos-latest`), `tg-windows-amd64-cpu.exe`, `CHECKSUMS.txt`, `BUNDLE_CHECKSUMS.txt`, package-manager bundle | `publish-github-release-assets` + `scripts/verify_github_release_assets.py --expected-profile native-frontdoor` (`docs/CI_PIPELINE.md:181-186`) |
+
+The default asset profile is CPU-only `native-frontdoor`. An opt-in repo variable
+`TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE=native-frontdoor-gpu` additionally builds
+`tg-linux-amd64-nvidia` / `tg-windows-amd64-nvidia.exe` (`docs/CI_PIPELINE.md:25`, `ci.yml:1314`).
+macOS stays CPU-only either way.
+
+### 1.7 Post-publish: dogfood the real artifact, not a mock
+
+Never declare a release "done" from PyPI visibility alone if the installer/update path changed
+(`docs/RELEASE_CHECKLIST.md:99-108`). Confirm with API evidence:
+
+```bash
+python - << 'PY'
+import json, urllib.request
+data = json.load(urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json"))
+print(data["info"]["version"])
+PY
+```
+
+Then run the Docker dogfood harness (`scripts/dogfood/README.md`) — it installs the *published*
+package into a clean container and drives the *real* `tg` binary (not `CliRunner`, which bypasses
+the `tensor_grep.cli.bootstrap:main_entry` front door and would have missed the v1.14.0 `tg search
+--rank` regression that shipped broken):
+
+```bash
+docker build --build-arg TG_VERSION=<X.Y.Z> -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood
+docker run --rm tg-dogfood      # exit 0 = every feature works; exit 1 = prints the failing tg <command>
+```
+
+Without Docker:
+
+```bash
+pip install "tensor-grep==<X.Y.Z>"
+python scripts/dogfood/dogfood_features.py   # or TG_BIN=/path/to/tg python scripts/dogfood/dogfood_features.py
+```
+
+Compact release checklist from `AGENTS.md:325-337` (run all of these, not a subset):
+
+```bash
+gh release view <tag>
+pip index versions tensor-grep
+uvx --refresh-package tensor-grep --from tensor-grep==<tag> tg --version
+tg upgrade
+cmd /c tg --version
+pwsh -NoProfile -Command "tg --version"
+tg doctor --json
+```
+
+`tg doctor --json` must show matching sidecar/native versions and surface any foreign-launcher
+route (current-shell / fresh-shell / Python-subprocess) — a mismatched version here is a real
+release-parity bug, not noise.
+
+### 1.8 Rollback, if a bad release escapes
+
+Full runbook: `docs/RELEASE_CHECKLIST.md:153-170`. Summary:
+
+1. Do not rely on deleting PyPI artifacts as the primary fix — publish a corrected **patch**
+   release instead.
+2. If GitHub release assets are wrong, rebuild for the *same* tag and rerun
+   `scripts/verify_github_release_assets.py`.
+3. Homebrew/winget: revert/submit a manifest pointing at the previous known-good version.
+4. Always add root cause + mitigation to `CHANGELOG.md` (and `docs/PAPER.md` if
+   architecture-impacting), and add/adjust a CI assertion so the specific failure class can't recur.
+
+### 1.9 Release-mechanics checklist (copy-paste before you claim "released")
+
+```
+[ ] PR title matches the validator regex (scripts/validate_pr_title_semver.py:10)
+[ ] Squash-merged (not merge-commit) so the title becomes the main commit subject
+[ ] No other release-bearing PR is mid-flight (one-merge-per-tick — 1.5 above)
+[ ] `Semantic Release` job green on the exact commit
+[ ] `git fetch origin main --tags && git pull --ff-only origin main`
+[ ] `publish-github-release-assets` green for the new tag
+[ ] `publish-pypi` green (if publish_pypi was true) AND PyPI JSON API shows the version
+[ ] `publish-success-gate` green
+[ ] Docker dogfood (1.7) run against the published version, exit 0
+[ ] If installer/update path changed: `tg upgrade` + fresh-shell `tg --version` verified
+```
+
+---
+
+## Part 2 — Public positioning
+
+### 2.1 The thesis: not faster grep
+
+`tensor-grep` is **not** a universal speed winner over raw text search. Say this plainly in any
+public-facing material. The honest comparator map (`docs/tool_comparison.md:1-13`):
+
+| Tool | Role |
+|---|---|
+| `ripgrep` (`rg`) | cold generic text-search **baseline** — `tg` does not claim to beat it on cold search |
+| `ast-grep` | structural search/rewrite **baseline** |
+| `Semgrep` | policy/security-scanning baseline (stronger ecosystem than `tg` today) |
+| `Zoekt` | indexed search-at-scale baseline (`tg` has no accepted head-to-head yet) |
+| `tensor-grep --cpu` | native CPU probe for large-file / count-heavy workloads |
+
+The moat is the **agent-native code-intelligence layer** on top of search — `tg orient` / `callers`
+/ `blast-radius` / `defs` / `refs` / `agent` (the Actionable Context Capsule) / `session` — not raw
+grep throughput. `docs/tool_comparison.md:62-77` states this explicitly: `rg` still owns cold
+generic text search on the current release line; `tg` wins repeated/warm-query search, AST
+search+rewrite, and agent-workflow surfaces (machine-readable CLI/NDJSON/session/MCP).
+
+Where `tg` currently loses or ties (state this, don't bury it — `docs/tool_comparison.md:21-24,73-77`):
+
+- Cold generic text search on the current Windows host: `rg` wins the standard-corpus row; `tg` is
+  roughly tied on a 200MB large-file row.
+- `Semgrep` remains the stronger security/policy scanning ecosystem.
+- `Zoekt` remains the external indexed-at-scale baseline; `tg` has local repeated-query wins, not an
+  accepted direct bakeoff.
+- `ag`, `ack`, `ugrep`, GNU `grep` are **not yet** part of the accepted comparator pack — don't make
+  hard claims about them (`docs/tool_comparison.md:87`).
+
+### 2.2 The reproducibility standard — required before ANY benchmark / GPU / LSP claim
+
+This is the actual gate, not aspiration. `AGENTS.md:341`: **"Never claim a speedup without measured
+numbers."** Concretely:
+
+1. **Emit a machine-readable artifact.** Benchmark suites write `artifacts/bench_*.json`
+   (`docs/PAPER.md:340`). A verbal "it feels faster" is not evidence.
+2. **Run it through the regression checker against the accepted baseline**, not an ad hoc rerun:
+   ```bash
+   python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.json
+   python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json
+   ```
+   `benchmarks/check_regression.py` rejects cross-OS comparisons by default unless explicitly
+   overridden, and compares against `benchmark_host_key`/`host_provenance`-tagged baselines
+   (`docs/PAPER.md:344,347`) — a Linux CI number is not evidence for a Windows claim, and vice
+   versa.
+3. **Pick the benchmark that matches what changed** — end-to-end CLI text search
+   (`run_benchmarks.py`) for routing/startup/control-plane changes, hot-query
+   (`run_hot_query_benchmarks.py`) for repeated-query/cache paths, AST (`run_ast_benchmarks.py`,
+   `run_ast_workflow_benchmarks.py`) for structural workflows, GPU (`run_gpu_benchmarks.py`,
+   `run_gpu_native_benchmarks.py`) for GPU paths (`AGENTS.md:343-362`). Using the wrong suite is not
+   evidence for a different code path.
+4. **Reject the change if it regresses**, even if the code is otherwise clean (`AGENTS.md:174,571`).
+   Main CI enforces this with a required same-runner base-vs-head benchmark-regression gate
+   (`docs/CI_PIPELINE.md:23,42-45`) that blocks merge *before* semantic-release ever runs.
+5. **For GPU specifically**: correctness before speed, always. GPU scale gates need 1GB and 5GB rows
+   with exact match/file-set correctness for every corpus, no-match must be a valid comparator
+   outcome (`rg` exit 1 + empty output vs `tg` no-match), and explicit `--gpu-device-ids` must not
+   silently touch unselected devices (`AGENTS.md:155`). Public managed-GPU promotion additionally
+   requires `NativeGpuBackend` with `sidecar_used = false`, a direct `rg --json` correctness/timing
+   comparison, and the advanced many-fixed-string proof gate versus a fair single-invocation `rg -F
+   -e ... -e ...` baseline (`docs/CI_PIPELINE.md:85-91`, the `public-gpu-proof.yml` workflow). Local
+   CUDA-feature binaries, sidecar rows, CPU-fallback rows, and single-pattern speed wins are
+   *implementation evidence*, not public promotion proof — do not market them as one.
+6. **For LSP specifically**: default `--provider native` must never start an LSP provider; a claim
+   requiring `lsp_provider_response` / `lsp_proof` / `lsp_operation` / `lsp_resolution_basis` is only
+   valid when an opted-in provider request actually confirmed it (`docs/CONTRACTS.md:105`). Mixed
+   evidence downgrades confidence and must be surfaced explicitly, not hidden behind one ranked
+   result (`docs/CONTRACTS.md:103`).
+7. **Preserve failed attempts, not just wins.** `docs/PAPER.md`'s optimization ledger
+   (section 3.10) exists so future agents don't re-attempt the same losing idea; update it whenever
+   a benchmark candidate is accepted *or* rejected (`AGENTS.md:556-561`).
+
+### 2.3 Current experimental / open surfaces (label them as such, don't oversell)
+
+| Surface | Status (2026-07-02, v1.17.25) | Source |
+|---|---|---|
+| GPU native backend (P1 CUDA-PFAC kernel) | **Paused at P0** (correctness taxonomy + loud non-promotional fallback + doctor/proof fields already shipped). Not advancing to P2–P4 until 3 CPU-only wins ship first (hybrid semantic search, `tg orient`+token-efficiency proof, Bloom-filter n-gram prefilter). | `AGENTS.md:226-234` (Roadmap Sequencing) |
+| GPU speed claim generally | Not accepted. GPU still loses or times out on 100MB/1GB/5GB public scale checks as of the last dogfood; kept experimental/opt-in until correctness+speed beat both `rg` and `tg --cpu` on accepted artifacts. | `docs/PAPER.md:139` |
+| CyBERT / provider-backed `classify` | Opt-in only (`TENSOR_GREP_CLASSIFY_PROVIDER=cybert`), default is local deterministic; useful future reference, not a default performance claim. | `docs/PAPER.md:141-146` |
+| Resident AST worker (`tg worker`) | Opt-in (`TG_RESIDENT_AST=1`), hidden from `--help`, workload-dependent — helps startup-dominated repeated micro-workflows, not the default performance path. | `docs/EXPERIMENTAL.md:5-14` |
+| LSP semantic provider | Opt-in via `--provider lsp|hybrid`; default `native` never starts it. | `docs/CONTRACTS.md:105` |
+| Ranking scorer (`search --rank`, agent capsule, semantic surfaces) | Flat, no-IDF scorer — can silently flip/degrade on corpus change; a degrade-to-ask safety floor exists, the scorer itself is unresolved debt. Don't market ranking quality without re-checking this. | memory: `tensor-grep-idf-ranking-fragility-2026-06-29` |
+
+### 2.4 Positioning checklist (before any public claim)
+
+```
+[ ] Is this claim comparator-specific? ("beats rg on cold search" is different from
+    "beats rg on repeated warm queries" — say which.)
+[ ] Do I have an artifacts/bench_*.json for it, generated on the same host class as the claim?
+[ ] Did check_regression.py pass against the accepted baseline (not just "looked faster locally")?
+[ ] If GPU: does it have 1GB+5GB correctness rows AND a fair single/many-pattern rg baseline?
+[ ] If LSP: is this native-provider-off by default, and is the LSP claim backed by an actual
+    opted-in provider response, not an assumed one?
+[ ] Am I calling GPU/LSP/semantic/cybert "experimental" or "opt-in" rather than implying default
+    behavior?
+[ ] Would `docs/tool_comparison.md`'s "Comparator Policy" (reproducible + checked-in artifact,
+    or don't publish the claim) pass a skeptical read?
+```
+
+---
+
+## Provenance and maintenance
+
+Volatile facts here will drift. Re-verify before trusting this skill on a stale clone:
+
+```bash
+# Current version + release doc tag
+python - << 'PY'
+import tomllib
+print(tomllib.loads(open("pyproject.toml","rb").read())["project"]["version"])
+PY
+grep -n "release_docs_current_tag" AGENTS.md | head -1
+
+# PR-title -> release-intent mapping (ground truth over any prose table, including this skill's)
+sed -n '10,25p' scripts/validate_pr_title_semver.py
+
+# The gate DAG (job names + needs:) — re-grep after any ci.yml edit
+grep -n "^jobs:\|^  [a-zA-Z][a-zA-Z0-9_-]*:$\|needs:" .github/workflows/ci.yml
+
+# Comparator snapshot (numbers move every benchmark refresh)
+sed -n '1,90p' docs/tool_comparison.md
+
+# GPU / roadmap status
+grep -n "Roadmap Sequencing" AGENTS.md
+sed -n '134,146p' docs/PAPER.md
+```
+
+If `scripts/validate_pr_title_semver.py`'s regex or `_RELEASE_INTENTS` dict changes, update
+section 1.3 here. If `ci.yml`'s `release` job `needs:` list changes, update the DAG in section 1.2.
+If the GPU roadmap graduates past P0, update section 2.3 and drop the "paused" framing.

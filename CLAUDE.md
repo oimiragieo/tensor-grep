@@ -36,6 +36,14 @@ Claude Code guidance for the **tensor-grep** repository.
 ## Skills that apply here
 
 - **Using `tg`**: `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`).
+- **Carrying the project forward (in-repo onboarding library, 16 skills)**: `.claude/skills/tensor-grep-*`
+  + `code-search-and-retrieval-reference` — the retirement handbook so a new engineer or a Sonnet-class
+  session can debug, extend, validate, and advance `tg`. Change: `change-control`, `debugging-playbook`,
+  `failure-archaeology`, `validation-and-qa`. Understand: `architecture-contract`,
+  `code-search-and-retrieval-reference`, `config-and-flags`. Operate: `build-and-env`, `run-and-operate`,
+  `diagnostics-and-tooling`, `docs-and-writing`, `release-and-positioning`. Advance:
+  `semantic-search-campaign`, `benchmark-and-proof-toolkit`, `research-frontier`, `research-methodology`.
+  Each auto-loads by task; this is the index.
 - **Build/release discipline** (global, `~/.claude/skills/`): `dogfood-the-shipped-artifact`,
   `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`.
 - **Post-release dogfood harness**: `scripts/dogfood/`.
