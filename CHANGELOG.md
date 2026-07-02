@@ -1,6 +1,145 @@
 # CHANGELOG
 
 
+## v1.17.26 (2026-07-02)
+
+### Bug Fixes
+
+- Sentinel user paths with -- in the rg passthrough (round-4 argv injection, HIGH)
+  ([#326](https://github.com/oimiragieo/tensor-grep/pull/326),
+  [`63c2f5f`](https://github.com/oimiragieo/tensor-grep/commit/63c2f5f9b1cdec7620fc41b9a6b600d0628d8669))
+
+execute_ripgrep_search forwarded paths RAW to the rg child (patterns were already -e-guarded, paths
+  were not), so a path beginning with `-` — e.g. a directory literally named `-l` — was parsed by
+  rg's own option parser as a FLAG, not a path. Dogfood-confirmed on the shipped v1.17.23 binary:
+  `tg search --column TODO -- -l` silently ran rg in --files-with-matches mode (wrong scope + wrong
+  output, no diagnostic); via rg's `--pre=CMD` it escalates toward execution. CWE-88 / same class as
+  the MCP-side fix in #322, now closed on the Rust side.
+
+Fix: extract a testable `ripgrep_operand_args()` helper that emits patterns (via -e) then, guarded
+  by a `--` end-of-options sentinel, the user paths. The sentinel is inserted only when paths is
+  non-empty, so stdin search (empty paths + readable stdin, per implicit_search_paths) is
+  unaffected.
+
+TDD: 3 new unit tests (sentinel before paths; files-mode still sentineled; no-paths emits no
+  sentinel) — watched fail, then pass. Full rust_core lib suite 64/64, cargo fmt + clippy clean.
+  `--` before positional paths is transparent to rg for normal paths.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Chores
+
+- Untrack _archive/ dev scratch + gitignore the whole dir
+  ([#324](https://github.com/oimiragieo/tensor-grep/pull/324),
+  [`1ed9ae4`](https://github.com/oimiragieo/tensor-grep/commit/1ed9ae497549cb0b62ed950c5d4239f80c3c35a9))
+
+.gitignore only ignored _archive/*.{log,patch,txt}, so 5 dead one-off dev scripts
+  (find_offsets/fix_main_final/master_assemble/patch_gpu_fallback/ patch_main_initializers .py) got
+  committed during an early bulk-format commit (b2dc2db). They're unreferenced scratch (grep: no
+  imports anywhere). Broaden the ignore to /_archive/ and untrack the .py files (kept on disk).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- Add the tensor-grep skill library (.claude/skills/, 16 skills)
+  ([#325](https://github.com/oimiragieo/tensor-grep/pull/325),
+  [`7c209c8`](https://github.com/oimiragieo/tensor-grep/commit/7c209c828c7cb4859b5e0e1498dec3f3cf0b6dc3))
+
+* docs: add the tensor-grep skill library (.claude/skills/, 16 skills)
+
+A complete onboarding skill library so Sonnet-class AI sessions AND mid-level human engineers can
+  debug, extend, validate, and advance tensor-grep without the original authors. Authored by 16
+  parallel agents (one per skill), each ground-truthed against the live repo, then reviewed
+  (DOCTRINE + factual + usability) and fixed.
+
+CORE (12): change-control, debugging-playbook, failure-archaeology, architecture-contract,
+  code-search-and-retrieval-reference, config-and-flags, build-and-env, run-and-operate,
+  diagnostics-and-tooling (+ scripts/ doctor_traffic_light.py), validation-and-qa, docs-and-writing,
+  release-and-positioning. ADVANCED (4): semantic-search-campaign (the buildable-now hardest
+  problem), benchmark-and-proof-toolkit, research-frontier (GPU/ranking/parity open problems),
+  research-methodology.
+
+Every skill: trigger-rich frontmatter, imperative runbook voice for both audiences,
+  ground-truth-only claims with a Provenance-and-maintenance section, no oversell, and routes
+  changes through change-control (no skill bypasses it).
+
+Review fixes applied (all verified vs code): change-control now lists `refactor:` -> patch
+  (validate_pr_title_semver.py:19); architecture-contract notes the native AST path is CUDA-gated
+  (ast_backend.py:504); code-search keeps the "validated AST slice, not an ast-grep replacement"
+  positioning caveat.
+
+Docs-only (no release). NOTE: the per-skill FACTUAL deep-review was partly rate-limited; covered by
+  a main-loop spot-check (env vars, file paths, 13 benchmark scripts all verified real) + a
+  follow-up full factual pass.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* docs: apply Phase-3 review fixes to the skill library (3 blocking + 23 important)
+
+Phase-3 review (18 agents: FACTUAL per-skill vs repo + DOCTRINE + USABILITY) found 3 BLOCKING + 23
+  IMPORTANT; a per-skill fixer (11 agents) applied 27 fixes, each re-verified against the live repo
+  before editing.
+
+BLOCKING: - change-control: "rg exit code 2 is non-fatal" was WRONG (contradicted the code) -> exit
+  2+ is a real failure; ripgrep_backend.py raises on returncode>1 (:88,:164,:199); must not be
+  swallowed. - debugging-playbook: the ranking-flip discriminating command `tg search --rank --json`
+  does NOT emit `ambiguity` (that is `tg agent --json`) -> split into two commands for the two
+  distinct code paths. - docs-and-writing: removed the false claim that .claude/skills/tensor-grep/
+  SKILL.md carries a `release_docs_current_tag:` line (it does not).
+
+IMPORTANT highlights: corrected a ledger-level overreach — `tg search --rank` and semantic search
+  use REAL BM25+IDF (retrieval_bm25.py); only the agent-capsule primary-target selection uses the
+  flat no-IDF scorer (repo_map.py -> score_term_overlap). Plus many stale citations retargeted,
+  cross-refs fixed, duplicated narratives trimmed to pointers, and frontmatter trigger-overlaps
+  sharpened.
+
+Docs-only, no release.
+
+* chore: ruff-fix the diagnostics skill script (RUF023 + preview format)
+
+Agent-written doctor_traffic_light.py had an unsorted __slots__ and needed preview formatting
+  (agents cannot run ruff). Fixes the Formatting & Linting CI check on #325.
+
+* docs: index the 16-skill onboarding library in AGENTS.md + CLAUDE.md
+
+The skill library lands in .claude/skills/ (this PR) and Claude Code auto-loads each skill by its
+  description — but the docs of record didn't point to it, so a human reader (or an agent orienting
+  via the docs) wouldn't know it exists. Add a "carry the project forward" index to both AGENTS.md
+  ("Skills", now three kinds) and CLAUDE.md ("Skills that apply here"), grouped by intent: Change /
+  Understand / Operate / Advance.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- Fix stale tg-skill claims + add round-3 security audit lens
+  ([#323](https://github.com/oimiragieo/tensor-grep/pull/323),
+  [`3564c76`](https://github.com/oimiragieo/tensor-grep/commit/3564c7604f912ca957b4e1f2b875d5af2e41c0fc))
+
+Workflow-audited (8 agents, all file:line-cited) skill accuracy + captured this session's security
+  learnings.
+
+tg-usage skill fixes (.claude/skills/tensor-grep/{SKILL,REFERENCE}.md): - Whole-repo search: "hangs
+  ~600s" is stale — #288 lowered TG_RG_TIMEOUT_SECONDS to 60s and fails FAST with a scope-to-a-path
+  hint (subprocess_policy.py:41-44, ripgrep_backend.py). Full-tree search is still slow (trigram
+  index still pending). - `tg scan`: "--config RULESET" conflated two distinct flags — --config is
+  an ast-grep root-config PATH (default sgconfig.yml), --ruleset selects a built-in pack
+  (main.py:9216-9229). Corrected to --ruleset. - `tg session daemon` is a sub-group needing
+  start|status|stop, not a runnable leaf (main.py:213-222).
+
+AGENTS.md + CLAUDE.md: new "Security Hardening Patterns (Round-3 audit lens)" section — four sweep
+  targets from this session's fixes (symlink-follow disclosure, pre-auth unbounded-read DoS,
+  atomic-write permission window, native-argv flag injection). Framed as project sweep targets, NOT
+  new skills: baseline-tested that current models already apply these fixes when writing fresh code
+  — the bugs lived in already-committed code. The argv one carries its CWE-88/MCP-276 CVE context
+  (CVE-2026-5058/23744/30623) + the -- caveats.
+
+Docs-only; governance suite green (43 passed).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.25 (2026-07-02)
 
 ### Bug Fixes
