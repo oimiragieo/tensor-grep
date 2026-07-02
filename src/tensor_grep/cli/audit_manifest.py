@@ -288,16 +288,24 @@ def _resolve_history_root(path: str | Path) -> Path:
 
 
 def _resolve_manifest_root(manifest_path: Path, manifest: dict[str, Any]) -> Path:
+    manifest_resolved = manifest_path.expanduser().resolve()
     manifest_root = _normalize_optional_str(manifest.get("path"))
     if manifest_root is not None:
         candidate = Path(manifest_root).expanduser().resolve()
-        if candidate.exists():
+        # Audit HIGH (path traversal): manifest["path"] is attacker-controlled JSON. Only honor it
+        # when the manifest file actually lives under the declared root (or IS that root) — a
+        # tampered manifest pointing `path` at any other existing directory must NOT redirect the
+        # audit-history writes / checkpoint reads there. Otherwise derive the root from the
+        # manifest file's own location.
+        if candidate.exists() and (
+            candidate == manifest_resolved or candidate in manifest_resolved.parents
+        ):
             return _resolve_root(candidate)
 
-    for ancestor in manifest_path.expanduser().resolve().parents:
+    for ancestor in manifest_resolved.parents:
         if ancestor.name == _AUDIT_SUBDIR and ancestor.parent.name == _TG_DIRNAME:
             return ancestor.parent.parent
-    return manifest_path.expanduser().resolve().parent
+    return manifest_resolved.parent
 
 
 def _audit_diff_field_path(parent: str, field: str) -> str:
