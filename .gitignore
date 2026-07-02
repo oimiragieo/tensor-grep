@@ -51,9 +51,7 @@ npm/node_modules/
 /.tensor-grep/
 /.factory/*.patch
 /.factory/*.txt
-/_archive/*.log
-/_archive/*.patch
-/_archive/*.txt
+/_archive/
 /agent_out.json
 /src/.tensor-grep/
 /src/tensor_grep/cli/commands.txt
