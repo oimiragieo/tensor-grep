@@ -58,6 +58,43 @@ def test_signed_manifest_with_correct_out_of_band_key_is_valid(tmp_path: Path) -
     assert result["valid"] is True
 
 
+def _make_signed_bundle(tmp_path: Path, signing_key_bytes: bytes) -> tuple[Path, Path]:
+    key = tmp_path / "audit.key"
+    key.write_bytes(signing_key_bytes)
+    manifest = tmp_path / "rewrite-audit.json"
+    _write_signed_manifest(manifest, signing_key_bytes, embedded_key_path=str(key))
+    bundle = audit_manifest.create_review_bundle(str(manifest))
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+    return key, bundle_path
+
+
+def test_review_bundle_valid_only_with_correct_signing_key(tmp_path: Path) -> None:
+    """Audit HIGH (integrity bypass): a signed review bundle reports valid only when the
+    correct out-of-band signing key is supplied. The keyless SHA256 self-checks alone are
+    cosmetic against a recomputing adversary."""
+    key, bundle_path = _make_signed_bundle(tmp_path, b"top-secret")
+
+    with_key = audit_manifest.verify_review_bundle(str(bundle_path), signing_key=key)
+    assert with_key["manifest_signature_valid"] is True
+    assert with_key["valid"] is True
+
+    # A SIGNED bundle verified WITHOUT the key must fail closed, not report valid.
+    no_key = audit_manifest.verify_review_bundle(str(bundle_path))
+    assert no_key["manifest_signature_valid"] is False
+    assert no_key["valid"] is False
+
+
+def test_review_bundle_rejects_wrong_signing_key(tmp_path: Path) -> None:
+    _key, bundle_path = _make_signed_bundle(tmp_path, b"top-secret")
+    wrong = tmp_path / "wrong.key"
+    wrong.write_bytes(b"not-the-key")
+
+    result = audit_manifest.verify_review_bundle(str(bundle_path), signing_key=wrong)
+    assert result["manifest_signature_valid"] is False
+    assert result["valid"] is False
+
+
 def test_signed_manifest_without_key_refuses_embedded_key_path(tmp_path: Path) -> None:
     # The attacker controls both the manifest AND the embedded key file it points at.
     attacker_key = tmp_path / "attacker.key"

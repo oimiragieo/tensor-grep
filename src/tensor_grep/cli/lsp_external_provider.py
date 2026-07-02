@@ -85,6 +85,11 @@ def _configured_positive_int(env_var: str, default: int) -> int:
     return value if value > 0 else default
 
 
+# Audit MED (DoS): cap the framed-message body size so a malicious or buggy external LSP
+# provider cannot declare a huge Content-Length and force an unbounded read/allocation.
+_MAX_LSP_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
 def _read_message(stream: Any) -> dict[str, Any] | None:
     headers: dict[str, str] = {}
     while True:
@@ -99,8 +104,14 @@ def _read_message(stream: Any) -> dict[str, Any] | None:
             continue
         key, value = line.split(":", 1)
         headers[key.strip().lower()] = value.strip()
-    content_length = int(headers.get("content-length", "0"))
+    try:
+        content_length = int(headers.get("content-length", "0"))
+    except (TypeError, ValueError):
+        return None
     if content_length <= 0:
+        return None
+    if content_length > _MAX_LSP_MESSAGE_BYTES:
+        # Refuse an oversized frame rather than allocating/reading an unbounded body.
         return None
     body = stream.read(content_length)
     if not body:
@@ -659,6 +670,12 @@ class ExternalLSPClient:
             self._notify_document_closed(evicted_uri)
 
     def _notify_document_closed(self, uri: str) -> None:
+        # Audit LOW (leak): evict the per-URI version counter on close, mirroring the
+        # _opened_documents cleanup. Both removal paths (open-eviction and close_document)
+        # funnel through here, so _doc_versions no longer grows unbounded across a
+        # long-lived client's lifetime. _doc_versions is _lock-guarded (see did_change).
+        with self._lock:
+            self._doc_versions.pop(uri, None)
         try:
             self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
         except Exception:

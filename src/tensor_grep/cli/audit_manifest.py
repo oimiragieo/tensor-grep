@@ -226,7 +226,9 @@ def create_review_bundle_json(
     )
 
 
-def verify_review_bundle(bundle_path: str | Path) -> dict[str, Any]:
+def verify_review_bundle(
+    bundle_path: str | Path, *, signing_key: str | Path | None = None
+) -> dict[str, Any]:
     resolved_bundle = Path(bundle_path).expanduser().resolve()
     bundle = _read_review_bundle_object(resolved_bundle)
     raw_checksums = bundle.get("checksums")
@@ -257,18 +259,46 @@ def verify_review_bundle(bundle_path: str | Path) -> dict[str, Any]:
         and expected_bundle_sha256 == actual_bundle_sha256,
     }
 
+    # Audit HIGH (integrity bypass): the SHA256 checks above are KEYLESS and cosmetic against a
+    # recomputing adversary (an attacker with write access to the bundle just recomputes them).
+    # Verify the embedded audit_manifest's HMAC signature with an out-of-band signing key: a
+    # SIGNED bundle then reports valid only when the correct key is supplied, and a signed bundle
+    # verified without the key fails closed. (Unsigned bundles have no signature to check.)
+    manifest_signature_valid = True
+    manifest_signature_error: str | None = None
+    embedded_manifest = bundle.get("audit_manifest")
+    if isinstance(embedded_manifest, dict):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="tg_bundle_verify_") as tmp_dir:
+            tmp_manifest = Path(tmp_dir) / "manifest.json"
+            tmp_manifest.write_text(json.dumps(embedded_manifest), encoding="utf-8")
+            manifest_result = verify_audit_manifest(tmp_manifest, signing_key=signing_key)
+        manifest_checks = manifest_result.get("checks", {})
+        manifest_signature_valid = bool(manifest_checks.get("signature_valid", False))
+        if not manifest_signature_valid:
+            errs = manifest_result.get("errors") or []
+            manifest_signature_error = errs[0] if errs else "Embedded manifest signature invalid."
+
     payload = _envelope(routing_reason="review-bundle-verify")
     payload["bundle_path"] = str(resolved_bundle)
-    payload["valid"] = bundle_integrity["valid"] and all(
-        bool(component_check["valid"]) for component_check in checks.values()
+    payload["valid"] = (
+        bundle_integrity["valid"]
+        and all(bool(component_check["valid"]) for component_check in checks.values())
+        and manifest_signature_valid
     )
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
+    payload["manifest_signature_valid"] = manifest_signature_valid
+    if manifest_signature_error is not None:
+        payload["manifest_signature_error"] = manifest_signature_error
     return payload
 
 
-def verify_review_bundle_json(bundle_path: str | Path) -> str:
-    return json.dumps(verify_review_bundle(bundle_path), indent=2)
+def verify_review_bundle_json(
+    bundle_path: str | Path, *, signing_key: str | Path | None = None
+) -> str:
+    return json.dumps(verify_review_bundle(bundle_path, signing_key=signing_key), indent=2)
 
 
 def _resolve_history_root(path: str | Path) -> Path:
@@ -288,16 +318,24 @@ def _resolve_history_root(path: str | Path) -> Path:
 
 
 def _resolve_manifest_root(manifest_path: Path, manifest: dict[str, Any]) -> Path:
+    manifest_resolved = manifest_path.expanduser().resolve()
     manifest_root = _normalize_optional_str(manifest.get("path"))
     if manifest_root is not None:
         candidate = Path(manifest_root).expanduser().resolve()
-        if candidate.exists():
+        # Audit HIGH (path traversal): manifest["path"] is attacker-controlled JSON. Only honor it
+        # when the manifest file actually lives under the declared root (or IS that root) — a
+        # tampered manifest pointing `path` at any other existing directory must NOT redirect the
+        # audit-history writes / checkpoint reads there. Otherwise derive the root from the
+        # manifest file's own location.
+        if candidate.exists() and (
+            candidate == manifest_resolved or candidate in manifest_resolved.parents
+        ):
             return _resolve_root(candidate)
 
-    for ancestor in manifest_path.expanduser().resolve().parents:
+    for ancestor in manifest_resolved.parents:
         if ancestor.name == _AUDIT_SUBDIR and ancestor.parent.name == _TG_DIRNAME:
             return ancestor.parent.parent
-    return manifest_path.expanduser().resolve().parent
+    return manifest_resolved.parent
 
 
 def _audit_diff_field_path(parent: str, field: str) -> str:
@@ -308,6 +346,9 @@ def _audit_diff_index_path(parent: str, index: int) -> str:
     return f"{parent}[{index}]" if parent else f"[{index}]"
 
 
+_MAX_MANIFEST_DIFF_DEPTH = 64
+
+
 def _diff_manifest_values(
     previous: Any,
     current: Any,
@@ -316,7 +357,15 @@ def _diff_manifest_values(
     added: dict[str, Any],
     removed: dict[str, Any],
     changed: dict[str, dict[str, Any]],
+    _depth: int = 0,
 ) -> None:
+    # Audit LOW (DoS): bound recursion over attacker-supplied manifest JSON so a maliciously
+    # deep manifest raises a clean, bounded error instead of an uncaught RecursionError crashing
+    # `tg audit diff`. Real audit manifests are shallow; 64 is generous headroom.
+    if _depth > _MAX_MANIFEST_DIFF_DEPTH:
+        raise ValueError(
+            f"Audit manifest nesting exceeds the maximum diff depth ({_MAX_MANIFEST_DIFF_DEPTH})."
+        )
     if isinstance(previous, dict) and isinstance(current, dict):
         for key in sorted(set(previous) | set(current)):
             if key in _AUDIT_DIFF_IGNORED_KEYS:
@@ -335,6 +384,7 @@ def _diff_manifest_values(
                 added=added,
                 removed=removed,
                 changed=changed,
+                _depth=_depth + 1,
             )
         return
 
@@ -348,6 +398,7 @@ def _diff_manifest_values(
                 added=added,
                 removed=removed,
                 changed=changed,
+                _depth=_depth + 1,
             )
         for index in range(shared_length, len(current)):
             added[_audit_diff_index_path(path, index)] = current[index]
