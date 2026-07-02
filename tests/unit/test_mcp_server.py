@@ -10,6 +10,8 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -4792,3 +4794,56 @@ def test_rewrite_apply_command_still_sentinels_positionals() -> None:
 
     assert cmd[-3:] == ["--", "-rf", "/tmp/x"]
     assert "--apply" in cmd and "--json" in cmd
+
+
+# --- round-4 security: MCP write-path confinement (arbitrary file write) -----------
+#
+# tg_ruleset_scan (write_baseline/write_suppressions) and tg_review_bundle_create
+# (output_path) forwarded LLM-supplied paths straight to disk with no confinement —
+# an arbitrary-file-write primitive reachable from any MCP client. Writes must stay
+# within a per-tool anchor (scan root / cwd) and fail closed otherwise.
+
+
+def test_confine_write_path_refuses_escape(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    anchor = tmp_path / "proj"
+    anchor.mkdir()
+    with pytest.raises(ValueError):
+        mcp_server._confine_write_path("../evil.json", anchor, label="write_baseline")
+    with pytest.raises(ValueError):
+        mcp_server._confine_write_path(str(tmp_path / "evil.json"), anchor, label="write_baseline")
+    ok = mcp_server._confine_write_path("baseline.json", anchor, label="write_baseline")
+    assert ok == (anchor.resolve() / "baseline.json")
+    ok2 = mcp_server._confine_write_path("sub/dir/base.json", anchor, label="x")
+    assert ok2 == (anchor.resolve() / "sub" / "dir" / "base.json")
+
+
+def test_ruleset_scan_refuses_write_baseline_escape(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    (scan_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    escape = tmp_path / "evil_baseline.json"
+    out = mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), write_baseline=str(escape)
+    )
+    parsed = json.loads(out)
+    assert parsed.get("error", {}).get("code") == "invalid_input"
+    assert not escape.exists()  # fail closed: nothing written outside the scan root
+
+
+def test_review_bundle_create_refuses_output_path_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    manifest = proj / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(proj)  # cwd = the project anchor
+    escape = tmp_path / "evil_bundle.json"
+    out = mcp_server.tg_review_bundle_create(manifest_path=str(manifest), output_path=str(escape))
+    parsed = json.loads(out)
+    assert parsed.get("error", {}).get("code") == "invalid_input"
+    assert not escape.exists()

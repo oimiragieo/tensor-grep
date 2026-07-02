@@ -1457,6 +1457,24 @@ def tg_rulesets() -> str:
     return _inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
 
 
+def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
+    """Resolve an MCP-supplied write path and refuse anything outside ``anchor`` (round-4).
+
+    The MCP write tools (ruleset baseline/suppressions, review-bundle output) take a path
+    straight from the (LLM/attacker-influenceable) tool call. Without confinement that is an
+    arbitrary-file-write primitive. Resolve the candidate (relative paths join the anchor),
+    normalize ``..`` and parent symlinks, and require the result to be the anchor itself or a
+    descendant; raise ``ValueError`` otherwise (fail closed).
+    """
+    anchor_resolved = anchor.expanduser().resolve()
+    raw = Path(candidate).expanduser()
+    target = raw if raw.is_absolute() else (anchor_resolved / raw)
+    resolved = target.resolve()
+    if resolved != anchor_resolved and anchor_resolved not in resolved.parents:
+        raise ValueError(f"{label} must stay within {anchor_resolved} (refused: {resolved})")
+    return resolved
+
+
 @mcp.tool()  # type: ignore
 def tg_ruleset_scan(
     ruleset: str,
@@ -1526,6 +1544,16 @@ def tg_ruleset_scan(
         "test_dirs": [],
         "language": ruleset_meta["language"],
     }
+    # round-4 security: confine the two write paths to the scan root before any scan/write —
+    # unconfined, they are an arbitrary-file-write primitive reachable from any MCP client.
+    scan_root = Path(path).expanduser().resolve()
+    try:
+        if write_baseline is not None:
+            _confine_write_path(write_baseline, scan_root, label="write_baseline")
+        if write_suppressions is not None:
+            _confine_write_path(write_suppressions, scan_root, label="write_suppressions")
+    except ValueError as exc:
+        return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
     try:
         payload = _run_ast_scan_payload(
             project_cfg,
@@ -3295,6 +3323,18 @@ def tg_review_bundle_create(
             code="invalid_input",
             routing_reason="review-bundle-create",
         )
+
+    # round-4 security: confine the bundle output to the project (cwd) — unconfined it is an
+    # arbitrary-file-write primitive reachable from any MCP client.
+    if output_path is not None:
+        try:
+            _confine_write_path(output_path, Path.cwd(), label="output_path")
+        except ValueError as exc:
+            return _review_bundle_error(
+                str(exc),
+                code="invalid_input",
+                routing_reason="review-bundle-create",
+            )
 
     try:
         return create_review_bundle_json(
