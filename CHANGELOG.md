@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v1.17.22 (2026-07-02)
+
+### Bug Fixes
+
+- Fail loud on explicit --gpu-device-ids with fixed-string search (audit #9b)
+  ([#317](https://github.com/oimiragieo/tensor-grep/pull/317),
+  [`4b6e584`](https://github.com/oimiragieo/tensor-grep/commit/4b6e5849862bc6f0482ace0b09e5e8d186aa1876))
+
+An explicit --gpu-device-ids request combined with fixed-string (-F) search is a user-explicit GPU
+  request, but _should_honor_explicit_gpu_ids excludes fixed_strings (no GPU fixed-string backend
+  exists yet), so the request silently fell through to the StringZilla/CPU fast path - dropping the
+  explicit GPU intent with no diagnostic. Add a guard that raises ConfigurationError (as pcre2/AST
+  already do) instead of silently routing to CPU. Revisit to route to GPU once a fixed-string GPU
+  kernel ships.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Add Backend Fail-Closed Contract section to AGENTS.md
+  ([#316](https://github.com/oimiragieo/tensor-grep/pull/316),
+  [`8dd22e3`](https://github.com/oimiragieo/tensor-grep/commit/8dd22e321dc27e5f6fb58070a64fb958864ca2d8))
+
+Captures the session's recurring silent-fallback finding as a contributor rule: backends must raise
+  BackendExecutionError on failure (never a clean 0-match), fail closed for unpreservable flag
+  contracts, make legitimate degraded fallbacks visible via fallback_reason, and validate untrusted
+  response shapes before indexing. Notes the planned SafeBackendMixin + conformance CI gate as the
+  structural fix.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.17.21 (2026-07-02)
 
 ### Bug Fixes
