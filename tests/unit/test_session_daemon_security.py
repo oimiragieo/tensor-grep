@@ -14,6 +14,7 @@ repo-map builder so they import only the light session-store path.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import threading
@@ -115,6 +116,40 @@ def test_unauthorized_request_does_not_count_activity(tmp_path: Path) -> None:
         server.server_close()
 
 
+# ----------------------------------------------------- round-3: pre-auth request DoS guard
+
+
+def test_read_bounded_request_line_accepts_small_request() -> None:
+    buf = io.BytesIO(b'{"command":"ping"}\n')
+    assert session_daemon._read_bounded_request_line(buf, max_bytes=1024) == '{"command":"ping"}'
+
+
+def test_read_bounded_request_line_refuses_oversized_pre_auth() -> None:
+    # A hostile local client streams past the cap with no newline. An unbounded
+    # readline() would buffer it all into memory BEFORE the token check; the bounded
+    # read must refuse it (return None) without materializing an unbounded line.
+    payload = b"A" * 4096  # no newline, exceeds the small cap
+    assert session_daemon._read_bounded_request_line(io.BytesIO(payload), max_bytes=1024) is None
+
+
+def test_read_bounded_request_line_returns_none_on_empty() -> None:
+    assert session_daemon._read_bounded_request_line(io.BytesIO(b""), max_bytes=1024) is None
+
+
+def test_read_bounded_request_line_returns_none_on_read_error() -> None:
+    class _Boom:
+        def readline(self, _size: int = -1) -> bytes:
+            raise TimeoutError("slow/silent client")
+
+    assert session_daemon._read_bounded_request_line(_Boom(), max_bytes=1024) is None
+
+
+def test_daemon_handler_sets_socket_timeout() -> None:
+    # A silent/slow client must not pin a worker thread forever before authenticating.
+    timeout = session_daemon._SessionDaemonHandler.timeout
+    assert timeout is not None and timeout > 0
+
+
 # ---------------------------------------------------------------- S3: path confinement
 
 
@@ -207,6 +242,48 @@ def test_daemon_request_path_field_cannot_escape_root(tmp_path: Path, monkeypatc
     assert response.get("ok") is True
     # The path the handler dispatched with must be confined to the daemon root, never `outside`.
     assert seen_paths == [str(root)]
+
+
+# -------------------------------------------------- round-3: atomic-write permission window
+
+
+def test_write_json_atomic_creates_sensitive_temp_without_world_readable_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A mode-restricted atomic write must CREATE its temp at that mode, not create it
+    world-readable and chmod afterwards (a window where another user could read the token)."""
+    target = tmp_path / "daemon.json"
+    created_modes: list[int] = []
+    real_open = os.open
+
+    def _spy_open(path: Any, flags: int, mode: int = 0o777, *args: Any, **kwargs: Any) -> int:
+        if flags & os.O_CREAT:
+            created_modes.append(mode)
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(session_store.os, "open", _spy_open)
+    session_store._write_json_atomic(target, {"token": "s3cr3t"}, mode=0o600)
+
+    assert target.exists()
+    # The temp had to be created via os.open with an explicit restrictive mode ...
+    assert created_modes, "sensitive temp must be created via os.open(O_CREAT, mode)"
+    # ... and that mode must never grant group/other any bits.
+    assert all((created_mode & 0o077) == 0 for created_mode in created_modes)
+
+
+def test_write_json_atomic_final_mode_is_restrictive_on_posix(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are only meaningful on POSIX")
+    target = tmp_path / "daemon.json"
+    session_store._write_json_atomic(target, {"token": "s3cr3t"}, mode=0o600)
+    assert (target.stat().st_mode & 0o777) == 0o600
+
+
+def test_write_json_atomic_default_mode_unchanged(tmp_path: Path) -> None:
+    # Non-sensitive writes (index/session payloads) keep the default-perms path.
+    target = tmp_path / "index.json"
+    session_store._write_json_atomic(target, {"records": []})
+    assert json.loads(target.read_text(encoding="utf-8")) == {"records": []}
 
 
 # ------------------------------------------------------------------- I2: retention bound

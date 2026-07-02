@@ -394,14 +394,26 @@ def _load_index(root: Path) -> list[SessionRecord]:
 def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    data = json.dumps(payload, indent=2)
     if mode is not None:
-        # audit S3: apply restrictive permissions to the temp file before the atomic rename so
-        # the published file never exists world-readable (e.g. 0600 for the daemon token file).
+        # audit S3 + round-3: create the temp AT the restrictive mode via os.open(O_CREAT|O_EXCL)
+        # so a sensitive file (e.g. the 0600 daemon token) is never briefly world-readable in the
+        # window between write and chmod. O_EXCL also refuses to follow a pre-existing temp/symlink.
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(data)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)  # don't leave a partial temp behind
+            raise
+        # O_CREAT honors the umask, so the created mode is never broader than `mode`; force the
+        # exact requested bits for determinism (in case the umask stripped an owner bit).
         try:
             os.chmod(tmp_path, mode)
         except OSError:
             pass
+    else:
+        tmp_path.write_text(data, encoding="utf-8")
     os.replace(tmp_path, path)
 
 
