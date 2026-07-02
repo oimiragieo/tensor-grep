@@ -486,7 +486,17 @@ Do not push from a dirty worktree if `origin/main` moved and the local tree has 
 
 A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state. Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 
-Merge one release-bearing PR at a time and wait for main CI + semantic-release to finish before merging the next. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version, so capture PRs can interleave safely.
+Merge one release-bearing PR at a time and wait for main CI + semantic-release to finish before merging the next. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the prior release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green.
+
+### Release publish is not instant — the push-race (hard-won, re-confirmed 2026-07-02)
+
+The real publish is the **`Semantic Release` job inside `.github/workflows/ci.yml`** (gated `github.ref == 'refs/heads/main' && github.event_name == 'push'`), NOT `release.yml` (which is `workflow_dispatch`-only, so a manually-pushed `v*` tag can no longer bypass semantic-release). That job **compiles the native assets before it publishes, so it runs for ~6 minutes** — and that whole window is a race window.
+
+If ANY other merge lands on `main` during that window — *including a no-release `docs:`/`chore:` PR* — the merge advances `main`, and the in-flight release job's final `git push origin main` (the `chore(release)` version-bump commit) is **rejected non-fast-forward** (`! [rejected]  main -> main`), so **that version never publishes**. The CI concurrency group is necessary but INSUFFICIENT: it serializes runs, not the human/agent act of clicking merge. Receipt: `v1.17.23` (a security batch, #318) failed to publish because the GPU-pause `docs:` PR (#319) was merged while #318's release job was still compiling assets.
+
+Recovery — **do NOT panic-rerun**: the failure self-heals. The next push-to-`main` CI run re-runs `Semantic Release`, and because the version is **derived from the git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. Just confirm that next run's `Semantic Release` job succeeds and the tag/PyPI version appears; the fix's *code* was already on `main` regardless — only the publish step was behind.
+
+Diagnosing a "didn't publish": decode the structured job result FIRST (`gh run view <id> --json jobs` → find `Semantic Release` → read `--log-failed`). Do not theorize from tracebacks. A `! [rejected]  main -> main` line is the push-race signature; a genuinely different failure is a different problem.
 
 Preferred approach:
 
@@ -518,6 +528,19 @@ Use this schema:
 Release-bearing PRs must use `Squash and merge` so the validated PR title becomes the commit subject on `main`.
 
 Do not manually create release tags when semantic-release is active.
+
+## Local Dev Gotchas (Windows, hard-won)
+
+Small, non-obvious traps that have each cost a real cycle on this desktop. None are version-specific.
+
+- **`git commit -m "..."` with backticks runs command substitution.** A message containing `` `...` `` (e.g. a fenced identifier) is interpreted by the shell and mangles the commit. Use `git commit -F <file>` or a single-quoted `<<'EOF'` heredoc for any message with backticks, `$`, or `!`.
+- **cargo/rustc are off `PATH` here — and a "hanging" Rust build is almost always a false alarm.** Use `C:/Users/oimir/.cargo/bin/cargo.exe` (or prepend `~/.cargo/bin` to `PATH`). What looks like a hang is slow LTO that *completes*: `maturin develop` is ~15 s, a `--release` build is minutes. Do not kill it as hung; let it finish. (The build command for stale in-tree binaries is under the doctor note above.)
+- **Verify FFI / PyO3 bridge changes against the REAL compiled extension, not mocks.** This is the "Dogfood the Real Binary" trap one layer down: mock-based tests passed green while the *real* bridge was dead (it dropped every forwarded flag and silently fell back to the Python engine). Prove a bridge change with a live runtime call into the built extension, then confirm the flag actually reached `rg`.
+- **After a squash-merge, apply follow-up fixes by SYMBOL, not by line number.** Merges shift every line below the change; a plan that says "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name (grep or `tg defs`) before editing.
+- **A dependency UPPER-cap can silently downgrade the whole install on a newer Python.** If an upper bound (e.g. `typer<0.25`) has no release compatible with a new Python, `pip`/`uv` resolve the *entire package* DOWN to a stale version with NO error — `requires-python>=X` has no upper bound to catch it. When a fresh Python yields a stale `tg`, suspect a transitive cap (typer/click/pydantic), not `requires-python`.
+- **Windows symlink creation needs privilege.** Tests that create symlinks must `pytest.skip` on `OSError` / `NotImplementedError`, or they false-fail on an unprivileged run.
+- **A stray `nul` file in the tree is a Windows `2>nul` redirect artifact.** Use `2>$null` (PowerShell) or `2>/dev/null` (bash); clean up with `rm -f ./nul`.
+- **CRLF makes a local bare `ruff format --check` false-alarm** over LF-committed blobs. Run `ruff format --preview <files>` (which normalizes) before commit — see "Required Local Validation" for why `--preview` is mandatory and must never be passed to `ruff check`.
 
 ## Documentation Discipline
 

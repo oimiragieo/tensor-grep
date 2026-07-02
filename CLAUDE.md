@@ -14,6 +14,17 @@ Claude Code guidance for the **tensor-grep** repository.
   the shipped binary.
 - **Verify AI-Drafted Plans Against the Real Code** — cite `file:line` for every seam claim before
   building.
+- **Backend Fail-Closed Contract** — raise `BackendExecutionError` on failure; never return an empty
+  result or silently swap engines for a contract flag (e.g. `--pcre2`).
+- **Push Discipline / the push-race** — the real publish is the `Semantic Release` job in `ci.yml`, and
+  it runs ~6 min (native-asset compile). Merging *anything* onto `main` during that window — even a
+  no-release `docs:`/`chore:` PR — rejects the in-flight release's push (`! [rejected] main -> main`).
+  Wait for the prior `chore(release)` commit + PyPI before the next merge; a failed release self-heals
+  on the next push (don't panic-rerun).
+- **Local Dev Gotchas (Windows, hard-won)** — backticks in `git commit -m` run command substitution
+  (use `-F`/heredoc); cargo/rustc off `PATH` and a "hanging" Rust build is slow LTO that finishes;
+  verify FFI/bridge changes against the REAL extension (not mocks); apply post-merge fixes by SYMBOL
+  not line number; a dependency upper-cap can silently downgrade the whole install on a newer Python.
 - The ruff `--preview` (format only, not lint), line-ending, decode-the-structured-CI-failure-first,
   and release rules.
 
