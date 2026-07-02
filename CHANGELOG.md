@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.17.20 (2026-07-02)
+
+### Bug Fixes
+
+- Close 4 silent-wrong-output findings in search backends (audit ranks 4-6 + sidecar)
+  ([#314](https://github.com/oimiragieo/tensor-grep/pull/314),
+  [`5d9f41f`](https://github.com/oimiragieo/tensor-grep/commit/5d9f41f95dc6e1695f43e06cdb3166743e0092f6))
+
+Edge-case audit correctness batch — each adversarially verified against the real code and fixed with
+  TDD. All four are cases where a real failure or a wrong answer was returned silently as a clean
+  result.
+
+- rank 4 (ripgrep count): `_search_counts` decided `path:count` vs bare-count from a list/dir
+  heuristic only, ignoring `config.with_filename`, so a single-file `--count -H` yielded
+  `path:count`, `int()` raised, the line was dropped, and the search reported a false 0 matches.
+  Compute `path_prefixed = (multi_file or with_filename) and not no_filename`.
+
+- rank 5 (ast-grep OOM mask): `_raise_for_nonzero` waived any nonzero exit whose stdout merely
+  started with `[`, so a killed/OOM'd `sg` subprocess emitting truncated JSON was masked as a clean
+  0-match scan. Require a full `json.loads` (reuse `_stdout_is_json_payload`) before waiving; a
+  truncated payload now raises BackendExecutionError.
+
+- rank 6 (registration-check comment match): `_declaration_re` only blocked a `#` BETWEEN the symbol
+  and `=`, so `# SYMBOL = ...` (or Rust `// SYMBOL = ...`) matched as the declaration and
+  `extract_members` returned the comment's wrong member set — in the very CI-gating registration
+  tool. Anchor to line-start and forbid a comment marker before the symbol, while still allowing
+  `const `/`pub ` so Rust `const SYMBOL: &[&str] =` still matches.
+
+- sidecar HIGH (cybert silent fallback): `CybertBackend.search()` swallowed `classify()` failures
+  with a bare except and returned keyword-heuristic hits labeled as real model output. Use
+  `classify_with_metadata`, surface `routing_reason=nlp_cybert_heuristic_fallback` +
+  `fallback_reason` on the swap, re-raise unexpected errors as BackendExecutionError, and validate
+  the logits shape before indexing the fixed 3-entry label list.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.17.19 (2026-07-01)
 
 ### Bug Fixes
