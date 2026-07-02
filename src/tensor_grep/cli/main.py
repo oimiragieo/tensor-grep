@@ -11035,6 +11035,11 @@ def review_bundle_create(
 @review_bundle_app.command("verify")
 def review_bundle_verify(
     bundle_path: str = typer.Argument(..., help="Path to the review bundle JSON file."),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        help="Optional HMAC signing key path to verify the embedded manifest's signature.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -11046,14 +11051,14 @@ def review_bundle_verify(
 
     try:
         if json_output:
-            json_text = verify_review_bundle_json(bundle_path)
+            json_text = verify_review_bundle_json(bundle_path, signing_key=signing_key)
             typer.echo(json_text)
             # Mirror the text path: a tampered/invalid bundle must exit 1 even in
             # --json mode (audit H1) so callers can gate on the process status.
             if not json.loads(json_text).get("valid", False):
                 raise typer.Exit(code=1)
             return
-        payload = verify_review_bundle(bundle_path)
+        payload = verify_review_bundle(bundle_path, signing_key=signing_key)
     except typer.Exit:
         raise
     except FileNotFoundError as exc:
