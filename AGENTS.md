@@ -211,6 +211,18 @@ Re-run any validation a subagent claims to have passed — subagents can assert 
 
 After building, run a mandatory post-build ADVERSARIAL AUDIT — a distinct named stage from the pre-build planning council. This audit caught a HIGH CUDA-fork hazard that 203 passing tests missed. A finding or claim with no `file:line` citation is DISCARDED. Re-audit → fix-wave → re-audit until ZERO must-fix findings remain; that zero-finding state is the convergence gate before promoting a build to a draft PR.
 
+## Backend Fail-Closed Contract
+
+Every `ComputeBackend` MUST raise `BackendExecutionError` on a real failure — never return a clean empty / `0-match` `SearchResult` (see `backends/base.py`), and never silently swap to a different engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly** (e.g. to CPU); a swallowed failure or a silent engine swap reaches the user (or a coding agent) as a trustworthy "no matches" — the one failure a context tool cannot afford.
+
+This contract is violated repeatedly. The recurring anti-pattern is a bare `except Exception:` that returns an empty result or falls through to a different engine. Instances fixed across audits: the Rust/PCRE2 bridge (ran `--pcre2` through the Python-regex engine), the ast-grep wrapper OOM mask (a killed subprocess read as a clean 0-match), the tree-sitter query swallow (invalid pattern → silent 0-match), and CyBERT's classify fallback (keyword-heuristic hits labeled as real model output). When a path CAN fall back to a different engine:
+
+- **Fail closed** for any flag/contract the fallback cannot preserve (e.g. `--pcre2` through a non-PCRE2 engine): raise, do not swap.
+- If a degraded fallback is legitimate (e.g. heuristic classification when the model is down), make the swap **visible**: set a `fallback_reason` (and a distinct `routing_reason`) on the `SearchResult` so JSON/CLI consumers can tell degraded output from real output. Never label heuristic output as model output.
+- Validate an untrusted response shape before indexing (e.g. a model's class count vs a fixed label list) so a mismatch degrades gracefully instead of raising an uncaught `IndexError` that a broad `except` then swallows.
+
+The same discipline applies beyond backends: any router/pipeline that can silently override an explicit user intent (e.g. an explicit `--gpu` request quietly routed to CPU) must instead raise `ConfigurationError` or emit a diagnostic. A systemic `SafeBackendMixin` + a fault-injection conformance CI gate (every registered backend must raise, not return empty, when its engine call fails) is the planned structural fix so this stops recurring one file at a time.
+
 ## Skills
 
 Two kinds of skills apply to this repo; load the relevant one before non-trivial work.
