@@ -85,6 +85,11 @@ def _configured_positive_int(env_var: str, default: int) -> int:
     return value if value > 0 else default
 
 
+# Audit MED (DoS): cap the framed-message body size so a malicious or buggy external LSP
+# provider cannot declare a huge Content-Length and force an unbounded read/allocation.
+_MAX_LSP_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
 def _read_message(stream: Any) -> dict[str, Any] | None:
     headers: dict[str, str] = {}
     while True:
@@ -99,8 +104,14 @@ def _read_message(stream: Any) -> dict[str, Any] | None:
             continue
         key, value = line.split(":", 1)
         headers[key.strip().lower()] = value.strip()
-    content_length = int(headers.get("content-length", "0"))
+    try:
+        content_length = int(headers.get("content-length", "0"))
+    except (TypeError, ValueError):
+        return None
     if content_length <= 0:
+        return None
+    if content_length > _MAX_LSP_MESSAGE_BYTES:
+        # Refuse an oversized frame rather than allocating/reading an unbounded body.
         return None
     body = stream.read(content_length)
     if not body:
