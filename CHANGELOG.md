@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.17.25 (2026-07-02)
+
+### Bug Fixes
+
+- End options before user positionals in MCP native-argv builders (round-3 SEC)
+  ([#322](https://github.com/oimiragieo/tensor-grep/pull/322),
+  [`5256e25`](https://github.com/oimiragieo/tensor-grep/commit/5256e257d0f41999b5b3e938e4902dca9fa79eb5))
+
+The MCP rewrite and index-search tools build a native `tg` command that ends with the
+  user-controlled pattern (and path) as trailing positionals. Without an end-of-options `--`
+  sentinel, a pattern beginning with `-` is parsed by the native binary as a flag (flag/argv
+  injection) AND legitimate patterns starting with `-` break outright.
+
+Verified against the REAL binary (not CliRunner — the effect is only visible there): tg search
+  "--weird" PATH -> error: unexpected argument '--weird' found tg search -- "--weird" PATH ->
+  matches literally tg run --lang python --rewrite bar --json "-x" PATH -> error tg run --lang
+  python --rewrite bar --json -- "-x" PATH -> parses OK
+
+Fix: _build_rewrite_command and _build_index_search_command now insert `--` immediately before the
+  pattern/path positionals, so options are terminated first and no user value can be re-interpreted
+  as a native flag.
+
+TDD: 3 new sentinel tests (index-search, rewrite-plan, rewrite-apply positions) watched fail first;
+  6 existing exact-argv shape assertions updated to the secure shape. Full MCP unit sweep 195
+  passed; ruff + mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.24 (2026-07-02)
 
 ### Bug Fixes
