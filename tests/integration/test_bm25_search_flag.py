@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
@@ -16,7 +15,7 @@ def test_search_config_has_rank_bm25_field() -> None:
     assert cfg.rank_bm25 is False
 
 
-def test_search_rank_reorders_by_bm25(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
+def test_search_rank_reorders_by_bm25(tmp_path: Path) -> None:
     dense = tmp_path / "dense.py"
     dense.write_text(
         "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
@@ -26,10 +25,12 @@ def test_search_rank_reorders_by_bm25(tmp_path: Path, capfd: pytest.CaptureFixtu
     sparse.write_text("# one passing invoice mention\nx = 1\n", encoding="utf-8")
 
     result = CliRunner().invoke(app, ["search", "--rank", "--json", "invoice", str(tmp_path)])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
 
-    # The search command writes JSON to the real stdout (captured by capfd at the fd level, not CliRunner/capsys).
-    payload = json.loads(capfd.readouterr().out)
+    # `--rank` refuses native delegation (round-4 #25) so the BM25 rerank runs in-process
+    # and the JSON is emitted via typer.echo -> CliRunner's captured stdout (NOT the fd-level
+    # stream a delegated native subprocess would have written to).
+    payload = json.loads(result.stdout)
     matches = payload.get("matches", [])
     assert matches, f"expected matches for 'invoice', got: {payload}"
 
