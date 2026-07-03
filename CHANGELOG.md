@@ -1,6 +1,58 @@
 # CHANGELOG
 
 
+## v1.19.9 (2026-07-03)
+
+### Bug Fixes
+
+- Confine MCP audit_manifest to cwd + consume-resolved + in-process O_NOFOLLOW (round-5 Q3, parts
+  A+B) ([#356](https://github.com/oimiragieo/tensor-grep/pull/356),
+  [`3c05064`](https://github.com/oimiragieo/tensor-grep/commit/3c0506439e5206ef4bdf1472321ec0432197eaaf))
+
+* fix(mcp): confine rewrite audit_manifest write + gate audit_signing_key read, harden in-process
+  ruleset-scan writes against symlink TOCTOU
+
+tg_rewrite_apply's audit_manifest was an unconfined MCP-reachable file-write primitive, and the
+  existing round-4 confinement for write_baseline / write_suppressions / output_path validated a
+  resolved Path then discarded it so downstream consumers re-resolved the raw candidate against a
+  different anchor (TOCTOU: validated-location != written-location).
+
+Part A (mcp_server.py): confine audit_manifest to Path.cwd() (the tg_review_bundle_create
+  output_path precedent, not the rewrite scan root) and forward the RESOLVED absolute string into
+  the native argv instead of the raw candidate; gate audit_signing_key (a secret HMAC-key READ)
+  behind an explicit TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1 opt-in rather than path-confining it
+  (operators legitimately keep signing keys outside the repo); make
+  write_baseline/write_suppressions/output_path consume their own resolved Path too, closing the
+  same discard/TOCTOU class at all three sites.
+
+Part B (main.py): replace the in-process write_text() calls for write_baseline/write_suppressions
+  with a shared _write_json_refuse_symlink() helper that refuses to write through a symlink at the
+  final path component (is_symlink() pre-check, authoritative on Windows where os.O_NOFOLLOW is
+  unavailable, plus O_NOFOLLOW on the actual open for POSIX) while preserving the documented
+  create-or-overwrite semantics via O_TRUNC (not O_EXCL).
+
+The narrower cross-process symlink-swap window in the native Rust write_audit_manifest_for_plan
+  (rust_core/src/main.rs) is out of scope here (no native rebuild available in this worktree) and is
+  documented as a tracked follow-up at the confinement call site.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: create cwd/src in the two audit-flag tests (Q3 verify — pre-confinement existence check)
+
+The two flag-forwarding tests chdir to an empty cwd to exercise the round-5 cwd-confinement, but
+  left path="src" which no longer exists there, so tg_rewrite_apply's pre-existing path-existence
+  check rejected "src" (invalid_input) before the confinement/subprocess it was trying to assert.
+  mkdir cwd/src so the tests actually reach the confined-audit-manifest argv-forwarding path.
+
+* style: ruff format test_mcp_server.py (Q3 verify — CI Formatting gate)
+
+* style: ruff format --preview test_mcp_server.py (CI uses --preview)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.8 (2026-07-03)
 
 ### Bug Fixes
