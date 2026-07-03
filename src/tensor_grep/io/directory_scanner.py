@@ -34,10 +34,57 @@ _GENERATED_RELATIVE_DIRS = {
 # fast path (which must also export the class) without re-plumbing the call site.
 HAS_RUST_SCANNER = False
 
+# Defensive traversal budget (round-5 Q14 hardening): a pathological tree (very deep/wide fanout,
+# or a filesystem fan-bomb) must not make a single `walk()` call consume unbounded time/memory.
+# Counts total dir+file entries the walk touches; once the cap is exceeded the walk STOPS and
+# flags the truncation (never a silent drop) -- mirroring the `possibly_truncated` /
+# `truncation_cause` DoS-guard style used by `cli/inventory.py` and `cli/repo_map.py`.
+# Env-overridable for the rare legitimately-huge monorepo.
+_MAX_SCAN_ENTRIES_ENV = "TG_DIR_SCAN_MAX_ENTRIES"
+DEFAULT_MAX_SCAN_ENTRIES = 200_000
+
+# Defensive byte cap on `.gitignore` (round-5 Q15 hardening): a giant (crafted or accidental)
+# .gitignore must not be slurped into memory whole. Read at most this many bytes; the rest is
+# ignored and flagged via `gitignore_truncated` rather than silently swallowed.
+_GITIGNORE_MAX_BYTES_ENV = "TG_GITIGNORE_MAX_BYTES"
+DEFAULT_GITIGNORE_MAX_BYTES = 1024 * 1024  # 1 MiB is generous for a real .gitignore
+
+
+def _configured_positive_int(env_var: str, default: int) -> int:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
 
 class DirectoryScanner:
-    def __init__(self, config: SearchConfig | None = None):
+    def __init__(
+        self,
+        config: SearchConfig | None = None,
+        *,
+        max_scan_entries: int | None = None,
+        gitignore_max_bytes: int | None = None,
+    ):
         self.config = config or SearchConfig()
+        self.max_scan_entries = (
+            max_scan_entries
+            if max_scan_entries is not None
+            else _configured_positive_int(_MAX_SCAN_ENTRIES_ENV, DEFAULT_MAX_SCAN_ENTRIES)
+        )
+        self.gitignore_max_bytes = (
+            gitignore_max_bytes
+            if gitignore_max_bytes is not None
+            else _configured_positive_int(_GITIGNORE_MAX_BYTES_ENV, DEFAULT_GITIGNORE_MAX_BYTES)
+        )
+        # Truncation signals -- sticky (never reset to False) so a scanner instance reused across
+        # multiple `walk()` calls (see `ast_workflows.py`) doesn't lose an earlier truncation.
+        self.scan_truncated = False
+        self.scan_truncation_cause: str | None = None
+        self.gitignore_truncated = False
 
     def _load_ignore_spec(self, base_path: Path) -> "GitIgnoreSpec | None":
         if self.config.no_ignore or self.config.no_ignore_vcs or self.config.no_ignore_files:
@@ -49,7 +96,20 @@ class DirectoryScanner:
 
         import pathspec
 
-        patterns = gitignore.read_text(encoding="utf-8").splitlines()
+        # Byte-cap the read (Q15): request one extra byte so we can tell whether the file
+        # actually exceeded the cap without loading it whole.
+        with gitignore.open("rb") as handle:
+            raw = handle.read(self.gitignore_max_bytes + 1)
+        if len(raw) > self.gitignore_max_bytes:
+            raw = raw[: self.gitignore_max_bytes]
+            self.gitignore_truncated = True
+            # Drop a dangling partial final line so a byte-boundary cut mid-pattern (e.g.
+            # "*.b") isn't fed to pathspec as a misleading glob.
+            last_newline = raw.rfind(b"\n")
+            if last_newline != -1:
+                raw = raw[:last_newline]
+
+        patterns = raw.decode("utf-8", errors="replace").splitlines()
         return pathspec.GitIgnoreSpec.from_lines(patterns)
 
     def _requires_python_guardrails(self, base_path: Path) -> bool:
@@ -94,7 +154,20 @@ class DirectoryScanner:
         def _relative_posix(path: Path) -> str:
             return path.relative_to(base_path).as_posix()
 
+        entries_visited = 0
+
         for root, dirs, files in os.walk(base_path):
+            # Traversal budget (Q14): count this root plus every dir/file entry it exposes
+            # BEFORE any filtering, since those are the entries the walk had to stat via
+            # readdir. Once the budget is exceeded, stop descending and surface truncation
+            # rather than silently dropping the rest of the tree.
+            entries_visited += 1 + len(dirs) + len(files)
+            if entries_visited > self.max_scan_entries:
+                self.scan_truncated = True
+                self.scan_truncation_cause = "max-scan-entries"
+                dirs.clear()
+                break
+
             current_depth = len(Path(root).parts) - base_depth
 
             if max_depth is not None and current_depth >= max_depth:
