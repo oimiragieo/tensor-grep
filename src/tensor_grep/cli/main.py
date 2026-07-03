@@ -6468,9 +6468,9 @@ def search_command(
                 config,
             )
             _write_path_list(output_paths, use_nul=null)
-            sys.exit(0)
+            sys.exit(2 if all_results.result_incomplete else 0)
         _emit_stats()
-        sys.exit(1)
+        sys.exit(2 if all_results.result_incomplete else 1)
 
     if files_without_match:
         unmatched_candidates = candidate_files_set - matched_files
@@ -6482,9 +6482,9 @@ def search_command(
         if unmatched:
             _emit_stats()
             _write_path_list(unmatched, use_nul=null)
-            sys.exit(0)
+            sys.exit(2 if all_results.result_incomplete else 0)
         _emit_stats()
-        sys.exit(1)
+        sys.exit(2 if all_results.result_incomplete else 1)
 
     if all_results.is_empty:
         _emit_stats()
@@ -6492,11 +6492,11 @@ def search_command(
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
             _safe_stdout_line(JsonFormatter().format(all_results))
-        sys.exit(1)
+        sys.exit(2 if all_results.result_incomplete else 1)
 
     if quiet:
         _emit_stats()
-        sys.exit(0)
+        sys.exit(2 if all_results.result_incomplete else 0)
 
     formatter: OutputFormatter
 
@@ -6525,6 +6525,10 @@ def search_command(
 
     _safe_stdout_line(formatter.format(all_results))
     _emit_stats()
+    if all_results.result_incomplete:
+        # rg-parity: partial results (rg exit 2, soft per-file error) exit 2 after a formatted
+        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal.
+        sys.exit(2)
 
 
 @app.command()

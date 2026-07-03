@@ -2717,6 +2717,10 @@ def tg_search(
                     "truncated": truncated,
                     "omitted_matches": omitted_matches,
                     "omitted_files": omitted_files,
+                    # Partial results (rg exit 2 soft error) — top-level so an agent caller can't
+                    # read a truncated result as complete (suppression != absence).
+                    "result_incomplete": all_results.result_incomplete,
+                    "incomplete_reason": all_results.incomplete_reason,
                     "routing": _routing_payload(all_results),
                 },
                 indent=2,

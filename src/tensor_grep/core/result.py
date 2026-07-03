@@ -36,6 +36,13 @@ class SearchResult:
     transfer_time_ms: float | None = None
     staging_bytes: int | None = None
     fallback_reason: str | None = None
+    # Partial-results signal: the backend produced SOME output but a soft per-item error
+    # suppressed the rest (e.g. rg exit 2 with matches for the readable files). Distinct from
+    # fallback_reason (which means "the execution engine was swapped") — conflating them would
+    # emit a false "we fell back" signal to doctor/JSON. Drives the rg-parity exit code 2 and a
+    # machine-visible "suppression != absence" marker on the JSON/MCP envelopes.
+    result_incomplete: bool = False
+    incomplete_reason: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -63,3 +70,8 @@ def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None
     aggregate.routing_worker_count = max(
         aggregate.routing_worker_count, result.routing_worker_count
     )
+    # Partial-results incompleteness is monotonic: any incomplete sub-result taints the aggregate,
+    # so ALL consumers (CLI, MCP, sidecar) inherit the rg-parity exit-2 + envelope marker uniformly.
+    aggregate.result_incomplete = aggregate.result_incomplete or result.result_incomplete
+    if result.incomplete_reason and not aggregate.incomplete_reason:
+        aggregate.incomplete_reason = result.incomplete_reason
