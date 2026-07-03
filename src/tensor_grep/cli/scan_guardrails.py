@@ -174,13 +174,24 @@ def _workspace_project_child_names(paths: list[str]) -> list[str]:
     return sorted(found, key=lambda item: item.lower())
 
 
+# A max_depth only counts as a real traversal BOUND if it is modest. Treating any non-None
+# value as "bounded" let `--max-depth 1000000` rubber-stamp a hostile-root scan (defeating the
+# broad-scan refusal entirely). Deeper-than-this scans of a system/generated/workspace root must
+# opt in explicitly via --allow-broad-generated-scan.
+_MAX_REASONABLE_SCAN_DEPTH = 50
+
+
+def _is_bounded_depth(max_depth: int | None) -> bool:
+    return max_depth is not None and 0 <= max_depth <= _MAX_REASONABLE_SCAN_DEPTH
+
+
 def _has_scan_bound(
     *,
     globs: list[str] | None,
     file_types: list[str] | None,
     max_depth: int | None,
 ) -> bool:
-    return bool(max_depth is not None or globs or file_types)
+    return bool(_is_bounded_depth(max_depth) or globs or file_types)
 
 
 def find_broad_scan_refusal(
@@ -197,7 +208,7 @@ def find_broad_scan_refusal(
     # Direct system roots need a traversal-depth bound. A glob alone still asks
     # the scanner to walk hostile roots such as %TEMP%, AppData, or C:\.
     system_roots = _system_root_names(paths)
-    if system_roots and max_depth is None:
+    if system_roots and not _is_bounded_depth(max_depth):
         return BroadScanRefusal("system-root", system_roots)
 
     if _has_scan_bound(globs=globs, file_types=file_types, max_depth=max_depth):
