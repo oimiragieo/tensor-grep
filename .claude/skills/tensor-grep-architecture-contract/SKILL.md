@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-architecture-contract
-description: Use when you need the load-bearing design of tensor-grep and WHY it holds before touching cli/bootstrap.py, rust_core/src/main.rs, backends/, routing, the agent capsule, or before reviewing/planning any change to the front door, command/flag registration, or backend contract. Explains the bootstrap intercept-before-Typer front door, native-vs-Python routing, the 4 command + 2 flag registration sites, the Backend Fail-Closed Contract, the agent-context moat, the invariants that must hold, and the known-weak points (flat no-IDF scorer, GPU not viable, rg parity gap, FFI not the dir-scan speed path). Read this to build the right mental model; use sibling skills for the how-to of changing, debugging, or benchmarking.
+description: Use when you need the load-bearing design of tensor-grep and WHY it holds before touching cli/bootstrap.py, rust_core/src/main.rs, backends/, core/result.py, cli/main.py's native-delegation gate, routing, the agent capsule, or before reviewing/planning any change to the front door, command/flag registration, or backend contract. Explains the bootstrap intercept-before-Typer front door, native-vs-Python routing, the 4 command + 2 flag registration sites, the Backend Fail-Closed Contract, the native-delegation forward-or-refuse contract (`_can_delegate_to_native_tg_search` + its field-coverage ratchet), the partial-results `result_incomplete`/`incomplete_reason` envelope, `MatchLine`'s frozen-but-hashable dataclass contract, the ASCII-only CLI output rule, the agent-context moat, the invariants that must hold, and the known-weak points (flat no-IDF scorer, GPU not viable, rg parity gap, FFI not the dir-scan speed path). Read this to build the right mental model; use sibling skills for the how-to of changing, debugging, or benchmarking.
 ---
 
 # tensor-grep architecture contract
@@ -102,6 +102,57 @@ Rules when a path *can* fall back (AGENTS.md "Backend Fail-Closed Contract", `ba
 
 **The recurring anti-pattern:** a bare `except Exception:` that returns empty or falls through to a different engine. This has been fixed *repeatedly* across audits — the Rust/PCRE2 bridge, the ast-grep OOM mask, the tree-sitter query swallow, CyBERT classify. When you review/write any backend or router that can change engines, this is the first thing to check. The structural fix (a `SafeBackendMixin` + a fault-injection conformance CI gate) is planned but **not yet shipped**, so the discipline is still per-file. The same rule extends to routers: an explicit `--gpu` request silently routed to CPU must raise/emit a diagnostic, not swap silently.
 
+## Partial-results contract: suppression != absence (`SearchResult.result_incomplete`)
+
+Companion invariant to the Backend Fail-Closed Contract above, shipped in round-4 slice 3 (#341, commit `f11ce28`, v1.18.x). `SearchResult` (`src/tensor_grep/core/result.py:41-47`) carries `result_incomplete: bool = False` and `incomplete_reason: str | None = None`, deliberately **not** overloaded onto `fallback_reason` — `fallback_reason` means "the execution engine was swapped"; `result_incomplete` means "this engine ran, but a soft per-item error suppressed part of the output." Conflating them would emit a false "we fell back" signal to `doctor`/JSON consumers.
+
+The trigger: rg exit code **2** is a *soft* per-file error (e.g. one unreadable/missing path among many) and rg still emits matches for every readable file. Before #341, tg's parser raised unconditionally on `exit > 1`, **discarding those partial matches** — and even if it hadn't, tg would have silently exited 0 while rg exits 2 (a parity break an agent scripting around exit codes would never see).
+
+The 5-site fix, cite `file:line`:
+
+- **Parse-first-then-branch** — `backends/ripgrep_backend.py` (`search`, `_search_files_with_matches`, `_search_counts`): exit 2 with a non-empty parse *keeps* the results, sets `result_incomplete=True` + a stderr-derived `incomplete_reason`; exit >2, or exit 2 with nothing parsed, still raises the byte-identical `RuntimeError` (kept as a plain `RuntimeError`, not `BackendExecutionError`, specifically so it does not trip the `--pcre2` CPU-fallback engine-swap path).
+- **Monotonic merge** — `merge_runtime_routing` (`core/result.py:75-79`) OR-merges `result_incomplete` across sub-results (`aggregate.result_incomplete or result.result_incomplete`), so the CLI/MCP/sidecar aggregate inherits uniformly — any incomplete sub-result taints the whole.
+- **Exit-code parity** — `cli/main.py:6478-6535`: the terminal exits now read `sys.exit(2 if all_results.result_incomplete else …)` across the files-with/without-matches, `is_empty`, quiet, and post-format branches, closing the "tg exits 0 while rg exits 2" gap.
+- **JSON/NDJSON envelope** — `cli/formatters/json_fmt.py:111-113,173-174`: `result_incomplete`/`incomplete_reason` are emitted **only when incomplete**, so a complete result's JSON shape stays byte-identical to before #341.
+- **MCP** — `cli/mcp_server.py:2722-2723`: the structured `tg_search` response carries both fields top-level — suppression must be visible to an agent, not buried in a log line.
+
+**Rule for any new path that can drop some results due to a soft/partial failure:** set `result_incomplete` + `incomplete_reason`. Do not (a) raise and lose the good results, or (b) silently return only the good results as if they were the complete answer — that is the same "suppression reads as absence" lie the Backend Fail-Closed Contract forbids, just at the partial-result layer instead of the total-failure layer. Tests: `tests/unit/test_rg_exit2_partial.py`.
+
+## Native-delegation forward-or-refuse contract (`_can_delegate_to_native_tg_search`)
+
+`cli/main.py:3263-3282` gates whether a Python-side `tg search` hands the **entire** search to the native `tg` subprocess (`_build_native_tg_search_command`, `cli/main.py:3285+`) and then `sys.exit()`s on its result — a delegation that runs *before* the Python-side BM25 rerank (`--rank`) and the in-backend sort (`--sort-files`) ever execute.
+
+**The invariant:** delegation is permitted only when native execution is byte-equivalent to the Python path for the requested config. The gate enforces this mechanically, not by convention — it loops every field name in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`cli/main.py:1755-1855`) and **refuses** delegation (falls through to the Python/backend path) if *any* of those fields differs from a fresh `SearchConfig()`'s default. Every `SearchConfig` field must land in exactly one bucket:
+
+1. **Forwarded** — read by `_build_native_tg_search_command` and translated into native argv.
+2. **Refused** — listed in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, so a non-default value forces the gate closed.
+3. **Gate-handled** — read off explicit keyword args at the call site (`files_with_matches`, `files_without_match`), not the config object.
+4. **KNOWN_GAP** — explicitly documented pre-existing tech debt, tracked rather than silently dropped.
+
+This is enforced by a governance **ratchet**, `tests/unit/test_native_delegation_field_coverage.py` (round-4 #25, shipped as #342, commit `5e6f780`): it AST-derives the "forwarded" set straight from `_build_native_tg_search_command`'s source (`ast.walk` over every `config.<attr>` read), so that list can never silently drift from the real code, then asserts `all_fields - (forwarded | required | gate_handled | known_gap) == set()`. Add a new `SearchConfig` field and forget to classify it → this test goes red immediately.
+
+**The bug this closes (#342):** `rank_bm25` and `sort_files` were neither forwarded to native argv nor in the refuse-tuple, so `tg search --rank --cpu` silently delegated to the native binary — which has no BM25 of its own — and `sys.exit()`d *before* the Python rerank/sort ever ran, returning unranked/unsorted output that looked like a normal, correct result (suppression indistinguishable from absence, same class the partial-results contract above targets). This is the **same flag-drop bug class** as the `-u`/`-uu` no-op fixed in #336 (round-4 PR-A slice 1): a flag parses successfully but never reaches the engine that must honor it.
+
+**Landmine already hit once — do not re-propose it:** the tempting "just gate on any field differing from defaults" fix is wrong. `query_pattern` is auto-set to the search pattern on *every* search, so a differs-from-default check would always see a difference and refuse delegation on every call, killing the fast path entirely (the exact failure mode from the 2026-06-30 #1 audit finding — see `tensor-grep-failure-archaeology`). The fix has to be per-field, not "any field changed."
+
+**Rule when adding a new `SearchConfig` field that affects search output:** decide immediately whether native delegation can reproduce it byte-for-byte. If not, add the field name to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`. The ratchet test refuses to let you skip this decision silently — it is a hard gate, not a lint suggestion.
+
+## `MatchLine` is a frozen, HASHABLE dataclass
+
+`src/tensor_grep/core/result.py:4-17` (`@dataclass(frozen=True) class MatchLine`). `submatches` (`tuple[dict[str, object], ...] | None`, added by #340 to carry rg's per-occurrence byte offsets for `--vimgrep`/`--column`) is a tuple-of-dicts — dicts are unhashable, so a populated `submatches` would break `hash(MatchLine(...))` the moment a frozen dataclass's default hash implementation (derived from its `==`-participating fields) tried to hash it.
+
+The fix (#344, commit `80de0b4`): `submatches: tuple[dict[str, object], ...] | None = field(default=None, compare=False)`. `compare=False` excludes the field from both `__eq__` and the derived `__hash__`, so `MatchLine` stays hashable even when `submatches` is populated. Excluding it from `==` is intentionally correct, not a shortcut: the offsets are a pure function of `text` + `line_number`, so two matches equal on those fields are equal regardless of any incidental difference in their submatch tuples.
+
+No caller hashes `MatchLine` today — this was caught as a **latent landmine** before any set/dedup consumer existed, not a live crash. Treat it as the standing precedent: this codebase keeps its frozen dataclasses hashable on purpose. **Any new field added to a frozen dataclass here that is itself unhashable (a `list`, `dict`, or other mutable/unhashable container) must be marked `field(..., compare=False)`** — or, if it genuinely must participate in equality, the dataclass needs a deliberate `eq=False`/custom `__hash__` redesign, not a silent break.
+
+Adjacent, same commit: the per-match submatch stash is now built only behind `config.vimgrep or config.column` in `RipgrepBackend.search` — only those two formatters consume the offsets, so building the tuple on every default-format match was wasted allocation (found via the blast-radius-regression profile that produced #345, not a separate bug hunt). Output stays byte-identical; `--vimgrep`/`--column` still emit one row per rg occurrence.
+
+## ASCII-only CLI output contract
+
+`tg` does not reconfigure `stdout` to UTF-8, and Windows consoles commonly default to the `cp1252` codepage. `typer.echo` (used throughout the CLI) **raises `UnicodeEncodeError`** on any character outside that codepage — a hard crash, not mojibake. #346 (commit `6b7b518`) found `render_inventory_text` in `src/tensor_grep/cli/inventory.py` emitting a literal `⚠` (U+26A0 WARNING SIGN) on the truncation-notice path (repo > `max_files`); on a stock Windows terminal, `tg inventory` on a large repo crashed instead of printing a warning.
+
+**Rule: no non-ASCII characters in any `tg`-CLI-rendered text output** (Typer `echo`/`print` call sites — this governs strings *tg itself* prints, not file contents being searched). Use bracketed ASCII markers instead — the fix replaced `⚠` with the literal string `[!]`. Before adding a new CLI-rendered string (a warning glyph, a checkmark, box-drawing table characters, an arrow), check it is `str.isascii()`-clean; if in doubt, dogfood on a real `cp1252` Windows console, not just a UTF-8-default terminal or CI runner — **CI's UTF-8 locale will not catch this class of bug**, it is Windows-console-only and was found by dogfooding a large real repo locally (`tensor-grep-dogfood-real-corpus-before-shipping-precision-2026-07-03` memory), not by the fixture test suite.
+
 ## The moat: agent-native context, not faster grep
 
 Positioning is a design constraint, not marketing. **tg is not a faster grep.** ripgrep is the raw-text parity baseline; ast-grep is the structural-search baseline. The moat is the **agent-native code-intelligence layer**: `orient`, `callers`, `blast-radius`, `defs`, `refs`, `source`, `agent` (the capsule), `session`. Peers to know: Aider repo-map (tree-sitter + NetworkX PageRank, `--map-tokens`), Sourcegraph Cody (SCIP + BM25 + embeddings → rerank), Cursor (index-first embeddings + Merkle change detection).
@@ -163,5 +214,9 @@ All facts verified against the live repo on 2026-07-02 at v1.17.25. Re-verify an
 - **rg timeout default:** `src/tensor_grep/cli/subprocess_policy.py:44` (`TG_RG_TIMEOUT_SECONDS`, default `60.0`).
 - **Open rg-passthrough `--` gap:** `rust_core/src/rg_passthrough.rs:389-397` (patterns via `-e`, paths raw). If a `--` sentinel now precedes the path loop, mark weak-point §5 resolved.
 - **Registration CI gate BLOCKING:** confirm in `AGENTS.md` §"Adding a Command or Flag" (as of #282/v1.17.1).
+- **Partial-results contract (added 2026-07-03, #341/`f11ce28`):** `src/tensor_grep/core/result.py:41-47` (`SearchResult.result_incomplete`/`incomplete_reason`) + `:75-79` (`merge_runtime_routing` OR-merge); exit-code wiring `src/tensor_grep/cli/main.py:6478-6535`; envelope `src/tensor_grep/cli/formatters/json_fmt.py:111-113,173-174`; MCP `src/tensor_grep/cli/mcp_server.py:2722-2723`. Re-verify: `tests/unit/test_rg_exit2_partial.py` green + `git show f11ce28 --stat`.
+- **Native-delegation forward-or-refuse contract (added 2026-07-03, #342/`5e6f780`):** gate `src/tensor_grep/cli/main.py:3263-3282` (`_can_delegate_to_native_tg_search`), refuse-tuple `:1755-1855` (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`). Re-verify: run `tests/unit/test_native_delegation_field_coverage.py` after touching `SearchConfig` — a new unclassified field turns it red immediately, which is the point.
+- **`MatchLine` hashability (added 2026-07-03, #344/`80de0b4`):** `src/tensor_grep/core/result.py:4-17` (`submatches` field uses `compare=False`). Re-verify: `python -c "from tensor_grep.core.result import MatchLine; hash(MatchLine(1,'x','f.py',submatches=({'start':0,'end':1},)))"` must not raise.
+- **ASCII-only CLI output (added 2026-07-03, #346/`6b7b518`):** fixed call site `src/tensor_grep/cli/inventory.py`. Re-verify: grep new CLI-rendered string literals for non-ASCII before shipping; no automated gate enforces this yet (a governance test is a reasonable follow-up, not yet shipped).
 
 If a re-verify disagrees with this skill, fix the skill — a wrong runbook is worse than none — and route any code change through `tensor-grep-change-control`.

@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-config-and-flags
-description: Use when adding, changing, or auditing a tg environment variable, CLI flag, or provider mode (native/lsp/hybrid); when a search flag silently leaks to ripgrep or a command misroutes; when deciding whether a config axis (GPU, LSP, classify, semantic) is production or EXPERIMENTAL default-OFF; or before registering a new `tg search --flag` or `tg COMMAND`. Catalogs the load-bearing TG_*/TENSOR_GREP_* env vars (routing, timeouts, GPU, classify, session, MCP security, LSP) with their default and guard, and the 2-front-door / 4-site registration checklist.
+description: Use when adding, changing, or auditing a tg environment variable, CLI flag, or provider mode (native/lsp/hybrid); when a search flag silently leaks to ripgrep or a command misroutes; when deciding whether a config axis (GPU, LSP, classify, semantic) is production or EXPERIMENTAL default-OFF; when adding a new `SearchConfig` field and needing to know whether it must be forwarded/refused/KNOWN_GAP'd for native delegation; or before registering a new `tg search --flag` or `tg COMMAND` (including `tg inventory`'s `--max-repo-files`). Catalogs the load-bearing TG_*/TENSOR_GREP_* env vars (routing, timeouts, GPU, classify, session, MCP security, LSP) with their default and guard, the 2-front-door / 4-site registration checklist, and the native-delegation field-coverage ratchet.
 ---
 
 # tensor-grep config and flags
@@ -218,6 +218,51 @@ when it carries `lsp_provider_response = true` from a completed provider request
 | `TG_MCP_ALLOW_VALIDATION_COMMANDS=1` | **Off by design (security), not "not ready yet"** | explicit env opt-in on the MCP server process | Shell-executes `lint_cmd`/`test_cmd`, a prompt-injection surface. |
 | Local hybrid semantic search (BM25 + CPU dense embeddings) | **Not yet shipped** — roadmap item #1 (`AGENTS.md:226-234`) | n/a | Do not document flags for this as if they exist; check `AGENTS.md` Roadmap Sequencing for current status before claiming it's available. |
 
+## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
+
+`tg inventory PATH [--json] [--max-repo-files N]` (`src/tensor_grep/cli/inventory.py`,
+registered `main.py:6641-6668`) emits a single-pass file/byte/language/category manifest by
+reusing the same gitignore-aware walker (`repo_map._iter_repo_files`) that `orient`/`callers`/
+`blast-radius` trust — so counts stay truth-consistent with every other `tg` command and inherit
+its `.tensor-grep`/`.git`/vendor exclusions for free.
+
+**`--max-repo-files` defaults to `50_000`, not the AST `512` cap** — this is a deliberate,
+documented divergence, not an oversight:
+
+- `DEFAULT_MAX_INVENTORY_FILES = 50_000` (`inventory.py:35`), passed to the CLI option as a
+  literal `50_000` (`main.py:6647`) rather than importing the constant, so the (heavy) `repo_map`
+  import stays lazy — same pattern `map` uses for its own limit. A guard test pins the two
+  literals together; re-verify with `grep -rn "50_000" src/tensor_grep/cli/inventory.py
+  src/tensor_grep/cli/main.py`.
+- `DEFAULT_AGENT_REPO_MAP_LIMIT = 512` (`repo_map.py:94`) budgets a **full AST parse per file**
+  for `tg map`/`orient`/`context`/`edit-plan`/session repo-map defaults — reusing it for
+  `inventory` would silently truncate any repo over ~500 files and defeat the "whole-repo
+  manifest" purpose (`inventory.py:31-34` states this explicitly in a code comment).
+  `inventory` is walk-only (`stat()` + an 8KB read for binary-sniffing per file), orders of
+  magnitude cheaper than an AST parse, so a much higher cap is safe.
+- Truncation is **never silent**: a repo over the cap is surfaced via
+  `scan_limit.possibly_truncated` + `scan_limit.truncation_cause` in the JSON payload, and as an
+  ASCII `[!] truncated at max_files=...` line in text output (fixed from a U+26A0 emoji that
+  crashed `typer.echo` on Windows cp1252 consoles — `#346`, commit `6b7b518`; ASCII-only is now
+  the rule for all `tg` CLI output, not just `inventory`).
+- Fails closed: a nonexistent `path` raises `FileNotFoundError` -> CLI exits 1
+  (`inventory.py:175-176`, `main.py:6661-6663`) — a missing path must never read as a valid empty
+  repo.
+
+Registration follows the standard 4-site table (`KNOWN_COMMANDS` in `commands.py`, native Rust
+`Commands::Inventory` in `rust_core/src/main.rs`, `PUBLIC_TOP_LEVEL_COMMANDS` in
+`tests/e2e/test_routing_parity.py`, the `@app.command()` in `main.py`) — see
+`tensor-grep-architecture-contract` for why each site exists.
+
+```bash
+# Re-verify the two caps and why they differ
+grep -n 'DEFAULT_MAX_INVENTORY_FILES\|max_repo_files' src/tensor_grep/cli/inventory.py src/tensor_grep/cli/main.py
+grep -n 'DEFAULT_AGENT_REPO_MAP_LIMIT = ' src/tensor_grep/cli/repo_map.py
+
+# Smoke-test the command against the real binary (not CliRunner)
+tg inventory . --json | python -m json.tool | head -30
+```
+
 ## Checklist: adding a flag or command
 
 This is the single highest-value thing to get right in this repo — miss a registration site and the
@@ -225,6 +270,74 @@ new flag/command **misroutes silently**, passing CliRunner tests while breaking 
 binary. **See `tensor-grep-architecture-contract` for the full 4-site command / 2-site search-flag
 registration table and the rationale for why each site exists**, and `tensor-grep-change-control` for
 the PR/merge gate around it (`AGENTS.md:178-196`) — this skill does not restate that table.
+
+### The third checklist item: native-delegation field coverage (`SearchConfig`)
+
+Adding a new field to `SearchConfig` (`src/tensor_grep/core/config.py`) is a **third** registration
+concern, separate from the 4-site command table and the 2-site search-flag table above — and it is
+easy to miss because it fails silently, not loudly.
+
+**Why it exists**: `_can_delegate_to_native_tg_search` (`main.py:3263-3282`) hands an entire search
+off to the native `tg` subprocess, which `sys.exit()`s **before** the Python-side BM25 rerank and
+the in-backend file sort ever run. Any `SearchConfig` field that is output-affecting but neither
+forwarded into the native argv (`_build_native_tg_search_command`) nor listed in the refuse-tuple
+`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`main.py:1755` onward) gets **silently dropped** —
+the search still runs and returns a result, just the wrong one (unranked/unsorted), which is worse
+than a crash because suppression reads as absence. This is the same bug class as the `-u`/`-uu`
+no-op fixed in `#336`; the receipt this time was `#342` (commit `5e6f780`, v1.18.6->v1.19.0 range):
+`rank_bm25` and `sort_files` were parsed but forwarded nowhere, so `tg search --rank --cpu` /
+`--sort-files --cpu` silently returned unranked/unsorted output on the delegated fast path.
+
+**The gate is now a governance ratchet, not a convention** — `tests/unit/test_native_delegation_field_coverage.py`
+AST-derives the forwarded-field set directly from `_build_native_tg_search_command`'s source (via
+`ast.walk` over `config.<attr>` reads, so it can't drift from a hand-maintained list) and asserts
+`test_every_field_classified`: every `dataclasses.fields(SearchConfig)` name must be one of:
+
+1. **Forwarded** — read by `_build_native_tg_search_command` and passed into the native argv.
+2. **Refused** — listed in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`; a non-default value
+   forces `_can_delegate_to_native_tg_search` to return `False` and fall through to the
+   Python/backend path. `rank_bm25` and `sort_files` live here as of `#342` — native `tg` has no
+   BM25 (it routes `--rank` back to the Python sidecar) and `sort_files` is applied in-backend
+   (`ripgrep_backend.py`/`rust_backend.py`), so neither is reproducible on a delegated `sys.exit`
+   path.
+3. **Gate-handled** — `files_with_matches`/`files_without_match`; read off explicit keyword args
+   at the call site rather than the config object, so the gate itself covers them.
+4. **`KNOWN_GAP`** — `_NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS` in the test file: pre-existing
+   fields (AST-mode selectors, NLP threshold, internal telemetry, `case_sensitive`/`ignore_*`
+   scope flags, `no_*` double-negation flags) that were *already* dropped through delegation
+   before `#342` and are acknowledged tech debt, not blessed as safe — a documented gap, not a
+   silent one. A companion test (`test_known_gap_has_no_stale_entries`) fails if a `KNOWN_GAP`
+   entry is later forwarded/refused/removed and the entry isn't pruned, so the gap set can't rot
+   into a false-safe list either.
+
+**When you add a `SearchConfig` field, this test goes RED until you classify it** — that red is the
+checklist: forward it (native argv), refuse it (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`),
+confirm it's gate-handled, or add it to `_NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS` with a one-line
+reason. Do not add to `KNOWN_GAP` just to make the test pass — that's exactly the silent-drop this
+ratchet exists to prevent; only pre-existing, reasoned gaps belong there.
+
+**Landmine already hit once — do not re-attempt the "differs from default" runtime gate.** The
+2026-06-30 #1 naive-fix failure mode: `query_pattern` is auto-set on every search
+(`main.py` ~line 6045), so a generic "does any field differ from `SearchConfig()` defaults" gate
+would trip on `query_pattern` on literally every call and kill the fast path entirely. The fix must
+be a specific field added to the tuple, not a blanket differs-from-default check.
+
+```bash
+# Run the ratchet directly (fast, no fixtures needed)
+uv run pytest tests/unit/test_native_delegation_field_coverage.py -v
+
+# Confirm the refuse-tuple + KNOWN_GAP set still exist at these names
+grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = ' src/tensor_grep/cli/main.py
+grep -n '_NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS = ' tests/unit/test_native_delegation_field_coverage.py
+
+# See exactly which fields the ratchet currently derives as "forwarded"
+uv run python -c "
+from tensor_grep.cli import main as tg_main
+import ast, inspect
+src = inspect.getsource(tg_main._build_native_tg_search_command)
+print(sorted({n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == 'config'}))
+"
+```
 
 Miss either search-flag site and the flag reaches `rg` unrecognized for users on the published binary
 — an `rg: unrecognized flag` crash that CliRunner-only tests cannot see, because CliRunner calls the
@@ -287,7 +400,22 @@ grep -n 'native.*lsp.*hybrid' src/tensor_grep/cli/main.py
 
 # Confirm the GPU fail-loud contract still raises (not falls back)
 grep -n '_raise_explicit_gpu_configuration_error\|class ConfigurationError' src/tensor_grep/core/pipeline.py
+
+# Re-verify tg inventory's two caps (50_000 walk-only vs 512 AST) still diverge deliberately
+grep -n 'DEFAULT_MAX_INVENTORY_FILES\|max_repo_files' src/tensor_grep/cli/inventory.py src/tensor_grep/cli/main.py
+grep -n 'DEFAULT_AGENT_REPO_MAP_LIMIT = ' src/tensor_grep/cli/repo_map.py
+
+# Re-verify the native-delegation field-coverage ratchet still exists and passes
+grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = ' src/tensor_grep/cli/main.py
+uv run pytest tests/unit/test_native_delegation_field_coverage.py -v
 ```
 
-If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.17.25`, treat every default/line-number
+Verified against source as of 2026-07-03 (this update): `tg inventory` section against `origin/main`
+commit `13acb2a` (v1.19.3, `pyproject.toml:338`); the native-delegation field-coverage ratchet against
+commit `5e6f780` (#342) plus its follow-on `ab717a1` (#343). The rest of this file (env-var catalog,
+front-door tables, GPU/LSP/provider sections above) was last fully re-verified at `v1.17.25` and has
+**not** been re-walked in this pass — treat those sections' line numbers as needing a fresh check per
+the rule below, independent of the two sections just re-verified.
+
+If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.19.3`, treat every default/line-number
 claim in this file as needing re-verification, not just the version string.

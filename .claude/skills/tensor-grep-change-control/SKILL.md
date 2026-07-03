@@ -178,6 +178,27 @@ That job **compiles native assets before publishing → it runs ~6 minutes**, an
 
 Other push rules: don't push from a dirty worktree if `origin/main` moved with unrelated local changes; a branch push / open PR starts **PR CI only** — it is not a release (`AGENTS.md:492-496`).
 
+### Current wall-time is much bigger than "~6 minutes" — size watchers accordingly (re-verified 2026-07-03, v1.19.x receipts)
+
+The **"~6 minutes" figure above (and at `AGENTS.md:507`) is stale** — it describes only the `Semantic Release` job's own runtime (still accurate: ~4-5 min in isolation), not the real race window. The real danger window is **squash-merge lands → `chore(release)` commit successfully pushed to `main`**, because `Semantic Release` cannot even *start* until every job in its `needs:` list finishes (`.github/workflows/ci.yml:862`), and that list now includes a 4-OS `native-build-smoke` matrix plus `benchmark-regression`. Measured against four consecutive real releases (`gh run view <run-id> --json jobs`, PR merge → `chore(release)` commit timestamp → `gh run` job `completedAt`):
+
+| Release | PR / commit | push → `chore(release)` on `main` | push → `publish-pypi` | push → `release-tag-smoke` (final gate) |
+|---|---|---|---|---|
+| v1.19.0 | #343 `ab717a1` | 25m29s | 43m08s | 47m09s |
+| v1.19.1 | #344 `80de0b4` | 22m38s | 40m07s | 44m18s |
+| v1.19.2 | #345 `bb5dc59` | 43m39s | 1h01m24s | 1h05m48s |
+| v1.19.3 | #346 `6b7b518` | 39m55s | 59m16s | 1h03m06s |
+
+So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-66 min before PyPI/the final release-tag-smoke gate confirms full publish**. Treat "~40 minutes" as the practical minimum wait before checking "did the prior release finish yet", not an upper bound — the slower runs (v1.19.2, v1.19.3) topped an hour.
+
+**Long pole:** `native-build-smoke (macos-15-intel)` (`ci.yml:468-477`) is **consistently the slowest of its own 4-OS matrix** — every run measured: 15m09s, 9m14s, 15m43s, 11m43s (avg ~13 min) vs ~5 min for `ubuntu-latest`/`macos-latest` and ~10 min for `windows-latest`. It was the exact job whose completion unblocked `Semantic Release`'s start in 2 of the 4 runs (down to single-digit seconds: v1.19.0 completed 12:33:45, `Semantic Release` started 12:33:48; v1.19.2 completed 14:37:54, `Semantic Release` started 14:37:57). In the other 2 runs, `benchmark-regression (ubuntu-latest)` finished a couple minutes later and was the actual pole instead — the two jobs alternate as the true bottleneck, so don't tune a watcher to only one of them. After `Semantic Release` publishes, `build-release-native-assets (macos-15-intel, cpu)` (`:1078-1081`) repeats the same slow-OS pattern (9-12 min, once the whole pipeline's single longest job) before `publish-pypi` and `release-tag-smoke` can run.
+
+**Gate a sequential merge-watcher on ABSOLUTE conditions, never "has the tag/commit changed since I started watching":**
+
+- **Correct:** poll `gh pr view <N> --json state -q .state` until it reads `MERGED`, **and independently** poll `gh run list --workflow=ci.yml --branch main --limit 1 --json status,conclusion` until the latest run reports `status == "completed"` **and** `conclusion == "success"` — require the completed state on **2 consecutive polls** (a multi-job run can transiently look "done" while a late job like `release-tag-smoke` is still finishing) before treating the prior release as fully published and starting the next merge.
+- **Wrong / deadlocks:** "wait until the release tag / `chore(release)` commit differs from what it was when my watcher launched." If the prior release **already finished publishing between the last time you looked and the moment the watcher actually started** — normal in a fast merge sequence like v1.19.0→v1.19.3 above, all landed inside roughly an hour — the tag is *already* at the target value the instant the watcher begins polling, so a changed-since-launch condition never fires and the watcher hangs forever on an event that already happened. Compare current absolute state against the registry/PR API, never against a snapshot taken at launch time.
+- **This v1.19.x sequence is itself the reaffirmation receipt for one-merge-per-tick:** four releases merged one at a time, each waited out to a confirmed publish before the next merge started, and **zero** `! [rejected] main -> main` push-races occurred — contrast the `v1.17.23`/#319 incident above, which is exactly what happens when that wait is skipped. Two PR-CI runs in this window did report `conclusion: "failure"` (`28657702879` — a capfd-vs-stdout test-capture regression, the round-4 ledger's `--rank`-routing item; `28648738456` — a one-off `macos-15-intel` native-asset build failure): both were **ordinary red PR-branch CI**, fixed and re-pushed before merge, not push-races. Triage tell: a red run on a **PR branch** is a normal fix-and-repush gate; a red **`main`**-branch `Semantic Release` push step with `! [rejected]` in its log is the push-race signature and self-heals on the next push (see above — don't panic-rerun).
+
 ---
 
 ## Part 8 — PR title drives release intent
@@ -256,11 +277,11 @@ tg dogfood --output artifacts/dogfood_readiness.json
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**. Re-verify anything below before relying on it:
+Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows). Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
-| Current release tag | `grep release_docs_current_tag AGENTS.md` (currently `v1.17.25`, `AGENTS.md:19`) |
+| Current release tag | `grep release_docs_current_tag AGENTS.md` (currently `v1.19.3`, `AGENTS.md:19`, as of 2026-07-03) |
 | 4 command registration sites | `grep -n KNOWN_COMMANDS src/tensor_grep/cli/commands.py`; `grep -n "enum Commands" rust_core/src/main.rs`; `grep -n PUBLIC_TOP_LEVEL_COMMANDS tests/e2e/test_routing_parity.py`; `grep -cn "@app.command" src/tensor_grep/cli/main.py` |
 | 2 search-flag front doors | `grep -n SEARCH_PYTHON_PASSTHROUGH_FLAGS rust_core/src/main.rs`; `grep -n _TG_ONLY_SEARCH_FLAGS src/tensor_grep/cli/bootstrap.py` |
 | Fail-closed error type | `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` |
@@ -268,6 +289,7 @@ Volatile facts are dated **2026-07-02, release `v1.17.25`**. Re-verify anything 
 | Local-validation gate commands | `CONTRIBUTING.md` "Local Validation"; `AGENTS.md` "Required Local Validation" |
 | PR-title → release-bump schema | `AGENTS.md` "PR Title And Release Intent"; `CONTRIBUTING.md` "Pull Request and Release Intent" |
 | Push-race mechanism + latest receipt | `AGENTS.md` "Release publish is not instant — the push-race" |
+| Release wall-time / long-pole job (dated 2026-07-03, v1.19.x) | `gh run list --workflow=ci.yml --branch main --limit 5 --json databaseId,createdAt,updatedAt`, then `gh run view <id> --json jobs -q '.jobs[] | {name, startedAt, completedAt, conclusion}'` — check whether `native-build-smoke (macos-15-intel)` / `build-release-native-assets (macos-15-intel, cpu)` / `benchmark-regression (ubuntu-latest)` are still the slowest `needs:` jobs; re-time push→`chore(release)`→`publish-pypi`→`release-tag-smoke` if the CI matrix has changed since |
 | `TG_RG_TIMEOUT_SECONDS` default | `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (currently `60.0`, `subprocess_policy.py:44`; the `600` in `AGENTS.md:165` describes the pre-#288 hang) |
 | Security round-3 sweep files | `AGENTS.md` "Security Hardening Patterns"; files `src/tensor_grep/cli/{checkpoint_store,session_daemon,session_store,mcp_server}.py` |
 | Open round-4 argv item | `AGENTS.md` (native-argv `--` sentinel); `rust_core/src/rg_passthrough.rs` |
