@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.18.5 (2026-07-03)
+
+### Bug Fixes
+
+- Keep + surface rg exit-2 partial results (rg-parity exit code) — round-4 PR-A slice 3
+  ([#341](https://github.com/oimiragieo/tensor-grep/pull/341),
+  [`f11ce28`](https://github.com/oimiragieo/tensor-grep/commit/f11ce2836cd768dfcc659ca6c69dbce72b31b615))
+
+rg exit 2 is a SOFT per-file error (e.g. one unreadable/missing path among many) AND rg still emits
+  matches for the readable files. The parser raised unconditionally on exit>1, DISCARDING those
+  partial matches — and (had it not) would have silently exited 0 while rg exits 2, a parity break.
+  Council-vetted coordinated 5-site fix (backend-only scope is no-op-or-worse):
+
+1. result.py: SearchResult gains `result_incomplete: bool=False` + `incomplete_reason: str|None`
+  (NOT overloading fallback_reason, which means "engine swapped"); merge_runtime_routing OR-merges
+  them so CLI/MCP/sidecar inherit uniformly. 2. ripgrep_backend.py
+  (search/_search_files_with_matches/_search_counts): parse-FIRST, then branch — exit 2 with a
+  non-empty parse keeps the results + sets result_incomplete + stderr note; exit >2, or exit 2 with
+  nothing parsed, still raises the BYTE-IDENTICAL RuntimeError (kept plain RuntimeError, NOT
+  BackendExecutionError, to avoid the --pcre2 CPU-fallback engine-swap). 3. main.py: the terminal
+  exits now `sys.exit(2 if all_results.result_incomplete else …)` across files-with/without-matches,
+  is_empty, quiet, and post-format — closing the exit-0-while-rg-exits-2 gap so tg matches rg's exit
+  2. 4. json_fmt.py: --json/--ndjson envelopes emit result_incomplete + incomplete_reason (only when
+  incomplete -> byte-identical shape for complete results). 5. mcp_server.py: the structured
+  tg_search response carries the fields top-level (suppression != absence for agents).
+
+TDD: 7 backend tests (exit2+matches keeps partial+flags; exit2-zero-parse & exit>2 fail closed
+  byte-identically; exit0/1 unchanged; files-with-matches + counts partial; merge OR-merge). 273
+  tests green incl. the full rg-parity exit-code suite (test_rg_parity_edges) + formatters + mcp +
+  routing_parity — ZERO regression. ruff+mypy clean. Task #34 (PR-A slice 3 of 3 — rg-parse moat
+  COMPLETE).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Build System
+
+- Bump ruff 0.15.11 -> 0.15.20 (maintenance)
+  ([#339](https://github.com/oimiragieo/tensor-grep/pull/339),
+  [`69c1f99`](https://github.com/oimiragieo/tensor-grep/commit/69c1f994a45cc6217768c61762ac0fa59cd40c4d))
+
+0.15.20 formats + lints this codebase identically to 0.15.11 (verified: git shows zero real content
+  changes across all files under 503 files left unchanged; the only diff is the pin). Pure
+  dev-dependency bump — no source changes, no release intent.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.18.4 (2026-07-03)
 
 ### Bug Fixes
