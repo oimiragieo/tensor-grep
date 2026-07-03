@@ -118,7 +118,10 @@ class RipgrepBackend(ComputeBackend):
             match_counts_by_file: dict[str, int] = {}
             total_matches = 0
 
-            for line in result.stdout.splitlines():
+            # split on rg's NDJSON record delimiter (\n) — NOT str.splitlines(), which also
+            # breaks on U+2028/U+2029/U+0085 that rg emits UNESCAPED inside a match's line text,
+            # fracturing the JSON record so it fails json.loads and is silently dropped.
+            for line in result.stdout.split("\n"):
                 if not line.strip():
                     continue
                 try:
@@ -153,10 +156,12 @@ class RipgrepBackend(ComputeBackend):
                         )
                         total_matches += 1
                         if path_str:
-                            match_counts_by_file[path_str] = (
-                                match_counts_by_file.get(path_str, 0) + 1
-                            )
-                            if path_str not in matched_file_paths:
+                            # O(1) first-seen detection via the counts dict — the previous
+                            # `path_str not in matched_file_paths` was an O(n) scan per match,
+                            # degrading a common-token search on a large repo to O(matches x files).
+                            new_count = match_counts_by_file.get(path_str, 0) + 1
+                            match_counts_by_file[path_str] = new_count
+                            if new_count == 1:
                                 matched_file_paths.append(path_str)
                     elif data.get("type") == "context":
                         data_match = data["data"]
@@ -215,7 +220,9 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            path_parts = result.stdout.split("\0") if config.null else result.stdout.splitlines()
+            # split on rg's \n path delimiter, not str.splitlines() (a filename may contain a
+            # literal U+2028/U+0085 that splitlines would fracture the path on).
+            path_parts = result.stdout.split("\0") if config.null else result.stdout.split("\n")
             matched_file_paths = [path for path in path_parts if path]
             # rg exit 2 with some matched files = soft partial error: keep them, flag incomplete.
             partial = result.returncode == 2 and bool(matched_file_paths)
@@ -257,7 +264,7 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            lines = [line.strip() for line in result.stdout.split("\n") if line.strip()]
             total_matches = 0
             total_files = 0
             matched_file_paths: list[str] = []
