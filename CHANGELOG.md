@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.19.3 (2026-07-03)
+
+### Bug Fixes
+
+- Use ASCII marker in tg inventory truncation notice (Windows cp1252 crash)
+  ([#346](https://github.com/oimiragieo/tensor-grep/pull/346),
+  [`6b7b518`](https://github.com/oimiragieo/tensor-grep/commit/6b7b518c7a2422237460381582dcda705b8964d2))
+
+render_inventory_text emitted a ⚠ (U+26A0) which typer.echo cannot encode on a Windows cp1252
+  console — `tg inventory` would crash with UnicodeEncodeError on the truncation path (repo >
+  max_files). tg does not reconfigure stdout to UTF-8 and no other command emits non-ASCII, so this
+  is a real latent crash. Replaced with an ASCII "[!]" marker. Found while dogfooding the (deferred)
+  diff-docs command on this repo.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.2 (2026-07-03)
 
 ### Performance Improvements
