@@ -1126,6 +1126,48 @@ def execute_rewrite_apply_json(
     pattern = _restore_variadic_metavar_escaping(pattern)
     replacement = _restore_variadic_metavar_escaping(replacement)
 
+    # round-5 security: confine audit_manifest to cwd (the sibling precedent for a general
+    # audit artifact — tg_review_bundle_create's output_path, not the rewrite scan root) and
+    # consume the RESOLVED absolute path so the native subprocess argv (see
+    # _build_rewrite_command below) carries the anchor-validated location, not the raw
+    # candidate. Without this the validated path is discarded (TOCTOU) and the native binary
+    # independently re-resolves the unconfined raw string against its own cwd.
+    # NOTE (tracked follow-up, Part C of this fix): this Python-side confinement closes the
+    # anchor-mismatch/discard TOCTOU (validated-location == written-location) and refuses an
+    # escaping path before the native subprocess is ever spawned. It does NOT close the
+    # narrower cross-process symlink-swap window: between this resolve() and the moment the
+    # native Rust binary's write_audit_manifest_for_plan actually opens the resolved path
+    # (rust_core/src/main.rs, ~6746-6838), a symlink could in principle be swapped in at the
+    # final path component. Closing that residual window requires the Rust side to refuse via
+    # symlink_metadata()+O_NOFOLLOW at the point the bytes hit disk (rust_core/src/main.rs is
+    # explicitly out of scope for this PR — see deviations). This Python confinement is
+    # defense-in-depth and the user-facing early error, not a full closure on its own.
+    if audit_manifest is not None:
+        try:
+            audit_manifest = str(
+                _confine_write_path(audit_manifest, Path.cwd(), label="audit_manifest")
+            )
+        except ValueError as exc:
+            return _rewrite_error(str(exc), code="invalid_input"), 1
+
+    # round-5 security: audit_signing_key is a READ of secret HMAC material that operators
+    # legitimately keep OUTSIDE the repo (~/.config, CI-injected) — confining it to cwd would
+    # be a regression. Instead gate it default-OFF behind an explicit opt-in env var, mirroring
+    # the lint_cmd/test_cmd -> TG_MCP_ALLOW_VALIDATION_COMMANDS posture, closing the
+    # arbitrary-read-as-HMAC-key primitive without over-restricting a legit out-of-tree key.
+    if (
+        audit_signing_key is not None
+        and os.environ.get("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ") != "1"
+    ):
+        return (
+            _rewrite_error(
+                "audit_signing_key read requires TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1",
+                code="unsupported_option",
+                retryable=False,
+            ),
+            1,
+        )
+
     # audit A1: plan-bound apply. When the caller pins the previously reviewed plan
     # via expected_plan_digest/expected_match_count, recompute the plan against the
     # CURRENT tree and refuse the apply (no files written) if reality has drifted.
@@ -1544,14 +1586,21 @@ def tg_ruleset_scan(
         "test_dirs": [],
         "language": ruleset_meta["language"],
     }
-    # round-4 security: confine the two write paths to the scan root before any scan/write —
+    # round-4/5 security: confine the two write paths to the scan root before any scan/write —
     # unconfined, they are an arbitrary-file-write primitive reachable from any MCP client.
+    # round-5: consume the RESOLVED absolute path (not the raw candidate) below so the
+    # downstream writer (_run_ast_scan_payload -> ... re-resolves once) sees the same
+    # anchor-validated location this check validated (closes the discard/TOCTOU class).
     scan_root = Path(path).expanduser().resolve()
     try:
         if write_baseline is not None:
-            _confine_write_path(write_baseline, scan_root, label="write_baseline")
+            write_baseline = str(
+                _confine_write_path(write_baseline, scan_root, label="write_baseline")
+            )
         if write_suppressions is not None:
-            _confine_write_path(write_suppressions, scan_root, label="write_suppressions")
+            write_suppressions = str(
+                _confine_write_path(write_suppressions, scan_root, label="write_suppressions")
+            )
     except ValueError as exc:
         return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
     try:
@@ -3328,11 +3377,14 @@ def tg_review_bundle_create(
             routing_reason="review-bundle-create",
         )
 
-    # round-4 security: confine the bundle output to the project (cwd) — unconfined it is an
-    # arbitrary-file-write primitive reachable from any MCP client.
+    # round-4/5 security: confine the bundle output to the project (cwd) — unconfined it is an
+    # arbitrary-file-write primitive reachable from any MCP client. round-5: consume the
+    # RESOLVED absolute path (not the raw candidate) below so create_review_bundle_json's own
+    # re-resolve in audit_manifest.py sees the same anchor-validated location this check
+    # validated (closes the discard/TOCTOU class).
     if output_path is not None:
         try:
-            _confine_write_path(output_path, Path.cwd(), label="output_path")
+            output_path = str(_confine_write_path(output_path, Path.cwd(), label="output_path"))
         except ValueError as exc:
             return _review_bundle_error(
                 str(exc),
