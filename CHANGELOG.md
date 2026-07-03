@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v1.18.1 (2026-07-03)
+
+### Bug Fixes
+
+- Decode non-UTF-8 rg lines.bytes + forward -u/-uu/-uuu (round-4 PR-A slice 1)
+  ([#336](https://github.com/oimiragieo/tensor-grep/pull/336),
+  [`b2e42b2`](https://github.com/oimiragieo/tensor-grep/commit/b2e42b2e3b6edfcf4563101697dcd479df6cf3fb))
+
+* fix: decode non-UTF-8 rg lines.bytes (no more phantom empty matches) + forward -u/-uu/-uuu
+  (round-4 PR-A slice, council-vetted)
+
+Two bounded, self-contained rg-parser correctness fixes from the round-4 moat batch:
+
+1) NON-UTF-8 MATCH CONTENT DROPPED. When rg matches a non-UTF-8 file it emits lines.bytes (base64),
+  not lines.text. The parser read only `.get("lines",{}).get("text","")`, silently defaulting to ""
+  -> a phantom match with empty MatchLine.text on ANY non-UTF-8 file. Added a fail-closed
+  `_decode_rg_field` helper (text passthrough; base64->utf-8 errors=replace; never raises -> "" on
+  garbage, since the per-record except only catches JSONDecodeError). Applied to all 4 sites
+  (match+context, lines+path). Path keeps the single-file fallback keyed on raw `.text` PRESENCE
+  (not the decoded value) so a real caller path still wins over a lossy decode (match.file stays
+  openable). Rejected: submatches.bytes (parser never reads it -> dead code) and loosening the
+  subprocess UTF-8 capture (rg's JSON stream is UTF-8 by contract).
+
+2) -u/-uu/-uuu SILENT NO-OP. config.unrestricted was plumbed CLI->SearchConfig but never handed to
+  rg, so `tg search -u ...` silently ignored the requested scope widening. Forward the raw token (rg
+  owns the -u->--no-ignore / -uu->+--hidden / -uuu->+--binary expansion; do not hand-roll it). One
+  choke point (_build_cmd) covers search/passthrough/counts/files-with-matches.
+
+TDD: 6 tests (decode passthrough/base64/lossy/fail-closed; real-backend non-UTF-8 content watched
+  fail with text==""; -u/-uu/-uuu forwarded, default forwards none). 58 ripgrep+parity tests green;
+  ruff+mypy clean; dogfooded the real -u path. Task #34 (PR-A slice 1 of 3); exit-2 partial-results
+  (5-file) + submatches --column follow.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: make the non-UTF-8 lines.bytes test deterministic (CI has no rg binary)
+
+The real-backend test wrote a binary file and ran a live rg search — green on my dev box (rg 15.1.0
+  installed) but ALL test-python CI jobs failed with `RuntimeError: RipgrepBackend requires the 'rg'
+  binary to be installed` (CI runners have no system rg). Same dev-box-vs-clean-CI trap as the
+  pyright case.
+
+Fix: feed a SYNTHETIC rg --json record whose match content is `lines.bytes` (base64) through the
+  parser via a mocked run_subprocess, and stub _get_binary_name (never executed, since
+  run_subprocess is mocked). Tests the actual fix (bytes decoding) deterministically with zero
+  dependency on a real rg version/behavior. Verified it passes with resolve_ripgrep_binary forced to
+  None (simulating CI). The other new tests (_decode_rg_field units, -u _build_cmd) were already
+  CI-safe.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.18.0 (2026-07-03)
 
 ### Features
