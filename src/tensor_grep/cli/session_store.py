@@ -596,6 +596,10 @@ def open_session(
         "scan_limit": scan_limit,
         "build_seconds": max(0.0, built_at - started_at),
     }
+    # Create the sessions dir up front so _session_payload_path's sessions_dir.resolve() is stable:
+    # under concurrent first-time opens, resolving while another writer is still mkdir-ing the dir
+    # can transiently mis-resolve and trip the containment guard on a VALID session id (Windows).
+    _sessions_dir(root).mkdir(parents=True, exist_ok=True)
     session_path = _session_payload_path(root, session_id)
     _write_json_atomic(session_path, payload)
 
