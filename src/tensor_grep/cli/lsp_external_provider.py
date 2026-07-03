@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from tensor_grep.cli.lsp_provider_setup import (
     canonical_language,
+    direct_managed_node_command,
     managed_provider_env,
     resolved_provider_command,
     wrap_windows_batch_command,
@@ -412,17 +413,36 @@ class ExternalLSPClient:
             raise LSPTransportError(self.last_error or "LSP provider temporarily unavailable")
         if self.process is not None:
             self.stop()
+        managed_root = _managed_provider_root()
+        try:
+            spawn_argv = direct_managed_node_command(list(self.command), root=managed_root)
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            # Fail CLOSED (CWE-427): a managed Node cmd-shim whose trusted node.exe / JS
+            # entrypoint cannot be resolved must NOT fall back to the cmd.exe/.cmd path —
+            # that path's bare `node` resolves CWD-first against the attacker-controlled
+            # workspace_root. Silent fallback would re-open the exact hole we are closing.
+            raise LSPTransportError(
+                f"managed LSP provider could not be resolved to a trusted node runtime: {exc}"
+            ) from exc
+        if spawn_argv is None:
+            # External/PATH providers, managed native .exe binaries, and all POSIX are
+            # unchanged (wrap_windows_batch_command is a no-op except for a real .cmd/.bat).
+            spawn_argv = wrap_windows_batch_command(list(self.command))
+        # cwd stays workspace_root: the resolved argv contains zero CWD-searchable names, so
+        # this launch is safe. Residual (not exploitable here — these servers are
+        # worker-thread based): a server that itself spawns a bare-name grandchild at runtime
+        # could recur one level down.
         self.process = subprocess.Popen(
-            wrap_windows_batch_command(list(self.command)),
+            spawn_argv,
             cwd=str(self.workspace_root),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=managed_provider_env(self.command, managed_root=_managed_provider_root()),
+            env=managed_provider_env(self.command, managed_root=managed_root),
         )
         self._record_debug_trace(
             event="process_start",
-            detail={"command": list(self.command), "cwd": str(self.workspace_root)},
+            detail={"command": spawn_argv, "cwd": str(self.workspace_root)},
         )
         self._message_queue = queue.Queue()
         self._pending_requests = {}

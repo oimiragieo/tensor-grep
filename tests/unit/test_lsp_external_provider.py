@@ -11,11 +11,174 @@ from typing import Any
 import pytest
 
 import tensor_grep.cli.lsp_external_provider as provider_module
+import tensor_grep.cli.lsp_provider_setup as provider_setup
 from tensor_grep.cli.lsp_external_provider import (
     ExternalLSPClient,
     ExternalLSPProviderManager,
     LSPTransportError,
 )
+
+
+class _CapturedSpawn(Exception):
+    """Raised by the fake ``subprocess.Popen`` after recording argv so ``start()`` aborts
+    before touching real process I/O; the test inspects the captured argv."""
+
+
+def _install_spawn_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
+    def _fake_popen(argv: Any, **kwargs: Any) -> Any:
+        captured["argv"] = list(argv)
+        captured["cwd"] = kwargs.get("cwd")
+        raise _CapturedSpawn
+
+    monkeypatch.setattr(provider_module.subprocess, "Popen", _fake_popen)
+
+
+def _build_fake_managed_root(tmp_path: Path) -> dict[str, Path]:
+    """A managed-provider root with the REAL-shaped layout the CWE-427 bypass needs:
+    a node runtime, the ``.bin`` cmd-shim, and the resolvable ``package.json['bin']``
+    JS entrypoint. (The pre-existing managed-start fixtures stub only an empty ``.cmd``,
+    which cannot exercise the node/js rewrite — the mock-vs-real trap.)"""
+    root = tmp_path / "providers"
+    node_runtime = root / "node-runtime"
+    node_bin = root / "node-packages" / "node_modules" / ".bin"
+    pyright_pkg = root / "node-packages" / "node_modules" / "pyright"
+    managed_bin = root / "bin"
+    for directory in (node_runtime, node_bin, pyright_pkg, managed_bin):
+        directory.mkdir(parents=True, exist_ok=True)
+    node_exe = node_runtime / "node.exe"
+    node_exe.write_text("", encoding="utf-8")
+    cmd_shim = node_bin / "pyright-langserver.cmd"
+    cmd_shim.write_text("@node ... %*\n", encoding="utf-8")
+    (pyright_pkg / "package.json").write_text(
+        '{"bin": {"pyright-langserver": "langserver.js"}}', encoding="utf-8"
+    )
+    js_entry = pyright_pkg / "langserver.js"
+    js_entry.write_text("", encoding="utf-8")
+    rust_exe = managed_bin / "rust-analyzer.exe"
+    rust_exe.write_text("", encoding="utf-8")
+    return {
+        "root": root,
+        "node_exe": node_exe,
+        "cmd_shim": cmd_shim,
+        "js_entry": js_entry,
+        "rust_exe": rust_exe,
+    }
+
+
+def test_start_rewrites_managed_windows_cmd_shim_to_direct_node_js_argv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Round-4 CWE-427: the managed pyright ``.cmd`` shim resolves a BARE ``node`` which
+    ``cmd.exe`` searches CWD-first — and CWD is the attacker-controlled analyzed
+    ``workspace_root``. ``start()`` must spawn the trusted absolute
+    ``[node.exe, langserver.js, --stdio]`` argv instead, so no launch step performs a
+    CWD-relative search. TODAY it spawns ``[cmd.exe, /C, ...pyright-langserver.cmd, --stdio]``."""
+    fake = _build_fake_managed_root(tmp_path)
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: True)
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda *a, **k: fake["root"])
+    captured: dict[str, Any] = {}
+    _install_spawn_capture(monkeypatch, captured)
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    # Sanity: resolution yielded the managed .cmd shim (the vulnerable input).
+    assert client.command[0] == str(fake["cmd_shim"])
+    assert client.command[-1] == "--stdio"
+
+    with pytest.raises(_CapturedSpawn):
+        client.start()
+
+    expected_js = (
+        fake["root"] / "node-packages" / "node_modules" / "pyright" / "langserver.js"
+    ).resolve()
+    assert captured["argv"] == [str(fake["node_exe"]), str(expected_js), "--stdio"]
+    assert "cmd.exe" not in captured["argv"]
+    assert not any(part.lower().endswith(".cmd") for part in captured["argv"])
+    assert "node" not in captured["argv"]  # no BARE, CWD-searchable token
+
+
+def test_start_fails_closed_when_managed_js_entrypoint_unresolvable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If a managed shim's trusted JS entrypoint cannot be resolved (e.g. a future
+    ``package.json`` bin-layout change), ``start()`` must RAISE (fail closed), never
+    silently fall back to the CWD-searchable ``cmd.exe``/``.cmd`` path."""
+    fake = _build_fake_managed_root(tmp_path)
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: True)
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda *a, **k: fake["root"])
+
+    def _boom(_binary: str, _root: Path) -> Path:
+        raise ValueError("bin layout changed")
+
+    monkeypatch.setattr(provider_setup, "managed_provider_js_entrypoint", _boom)
+    captured: dict[str, Any] = {}
+    _install_spawn_capture(monkeypatch, captured)
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    with pytest.raises(LSPTransportError):
+        client.start()
+    assert "argv" not in captured  # never spawned the vulnerable shim
+
+
+def test_start_leaves_external_path_cmd_provider_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An external/PATH provider (a ``.cmd`` OUTSIDE the managed root, whose npm layout
+    tensor-grep does not own) must still route through ``cmd.exe`` unchanged — the
+    managed-only gate must not try to resolve a JS entry it does not own."""
+    fake = _build_fake_managed_root(tmp_path)
+    external_cmd = tmp_path / "external" / "pyright-langserver.cmd"
+    external_cmd.parent.mkdir(parents=True, exist_ok=True)
+    external_cmd.write_text("@node ...\n", encoding="utf-8")
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: True)
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda *a, **k: fake["root"])
+    captured: dict[str, Any] = {}
+    _install_spawn_capture(monkeypatch, captured)
+
+    monkeypatch.setattr(provider_module, "_provider_command", lambda _language: ["placeholder"])
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.command = [str(external_cmd), "--stdio"]
+    with pytest.raises(_CapturedSpawn):
+        client.start()
+    assert captured["argv"] == ["cmd.exe", "/C", str(external_cmd), "--stdio"]
+
+
+def test_start_leaves_managed_native_exe_provider_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A managed NATIVE ``.exe`` provider (rust-analyzer) has no cmd-shim and must never
+    be routed through the node/js rewrite — its suffix is ``.exe``, not ``.cmd``."""
+    fake = _build_fake_managed_root(tmp_path)
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: True)
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda *a, **k: fake["root"])
+    captured: dict[str, Any] = {}
+    _install_spawn_capture(monkeypatch, captured)
+
+    monkeypatch.setattr(provider_module, "_provider_command", lambda _language: ["placeholder"])
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.command = [str(fake["rust_exe"])]
+    with pytest.raises(_CapturedSpawn):
+        client.start()
+    assert captured["argv"] == [str(fake["rust_exe"])]
+
+
+def test_start_leaves_posix_command_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """POSIX: no cmd.exe wrap and no node/js rewrite — the command is spawned as-is."""
+    fake = _build_fake_managed_root(tmp_path)
+    monkeypatch.setattr(provider_setup, "is_windows", lambda: False)
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda *a, **k: fake["root"])
+    captured: dict[str, Any] = {}
+    _install_spawn_capture(monkeypatch, captured)
+
+    # Stub command resolution so construction never depends on a real pyright on PATH (present on
+    # dev boxes, absent on clean CI); this test overrides client.command below regardless.
+    monkeypatch.setattr(provider_module, "_provider_command", lambda _language: ["placeholder"])
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.command = ["/usr/bin/pyright-langserver", "--stdio"]
+    with pytest.raises(_CapturedSpawn):
+        client.start()
+    assert captured["argv"] == ["/usr/bin/pyright-langserver", "--stdio"]
 
 
 def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
@@ -867,6 +1030,19 @@ def test_external_provider_client_starts_managed_provider_with_managed_runtime_e
     )
     binary.parent.mkdir(parents=True)
     binary.write_text("", encoding="utf-8")
+    if os.name == "nt":
+        # Real-shaped managed layout: once start() rewrites a managed Windows .cmd shim to
+        # the trusted [node.exe, entry.js] argv (CWE-427 fix), the bare .cmd stub alone is
+        # insufficient — the node runtime + package.json['bin'] entrypoint must resolve.
+        node_runtime = provider_root / "node-runtime"
+        node_runtime.mkdir(parents=True, exist_ok=True)
+        (node_runtime / "node.exe").write_text("", encoding="utf-8")
+        pyright_pkg = provider_root / "node-packages" / "node_modules" / "pyright"
+        pyright_pkg.mkdir(parents=True, exist_ok=True)
+        (pyright_pkg / "package.json").write_text(
+            '{"bin": {"pyright-langserver": "langserver.js"}}', encoding="utf-8"
+        )
+        (pyright_pkg / "langserver.js").write_text("", encoding="utf-8")
     monkeypatch.setenv("TENSOR_GREP_LSP_PROVIDER_HOME", str(provider_root))
     captured: dict[str, object] = {}
 
