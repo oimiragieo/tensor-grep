@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.18.3 (2026-07-03)
+
+### Bug Fixes
+
+- Bound blast-radius-render's per-candidate source lookups (TG-4 — 3.5min -> ~3s)
+  ([#338](https://github.com/oimiragieo/tensor-grep/pull/338),
+  [`ec8933a`](https://github.com/oimiragieo/tensor-grep/commit/ec8933a7ab88695ad20dc8077df4eef16b95c4fd))
+
+Real AI-use feedback: `tg blast-radius-render QueryEngine` took ~3.5 MIN and returned near-empty
+  output, while `tg blast-radius --json` returned the full graph in ~3s. Root cause (verified):
+  build_symbol_blast_radius_render_from_map (repo_map.py) iterates the ranked candidate symbols in
+  the top files and calls the EXPENSIVE build_symbol_source_from_map once per candidate, bounded
+  only by accumulating max_sources matching blocks. A high-fan-in symbol yields thousands of
+  candidates, and when few of them yield a source that matches the current file, the loop scanned
+  ALL of them -> thousands of expensive lookups on a large repo. (build_repo_map is shared with the
+  fast --json path, so the 70x gap is entirely this loop.)
+
+Fix: cap the expensive per-candidate lookups at max(max_sources*8, 24) (=40 by default). ranked
+  candidates are relevance-sorted, so the best sources are examined first; beyond the cap we degrade
+  gracefully to fewer rendered blocks (the JSON graph remains the complete source of truth).
+
+TDD: 2 tests via a spy on build_symbol_source_from_map — 1000 non-matching candidates now trigger
+
+<=40 lookups (watched fail: 1000), and the normal path still collects up to max_sources when
+  candidates match (cap must not starve). 314 render/parity tests green; ruff+mypy clean. Task #35
+  (TG-4). blast-radius --json unaffected.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.18.2 (2026-07-03)
 
 ### Bug Fixes
