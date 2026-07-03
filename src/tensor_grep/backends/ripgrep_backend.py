@@ -117,6 +117,9 @@ class RipgrepBackend(ComputeBackend):
             matched_file_paths: list[str] = []
             match_counts_by_file: dict[str, int] = {}
             total_matches = 0
+            # Only the --vimgrep/--column formatters consume submatch offsets; stashing them on
+            # every default-format match is wasted work (the tuple is built then discarded).
+            want_submatches = bool(config and (config.vimgrep or config.column))
 
             for line in result.stdout.splitlines():
                 if not line.strip():
@@ -142,7 +145,7 @@ class RipgrepBackend(ComputeBackend):
                         # Stash rg's per-occurrence byte offsets (submatches[]) for --vimgrep/
                         # --column output shaping. Counting stays one-per-matching-line (below) so
                         # total_matches / parity with the other backends is unchanged.
-                        _subs = data_match.get("submatches") or None
+                        _subs = (data_match.get("submatches") or None) if want_submatches else None
                         matches.append(
                             MatchLine(
                                 line_number=line_number,

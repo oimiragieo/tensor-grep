@@ -9,10 +9,12 @@ class MatchLine:
     range: dict[str, object] | None = None
     meta_variables: dict[str, object] | None = None
     # rg's authoritative per-occurrence byte offsets for a multi-match line (each entry is an rg
-    # submatch: {"match": {...}, "start": int, "end": int}). Populated only by RipgrepBackend;
-    # consumed by --vimgrep/--column output shaping. Tuple keeps the frozen dataclass hashable;
-    # None (the default) keeps every other backend byte-for-byte unchanged.
-    submatches: tuple[dict[str, object], ...] | None = None
+    # submatch: {"match": {...}, "start": int, "end": int}). Populated only by RipgrepBackend when
+    # --vimgrep/--column is requested; consumed by that output shaping. compare=False keeps this
+    # frozen dataclass HASHABLE — a tuple of dicts is not hashable, so including it would break
+    # hash(MatchLine(...)) once populated. Excluding it from == is correct: these offsets are a
+    # pure function of text+line, so two matches equal on those fields are equal here too.
+    submatches: tuple[dict[str, object], ...] | None = field(default=None, compare=False)
 
 
 @dataclass
