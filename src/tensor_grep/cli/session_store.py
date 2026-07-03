@@ -14,6 +14,7 @@ from time import monotonic
 from typing import Any, TextIO, cast
 from uuid import uuid4
 
+from tensor_grep.cli._index_lock import index_lock, replace_with_retry
 from tensor_grep.cli.repo_map import (
     DEFAULT_AGENT_REPO_MAP_LIMIT,
     _is_repo_context_file,
@@ -414,7 +415,7 @@ def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> 
             pass
     else:
         tmp_path.write_text(data, encoding="utf-8")
-    os.replace(tmp_path, path)
+    replace_with_retry(tmp_path, path)
 
 
 def _write_index(root: Path, records: list[SessionRecord]) -> None:
@@ -595,6 +596,10 @@ def open_session(
         "scan_limit": scan_limit,
         "build_seconds": max(0.0, built_at - started_at),
     }
+    # Create the sessions dir up front so _session_payload_path's sessions_dir.resolve() is stable:
+    # under concurrent first-time opens, resolving while another writer is still mkdir-ing the dir
+    # can transiently mis-resolve and trip the containment guard on a VALID session id (Windows).
+    _sessions_dir(root).mkdir(parents=True, exist_ok=True)
     session_path = _session_payload_path(root, session_id)
     _write_json_atomic(session_path, payload)
 
@@ -606,12 +611,17 @@ def open_session(
         file_count=len(repo_map["files"]),
         symbol_count=len(repo_map["symbols"]),
     )
-    records = [existing for existing in _load_index(root) if existing.session_id != session_id]
-    records.insert(0, record)
-    # audit I2: bound retention so disk and index size do not grow without limit; unlink the
-    # payload files for any records dropped past the configured cap before rewriting the index.
-    records = _prune_session_records(root, records)
-    _write_index(root, records)
+    # q10 RMW race: load->mutate->write must be atomic w.r.t. every other writer of this
+    # index.json, cross-process and cross-thread, or a concurrent insert can be lost (see
+    # _index_lock.index_lock docstring / AGENTS.md Backend Fail-Closed Contract).
+    with index_lock(_index_path(root)):
+        records = [existing for existing in _load_index(root) if existing.session_id != session_id]
+        records.insert(0, record)
+        # audit I2: bound retention so disk and index size do not grow without limit; unlink
+        # the payload files for any records dropped past the configured cap before rewriting
+        # the index.
+        records = _prune_session_records(root, records)
+        _write_index(root, records)
     return SessionOpenResult(
         session_id=session_id,
         root=str(root),
@@ -679,31 +689,34 @@ def refresh_session(
     if payload_cache is not None:
         payload_cache.put(session_id, str(root), payload)
 
-    records = _load_index(root)
-    for index, record in enumerate(records):
-        if record.session_id == session_id:
-            records[index] = SessionRecord(
-                version=_SESSION_VERSION,
-                session_id=session_id,
-                root=str(root),
-                created_at=created_at,
-                file_count=len(repo_map["files"]),
-                symbol_count=len(repo_map["symbols"]),
+    # q10 RMW race: same load->mutate->write hazard as open_session; serialize against every
+    # other writer of this index.json before mutating the in-memory record list.
+    with index_lock(_index_path(root)):
+        records = _load_index(root)
+        for index, record in enumerate(records):
+            if record.session_id == session_id:
+                records[index] = SessionRecord(
+                    version=_SESSION_VERSION,
+                    session_id=session_id,
+                    root=str(root),
+                    created_at=created_at,
+                    file_count=len(repo_map["files"]),
+                    symbol_count=len(repo_map["symbols"]),
+                )
+                break
+        else:
+            records.insert(
+                0,
+                SessionRecord(
+                    version=_SESSION_VERSION,
+                    session_id=session_id,
+                    root=str(root),
+                    created_at=created_at,
+                    file_count=len(repo_map["files"]),
+                    symbol_count=len(repo_map["symbols"]),
+                ),
             )
-            break
-    else:
-        records.insert(
-            0,
-            SessionRecord(
-                version=_SESSION_VERSION,
-                session_id=session_id,
-                root=str(root),
-                created_at=created_at,
-                file_count=len(repo_map["files"]),
-                symbol_count=len(repo_map["symbols"]),
-            ),
-        )
-    _write_index(root, records)
+        _write_index(root, records)
 
     return SessionRefreshResult(
         session_id=session_id,
