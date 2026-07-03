@@ -47,6 +47,7 @@ KNOWN_COMMANDS = {
     "__gpu-oom-probe",
     "map",
     "orient",
+    "inventory",
     "session",
     "doctor",
     "checkpoint",
