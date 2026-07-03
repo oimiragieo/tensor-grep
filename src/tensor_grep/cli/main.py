@@ -3790,6 +3790,10 @@ def _can_passthrough_rg(
         and not config.ltl
         and not config.force_cpu
         and not config.rank_bm25
+        # An explicit --gpu-device-ids request must reach Pipeline, which raises loudly when GPU
+        # can't be honored (the "never silently downgrade to CPU" contract). rg-passthrough would
+        # run plain CPU rg with exit 0 and no fallback_reason — a silent downgrade. (round-5 Q9)
+        and not config.gpu_device_ids
         and format_type == "rg"
         and (not json_mode or rg_json_passthrough)
         and not ndjson_mode
