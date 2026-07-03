@@ -149,6 +149,12 @@ Find call sites plus likely impacted tests:
 tg callers . create_invoice --max-repo-files 512 --json
 ```
 
+`tg callers` is Python-first: it matches Python AST call nodes most reliably
+and can under-match, or take minutes, on large TypeScript/JS repos. Prefer
+`tg refs` for TS/JS symbol navigation; dogfooding found `tg refs` returning
+14 reference sites on a TS-heavy repo where `tg callers` returned 1 for the
+same symbol.
+
 For `tg blast-radius ... --json`, `blast_radius_score` is a bounded `0.0` to
 `1.0` evidence-density score derived from ranked files, direct callers, and
 related tests before output limiting. Use `affected_files` for the concrete
