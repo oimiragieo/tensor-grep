@@ -534,3 +534,117 @@ class TestCPUBackend:
         assert second.total_matches == 1
         assert second.routing_reason == "cpu_python_regex_prefilter"
         assert build_calls["count"] == 1
+
+    # --- Round-4: literal-prefilter must not fold the optional (*-quantified) atom ---
+
+    def test_extract_required_literal_excludes_optional_star_atom(self):
+        # "colou*r" matches "color" (zero u's); the required substring is "colo", not "colou".
+        assert CPUBackend._extract_required_literal("colou*r") == "colo"
+
+    def test_star_prefilter_does_not_silently_drop_zero_repetition_match(self, tmp_path):
+        # End-to-end: "color" legitimately matches r"colou*r"; the prefilter must not exclude it.
+        log = tmp_path / "star.log"
+        log.write_text("the color is red\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), r"colou*r", config=SearchConfig())
+
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+
+    def test_star_prefilter_pops_only_the_optional_atom_not_the_run(self, tmp_path):
+        # "flagok" (zero x's) matches r"flagx*ok"; surviving literal is the truncated "flag"
+        # (not the buggy "flagx", and not emptied out entirely).
+        log = tmp_path / "run.log"
+        log.write_text("flagok\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), r"flagx*ok", config=SearchConfig())
+
+        assert result.total_matches == 1
+
+    def test_star_prefilter_still_filters_decoys_and_guards_leading_star(self, tmp_path):
+        # The surviving literal ("worke") must still exclude a decoy line (prefilter not degraded
+        # into "scan everything"); and a leading-'*' pattern must not raise IndexError.
+        log = tmp_path / "decoy.log"
+        log.write_text("workers\nunrelated line\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), r"worker*s", config=SearchConfig())
+            assert result.total_matches == 1
+            assert result.matches[0].line_number == 1
+            # empty-`current` guard: leading '*' must not IndexError.
+            guarded = backend.search(str(log), r".*abc", config=SearchConfig())
+        assert guarded.total_matches == 0
+
+    # --- Round-4: fail closed (no silent ReDoS-prone Python-re swap) on Rust syntax rejection ---
+
+    def test_should_fail_closed_when_rust_rejects_backreference_syntax(self, tmp_path):
+        import pytest
+
+        from tensor_grep.backends.cpu_backend import InvalidRegexError
+
+        f = tmp_path / "x.txt"
+        f.write_text("a" * 40 + "!\n", encoding="utf-8")  # catastrophic-backtracking payload
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class RejectingRustBackend:
+            def search(self, **_kwargs):
+                # The Rust `regex` crate rejects look-around/backreferences at COMPILE time.
+                raise RuntimeError("regex parse error: look-around is not supported")
+
+        rust_mod.RustBackend = RejectingRustBackend
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            with pytest.raises(InvalidRegexError):
+                CPUBackend().search(str(f), r"(?=(a+)+)$", config=SearchConfig())
+
+    def test_should_still_fall_back_to_python_re_on_nonsyntax_rust_failure(self, tmp_path):
+        f = tmp_path / "x.txt"
+        f.write_text("ERROR here\nno match\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")  # NOT a syntax rejection
+
+        rust_mod.RustBackend = FailingRustBackend
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = CPUBackend().search(str(f), "ERROR", config=SearchConfig())
+        assert result.total_matches == 1
+        # Fell open to the Python engine (prefilter variant counts) — no raise, no engine block.
+        assert result.routing_reason.startswith("cpu_python_regex")
+
+    def test_should_allow_backreference_when_pcre2_explicitly_requested(self, tmp_path):
+        f = tmp_path / "x.txt"
+        f.write_text("aa bb\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class RejectingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("regex parse error: backreferences are not supported")
+
+        rust_mod.RustBackend = RejectingRustBackend
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = CPUBackend().search(str(f), r"(a)\1", config=SearchConfig(pcre2=True))
+        assert result.total_matches == 1  # user opted in; Python re ran the backref pattern
