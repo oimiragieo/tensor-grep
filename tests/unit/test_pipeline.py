@@ -56,6 +56,35 @@ class TestPipeline:
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_explicit_gpu_device_ids_with_count_fails_loud_not_silent_cpu(self, mock_rust, mock_rg):
+        """Round-4: --gpu-device-ids + --count has no GPU backend, but count silently won
+        via count_rust_fast_path, dropping the explicit GPU intent with no diagnostic. It
+        must fail loud (ConfigurationError), like fixed-strings/pcre2/AST already do."""
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        with pytest.raises(ConfigurationError):
+            Pipeline(
+                force_cpu=False,
+                config=SearchConfig(query_pattern="ERROR", count=True, gpu_device_ids=[0]),
+            )
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_explicit_gpu_device_ids_with_context_fails_loud_not_silent_cpu(
+        self, mock_rust, mock_rg
+    ):
+        """Round-4: --gpu-device-ids + context (-C) has no GPU backend, but the semantics
+        branch silently routed to rg_semantics_fast_path, dropping the GPU intent."""
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        with pytest.raises(ConfigurationError):
+            Pipeline(
+                force_cpu=False,
+                config=SearchConfig(query_pattern="ERROR", context=3, gpu_device_ids=[0]),
+            )
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
     @patch("tensor_grep.backends.ast_backend.AstBackend")
     def test_should_prefer_ast_wrapper_by_default_when_both_ast_backends_are_available(

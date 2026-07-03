@@ -200,6 +200,12 @@ class Pipeline:
                 else:
                     self.backend = CPUBackend()
                     selected_backend_reason = "force_cpu_python_cpu"
+            elif config and config.ast and config.gpu_device_ids:
+                # round-4: AST search has no GPU backend, but _should_honor_explicit_gpu_ids
+                # excludes ast, so an explicit --gpu-device-ids request silently fell through.
+                self._raise_explicit_gpu_configuration_error(
+                    config, "AST search has no GPU backend"
+                )
             elif config and config.ast:
                 try:
                     from tensor_grep.backends.ast_backend import AstBackend
@@ -239,9 +245,21 @@ class Pipeline:
                 if cybert_backend.is_available():
                     self.backend = cybert_backend
                     selected_backend_reason = "nlp_cybert"
+                elif config and config.gpu_device_ids:
+                    # round-4: cybert (the only GPU-capable NLP path) is unavailable; an explicit
+                    # --gpu-device-ids request must not silently fall back to a non-GPU backend.
+                    self._raise_explicit_gpu_configuration_error(
+                        config, "NLP classification backend (cybert) is unavailable"
+                    )
                 else:
                     self.backend = fallback_backend
                     selected_backend_reason = "nlp_backend_unavailable_fallback"
+            elif config and config.count and config.gpu_device_ids:
+                # round-4: count (-c) search has no GPU backend; fail loud rather than silently
+                # taking the rust/rg count fast path and dropping the explicit GPU request.
+                self._raise_explicit_gpu_configuration_error(
+                    config, "count (-c) search has no GPU backend"
+                )
             elif config and config.count and rust_available:
                 # For pure counting, our Rust backend beats rg and everything else
                 self.backend = rust_backend
@@ -266,6 +284,13 @@ class Pipeline:
                 # For literal string searches without context boundaries, StringZilla's SIMD destroys C
                 self.backend = sz_backend
                 selected_backend_reason = "fixed_strings_stringzilla_fast_path"
+            elif config and config.gpu_device_ids and needs_python_cpu:
+                # round-4: context/line-regexp/word-regexp/LTL routes have no GPU backend
+                # (_should_honor_explicit_gpu_ids excludes needs_python_cpu); fail loud instead
+                # of silently taking the rg/CPU semantics path and dropping the GPU request.
+                self._raise_explicit_gpu_configuration_error(
+                    config, "context/line-regexp/word-regexp/LTL search has no GPU backend"
+                )
             elif config and (
                 config.context
                 or config.before_context
