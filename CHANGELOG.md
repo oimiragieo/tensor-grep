@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.17.30 (2026-07-03)
+
+### Bug Fixes
+
+- Spawn managed Windows LSP providers via trusted node+js argv, not the CWD-searchable .cmd shim
+  (CWE-427) ([#331](https://github.com/oimiragieo/tensor-grep/pull/331),
+  [`c9da904`](https://github.com/oimiragieo/tensor-grep/commit/c9da90466b54cde48847ca09f1cdf98492b454ad))
+
+* fix: spawn managed Windows LSP providers via trusted node+js argv, not the CWD-searchable .cmd
+  shim (CWE-427)
+
+ExternalLSPClient.start() spawned the managed Node LSP provider through its npm cmd-shim ([cmd.exe,
+  /C, ...\.bin\pyright-langserver.cmd, --stdio]) with cwd=workspace_root. The cmd-shim body resolves
+  a BARE, unqualified `node`, which cmd.exe searches CWD-first — and CWD is the attacker-controlled
+  analyzed repo, so a planted workspace_root\node.exe hijacks the language server (CWE-427). The
+  managed PATH prepend does not help: CWD is searched before PATH. Sibling of the already-shipped
+  apply_policy CWE-427 fix.
+
+Fix (council-vetted): resolve the shim to its trusted absolute [node.exe, entry.js, *args] BEFORE
+  spawning. direct_managed_node_command() gates strictly to managed Windows .cmd/.bat shims
+  (external/PATH providers, managed native .exe like rust-analyzer, and all POSIX are byte-for-byte
+  unchanged, still via wrap_windows_batch_command). The JS entrypoint is read from
+  package.json["bin"] (the stable contract), NOT by text-parsing the version-drifting cmd-shim. Once
+  the gate passes, any resolution failure FAILS CLOSED (LSPTransportError) — never a silent fallback
+  to the vulnerable shim (the recurring silent-fallback anti-pattern). self.command (what
+  provider_status()/doctor report) is never mutated; the rewrite is a local spawn-time argv only;
+  --stdio is preserved; the debug trace logs the actual spawn_argv.
+
+TDD: 5 new tests (managed-shim rewrite watched fail RED spawning cmd.exe; fail-closed on
+
+unresolvable entrypoint; 3 legit unchanged paths: external/PATH .cmd, managed native .exe, POSIX).
+  Upgraded the pre-existing managed-start env test to the real-shaped layout (node.exe +
+  package.json bin + entry) — the empty-.cmd stub couldn't exercise the node/js rewrite
+  (mock-vs-real trap). 106 LSP tests pass; ruff + mypy clean. Round-4 #34 (PR-E), task #31.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: make LSP start() legit-path tests independent of a real pyright on PATH (clean-CI fix)
+
+The 3 legit-path tests construct ExternalLSPClient(language="python"), whose __init__ resolves
+  _provider_command("python"). test_start_leaves_posix_command_unchanged patches is_windows->False,
+  so the fixture's managed .cmd no longer matches (no-suffix binary), and resolution falls through
+  to a PATH lookup. That found pyright-langserver on the dev box (two installs: pip + npm) so it
+  passed locally, but FAILED on clean CI with FileNotFoundError across every test-python job.
+
+Fix: patch _provider_command to a placeholder in the 3 legit tests (they override client.command
+
+anyway), so construction never depends on a real binary. Proven PATH-independent: with pyright
+  removed from PATH entirely (NONE), posix/external/native all pass. Buggy + fail-closed tests keep
+  real resolution (is_windows->True + the fixture's managed .cmd is deterministic).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.29 (2026-07-03)
 
 ### Bug Fixes
