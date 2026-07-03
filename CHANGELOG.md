@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.19.8 (2026-07-03)
+
+### Bug Fixes
+
+- Index.json cross-process lost-update race — per-index lockfile + Windows hardening (round-5 Q10)
+  ([#355](https://github.com/oimiragieo/tensor-grep/pull/355),
+  [`2d6a92a`](https://github.com/oimiragieo/tensor-grep/commit/2d6a92a45d111a31e9268ec7acf95609d26bd794))
+
+* fix: serialize index.json RMW to close cross-process/thread lost-update race
+
+open_session/refresh_session (session_store.py) and create_checkpoint (checkpoint_store.py) each did
+  an unlocked load->mutate->write of the per-root index.json; _write_json_atomic only makes the
+  final os.replace swap atomic, not the read-modify-write. Two near-simultaneous writers could each
+  read the same pre-insert index and the second would clobber the first's insert, leaving an
+  orphaned session/snapshot dir invisible to list and never retention-pruned (reintroducing the
+  round-4 disk-growth DoS), and letting resolve_latest/undo target a stale entry.
+
+Add a shared, purpose-built, blocking, fail-closed index_lock context manager (new
+  src/tensor_grep/cli/_index_lock.py) built on O_CREAT|O_EXCL with guarded stale-lock reclaim
+  (mtime-based, RMW-scaled). Wrap only the index.json RMW spans in open_session, refresh_session,
+  create_checkpoint, and the discovery-path _rebuild_index_from_checkpoint_metadata writer --
+  build_repo_map, the per-session payload write, and the snapshot copy loop stay outside the lock.
+  Refactor _prune_checkpoint_records into a pure _select_retained_checkpoints selector (no I/O) so
+  create_checkpoint's retention pruning runs inside the lock while the slow rmtree of dropped
+  checkpoint dirs runs after release.
+
+Adds concurrency tests (threaded, monkeypatched-slow-_write_index) proving no lost insert for
+  open_session/refresh_session/ create_checkpoint, a non-contended hot-path overhead guard, a
+  stale-lock reclaim test (including a 2-thread racing-reclaim guard), and a per-root lock-isolation
+  test.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: Windows cross-platform hardening for the index-lock concurrency fix (Q10 verify)
+
+Verification of the council-built index-lock (real venv, Windows) surfaced 3 Windows-only
+  concurrency bugs the worktree build could not run: 1. index_lock acquire only caught
+  FileExistsError; on Windows a concurrent stale-lock reclaim leaves the lockfile "delete pending"
+  so O_CREAT|O_EXCL raises PermissionError (WinError 5), not FileExistsError -> the acquire leaked
+  it. Now treated as a transient retry (fails closed at the deadline; a genuine perms error
+  self-limits into IndexLockTimeoutError). 2. _write_json_atomic's os.replace(tmp, index.json)
+  transiently fails with WinError 5 when the destination is momentarily held (reader/AV/indexer).
+  Added replace_with_retry (POSIX no-op). Applied to BOTH session_store and checkpoint_store. 3.
+  create_checkpoint resolved the snapshot path before the storage dir existed; under concurrent
+  first-creates, storage_dir.resolve() mid-mkdir mis-resolved and tripped the containment guard on a
+  VALID id. Pre-create the storage root so resolve() is stable.
+
+Flake on test_concurrent_create_checkpoint_no_lost_insert: 3/15 -> 0/20. 169 session+checkpoint
+  regression tests green.
+
+* fix: pre-create sessions dir in open_session so resolve() is stable under concurrency (Q10 CI)
+
+CI (windows-latest/py3.11) caught test_concurrent_open_session_no_lost_insert failing 3==4 with
+  'Refusing session id outside sessions dir' — the SAME resolve-under-concurrent-mkdir race I fixed
+  for create_checkpoint, but session_store's open_session was missed. _session_payload_path resolves
+  sessions_dir before _write_json_atomic creates it, so a concurrent first-time open mis-resolves
+  and the containment guard rejects a valid session id, dropping that thread's insert. Pre-create
+  the sessions dir up front. open_session concurrency test: was CI-flaky -> 0/30 local hammer.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- Promote tg refs for TS symbol-nav, document scan-limit tiers
+  ([#354](https://github.com/oimiragieo/tensor-grep/pull/354),
+  [`d3b2849`](https://github.com/oimiragieo/tensor-grep/commit/d3b2849e75e594c20a0d4c1a4a4b1e76656f3608))
+
+v1.19.3 dogfood found two doc gaps: `tg callers` is Python-first and under-matches (or runs for
+  minutes) on TypeScript/JS repos, while `tg refs` found 14 reference sites on a TS-heavy repo where
+  `tg callers` found 1 for the same symbol. Separately, `tg inventory`'s file count (up to
+  DEFAULT_MAX_INVENTORY_FILES=50000, walk-only) and `tg map`/`tg orient`'s file count
+  (DEFAULT_AGENT_REPO_MAP_LIMIT=512, full parse) looked like a mismatch without the tiering
+  explained.
+
+Add prose notes to README.md, AGENTS.md, and docs/harness_cookbook.md: recommend `tg refs` over `tg
+  callers` for TS/JS symbol navigation, and document the three scan-limit tiers (map/orient=512,
+  inventory=50000, search=uncapped) with the real constant names cited from
+  src/tensor_grep/cli/repo_map.py and src/tensor_grep/cli/inventory.py.
+
+Docs only; no code touched. No test to add (task marked test_path = "none (docs-only)").
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.7 (2026-07-03)
 
 ### Bug Fixes
