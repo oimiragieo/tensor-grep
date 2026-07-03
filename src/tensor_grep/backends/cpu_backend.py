@@ -626,14 +626,24 @@ class CPUBackend(ComputeBackend):
         matches: list[MatchLine] = []
         sequence_count = 0
 
+        # DoS fix: the old inner "scan forward per left-match" was O(n^2) — a
+        # left-matches-often/right-rarely query (every line matches A, none matches B)
+        # scanned to EOF for each of the ~n left hits. Precompute, in ONE backward pass, the
+        # nearest right-match index at-or-after each position so each left hit resolves its
+        # "eventually B" in O(1). Total O(n) with identical results (still the FIRST right
+        # match strictly after the left line).
+        total_lines = len(lines)
+        next_right_at_or_after: list[int | None] = [None] * (total_lines + 1)
+        nearest_right: int | None = None
+        for probe in range(total_lines - 1, -1, -1):
+            if right_regex.search(lines[probe][1]) is not None:
+                nearest_right = probe
+            next_right_at_or_after[probe] = nearest_right
+
         for idx, (left_line_no, left_text) in enumerate(lines):
             if left_regex.search(left_text) is None:
                 continue
-            right_match_idx = None
-            for probe in range(idx + 1, len(lines)):
-                if right_regex.search(lines[probe][1]) is not None:
-                    right_match_idx = probe
-                    break
+            right_match_idx = next_right_at_or_after[idx + 1]  # first right STRICTLY after idx
             if right_match_idx is None:
                 continue
 
