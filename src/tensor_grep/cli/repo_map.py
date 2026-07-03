@@ -5174,7 +5174,13 @@ def _source_tokens(source_files: list[str]) -> set[str]:
     return tokens
 
 
-def _module_aliases_for_path(path: str) -> set[str]:
+@lru_cache(maxsize=16384)
+def _module_aliases_for_path(path: str) -> frozenset[str]:
+    # Pure function of the path STRING (no file I/O) — safe to cache unconditionally, no mtime
+    # key needed. The reverse-import graph / PageRank calls this in tight loops (~1.4M calls for
+    # ~unique-file inputs on a depth-2 blast-radius), so memoization collapses it to one build
+    # per distinct path. frozenset return keeps the cached value immutable (all callers iterate
+    # it or .update() FROM it; none mutate it).
     current = Path(path)
     aliases = {current.stem.lower()}
     parts = [part.lower() for part in current.with_suffix("").parts]
@@ -5182,7 +5188,7 @@ def _module_aliases_for_path(path: str) -> set[str]:
         aliases.add(".".join(parts))
     if len(parts) > 1:
         aliases.add(".".join(parts[-2:]))
-    return {alias for alias in aliases if alias}
+    return frozenset(alias for alias in aliases if alias)
 
 
 def _import_alias_candidates(import_name: str) -> set[str]:
@@ -5201,7 +5207,7 @@ def _import_alias_candidates(import_name: str) -> set[str]:
 
 def _import_graph_bonus(
     file_path: str,
-    dependency_aliases: dict[str, set[str]],
+    dependency_aliases: dict[str, frozenset[str]],
     imports_by_file: dict[str, list[str]],
 ) -> int:
     bonus = 0
