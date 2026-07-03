@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.19.4 (2026-07-03)
+
+### Bug Fixes
+
+- Rg NDJSON split on \n only (not splitlines) + O(1) file-list membership (round-5 Q1/Q2)
+  ([#349](https://github.com/oimiragieo/tensor-grep/pull/349),
+  [`7641397`](https://github.com/oimiragieo/tensor-grep/commit/76413971eb25725364401509133eed4082f57fb7))
+
+Q1 (correctness/silent-failure): the rg --json/-l/--count parsers used str.splitlines(), which also
+  splits on U+2028/U+2029/U+0085 that rg emits UNESCAPED inside a match's line text (or a filename).
+  A matched line containing one of those chars fractured rg's single NDJSON record into invalid-JSON
+  halves -> both fail json.loads -> the match was silently dropped (total_matches:0, no
+  result_incomplete, no stderr). Fixed all 3 parse loops (search / files-with-matches / counts) to
+  split("\n") — rg's actual record delimiter; text=True already universal-newline-normalizes \r, and
+  empties are filtered downstream.
+
+Q2 (perf): the default search path did `path_str not in matched_file_paths` (an O(n) list scan) per
+  match, degrading a common-token search on a large repo to O(matches x files). The
+  match_counts_by_file dict two lines up already encodes first-seen — use it for O(1).
+
+Both adversarially verified + live-reproduced by the round-5 audit (workflow, 43 agents). Tests: 4
+  new (U+2028/U+0085 not dropped; first-seen order + counts) + 30 parity/exit2/ submatch green, zero
+  regression.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- Refresh SESSION_HANDOFF date + capture round-4 v1.19.x milestones
+  ([#347](https://github.com/oimiragieo/tensor-grep/pull/347),
+  [`f76f844`](https://github.com/oimiragieo/tensor-grep/commit/f76f8441483167f98694b3dc1a26bba191ef16d8))
+
+Bumps the stale "Last updated" (2026-06-28 -> 2026-07-03) and adds a concise recent-milestones
+  summary under Current Release State: the rg-parse correctness moat, tg inventory, the ~4.8x
+  blast-radius speedup (with the noise-not-regression note), the native-delegation deny-by-default
+  guard, the MatchLine hashability fix, blast-radius --mermaid, and the deliberately-deferred tg
+  diff-docs. Governance suite (test_public_docs_governance.py, 43 tests) green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.3 (2026-07-03)
 
 ### Bug Fixes
