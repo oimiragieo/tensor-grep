@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.17.29 (2026-07-03)
+
+### Bug Fixes
+
+- Fail loud on explicit --gpu-device-ids for all non-GPU routes (round-4, council-vetted)
+  ([#330](https://github.com/oimiragieo/tensor-grep/pull/330),
+  [`e08faa3`](https://github.com/oimiragieo/tensor-grep/commit/e08faa3c35a08e34e1ad22b7938809ebe516c82f))
+
+The #9b fix only guarded fixed_strings+gpu. The fix-approach-council verified 3 more sibling
+  silent-drop branches: an explicit --gpu-device-ids request combined with AST, count (-c),
+  context/line-regexp/word-regexp/LTL, or an unavailable-cybert NLP route was silently routed to a
+  non-GPU backend (ast_wrapper / count_rust_fast_path / rg_semantics_fast_path / fallback) with NO
+  error, NO warning — the explicit GPU intent dropped. (The single-location fix at pipeline.py:203
+  the finding cited is a no-op: _should_honor_explicit_gpu_ids excludes these, so those branches are
+  reached first.)
+
+Fix: 4 per-branch guards, each gated STRICTLY on config.gpu_device_ids truthiness, mirroring the
+  shipped #9b _raise_explicit_gpu_configuration_error. The plain no-GPU paths
+  (--ast/--count/--context/NLP-fallback with no --gpu-device-ids) and the explicit-GPU happy path
+  are unchanged; pcre2/force_cpu precedence untouched (out of scope).
+
+TDD: 2 new tests (count+gpu, context+gpu -> ConfigurationError) watched fail; 3 existing tripwires
+  (count-no-gpu, ast-no-gpu, explicit-gpu-happy-path) stay green. test_pipeline.py 38 passed +
+  cross_backend 39/6-skip; ruff+mypy clean. Round-4 #34 (PR-C).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.28 (2026-07-02)
 
 ### Bug Fixes
