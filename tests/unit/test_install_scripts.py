@@ -622,3 +622,32 @@ def test_install_sh_notes_self_verification_of_astral_installer():
     # The comment should reference the self-verification property and contrast with install.ps1.
     assert "self-verif" in content
     assert "uv_checksums.json" in content or "install.ps1" in content
+
+
+def test_install_ps1_verifies_path_uv_version_before_trusting_it():
+    # H6 (round-4): a uv already on PATH must be trusted only after an EXACT pinned-version check;
+    # any mismatch must fall closed into the checksum-verified download, not silently reuse PATH uv.
+    content = _read_script("scripts/install.ps1")
+    idx = content.index('Get-Command "uv"')
+    end = content.index("[2/4]", idx)
+    branch = content[idx:end]
+    assert "--version" in branch  # the version probe
+    assert "$uvVersion" in branch  # compared against the pin
+    assert "$uvTrusted" in branch  # fail-closed marker gating reuse vs download
+    # The bare unconditional "Found existing uv installation." trust message must be gone.
+    assert "Found existing uv installation." not in content
+    # Exact regex-captured comparison (never -like/substring), so 0.11.253 cannot match 0.11.25.
+    assert "-eq $uvVersion" in branch
+
+
+def test_install_sh_verifies_path_uv_version_before_trusting_it():
+    content = _read_script("scripts/install.sh")
+    idx = content.index("command -v uv")
+    end = content.index("[2/4]", idx)
+    branch = content[idx:end]
+    assert "uv --version" in branch  # the version probe
+    assert "${UV_VERSION}" in branch  # compared against the pin
+    assert "uv_trusted" in branch  # fail-closed marker gating reuse vs download
+    assert "Found existing uv installation." not in content
+    # Exact shell string equality, never a glob match.
+    assert '[ "${uv_ver}" = "${UV_VERSION}" ]' in branch

@@ -464,8 +464,33 @@ try {
         "aarch64" = "40d65c29c4d97db6a0993df665d3727700bb799b3618992ce9a4dc533c6d1a31"
     }
     $uvPath = "uv"
-    if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
+    # H6 hardening: a uv already on PATH is trusted ONLY if it reports EXACTLY the pinned version.
+    # Any mismatch/unparsable/error falls CLOSED into the checksum-verified download below, so a
+    # stale/incompatible/hijacked PATH uv can no longer bypass the pinned-uv supply-chain gate.
+    $uvTrusted = $false
+    $existingUv = Get-Command "uv" -ErrorAction SilentlyContinue
+    if ($existingUv) {
+        try {
+            $uvVersionOutput = & $existingUv.Source --version 2>$null
+            # EXACT regex-captured match (never substring/-like) so "0.11.253" cannot false-match "0.11.25".
+            if ($LASTEXITCODE -eq 0 -and $uvVersionOutput -match "^uv (?<v>\d+\.\d+\.\d+)" -and $Matches.v -eq $uvVersion) {
+                $uvTrusted = $true
+            } else {
+                Write-Warning "Existing PATH uv reports '$uvVersionOutput', not pinned $uvVersion; ignoring it and downloading the pinned, checksum-verified release instead."
+            }
+        } catch {
+            Write-Warning "Existing PATH uv version check failed ($_); ignoring it and downloading the pinned, checksum-verified release instead."
+        }
+    }
+    if ($uvTrusted) {
+        Write-Host "[1/4] Found existing uv $uvVersion on PATH (matches pinned version)."
+        $uvPath = $existingUv.Source
+    } else {
         Write-Host "[1/4] Downloading uv package manager (pinned $uvVersion)..."
+        # Residual risk (accepted): a version-string gate catches stale/accidental/incompatible uv but
+        # does NOT stop a determined PATH-hijack attacker who hardcodes --version to print the pin.
+        # Closing that needs a committed hash of the resident binary, which does not exist today (only
+        # the release zip is hashed). This closes the accidental/stale-uv hole; fake binary out of scope.
         # Detect CPU architecture to pick the correct release artifact.
         $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
         $uvArch = switch ($osArch) {
@@ -503,8 +528,6 @@ try {
             throw "uv.exe not found in extracted zip at $uvExtractDir."
         }
         $uvPath = $uvExePath
-    } else {
-        Write-Host "[1/4] Found existing uv installation."
     }
 
     # 2. Detect GPU Configuration
