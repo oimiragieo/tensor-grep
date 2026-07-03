@@ -1928,8 +1928,19 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
     ]
 
 
-def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
+def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
+
+    # round-5 security: audit_manifest is confined to cwd (see the round-5 confinement
+    # tests below), so this test's flag-support assertion must use a cwd-confined path
+    # and assert the RESOLVED absolute path is what reaches the native argv.
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    (
+        cwd / "src"
+    ).mkdir()  # path="src" must exist under cwd or the pre-confinement existence check rejects it
+    monkeypatch.chdir(cwd)
+    resolved_manifest = cwd / "rewrite-audit.json"
 
     payload = {
         "version": 1,
@@ -1938,7 +1949,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
         "routing_reason": "ast-native",
         "sidecar_used": False,
         "audit_manifest": {
-            "path": "C:/repo/rewrite-audit.json",
+            "path": str(resolved_manifest),
             "file_count": 1,
             "applied_edit_count": 1,
             "signed": False,
@@ -1966,7 +1977,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
             replacement="lambda $$$ARGS: $EXPR",
             lang="python",
             path="src",
-            audit_manifest="C:/repo/rewrite-audit.json",
+            audit_manifest="rewrite-audit.json",
         )
 
     parsed = json.loads(out)
@@ -1982,7 +1993,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
         "lambda $$$ARGS: $EXPR",
         "--apply",
         "--audit-manifest",
-        "C:/repo/rewrite-audit.json",
+        str(resolved_manifest),
         "--json",
         "--",
         "def $F($$$ARGS): return $EXPR",
@@ -1990,7 +2001,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
     ]
 
 
-def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_path):
+def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -1998,6 +2009,9 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
     audit_dir.mkdir(parents=True)
     manifest_path = audit_dir / "rewrite-audit.json"
     manifest_payload = _write_audit_manifest(manifest_path, project_root=project)
+    # round-5 security: audit_manifest is confined to cwd; the manifest already lives
+    # under `project`, so anchor cwd there.
+    monkeypatch.chdir(project)
     payload = {
         "version": 1,
         "schema_version": 1,
@@ -2053,8 +2067,20 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
     ]
 
 
-def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
+def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
+
+    # round-5 security: audit_manifest is confined to cwd, and audit_signing_key (a secret
+    # READ) requires the explicit opt-in env var. Anchor cwd + opt in to exercise the
+    # legitimate flag-forwarding path.
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    (
+        cwd / "src"
+    ).mkdir()  # path="src" must exist under cwd or the pre-confinement existence check rejects it
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ", "1")
+    resolved_manifest = cwd / "rewrite-audit.json"
 
     payload = {
         "version": 1,
@@ -2063,7 +2089,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
         "routing_reason": "ast-native",
         "sidecar_used": False,
         "audit_manifest": {
-            "path": "C:/repo/rewrite-audit.json",
+            "path": str(resolved_manifest),
             "file_count": 1,
             "applied_edit_count": 1,
             "signed": True,
@@ -2091,7 +2117,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
             replacement="lambda $$$ARGS: $EXPR",
             lang="python",
             path="src",
-            audit_manifest="C:/repo/rewrite-audit.json",
+            audit_manifest="rewrite-audit.json",
             audit_signing_key="C:/repo/audit.key",
         )
 
@@ -2108,7 +2134,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
         "lambda $$$ARGS: $EXPR",
         "--apply",
         "--audit-manifest",
-        "C:/repo/rewrite-audit.json",
+        str(resolved_manifest),
         "--audit-signing-key",
         "C:/repo/audit.key",
         "--json",
@@ -4847,3 +4873,213 @@ def test_review_bundle_create_refuses_output_path_escape(tmp_path, monkeypatch):
     parsed = json.loads(out)
     assert parsed.get("error", {}).get("code") == "invalid_input"
     assert not escape.exists()
+
+
+# --- round-5 security: tg_rewrite_apply audit_manifest confinement + consume-resolved,
+# audit_signing_key opt-in gate, and O_NOFOLLOW-guarded in-process writes (TOCTOU fix) -----
+#
+# tg_rewrite_apply's audit_manifest was entirely unconfined (an arbitrary MCP-reachable
+# file-write primitive), and the round-4 write-path confinement that DID exist for
+# write_baseline/write_suppressions/output_path validated a resolved Path then discarded
+# it, forwarding the raw candidate string to the downstream consumer (TOCTOU: the
+# validated location and the written location could diverge). This block covers: (1) the
+# audit_manifest escape refusal, (2) the audit_signing_key opt-in gate, (3) a confined
+# audit_manifest is still written for a rewrite target in a different directory, and (4)
+# the O_NOFOLLOW symlink-swap refusal on the in-process ruleset-scan writers, guarding the
+# O_TRUNC-not-O_EXCL re-run/overwrite semantics.
+
+
+def test_rewrite_apply_refuses_audit_manifest_escape(tmp_path, monkeypatch):
+    """FAILS pre-fix (audit_manifest unconfined at _build_rewrite_command call site);
+    PASSES post-fix (Part A: confined to cwd, refused before any subprocess spawn)."""
+    from tensor_grep.cli import mcp_server
+
+    cwd = tmp_path / "proj"
+    (cwd / "sub").mkdir(parents=True)
+    (cwd / "sub" / "a.py").write_text("foo = 1\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)  # cwd is the anchor
+    outside = tmp_path / "escape"
+    outside.mkdir()
+    escaped = outside / "pwned_manifest.json"  # absolute, outside cwd AND outside target
+    payload_json, exit_code = mcp_server.execute_rewrite_apply_json(
+        pattern="foo",
+        replacement="bar",
+        lang="python",
+        path=str(cwd / "sub"),
+        audit_manifest=str(escaped),
+    )
+    payload = json.loads(payload_json)
+    assert exit_code == 1
+    assert payload.get("error", {}).get("code") == "invalid_input"
+    assert not escaped.exists()  # subprocess never spawned
+
+
+def test_rewrite_apply_refuses_audit_signing_key_without_opt_in(tmp_path, monkeypatch):
+    """FAILS pre-fix (audit_signing_key forwarded to the native binary unconditionally,
+    an arbitrary-file-read-as-HMAC-key primitive); PASSES post-fix (Part A: refused with
+    code=unsupported_option unless TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1)."""
+    from tensor_grep.cli import mcp_server
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    (cwd / "a.py").write_text("foo = 1\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ", raising=False)
+    secret = tmp_path / "outside-secret.key"
+    secret.write_text("hmac-secret\n", encoding="utf-8")
+
+    with patch("tensor_grep.cli.mcp_server.subprocess.run") as mock_run:
+        payload_json, exit_code = mcp_server.execute_rewrite_apply_json(
+            pattern="foo",
+            replacement="bar",
+            lang="python",
+            path=str(cwd),
+            audit_signing_key=str(secret),
+        )
+        mock_run.assert_not_called()  # refused before any subprocess spawn
+
+    payload = json.loads(payload_json)
+    assert exit_code == 1
+    assert payload.get("error", {}).get("code") == "unsupported_option"
+
+
+def test_rewrite_apply_writes_confined_audit_manifest(tmp_path, monkeypatch):
+    """A confined audit_manifest under cwd must still be written for a rewrite target in
+    a DIFFERENT directory (guards the anchor from over-restricting to the rewrite path)."""
+    from tensor_grep.cli import mcp_server
+
+    cwd = tmp_path / "proj"
+    (cwd / "sub").mkdir(parents=True)
+    (cwd / "sub" / "a.py").write_text("foo = 1\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)
+    audit_dir = cwd / "tg_audit"
+    audit_dir.mkdir()
+    manifest = audit_dir / "manifest.json"  # UNDER the cwd anchor
+    resolved_manifest = manifest.resolve()
+
+    payload = {
+        "version": 1,
+        "schema_version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "audit_manifest": {
+            "path": str(resolved_manifest),
+            "file_count": 1,
+            "applied_edit_count": 1,
+            "signed": False,
+            "signature_kind": None,
+        },
+        "plan": {"total_edits": 1},
+        "verification": None,
+        "validation": None,
+    }
+    with (
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"], returncode=0, stdout=json.dumps(payload), stderr=""
+            ),
+        ) as mock_run,
+    ):
+        _payload_json, exit_code = mcp_server.execute_rewrite_apply_json(
+            pattern="foo",
+            replacement="bar",
+            lang="python",
+            path=str(cwd / "sub"),  # rewrite target != cwd, legit
+            audit_manifest=str(manifest),
+        )
+
+    assert exit_code == 0
+    # the RESOLVED absolute path reached the native argv, not the raw candidate string.
+    assert "--audit-manifest" in mock_run.call_args.args[0]
+    idx = mock_run.call_args.args[0].index("--audit-manifest")
+    assert mock_run.call_args.args[0][idx + 1] == str(resolved_manifest)
+
+
+def test_write_json_refuse_symlink_refuses_swap(tmp_path):
+    """Direct unit test of the Part-B in-process writer (main.py._write_json_refuse_symlink)
+    shared by write_baseline and write_suppressions. FAILS pre-fix (plain
+    write_path.write_text(...) blindly follows the symlink, silently overwriting whatever
+    it points at); PASSES post-fix (refused via the is_symlink() pre-check -- authoritative
+    on Windows, where os.O_NOFOLLOW is unavailable -- and via O_NOFOLLOW on POSIX; the
+    outside target is left completely unchanged, not written through)."""
+    from tensor_grep.cli import main as cli_main
+
+    outside_target = tmp_path / "outside.json"
+    outside_target.write_text("UNCHANGED\n", encoding="utf-8")
+    link_path = tmp_path / "baseline.json"
+    try:
+        link_path.symlink_to(outside_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    with pytest.raises(ValueError):
+        cli_main._write_json_refuse_symlink(link_path, {"fingerprints": ["x"]})
+    assert outside_target.read_text(encoding="utf-8") == "UNCHANGED\n"
+
+
+def test_ruleset_scan_write_baseline_refuses_symlink_swap_end_to_end(tmp_path, monkeypatch):
+    """End-to-end: a pre-planted symlink at a confined write_baseline target is refused
+    fail-closed through the full tg_ruleset_scan path (confinement resolve() +
+    Part-B is_symlink()/O_NOFOLLOW both refuse it), and the symlink's outside target is
+    left unchanged (not written through)."""
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    monkeypatch.chdir(scan_root)
+
+    (scan_root / "a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    outside_target = tmp_path / "outside-baseline.json"  # sibling of scan_root, still in tmp_path
+    outside_target.write_text("UNCHANGED\n", encoding="utf-8")
+    link_path = scan_root / "baseline.json"
+    try:
+        link_path.symlink_to(outside_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_ruleset_scan(
+        "crypto-safe",
+        path=".",
+        language="python",
+        write_baseline="baseline.json",
+    )
+    parsed = json.loads(out)
+    assert parsed.get("error", {}).get("code") == "invalid_input"
+    assert outside_target.read_text(encoding="utf-8") == "UNCHANGED\n"
+
+
+def test_ruleset_scan_write_baseline_overwrites_on_rerun(monkeypatch, tmp_path):
+    """A repeated write to the SAME write_baseline path must succeed and overwrite
+    (guards O_CREAT|O_TRUNC|O_NOFOLLOW, not O_EXCL, which would fail the second run)."""
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+
+    first = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "crypto-safe", path=".", language="python", write_baseline="baseline.json"
+        )
+    )
+    assert first.get("error") is None
+    second = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "crypto-safe", path=".", language="python", write_baseline="baseline.json"
+        )
+    )
+    assert second.get("error") is None
+    baseline_file = Path("baseline.json")
+    written = json.loads(baseline_file.read_text(encoding="utf-8"))
+    assert written["fingerprints"] == [first["findings"][0]["fingerprint"]]
+    # round-5: the write lands under the validated anchor (scan_root == cwd here, path=".").
+    assert baseline_file.resolve().parent == tmp_path.resolve()

@@ -4534,6 +4534,37 @@ def _suppression_entry_matches(
     return True
 
 
+def _write_json_refuse_symlink(write_path: Path, data: object) -> None:
+    """Write JSON to ``write_path`` refusing to follow a symlink at the final component.
+
+    Round-5 security: closes the check->write symlink-swap race for the two in-process
+    ruleset-scan writers (baseline/suppressions). O_TRUNC (not O_EXCL) preserves the
+    documented create-or-overwrite semantics -- a re-run must still succeed and refresh
+    the file.
+
+    Two layers, because ``os.O_NOFOLLOW`` is unavailable on Windows (mirrors cpython's
+    own tempfile module: ``getattr(os, "O_NOFOLLOW", 0)``, not a hard import-time
+    dependency):
+      1. An explicit ``is_symlink()`` pre-check -- the authoritative guard on Windows,
+         and works there without elevated privileges (only *creating* a Windows symlink
+         needs privilege; checking for one does not).
+      2. ``O_NOFOLLOW`` on the actual open -- the authoritative guard on POSIX, closing
+         the narrow race between step 1's check and the open() call.
+    """
+    if write_path.is_symlink():
+        raise ValueError(f"Refusing to write through symlink at {write_path}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(write_path), flags, 0o600)
+    except OSError as exc:
+        raise ValueError(f"Refusing to write {write_path}: {exc}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2))
+    except OSError as exc:
+        raise ValueError(f"Refusing to write {write_path}: {exc}") from exc
+
+
 def _apply_ruleset_baseline(
     payload: dict[str, object],
     *,
@@ -4585,7 +4616,7 @@ def _apply_ruleset_baseline(
             "language": payload.get("language"),
             "fingerprints": matched_fingerprints,
         }
-        write_path.write_text(json.dumps(baseline_payload, indent=2), encoding="utf-8")
+        _write_json_refuse_symlink(write_path, baseline_payload)
         payload["baseline_written"] = {
             "path": str(write_path),
             "fingerprints": matched_fingerprints,
@@ -4719,7 +4750,7 @@ def _apply_ruleset_baseline(
                 for fingerprint in matched_fingerprints
             ],
         }
-        write_path.write_text(json.dumps(suppressions_payload, indent=2), encoding="utf-8")
+        _write_json_refuse_symlink(write_path, suppressions_payload)
         payload["suppressions_written"] = {
             "path": str(write_path),
             "fingerprints": matched_fingerprints,
