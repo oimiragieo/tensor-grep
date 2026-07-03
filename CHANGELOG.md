@@ -1,6 +1,67 @@
 # CHANGELOG
 
 
+## v1.19.5 (2026-07-03)
+
+### Bug Fixes
+
+- --gpu-device-ids must not silently downgrade to CPU via rg-passthrough (round-5 Q9)
+  ([#350](https://github.com/oimiragieo/tensor-grep/pull/350),
+  [`65002f8`](https://github.com/oimiragieo/tensor-grep/commit/65002f8ba2a95b0af46eae9e99c7157fe1c08645))
+
+_can_passthrough_rg did not check config.gpu_device_ids, so `tg search PAT --gpu-device-ids 0` (or
+  with TG_DISABLE_NATIVE_TG=1) took the plain-rg CPU fast path: exit 0, clean matches, no
+  fallback_reason — the exact opposite of the documented "an explicit GPU request must fail loud,
+  never silently downgrade to CPU" contract that Pipeline enforces (ConfigurationError). Added `not
+  config.gpu_device_ids` to the passthrough guard so the request reaches Pipeline, mirroring the
+  guard _selected_route_supports_rg_passthrough already applies on the stats branch.
+
+Adversarially verified + live-reproduced by the round-5 audit. TDD: request -> not passthrough;
+  plain search still passthrough (fast path preserved). routing-parity green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- **skills**: Fold v1.19.x round-4 learnings into the retirement skill library
+  ([#348](https://github.com/oimiragieo/tensor-grep/pull/348),
+  [`fc6b194`](https://github.com/oimiragieo/tensor-grep/commit/fc6b194678c6222a46263be4ac6fbfcfdc9203f4))
+
+Updates 7 tensor-grep-* skills (+635/-30) with this session's shipped learnings, every claim
+  ground-truth-verified against git v1.18.5..v1.19.3 before writing: - failure-archaeology: 6 new
+  settled battles (native-delegation drop + query_pattern landmine; capfd capture-surface red-main;
+  MatchLine hashability + reverted micro-opt; +33% noise-not-regression + wrong council guess;
+  diff-docs 20k-FP deferral; watcher deadlock / ~40min release cadence). - debugging-playbook:
+  profile-at-scale discipline + capfd-vs-result.stdout capture rule. - config-and-flags: tg
+  inventory --max-repo-files + the native-delegation field-coverage ratchet. -
+  architecture-contract: result_incomplete envelope, forward-or-refuse delegation, frozen-hashable
+  MatchLine, ASCII-only CLI output invariants. - validation-and-qa:
+  fixture-green-vs-real-corpus-dogfood bar; integration-suite requirement. - change-control: ~40min
+  release cadence + absolute-state watcher gating. - research-frontier: tg diff-docs open problem
+  with a falsifiable real-corpus precision milestone.
+
+Authored + reviewed (doctrine + usability lenses) via the skill-library-refresh workflow;
+  factual-review substituted by a git spot-check of all cited SHAs (5e6f780/80de0b4/bb5dc59/
+  6b7b518/f11ce28 all confirmed). Docs-only, no code/release.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Testing
+
+- Loosen pagerank timing guard 2.0s->10.0s (flaky on loaded CI runners)
+  ([#351](https://github.com/oimiragieo/tensor-grep/pull/351),
+  [`ed27443`](https://github.com/oimiragieo/tensor-grep/commit/ed27443d4203131896d84988d15bc51fa2c7af97))
+
+test_reverse_import_pagerank_caps_broad_query_seed_sets asserts the SEED CAP
+  (_GRAPH_PAGERANK_SEED_FILE_LIMIT=64) keeps pagerank fast on a broad query. The capped run is
+  ~0.5s; an uncapped regression (all 3173 seeds) is ~50x the work (~25s+). The 2.0s bound was too
+  tight for CI load variance — false-failed at 2.735s on a hardlink-degraded windows-latest/py3.11
+  runner (blocked an unrelated docs PR's merge). A 10.0s ceiling still catches the O(seeds) blowup
+  this test exists to prevent while tolerating runner load.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.4 (2026-07-03)
 
 ### Bug Fixes
