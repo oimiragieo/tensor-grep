@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-debugging-playbook
-description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, or a release doesn't publish. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, and ranking flip. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
+description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, or a release doesn't publish. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, and a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
 ---
 
 # tensor-grep Debugging Playbook
@@ -21,6 +21,7 @@ book. Reach for a sibling instead when:
 | The 4 registration sites for a new command/flag, PR-title→release-intent rules, what you may not edit | `tensor-grep-change-control` |
 | The full postmortem of a *settled* battle (PyO3 FFI revert, README-rewrite gate break, fork-bomb binary disable) | `tensor-grep-failure-archaeology` |
 | The architecture of the `ComputeBackend` contract / registration system itself, not just "how do I diagnose a violation" | `tensor-grep-architecture-contract` |
+| How to *extend* the native-delegation field-coverage ratchet for a new `SearchConfig` field (forward / refuse / KNOWN_GAP), not "why is this test red" | `tensor-grep-config-and-flags` |
 | Env var reference (`TG_RG_TIMEOUT_SECONDS`, `TG_SESSION_MAX`, …) beyond the ones a failure mode below needs | `tensor-grep-config-and-flags` |
 | Toolchain/build setup (cargo off `PATH`, `maturin develop`, Windows gotchas) unrelated to a live failure | `tensor-grep-build-and-env` |
 | `tg doctor` / `tg dogfood` field-by-field reference | `tensor-grep-diagnostics-and-tooling` |
@@ -45,6 +46,11 @@ If your symptom isn't in the table below, it's probably not covered here — che
 - **argv/flag injection (CWE-88)** — a user- or LLM-controlled value that begins with `-` gets
   parsed by a subprocess's *own* argument parser as a flag instead of as data, even when the
   parent process used list-argv (`shell=False`), which only stops *shell* injection.
+- **Capture surface** — the mechanism a test reads a command's output through. `CliRunner`'s
+  `result.stdout`/`result.output` captures only **in-process** writes (`typer.echo`/`click.echo`
+  during `.invoke()`); pytest's `capfd` captures at the **OS file-descriptor level**, which is the
+  only way to see output written by a real exec'd subprocess. They are not interchangeable, and
+  using the wrong one doesn't error — it silently reads back empty. See §9.
 
 ## Triage table
 
@@ -58,6 +64,8 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A test suite is green but the real binary/extension does the wrong thing (dropped flags, dead code path) | Test mocked the boundary (a monkeypatched function, a stubbed PyO3 class) instead of exercising the compiled extension or the published binary | Run the same call through the *installed* `tg` (not `CliRunner`, not a mocked backend) and check `tg doctor --json` / `HAVE_RUST` | [§6](#6-mock-green-real-dead) |
 | A fresh Python install resolves `tensor-grep` to an old version with no error | An upper-bound dependency pin (e.g. `typer<0.26`) has no release compatible with the new Python, so the resolver silently downgrades the *whole package* | `pip index versions tensor-grep` vs what actually installed; check `pyproject.toml` for `<` pins on `typer`/`click`/`pydantic` | [§7](#7-dependency-cap-silent-downgrade) |
 | Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
+| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1755`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
+| A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 
 ---
 
@@ -86,6 +94,12 @@ Known real incident: a README rewrite broke ~14 governance tests **and** a separ
 tracebacks instead of reading which check failed first (root cause was two unrelated layers: a
 missing `ast-grep` CLI dependency, and `uv run` re-syncing away the `[dev]` tree-sitter extra).
 Decode the check name before touching code.
+
+A second, more subtle version of the same trap: a red `test-python` job whose failure signature
+(`JSONDecodeError` from an empty captured string) *looks* like a routing regression but is actually
+a stale test fixture — the test was reading the wrong capture stream after a delegation-routing
+change moved the command from a subprocess path to an in-process one. Reading the traceback alone
+sends you looking for a routing bug that doesn't exist; the fix pointer is §9, not a backend change.
 
 If the failing check is the `Semantic Release` job specifically, go to §2, not here.
 
@@ -309,13 +323,133 @@ the incident above only prevents *silent* wrong picks; it does not make the rank
 IDF-aware or less corpus-fragile. That remains a tracked, separate, benchmarked `repo_map`
 follow-up. Do not claim ranking is "fixed" — only that a floor exists under it.
 
+## 9. Capture-surface trap (`capfd` vs `result.stdout`)
+
+A `CliRunner`-based test can read a command's output two different ways, and they are **not
+interchangeable** (see "Capture surface" in Jargon above):
+
+- `result.stdout` / `result.output` — `CliRunner` redirects stdout **in-process** during
+  `.invoke()`; correct when the exercised path writes via `typer.echo`/`click.echo` without ever
+  leaving the Python process.
+- `capfd.readouterr().out` — pytest's **file-descriptor-level** capture; required when the
+  exercised path execs a real OS subprocess (e.g. a native-tg delegation), because that
+  subprocess's writes never pass through `CliRunner`'s in-process redirect.
+
+Using the wrong one does not error — it silently returns an **empty string**, which then fails
+downstream (`json.loads("")` → `JSONDecodeError`) in a way that reads as "the command produced no
+output," not "you're reading the wrong stream." It is the same shape as the fail-closed-vs-
+silent-empty trap in §4, one layer up in the test harness instead of the backend.
+
+**Real incident (round-4, commit `ab717a1`, #343 as a follow-up to #342, v1.19.0):** #342 added
+`rank_bm25`/`sort_files` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
+(`src/tensor_grep/cli/main.py:1834-1835`) so `tg search --rank` correctly **refuses** native
+delegation and the BM25 rerank runs in-process instead of via a delegated subprocess.
+`test_search_rank_reorders_by_bm25` (`tests/integration/test_bm25_search_flag.py`) had been written
+against the *old* delegated behavior and read `capfd.readouterr().out`, which had only ever
+captured real output while `--rank` wrongly delegated. Once `--rank` started refusing delegation,
+the JSON began going through `typer.echo` → `CliRunner`'s captured `result.stdout` instead, and
+`capfd` read back empty → `JSONDecodeError` on every `main`/release `test-python` job. It stayed
+green on the PR because PR CI does not build the native binary, so the fd-vs-in-process split never
+had a chance to surface there (the `ab717a1` commit message states this explicitly) — a second trap
+layered on the first: the same test can be green on a PR and red on `main` for a reason that has
+nothing to do with whether the PR's diff is correct.
+
+**Fix:** read `result.stdout` (`tests/integration/test_bm25_search_flag.py`, current version)
+instead of `capfd.readouterr().out`; the now-unused `pytest.CaptureFixture` import was dropped.
+
+**Discriminating experiment:** if a `CliRunner` test that reads `capfd` starts failing right after a
+delegation/routing/gating change, first ask "does this flag/config still delegate to a real
+subprocess after my change?" — grep the refuse-tuple
+(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1755`) for the field
+you touched. If it now refuses delegation (or newly allows it), the correct capture fixture flips
+too.
+
+**Rule going forward:** `capfd` in a `CliRunner` test is an **implicit assertion** that the
+exercised path execs a real subprocess. Any change to native-delegation gating
+(`_build_native_tg_search_command`, `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, or the
+refuse-tuple governed by `tests/unit/test_native_delegation_field_coverage.py` — see
+`tensor-grep-config-and-flags` for how to extend it) **must run `tests/integration/` locally**, not
+just `tests/unit/`, before pushing: the fd-vs-in-process split is an integration-level concern, and
+it only reproduces when the native binary is actually built, which most local dev loops and PR CI
+skip but `main`/release CI does not.
+
+```bash
+uv run pytest tests/integration/ -v      # run before pushing any delegation/routing-gate change
+```
+
+## 10. Profile-at-scale discipline (latency claims)
+
+**For a latency question, the profiler is the oracle — not a code-review pass, and not a function
+that "looks expensive" by inspection.** This repo has a receipt of a review process guessing the
+wrong hot path, and a receipt of a reported regression that turned out to be measurement noise;
+both were only resolved by profiling the actual command at realistic scale.
+
+**Incident 1 — a guessed cache target was mostly wrong (commit `bb5dc59`, PR #345, v1.19.2):** a
+latency-diagnosis pass on `tg blast-radius` identified AST parsing (`compile()`) as the likely hot
+path by reading the code, and reasoned toward caching it. Profiling the *actual* `tg blast-radius`
+call at depth 2 on this repo showed `compile()` was only **3.6% of runtime** — caching it would
+have saved roughly 3%. The real hotspot, invisible from code review, was `_module_aliases_for_path`
+(`src/tensor_grep/cli/repo_map.py:5178`), called **1,431,341 times** for ~1,000 unique path inputs
+from the reverse-import-graph / PageRank loops — 6.1s self / 38s cumulative of a 62s run. The commit
+message states this directly: "this corrects the regression-hunt synthesis, which guessed AST-parse
+caching (would have saved ~3%) — the real hotspot only showed under measurement."
+
+**Incident 2 — a reported regression was environmental noise, not a real one (same commit
+message):** an AI-user-reported "+33% slower" (188s→250s) on the callers/blast-radius path was
+separately investigated by profiling `tg callers` directly: the code path was byte-identical across
+the two versions being compared (`v1.17.31`→`HEAD`), and a live `cProfile` capture had **zero
+`ripgrep_backend` frames** on the call path the regression theory required. Conclusion: noise, not a
+regression. Don't design a fix for a slowdown you have not reproduced under a profiler.
+
+**Technique that found the real hotspot:** before designing a cache or optimization for a suspect
+function, wrap or monkeypatch it with a call counter keyed by its argument(s)
+(`collections.Counter`) around the *actual* slow command — not a microbenchmark, not a toy input —
+and look for a function called far more times than there are distinct outputs. A function called
+1.4M times for ~1,000 unique inputs is pure redundant work; a plain `@lru_cache` (no invalidation
+key needed for a pure function) collapses it to one build per distinct input. This is the
+discriminating step a code-only review cannot substitute for: `compile()` genuinely runs once per
+file, so it "looks" proportional to input size and isn't obviously wasteful from reading the code
+alone; the redundant calls to `_module_aliases_for_path` only became visible under a call-count
+instrument.
+
+**Caching correctness check — don't cache blind:** before adding `@lru_cache` to a suspect
+function, confirm it is a **pure function of its arguments** (no file I/O, no external state). This
+repo already documents the opposite pattern in the same file: `_mtime_aware_cache`
+(`src/tensor_grep/cli/repo_map.py:26-36`) exists specifically because a plain `@lru_cache` on a
+path-keyed function that reads *file content* returns **stale results** in the long-lived daemon
+after the file is edited. `_module_aliases_for_path` is safe with a plain `@lru_cache` only because
+it is a pure string transform of the path itself — it never touches the filesystem. If the function
+you're about to cache reads file content, use `_mtime_aware_cache`, not `@lru_cache`. Also return an
+immutable type (`frozenset`, not `set`) from a cached function whose result callers might be tempted
+to mutate — the fix updated `_module_aliases_for_path`'s return type and every downstream type hint
+(`dict[str, set[str]]` → `dict[str, frozenset[str]]`) for exactly this reason
+(`tests/unit/test_module_aliases_cache.py`).
+
+**Discriminating experiment:**
+
+```bash
+# Profile the ACTUAL slow command at realistic scale, not a synthetic benchmark or toy input.
+uv run python -m cProfile -s cumulative -m tensor_grep.cli.main blast-radius SYMBOL --depth 2
+
+# Before promoting a code-reading guess to a fix, verify call-count redundancy on the specific
+# suspect function: wrap it with a Counter keyed by its argument(s) around the real command, then
+# check hits-per-unique-key. High call count + low unique-key count = a free @lru_cache candidate.
+```
+
+**Rule:** do not ship a perf fix — or accept a reported regression as real — on the strength of a
+code-reading guess alone. Reproduce the slowness under a profiler on the real command at realistic
+scale first; only then pick the fix target. Verify any cache/memoization "fix" against a parity
+check (identical output on the same input) before trusting the speedup — a cache is only safe if it
+doesn't change results.
+
 ---
 
 ## Provenance and maintenance
 
 Facts here were verified against the live repo as of **2026-07-02, tensor-grep v1.17.25**
-(`pyproject.toml:322`). Re-verify anything below before trusting it on a later version — this
-table drifts whenever the cited line numbers, defaults, or contracts change.
+(`pyproject.toml:322`) for §1–§8, and **2026-07-03, v1.19.3** (`pyproject.toml:338`) for §9–§10.
+Re-verify anything below before trusting it on a later version — this table drifts whenever the
+cited line numbers, defaults, or contracts change.
 
 Re-verification commands:
 
@@ -344,6 +478,16 @@ grep -n "def check_group_smart" src/tensor_grep/core/registration_check.py
 
 # push-race + --log-failed guidance still current in AGENTS.md
 grep -n "log-failed\|push-race\|rejected  main -> main" AGENTS.md
+
+# capfd -> result.stdout fix still present (§9)
+grep -n "result.stdout\|capfd" tests/integration/test_bm25_search_flag.py
+
+# rank_bm25/sort_files still in the native-delegation refuse-tuple (§9)
+grep -n '"sort_files"\|"rank_bm25"' src/tensor_grep/cli/main.py
+
+# _module_aliases_for_path still memoized + frozenset-returning (§10)
+grep -n "^@lru_cache(maxsize=16384)" src/tensor_grep/cli/repo_map.py
+grep -n "^def _module_aliases_for_path" src/tensor_grep/cli/repo_map.py
 ```
 
 If any of these greps come back empty or materially different, the corresponding row above is

@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-validation-and-qa
-description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
+description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, shipping a doc-drift/ranking/classification heuristic off green fixture tests, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the fixture-green-vs-real-corpus-dogfood trap for precision/heuristic features, the `capfd`-vs-`result.stdout` capture-surface trap on routing/delegation changes (needs `tests/integration/` run with the native `tg` binary rebuilt, not just `tests/unit/`), the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
 ---
 
 # tensor-grep validation and QA
@@ -65,16 +65,53 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    command/flag/routing change, run the real binary: `python scripts/dogfood/dogfood_features.py`
    (installed `tg` on PATH) or the clean-room Docker path in `scripts/dogfood/README.md`. See
    `dogfood-the-shipped-artifact` (global skill) and `tensor-grep-change-control` Part 5.
-4. **A benchmark line vs the accepted baseline**, for any hot-path/speed claim. Never trust a
+4. **Fixture-green is not sufficient for a precision/heuristic feature — dogfood the real corpus, not
+   just the fixtures you wrote alongside it.** A test suite authored together with a detection
+   heuristic tends to only contain the cases the author already thought of; the failure mode that
+   actually matters (flooding false positives) never shows up until the heuristic meets a real, larger
+   corpus. Receipt (2026-07-03): the `tg diff-docs` MVP (round-4 design-council build, commit
+   `90b7042` "wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)" on
+   `wip/diff-docs-precision`, **not merged to `main`**) shipped with 17 green tests in
+   `tests/unit/test_diff_docs.py` (`grep -c "def test_"` on that commit) — every fixture passed — but a
+   dogfood run against this repo's real `docs/` vs `src/` corpus produced on the order of 20,000
+   findings, the large majority flagging language/stdlib types (`String`, `Option`, `Vec`) as
+   "unresolved symbols" because nothing in the design gated on a *positive* in-repo reference signal.
+   `diff_docs.py`'s own module docstring names the mechanism up front: naive code-doc drift detection
+   is independently measured at 0.62 precision / 98% flag-rate (DocPrism, arXiv 2511.00215) — this is
+   the expected failure mode of the whole naive-heuristic class, not a one-off implementation bug. The
+   correct call was to **defer, not ship**: 20k false positives trains the agent to ignore the tool,
+   which is worse than not shipping it. Before shipping any precision/heuristic feature (doc-drift,
+   ranking, classification, dedup), run it on this repo's own real corpus and eyeball the finding count
+   and the top hits — a green fixture suite alone cannot catch a flooding failure mode.
+5. **A routing/delegation change is only proven by `tests/integration/`, run with the native `tg`
+   binary built — not `tests/unit/` alone.**
+   `tests/integration/test_bm25_search_flag.py::test_search_rank_reorders_by_bm25` read `capfd` (the
+   OS-fd-level stream) because, before commit `5e6f780` (#342), `--rank` silently delegated to the
+   native subprocess, which is what actually wrote to that fd. Fixing the delegation gate to refuse
+   `--rank` (so the BM25 rerank runs in-process) moved the JSON emission to a different capture channel
+   — `typer.echo` -> `CliRunner`'s captured `result.stdout`, not the fd — and broke `main`'s release
+   the same day. Commit `ab717a1`'s own message: *"#342 ... merged but its release failed:
+   `test_search_rank_reorders_by_bm25` read fd-level `capfd`, which only captured output when `--rank`
+   *wrongly* delegated to the native subprocess. ... Only surfaces on main/release CI, which builds the
+   native binary; PR CI skips it."* (fixed by reading `result.stdout` instead of
+   `capfd.readouterr().out`). Two takeaways: (a) `capfd` in a `CliRunner` test is an implicit assertion
+   that a **real subprocess** wrote to the OS stdout fd — any change to whether a code path delegates
+   natively or runs in-process can silently break that assertion in either direction, and a green
+   `tests/unit/` run will not catch it because the native binary isn't built there either; (b) before
+   trusting a routing/delegation change, rebuild the native binary locally
+   (`cargo build --manifest-path rust_core/Cargo.toml --bin tg`, or add `--release` — see
+   `tensor-grep-build-and-env`) and run `uv run pytest tests/integration -q` — PR review alone builds
+   neither, so a `--rank`/`--sort-files`-class bug is invisible until it reaches `main`.
+6. **A benchmark line vs the accepted baseline**, for any hot-path/speed claim. Never trust a
    microprofile or memory of "it felt faster." Full decision table and noise-floor rules live in
    `tensor-grep-benchmark-and-proof-toolkit` — do not duplicate that table here; use it.
-5. **The agent-readiness gate** (`scripts/agent_readiness.py`, wrapped by `tg dogfood`) — a CI-blocking
+7. **The agent-readiness gate** (`scripts/agent_readiness.py`, wrapped by `tg dogfood`) — a CI-blocking
    fast dogfood of agent-critical surfaces (Part 4 below).
-6. **Live extension call for FFI/PyO3 changes**, never a mock alone. A mock-based bridge test passed
+8. **Live extension call for FFI/PyO3 changes**, never a mock alone. A mock-based bridge test passed
    green while the real PyO3 extension silently dropped every forwarded flag and fell back to the
    Python engine — the mock could not see it. Prove an FFI change by calling the *built* extension at
    runtime and checking the flag actually reached `rg`.
-7. **A subagent's "tests pass" is a hypothesis, not evidence**, until re-run against external state —
+9. **A subagent's "tests pass" is a hypothesis, not evidence**, until re-run against external state —
    an exit code you observed, a `file:line` that resolves, or a real dogfood run. This applies doubly
    to worktree-fanout branches: a worktree has no `.venv`, so a subagent's claim is *literally
    un-runnable in its own tree* until re-run in the real environment.
@@ -136,6 +173,15 @@ Gotchas that each cost a real CI cycle when missed:
   before reading prose tracebacks — it names the exact gate/file/line. A June-2026 README rewrite
   cost 4 wasted CI round-trips because the team theorized from tracebacks instead of decoding the
   failing check first (`CONTRIBUTING.md:26`).
+- **A local full-suite `pytest` pass without the native binary built does not prove a
+  routing/delegation change.** `resolve_native_tg_binary()`
+  (`src/tensor_grep/cli/runtime_paths.py:230`) looks for
+  `rust_core/target/{release,debug}/tg(.exe)` first; if neither exists, every `native`-launcher test
+  in `tests/e2e/test_routing_parity.py` and the fd-vs-in-process split in
+  `tests/integration/test_bm25_search_flag.py` silently **skip** (`pytest.skip(...)`) instead of
+  failing — a skip reads as a green summary line, not as "unverified." Rebuild before trusting the
+  run: `cargo build --manifest-path rust_core/Cargo.toml --bin tg` (add `--release` to match CI's
+  `native-build-smoke` profile). Receipt and full mechanism: Part 1 point 5 (#342/#343).
 
 ---
 
@@ -326,7 +372,19 @@ stacks `slow` and defines an OS-aware throughput floor that returns `None`/skip 
   `test_bootstrap_commands_match_source_of_truth` / `test_typer_app_commands_match_source_of_truth` /
   `test_rust_core_uses_source_of_truth` still hold — these three are the existing enforcement of the
   4-site registration rule (`tensor-grep-change-control` Part 3). Do not invent a parallel check; add
-  to these first.
+  to these first. If the change affects whether a `SearchConfig` field is forwarded to native `argv`,
+  refused, or gate-handled, also extend
+  `tests/unit/test_native_delegation_field_coverage.py`'s `TestFieldCoverageRatchet` class (AST-derives
+  the forwarded set — do not hand-maintain a second list) **and** run `uv run pytest tests/integration -q`
+  with the native binary built (Part 1 point 5) — a `tests/unit`-only pass cannot exercise the
+  fd-vs-in-process split that a delegation-routing change moves.
+- **Precision/heuristic change** (doc-drift, ranking, classification, dedup, or any "flag when X looks
+  wrong" feature): a green fixture suite alone is not sufficient evidence (Part 1 point 4). Add fixture
+  tests as usual, but before claiming done, run the feature against this repo's own real corpus
+  (`docs/` + `src/` for doc-drift, the full repo for ranking/classification) and record the finding
+  count and a sample of the top hits — if the count floods (thousands of findings on a repo this size)
+  or the top hits are dominated by one noisy category, that is a **defer** signal, not a "tune the
+  threshold later" signal.
 - **Backend behavior change**: extend `tests/e2e/test_backend_contracts.py`'s `_check_contract` shape
   or add a new `test_*_contract.py` — assert the fail-closed invariant (raises
   `BackendExecutionError`, never returns a clean empty result) per `src/tensor_grep/backends/base.py:7`.
@@ -358,6 +416,11 @@ was never observed to fail cannot be trusted to catch a regression.
 
 - [ ] Behavior change has a test that was **observed failing** before the fix.
 - [ ] If it touches routing/commands/flags: the real binary was **dogfooded**, not just `CliRunner`.
+- [ ] If it touches native delegation/routing: `tests/integration/` was run **with the native `tg`
+      binary rebuilt**, not just `tests/unit/` (Part 1 point 5) — a skip is not a pass.
+- [ ] If it is a precision/heuristic feature (doc-drift, ranking, classification, dedup): it was run
+      against this repo's **real corpus**, not just its fixture suite, and the finding count/top hits
+      were eyeballed before claiming done (Part 1 point 4).
 - [ ] If it touches a backend/router: the **fail-closed** contract holds (raises, doesn't return empty).
 - [ ] If it touches a hot path: a **benchmark line vs the accepted baseline** exists, run through the
       right script (`tensor-grep-benchmark-and-proof-toolkit`), and did not silently trip the CLI's
@@ -394,6 +457,10 @@ Volatile facts are dated **2026-07-02, release `v1.17.25`**. Re-verify before re
 | mypy strict-mode config | `grep -n "\[tool.mypy\]" -A6 pyproject.toml` |
 | `--no-sync` rationale | `grep -n "no-sync" -B2 -A2 .github/workflows/ci.yml` |
 | Current release tag | `grep -n "^version" pyproject.toml` |
+| `tg diff-docs` still deferred/unmerged (2026-07-03) | `git log --oneline --all -- src/tensor_grep/cli/diff_docs.py` (should show only the `wip/diff-docs-precision` commit `90b7042`, nothing on `main`) |
+| Native-binary discovery order for parity/integration tests (2026-07-03) | `grep -n "_in_tree_native_tg_candidates\|def resolve_native_tg_binary" -A5 src/tensor_grep/cli/runtime_paths.py` |
+| Native-delegation field-coverage ratchet test still present (2026-07-03) | `grep -n "class Test" tests/unit/test_native_delegation_field_coverage.py` |
+| `--rank`/`capfd` capture-surface receipt (2026-07-03) | `git show ab717a1 -s --format=%B` (contains both the `#342` refuse-delegation fix and the `#342 follow-up` capture fix in one squashed message) |
 
 If any command above no longer matches, update this skill in the same change — a wrong runbook is
 worse than none.
