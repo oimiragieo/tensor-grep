@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.19.2 (2026-07-03)
+
+### Performance Improvements
+
+- Memoize _module_aliases_for_path — blast-radius depth-2 ~4.8x faster (62s->13s)
+  ([#345](https://github.com/oimiragieo/tensor-grep/pull/345),
+  [`bb5dc59`](https://github.com/oimiragieo/tensor-grep/commit/bb5dc59c63708dbc92bce3fd10dc4bb9fe7ff85e))
+
+Profile-at-scale of `tg blast-radius` (depth-2, high-fan-in symbol) showed the dominant cost was NOT
+  the AST parse (compile = 3.6% of runtime) but _module_aliases_for_path, called ~1.4M times for
+  ~1000 unique-path inputs in the reverse-import graph / PageRank loops (6.1s self / 38s cumulative
+  of a 62s run). It is a PURE function of the path string (no file I/O), so it is unconditionally
+  safe to memoize — no mtime key needed.
+
+@lru_cache(maxsize=16384) + frozenset return collapses 1,431,341 calls to 1,002 unique builds:
+  blast-radius(SearchConfig, depth=2) 61.7s -> 12.8s on this repo, IDENTICAL output (affected=62;
+  231 blast-radius/callers/pagerank parity tests unchanged). frozenset keeps the cached value
+  immutable (all callers iterate it or .update() FROM it; none mutate).
+
+Found by the profile-at-scale step of task #36. Note this corrects the regression-hunt synthesis,
+  which guessed AST-parse caching (would have saved ~3%) — the real hotspot only showed under
+  measurement. The reported +33% "regression" was separately proven to be environmental noise (plain
+  callers path byte-identical v1.17.31->HEAD).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.1 (2026-07-03)
 
 ### Bug Fixes
