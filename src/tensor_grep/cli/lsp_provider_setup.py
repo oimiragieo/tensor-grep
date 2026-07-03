@@ -380,6 +380,74 @@ def wrap_windows_batch_command(command: list[str]) -> list[str]:
     return command
 
 
+# Managed Node LSP shim name -> npm package name. NOT 1:1: pyright-langserver ships in
+# the `pyright` package. Used to resolve the trusted JS entrypoint for the CWE-427 bypass.
+_MANAGED_NODE_BIN_TO_PACKAGE = {
+    "pyright-langserver": "pyright",
+    "typescript-language-server": "typescript-language-server",
+    "intelephense": "intelephense",
+}
+
+
+def managed_provider_js_entrypoint(binary_name: str, root: Path) -> Path:
+    """Resolve a managed Node LSP shim to its trusted absolute JS entrypoint.
+
+    Reads the package's ``package.json['bin']`` (the stable contract) rather than
+    text-parsing the generated ``.cmd`` cmd-shim (npm's cmd-shim template drifts across
+    versions with no stability guarantee). Fails CLOSED — raises on any resolution gap —
+    so the caller can never silently fall back to the CWD-searchable ``cmd.exe``/``.cmd``
+    launch path (CWE-427).
+    """
+    package = _MANAGED_NODE_BIN_TO_PACKAGE.get(binary_name)
+    if package is None:
+        raise ValueError(f"no managed npm package known for LSP shim {binary_name!r}")
+    package_dir = _node_packages_dir(root) / "node_modules" / package
+    data = json.loads((package_dir / "package.json").read_text(encoding="utf-8"))
+    bin_field = data.get("bin")
+    relative: str | None
+    if isinstance(bin_field, str):
+        relative = bin_field
+    elif isinstance(bin_field, dict):
+        relative = bin_field.get(binary_name)
+    else:
+        relative = None
+    if not relative:
+        raise ValueError(f"package.json for {package!r} has no bin entry for {binary_name!r}")
+    entry = (package_dir / relative).resolve()
+    if not entry.is_file():
+        raise FileNotFoundError(f"managed LSP entrypoint missing: {entry}")
+    return entry
+
+
+def direct_managed_node_command(command: list[str], *, root: Path) -> list[str] | None:
+    """Rewrite a MANAGED Node ``.cmd`` shim spawn into a direct, trusted-absolute
+    ``[node.exe, entry.js, *args]`` argv, bypassing the CWE-427-vulnerable cmd-shim.
+
+    The npm ``.cmd`` shim resolves a BARE ``node`` token, which ``cmd.exe`` searches
+    CWD-first — and for an LSP spawn CWD is the attacker-controlled analyzed workspace, so
+    a planted ``workspace_root\\node.exe`` hijacks the language server. Rewriting to the
+    trusted absolute node runtime + JS entrypoint removes every CWD-searchable name.
+
+    Returns ``None`` (caller keeps its existing ``wrap_windows_batch_command`` path) for
+    every case this bypass must NOT touch: non-Windows, non-managed/external providers, and
+    managed native ``.exe`` binaries (rust-analyzer/gopls/csharp-ls). Once the gate passes
+    (a managed Windows ``.cmd``/``.bat`` shim), any failure to resolve the trusted node
+    runtime or JS entrypoint RAISES (fail closed) — it never returns ``None``, so it can
+    never silently drop back to the vulnerable shim.
+    """
+    if not command or not is_windows():
+        return None
+    if _command_source(command, root) != "managed":
+        return None
+    if Path(command[0]).suffix.lower() not in {".cmd", ".bat"}:
+        return None
+    node_exe = _node_executable(root)
+    if not node_exe.is_file():
+        raise FileNotFoundError(f"managed node runtime missing: {node_exe}")
+    js_entry = managed_provider_js_entrypoint(Path(command[0]).stem, root)
+    return [str(node_exe), str(js_entry), *command[1:]]
+
+
 def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
     command = wrap_windows_batch_command(command)
     completed = subprocess.run(
