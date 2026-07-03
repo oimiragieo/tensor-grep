@@ -274,7 +274,7 @@ def render_inventory_text(inventory: dict[str, Any]) -> str:
     scan = inventory["scan_limit"]
     if scan["possibly_truncated"]:
         lines.append(
-            f"  ⚠ truncated at max_files={scan['max_files']} "
+            f"  [!] truncated at max_files={scan['max_files']} "
             f"(cause={scan['truncation_cause']}); counts are a floor, not complete."
         )
     return "\n".join(lines)
