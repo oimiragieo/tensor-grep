@@ -1,3 +1,5 @@
+import base64
+import binascii
 import subprocess
 import sys
 from pathlib import Path
@@ -6,6 +8,30 @@ from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+
+
+def _decode_rg_field(field: dict[str, object] | None) -> str:
+    """Decode an rg ``--json`` text-or-bytes field object.
+
+    rg emits ``.text`` (already-UTF-8) normally, but ``.bytes`` (base64) for non-UTF-8
+    content or paths. The old parser read only ``.text`` and silently defaulted to "",
+    producing a phantom match with empty ``MatchLine.text`` on any non-UTF-8 file. NEVER
+    raises: a malformed/undecodable payload degrades to "" so one bad record can't abort
+    the whole search (the per-record ``except json.JSONDecodeError`` does not catch
+    ``binascii.Error``/``ValueError``).
+    """
+    if not field:
+        return ""
+    text = field.get("text")
+    if isinstance(text, str):
+        return text  # valid-UTF-8 path: byte-identical to today, zero extra work
+    b64 = field.get("bytes")
+    if not isinstance(b64, str):
+        return ""
+    try:
+        return base64.b64decode(b64).decode("utf-8", errors="replace")
+    except (binascii.Error, ValueError):
+        return ""
 
 
 class RipgrepBackend(ComputeBackend):
@@ -106,11 +132,17 @@ class RipgrepBackend(ComputeBackend):
                     if data.get("type") == "match":
                         data_match = data["data"]
                         line_number = data_match.get("line_number", 0)
-                        # We extract the pure text matched line
-                        text = data_match.get("lines", {}).get("text", "").rstrip("\n\r")
+                        # Decode text-or-bytes: non-UTF-8 files arrive as lines.bytes (base64),
+                        # not lines.text — reading only .text produced a phantom empty match.
+                        text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
 
-                        path_str = data_match.get("path", {}).get("text", "")
-                        if not path_str and isinstance(file_path, str):
+                        _path_obj = data_match.get("path", {})
+                        path_str = _decode_rg_field(_path_obj)
+                        # Preserve the single-file fallback: if rg gave no path.text, prefer the
+                        # real caller-supplied path over a lossy U+FFFD decode (keeps match.file
+                        # openable for _resolve_match_path). Non-UTF-8 filenames in a directory
+                        # scan may still yield a lossy path; correct raw-bytes path is out of scope.
+                        if "text" not in _path_obj and isinstance(file_path, str):
                             path_str = file_path
 
                         # Note: Ripgrep JSON also outputs absolute offsets, but MatchLine requires line_num/text
@@ -125,9 +157,10 @@ class RipgrepBackend(ComputeBackend):
                     elif data.get("type") == "context":
                         data_match = data["data"]
                         line_number = data_match.get("line_number", 0)
-                        text = data_match.get("lines", {}).get("text", "").rstrip("\n\r")
-                        path_str = data_match.get("path", {}).get("text", "")
-                        if not path_str and isinstance(file_path, str):
+                        text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
+                        _path_obj = data_match.get("path", {})
+                        path_str = _decode_rg_field(_path_obj)
+                        if "text" not in _path_obj and isinstance(file_path, str):
                             path_str = file_path
                         matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
                 except json.JSONDecodeError:
@@ -418,6 +451,11 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--hidden")
             if config.no_hidden:
                 cmd.append("--no-hidden")
+            if config.unrestricted:
+                # Forward the raw -u/-uu/-uuu token; rg's own parser owns the
+                # -u->--no-ignore / -uu->+--hidden / -uuu->+--binary expansion. Was a
+                # silent no-op — parsed into SearchConfig but never handed to rg.
+                cmd.append("-" + "u" * config.unrestricted)
             if config.follow:
                 cmd.append("--follow")
             if config.no_follow:

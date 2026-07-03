@@ -797,3 +797,75 @@ def test_search_should_parse_files_with_matches_from_count_without_rg_list_flag(
     assert result.match_counts_by_file == {"a.log": 4}
     assert result.total_files == 1
     assert result.total_matches == 4
+
+
+# --- PR-A slice: non-UTF-8 lines.bytes decoding + -u/-uu/-uuu forwarding ---
+
+import base64 as _b64  # noqa: E402
+
+from tensor_grep.backends.ripgrep_backend import _decode_rg_field  # noqa: E402
+
+
+def test_decode_rg_field_passthrough_text():
+    assert _decode_rg_field({"text": "hello"}) == "hello"
+
+
+def test_decode_rg_field_base64_bytes():
+    assert _decode_rg_field({"bytes": _b64.b64encode(b"foo").decode()}) == "foo"
+
+
+def test_decode_rg_field_lossy_on_non_utf8_bytes():
+    out = _decode_rg_field({"bytes": _b64.b64encode(b"foo\xff\xfe").decode()})
+    assert out.startswith("foo")  # U+FFFD replacement for the invalid tail, never raises
+
+
+def test_decode_rg_field_fail_closed_on_garbage():
+    assert _decode_rg_field(None) == ""
+    assert _decode_rg_field({}) == ""
+    assert _decode_rg_field({"bytes": "@@@not-base64@@@"}) == ""
+
+
+def test_ripgrep_backend_decodes_non_utf8_lines_bytes(monkeypatch):
+    # Deterministic: feed a synthetic rg --json record whose match content is `lines.bytes`
+    # (base64) exactly as rg emits for a non-UTF-8 file. Mocked (not a real rg run) so the
+    # test can't depend on rg's version-specific binary/non-UTF-8 handling on CI.
+    import base64 as _b64
+    import json as _json
+    from types import SimpleNamespace
+
+    import tensor_grep.backends.ripgrep_backend as rb
+
+    record = {
+        "type": "match",
+        "data": {
+            "path": {"text": "/repo/binary.bin"},
+            "lines": {"bytes": _b64.b64encode(b"foo \xff\xfe bar\n").decode()},
+            "line_number": 3,
+        },
+    }
+    fake = SimpleNamespace(returncode=0, stdout=_json.dumps(record) + "\n", stderr="")
+    monkeypatch.setattr(rb, "run_subprocess", lambda *a, **k: fake)
+    # CI has no real rg binary; stub the resolver (the fake name is never executed because
+    # run_subprocess is mocked) so this stays a pure parser test.
+    monkeypatch.setattr(RipgrepBackend, "_get_binary_name", lambda self: "rg")
+
+    result = RipgrepBackend().search("/repo/binary.bin", "foo", SearchConfig())
+    assert result.total_matches == 1
+    # TODAY (pre-fix): matches[0].text == "" (phantom empty match); after: real decoded text.
+    assert result.matches[0].text != ""
+    assert "foo" in result.matches[0].text
+    assert result.matches[0].line_number == 3
+
+
+def test_build_cmd_forwards_unrestricted_levels():
+    backend = RipgrepBackend()
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        for level, flag in ((1, "-u"), (2, "-uu"), (3, "-uuu")):
+            cmd = backend._build_cmd(
+                file_path="x", pattern="p", config=SearchConfig(unrestricted=level), json_mode=False
+            )
+            assert flag in cmd, f"level {level} should forward {flag}"
+        cmd0 = backend._build_cmd(
+            file_path="x", pattern="p", config=SearchConfig(unrestricted=0), json_mode=False
+        )
+        assert not any(tok in ("-u", "-uu", "-uuu") for tok in cmd0)  # default: no -u forwarded
