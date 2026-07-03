@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import index_lock
+from tensor_grep.cli._index_lock import index_lock, replace_with_retry
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 _CHECKPOINT_VERSION = 1
@@ -83,7 +83,7 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
         # index/metadata that would leave the agent's rollback safety net unable to
         # find the checkpoint while edits stay applied (audit I5).
         os.fsync(handle.fileno())
-    os.replace(tmp_path, path)
+    replace_with_retry(tmp_path, path)
     # Best-effort durability of the rename itself; directory fsync is a no-op or
     # unsupported on Windows, so failures here are non-fatal.
     try:
@@ -679,6 +679,11 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     created_at = datetime.now(UTC).isoformat()
     checkpoint_id = f"ckpt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
     entries = _snapshot_entries(scope)
+
+    # Create the storage root up front so its resolve() is stable: under concurrent first-time
+    # creates, resolving _snapshot_path while another writer is still mkdir-ing .tensor-grep/
+    # checkpoints can transiently mis-resolve and trip the containment guard on a valid id.
+    _checkpoint_storage_dir(root).mkdir(parents=True, exist_ok=True)
 
     snapshot_dir = _snapshot_path(root, checkpoint_id)
     snapshot_dir.mkdir(parents=True, exist_ok=True)

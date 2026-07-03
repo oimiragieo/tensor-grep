@@ -14,7 +14,7 @@ from time import monotonic
 from typing import Any, TextIO, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import index_lock
+from tensor_grep.cli._index_lock import index_lock, replace_with_retry
 from tensor_grep.cli.repo_map import (
     DEFAULT_AGENT_REPO_MAP_LIMIT,
     _is_repo_context_file,
@@ -415,7 +415,7 @@ def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> 
             pass
     else:
         tmp_path.write_text(data, encoding="utf-8")
-    os.replace(tmp_path, path)
+    replace_with_retry(tmp_path, path)
 
 
 def _write_index(root: Path, records: list[SessionRecord]) -> None:
