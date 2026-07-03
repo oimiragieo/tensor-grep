@@ -12912,6 +12912,14 @@ def build_symbol_blast_radius_render_from_map(
     sources: list[dict[str, Any]] = []
     seen_symbols: set[tuple[str, str]] = set()
     ranked_symbols = _sorted_ranked_symbols(list(radius_payload.get("symbols", [])))
+    # Perf guard (TG-4): a high-fan-in symbol yields thousands of candidate symbols in the top
+    # files, and each candidate triggers an expensive build_symbol_source_from_map lookup. With
+    # only the max_sources accumulation as a bound, a symbol whose candidates rarely yield a
+    # matching source scanned them ALL — ~3.5 min on a large repo vs ~3s for the JSON graph.
+    # Cap the expensive per-candidate lookups. ranked_symbols is relevance-sorted, so the best
+    # sources are examined first and we degrade gracefully to fewer rendered blocks.
+    max_source_candidates = max(max_sources * 8, 24)
+    examined_candidates = 0
     for current_symbol in ranked_symbols:
         current_file = str(current_symbol["file"])
         if current_file not in top_files:
@@ -12920,6 +12928,9 @@ def build_symbol_blast_radius_render_from_map(
         if symbol_key in seen_symbols:
             continue
         seen_symbols.add(symbol_key)
+        examined_candidates += 1
+        if examined_candidates > max_source_candidates:
+            break
         symbol_sources = build_symbol_source_from_map(
             repo_map,
             str(current_symbol["name"]),
