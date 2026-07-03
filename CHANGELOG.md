@@ -1,6 +1,76 @@
 # CHANGELOG
 
 
+## v1.17.31 (2026-07-03)
+
+### Bug Fixes
+
+- Cpu-backend fail-closed on Rust syntax-rejection (no silent ReDoS swap) + prefilter drops the
+  optional *-atom (round-4, council-vetted)
+  ([#332](https://github.com/oimiragieo/tensor-grep/pull/332),
+  [`d16bcce`](https://github.com/oimiragieo/tensor-grep/commit/d16bccef10e00d986f22579d7973caaf175a4f5d))
+
+Two round-4 CPU-backend defects, both council-vetted:
+
+1) SILENT MISSED MATCH (correctness). `_extract_required_literal` folded the atom BEFORE a `*` into
+  the required literal: "colou*r" yielded required-literal "colou", so a line containing "color"
+  (zero u's — a legitimate match) was dropped by the prefilter candidate gate before regex.search
+  ever ran. Fix: split `*` out of the `.^$` branch and pop exactly the single trailing atom it
+  quantifies (the guard already excludes groups/classes, so the atom is one char), leaving the rest
+  of the run as a genuinely-required literal ("flagx*ok" still yields "flag"). Empty-buffer guards
+  prevent IndexError on leading/adjacent `*` (".*abc"). Strictly conservative: only shortens or
+  drops-to-None, never lengthens/corrupts — zero false negatives, worst case forgoes the speedup for
+  a *-adjacent chunk.
+
+2) FAIL-OPEN ReDoS (security). A blanket `except Exception` silently fell back from the linear-time
+  Rust engine to Python `re` (catastrophic-backtracking-prone) for ANY failure — including a Rust
+  SYNTAX rejection of a backreference/look-around pattern, the canonical ReDoS class. Fix: triage
+  the handler — a typed _RustUtf8DecodeMismatch and ImportError/ModuleNotFoundError still fall open
+  (safe: non-UTF-8 already ran O(n) in Rust; or the native ext is genuinely absent). A
+  syntax-rejection on the DEFAULT (non-pcre2) path now raises InvalidRegexError (routes through the
+  CLI's existing _exit_invalid_regex clean exit; being a ValueError not BackendExecutionError, it
+  never hits the _search_with_cpu_fallback retry — no double-fault, no call-site surgery). --pcre2
+  still opts a backref pattern through Python re (user consent, mirrors ripgrep -P). A native
+  panic/IO failure (syntax accepted) still falls open — provably ReDoS-safe.
+
+TDD: 7 new tests (2 prefilter buggy watched fail: colou*r->colo unit + color e2e; 2 prefilter
+
+legit/crash-guard: flagx*ok, worker*s decoy + .*abc no-IndexError; 1 ReDoS buggy: backref syntax ->
+  InvalidRegexError; 2 ReDoS legit: non-syntax failure still falls open, --pcre2 still allows
+  backref). 97 backend tests pass; ruff + mypy clean. Round-4 #34 (PR-B), task #25.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- Verify a PATH-resident uv against the pinned version before trusting it (round-4 H6,
+  council-vetted) ([#333](https://github.com/oimiragieo/tensor-grep/pull/333),
+  [`0d6ec58`](https://github.com/oimiragieo/tensor-grep/commit/0d6ec588a935382ffed530b46573b78134c596f4))
+
+Both installers, on finding a uv already on PATH, took the else-branch ("Found existing uv
+  installation.") and used that binary — with ZERO version or checksum check — for every subsequent
+  privileged step (uv venv, uv pip install of torch + tensor-grep). The committed-checksum pinned-uv
+  hardening (H6) only guarded the DOWNLOAD branch, so a stale/incompatible/ hijacked PATH uv
+  completely bypassed it.
+
+Fix (council-vetted): trust a PATH uv ONLY if it reports EXACTLY the pinned version; any mismatch,
+  unparsable output, nonzero exit, or thrown probe error falls CLOSED into the existing
+  checksum-verified download block (left byte-for-byte unchanged) as the sole trusted source. -
+  install.ps1: regex-captured exact match (`$Matches.v -eq $uvVersion`), never -like/substring, so
+  "0.11.253" cannot false-match "0.11.25". - install.sh: shell string equality (`[ "${uv_ver}" =
+  "${UV_VERSION}" ]`), exact not glob. Council dropped the finding's "or committed checksum" option
+  as a NO-OP: uv_checksums.json hashes the release ARCHIVE, not a resident binary — there is no
+  reference to hash a PATH uv against, so exact-version-match is the only deliverable verification.
+  Offline/CI fast path preserved (an exact-pin match still skips the download). Residual (documented
+  in-code): a version-string gate does not stop a deliberate PATH-hijack that hardcodes --version to
+  print the pin — closing that needs a committed resident-binary hash that does not exist today;
+  explicitly out of scope.
+
+TDD: 2 static-content tests (ps1 + sh) asserting the PATH branch gates on --version vs the pin with
+  a fail-closed marker and no bare unconditional-trust message. 44 install-script tests pass; bash
+  -n + PowerShell parser both clean; ruff clean. Round-4 #34 (PR-D), task #24.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.30 (2026-07-03)
 
 ### Bug Fixes
