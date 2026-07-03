@@ -134,6 +134,7 @@ def test_start_leaves_external_path_cmd_provider_unchanged(
     captured: dict[str, Any] = {}
     _install_spawn_capture(monkeypatch, captured)
 
+    monkeypatch.setattr(provider_module, "_provider_command", lambda _language: ["placeholder"])
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
     client.command = [str(external_cmd), "--stdio"]
     with pytest.raises(_CapturedSpawn):
@@ -152,6 +153,7 @@ def test_start_leaves_managed_native_exe_provider_unchanged(
     captured: dict[str, Any] = {}
     _install_spawn_capture(monkeypatch, captured)
 
+    monkeypatch.setattr(provider_module, "_provider_command", lambda _language: ["placeholder"])
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
     client.command = [str(fake["rust_exe"])]
     with pytest.raises(_CapturedSpawn):
@@ -169,6 +171,9 @@ def test_start_leaves_posix_command_unchanged(
     captured: dict[str, Any] = {}
     _install_spawn_capture(monkeypatch, captured)
 
+    # Stub command resolution so construction never depends on a real pyright on PATH (present on
+    # dev boxes, absent on clean CI); this test overrides client.command below regardless.
+    monkeypatch.setattr(provider_module, "_provider_command", lambda _language: ["placeholder"])
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
     client.command = ["/usr/bin/pyright-langserver", "--stdio"]
     with pytest.raises(_CapturedSpawn):
