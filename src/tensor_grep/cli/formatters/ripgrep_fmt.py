@@ -73,6 +73,25 @@ class RipgrepFormatter(OutputFormatter):
         # by the UTF-8 width of the text before the match (audit MED parity).
         return len(match.text[:index].encode("utf-8")) + 1
 
+    def _submatch_columns(self, match: MatchLine) -> list[int] | None:
+        """rg's authoritative 1-based byte columns for every occurrence on this line.
+
+        rg submatch ``start`` is a 0-based BYTE offset into the line, so ``start + 1`` is rg's
+        1-based byte column directly — no Python regex, no first-occurrence-only guess. Returns
+        None for non-rg backends / context lines (no submatches) so those fall through to the
+        existing single-column path unchanged.
+        """
+        subs = match.submatches
+        if not subs:
+            return None
+        columns: list[int] = []
+        for sub in subs:
+            if isinstance(sub, dict):
+                start = sub.get("start")
+                if isinstance(start, int):
+                    columns.append(start + 1)
+        return columns or None
+
     def format(self, result: SearchResult) -> str:
         lines = []
 
@@ -128,30 +147,38 @@ class RipgrepFormatter(OutputFormatter):
             non_binary_matches = result.matches
 
         for match in non_binary_matches:
+            # rg supplies per-occurrence byte offsets; --vimgrep/--column emit ONE row per
+            # occurrence (matching real `rg --vimgrep`), not just the first. Non-rg backends /
+            # context lines have no submatches -> single row via _column_for_match, unchanged.
+            submatch_columns = self._submatch_columns(match)
             if self.config.vimgrep:
-                lines.append(
-                    ":".join([
-                        self._format_path(str(match.file)),
-                        str(match.line_number),
-                        str(self._column_for_match(match)),
-                        str(match.text),
-                    ])
-                )
+                columns = submatch_columns or [self._column_for_match(match)]
+                for column in columns:
+                    lines.append(
+                        ":".join([
+                            self._format_path(str(match.file)),
+                            str(match.line_number),
+                            str(column),
+                            str(match.text),
+                        ])
+                    )
                 continue
 
-            parts = []
+            prefix_parts = []
             if self.config.with_filename or (
                 self.config.file_patterns is None
                 and not self.config.no_filename
                 and result.total_files > 1
             ):
-                parts.append(self._format_path(str(match.file)))
+                prefix_parts.append(self._format_path(str(match.file)))
 
             if self.config.line_number:
-                parts.append(str(match.line_number))
-            if self.config.column:
-                parts.append(str(self._column_for_match(match)))
+                prefix_parts.append(str(match.line_number))
 
-            parts.append(str(match.text))
-            lines.append(":".join(parts))
+            if self.config.column:
+                columns = submatch_columns or [self._column_for_match(match)]
+                for column in columns:
+                    lines.append(":".join([*prefix_parts, str(column), str(match.text)]))
+            else:
+                lines.append(":".join([*prefix_parts, str(match.text)]))
         return "\n".join(lines)

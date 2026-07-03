@@ -8,6 +8,11 @@ class MatchLine:
     file: str
     range: dict[str, object] | None = None
     meta_variables: dict[str, object] | None = None
+    # rg's authoritative per-occurrence byte offsets for a multi-match line (each entry is an rg
+    # submatch: {"match": {...}, "start": int, "end": int}). Populated only by RipgrepBackend;
+    # consumed by --vimgrep/--column output shaping. Tuple keeps the frozen dataclass hashable;
+    # None (the default) keeps every other backend byte-for-byte unchanged.
+    submatches: tuple[dict[str, object], ...] | None = None
 
 
 @dataclass
