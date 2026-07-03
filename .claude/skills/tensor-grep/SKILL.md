@@ -31,6 +31,8 @@ prefer the canonical path-first form.
 0. (Unfamiliar repo) Orient before searching:
    - `tg orient REPO_PATH`
    Returns central files (by import in-degree), entry points, symbol map, and AST snippets in one call.
+   - `tg inventory REPO_PATH --json` for a fast first-contact manifest (file/byte counts by language and by
+     category, largest files, binary split) — walk-only, no AST parse, so it is cheap on a large repo.
 2. Start with direct source lookup:
    - `tg source REPO_PATH SYMBOL`
 2a. If the symbol name is unknown, find it by content first:

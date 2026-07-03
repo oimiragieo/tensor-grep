@@ -50,6 +50,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "lsp-setup",
     "map",
     "orient",
+    "inventory",
     "session",
     "doctor",
     "checkpoint",

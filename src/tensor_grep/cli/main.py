@@ -6639,6 +6639,36 @@ def map(
 
 
 @app.command()
+def inventory(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    max_repo_files: int = typer.Option(
+        # Literal mirrors inventory.DEFAULT_MAX_INVENTORY_FILES (kept literal so the heavy
+        # repo_map import stays lazy, matching `map`'s 512 pattern); a guard test pins them.
+        50_000,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before truncating (walk-only; defaults to 50000).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Emit a single-pass repository inventory (files, bytes, languages, categories)."""
+    import json as _json
+
+    from tensor_grep.cli.inventory import build_inventory, render_inventory_text
+
+    try:
+        payload = build_inventory(path, max_files=max_repo_files)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(_json.dumps(payload))
+        return
+    typer.echo(render_inventory_text(payload))
+
+
+@app.command()
 def orient(
     path: str = typer.Argument(".", help="File or directory to orient on"),
     max_tokens: int = typer.Option(3000, "--max-tokens", help="Snippet token budget", min=1),
