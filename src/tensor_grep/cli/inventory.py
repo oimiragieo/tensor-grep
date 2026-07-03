@@ -175,7 +175,13 @@ def build_inventory(
     if not root.exists():
         raise FileNotFoundError(f"inventory path does not exist: {path}")
 
-    walked = _iter_repo_files(root, max_files=None)
+    # Probe one file past the cap: _iter_repo_files' bucketed early-stop (repo_map.py)
+    # can honor a real max_files bound and stop walking once it has enough, so we thread
+    # the cap straight into the iterator instead of walking the whole tree and slicing
+    # afterward. Asking for max_files + 1 (not max_files) lets us still tell "exactly
+    # max_files files exist" apart from "more files exist" for the truncation notice,
+    # without ever walking further than one file past the cap.
+    walked = _iter_repo_files(root, max_files=max_files + 1)
     possibly_truncated = False
     truncation_cause: str | None = None
     if len(walked) > max_files:

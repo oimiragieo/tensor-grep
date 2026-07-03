@@ -210,6 +210,49 @@ def _envelope_base(
     return base
 
 
+def _log_tool_exception(tool_name: str, exc: BaseException) -> None:
+    """Log the full exception (message + traceback) server-side only.
+
+    q11: MCP tool responses are returned to the client over the protocol
+    stream (stdout); the raw exception text can contain absolute filesystem
+    paths, internal module structure, or a full stack trace and must never
+    be shipped there. The full detail is written to stderr instead, which
+    carries server-side diagnostics, not the MCP JSON-RPC channel.
+    """
+    import traceback
+
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
+
+
+def _sanitized_tool_error(tool_name: str, exc: BaseException) -> dict[str, Any]:
+    """Build a stable, sanitized error object for an MCP tool JSON response.
+
+    Logs the full exception server-side (see `_log_tool_exception`) and
+    returns only a short category + safe reason to the client -- never the
+    raw exception text or a stack trace. Still signals failure (the caller
+    keeps the call's error/non-empty-result contract); this only strips the
+    internals from what crosses the wire.
+    """
+    _log_tool_exception(tool_name, exc)
+    return {
+        "code": "internal_error",
+        "message": f"{tool_name} failed due to an internal error ({exc.__class__.__name__}).",
+        "retryable": False,
+    }
+
+
+def _sanitized_tool_error_text(tool_name: str, exc: BaseException) -> str:
+    """Plain-text counterpart of `_sanitized_tool_error` for tool response
+    modes that return free text instead of a JSON envelope.
+    """
+    _log_tool_exception(tool_name, exc)
+    return (
+        f"{tool_name} failed: internal error ({exc.__class__.__name__}). "
+        "See server logs for detail."
+    )
+
+
 def _rewrite_envelope() -> dict[str, Any]:
     return _envelope_base(
         routing_backend=_REWRITE_ROUTING_BACKEND,
@@ -2765,9 +2808,7 @@ def tg_search(
         return "\n".join(output)
 
     except Exception as e:
-        import traceback
-
-        return f"Search failed: {e!s}\n{traceback.format_exc()}"
+        return _sanitized_tool_error_text("tg_search", e)
 
 
 @mcp.tool()  # type: ignore
@@ -2936,23 +2977,17 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
         return "\n".join(output)
 
     except Exception as e:
-        import traceback
-
         if structured_json:
             return json.dumps(
                 {
                     "pattern": pattern,
                     "lang": lang,
                     "path": path,
-                    "error": {
-                        "code": "internal_error",
-                        "message": str(e),
-                        "detail": traceback.format_exc(),
-                    },
+                    "error": _sanitized_tool_error("tg_ast_search", e),
                 },
                 indent=2,
             )
-        return f"AST Search failed: {e!s}\n{traceback.format_exc()}"
+        return _sanitized_tool_error_text("tg_ast_search", e)
 
 
 @mcp.tool()  # type: ignore
@@ -3037,21 +3072,15 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
         return "\n".join(output)
 
     except Exception as e:
-        import traceback
-
         if structured_json:
             return json.dumps(
                 {
                     "file_path": file_path,
-                    "error": {
-                        "code": "internal_error",
-                        "message": str(e),
-                        "detail": traceback.format_exc(),
-                    },
+                    "error": _sanitized_tool_error("tg_classify_logs", e),
                 },
                 indent=2,
             )
-        return f"Log Classification failed: {e!s}\n{traceback.format_exc()}"
+        return _sanitized_tool_error_text("tg_classify_logs", e)
 
 
 @mcp.tool()  # type: ignore
