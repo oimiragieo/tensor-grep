@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-06-28
+Last updated: 2026-07-03
 
 ## Current Release State
 
@@ -9,6 +9,8 @@ release_docs_current_tag: v1.19.1
 - Latest tagged version: `v1.19.1`
 - Latest complete PyPI version: `v1.19.1`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.19.1>
+
+**Recent shipped milestones (round-4, through the v1.19.x line — 2026-07-03):** the rg-parse correctness moat (non-UTF-8 `lines.bytes` decode, `-u`/`-uu`/`-uuu` forwarding, `--vimgrep`/`--column` per-occurrence byte columns, and rg exit-2 partial-results with rg-parity exit codes); the `tg inventory` walk-only repository manifest; a roughly 4.8x `tg blast-radius` speedup from memoizing the pure `_module_aliases_for_path` (the reported cross-version latency delta was separately confirmed to be measurement noise, not a code regression); the native-delegation deny-by-default guard so `--rank`/`--sort-files` no longer silently drop through delegation to the native front door; a `MatchLine` hashability fix; and `tg blast-radius --mermaid`. `tg diff-docs` was prototyped and deliberately deferred pending a precision rebuild — naive doc-drift detection floods false positives (documented follow-up).
 
 **Historical release proof (pre-v1.17.11 — retained for the audit trail; the run IDs below are OLD and are NOT proof of the current v1.17.11 release):**
 
