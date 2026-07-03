@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.19.1 (2026-07-03)
+
+### Bug Fixes
+
+- Keep MatchLine hashable with submatches + skip stash unless columns wanted
+  ([#344](https://github.com/oimiragieo/tensor-grep/pull/344),
+  [`80de0b4`](https://github.com/oimiragieo/tensor-grep/commit/80de0b44a29645a73efc26df98fdf58970a5a62f))
+
+* fix: keep MatchLine hashable with submatches + skip stash unless columns wanted
+
+The submatches field (added #340) is a tuple of dicts, which is unhashable, so a populated MatchLine
+  raised TypeError on hash() — silently breaking the frozen dataclass's hashability contract (no
+  caller hashes it yet; latent landmine for any set/dedup use). Mark it compare=False so it stays
+  hashable and is excluded from == (the offsets are a pure function of text+line, so equality is
+  unaffected).
+
+Also gate the per-match submatch stash in RipgrepBackend.search behind config.vimgrep/config.column
+  — only those formatters consume the offsets, so building the tuple on every default-format match
+  was wasted work (a small parse-loop cost the blast-radius-regression profile surfaced). Output is
+  byte-identical; --vimgrep/--column still emit one row per occurrence.
+
+Found by the blast-radius-regression-hunt workflow (2026-07-03), which also proved the reported
+  blast-radius +33% was environmental noise, not a code regression.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: keep MatchLine hashable when submatches is populated (latent bug from #340)
+
+submatches (added #340) is a tuple of dicts, which is unhashable, so a populated MatchLine raised
+  TypeError on hash() — silently breaking the frozen dataclass's hashability contract (no caller
+  hashes it yet; latent landmine for any set/dedup use). Mark it compare=False so it stays hashable
+  and is excluded from == (the offsets are a pure function of text+line, so equality is unaffected).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.0 (2026-07-03)
 
 ### Bug Fixes
