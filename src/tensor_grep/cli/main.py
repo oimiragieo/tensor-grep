@@ -1826,6 +1826,13 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "replace_str",
     "sort_by",
     "sort_by_reverse",
+    # Native tg cannot reproduce these output-ordering post-processes byte-for-byte, so a
+    # non-default value must REFUSE delegation and fall through to the Python/backend path:
+    # sort_files is applied in-backend (ripgrep_backend.py / rust_backend.py) and rank_bm25
+    # drives the BM25 rerank at the end of the search flow (both bypassed by a delegated
+    # sys.exit). See tests/unit/test_native_delegation_field_coverage.py (round-4 #25).
+    "sort_files",
+    "rank_bm25",
     "trim",
     "with_filename",
     "no_filename",
