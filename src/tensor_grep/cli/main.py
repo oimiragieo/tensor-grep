@@ -7781,6 +7781,63 @@ def callers(
     )
 
 
+def _mermaid_label(text: str) -> str:
+    """Neutralize characters that would break a quoted Mermaid node/edge label."""
+    return text.replace("\\", "/").replace('"', "'")
+
+
+def _mermaid_relpath(file_path: str, root: str) -> str:
+    """A short forward-slashed path for a Mermaid node (relative to root when it stays inside)."""
+    forward = file_path.replace("\\", "/")
+    try:
+        rel = os.path.relpath(file_path, root).replace("\\", "/")
+        if rel and not rel.startswith(".."):
+            return rel
+    except (ValueError, OSError):
+        pass
+    return os.path.basename(forward) or forward
+
+
+def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
+    """Render a blast-radius payload's exact call sites (``callers[]``) as a Mermaid ``graph TD``.
+
+    Only DIRECT callers are drawn (each unique caller file --> the symbol), because they carry
+    exact file+line evidence. The depth-layered ``caller_tree`` has no exact file-to-file edges,
+    so inventing them would lie to the reader (the agent-native contract). Output is deterministic
+    (sorted nodes) so it is diff-friendly for doc generators.
+    """
+    symbol = str(payload.get("symbol", "symbol"))
+    root = str(payload.get("path") or ".")
+    callers = cast(list[dict[str, Any]], payload.get("callers") or [])
+    grouped: dict[str, list[int]] = {}
+    for caller in callers:
+        raw = caller.get("file")
+        if not raw:
+            continue
+        entry = grouped.setdefault(_mermaid_relpath(str(raw), root), [])
+        line_no = caller.get("line")
+        if isinstance(line_no, int):
+            entry.append(line_no)
+    lines = ["graph TD", f'  target["{_mermaid_label(symbol)}"]']
+    for idx, rel in enumerate(sorted(grouped)):
+        node = f"n{idx}"
+        lines.append(f'  {node}["{_mermaid_label(rel)}"]')
+        call_lines = sorted(grouped[rel])
+        if len(call_lines) == 1:
+            lines.append(f"  {node} -->|L{call_lines[0]}| target")
+        elif call_lines:
+            lines.append(f"  {node} -->|{len(call_lines)} calls| target")
+        else:
+            lines.append(f"  {node} --> target")
+    if not grouped:
+        lines.append(f"  %% no callers found for {symbol}")
+    if payload.get("result_incomplete"):
+        lines.append(
+            "  %% note: result truncated -- raise --max-callers/--max-files for the full graph"
+        )
+    return "\n".join(lines)
+
+
 @app.command(name="blast-radius")
 def blast_radius(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -7819,6 +7876,11 @@ def blast_radius(
         help="Maximum impacted files to include in output; raise for fuller broad impact analysis.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    mermaid_output: bool = typer.Option(
+        False,
+        "--mermaid",
+        help="Render the direct-caller graph as a Mermaid `graph TD` (doc/agent-friendly).",
+    ),
 ) -> None:
     """Return exact callers plus a transitive file/test blast radius for a symbol."""
     from tensor_grep.cli.repo_map import build_symbol_blast_radius
@@ -7842,6 +7904,12 @@ def blast_radius(
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+    if mermaid_output:
+        # Faithful diagram of the exact call sites (no truncation caveat needed — the
+        # renderer emits a `%% truncated` comment from payload.result_incomplete itself).
+        typer.echo(_render_blast_radius_mermaid(payload))
+        return
 
     # Surface output-cap truncation (callers_truncated/files_truncated) so a capped blast radius
     # can never look complete — the same false-confidence vector as a truncated callers=0.
