@@ -1,6 +1,86 @@
 # CHANGELOG
 
 
+## v1.19.0 (2026-07-03)
+
+### Bug Fixes
+
+- Refuse native delegation for --rank/--sort-files (silent wrong-output) + coverage ratchet
+  ([#342](https://github.com/oimiragieo/tensor-grep/pull/342),
+  [`5e6f780`](https://github.com/oimiragieo/tensor-grep/commit/5e6f780b7e5cee5e591f0453d8f7bf46116b5186))
+
+Native-tg delegation sys.exit()s before the Python-side BM25 rerank and the in-backend sort, so `tg
+  search --rank --cpu` (also --rank --json/--ndjson, --sort-files --cpu) silently returned
+  UNRANKED/UNSORTED results — a wrong-output bug where suppression is indistinguishable from
+  absence.
+
+rank_bm25 and sort_files were neither forwarded to the native argv nor in the refuse-tuple, so the
+  gate delegated and dropped them. Native tg has no BM25 (it routes --rank back to the Python
+  sidecar), and sort_files is applied in-backend — neither is reproducible on a delegated sys.exit
+  path.
+
+Fix (council-vetted, round-4 #25): add both to _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS so a
+  non-default value REFUSES delegation and falls through to the Python/backend path that
+  reranks+sorts. The default fast path is untouched (both default False). Rejected the Option-B
+  runtime gate rewrite: query_pattern is auto-set on every search, so a "differs-from-default" gate
+  would always refuse and kill the fast path (the 2026-06-30 #1 failure mode).
+
+Adds tests/unit/test_native_delegation_field_coverage.py — a governance ratchet that AST-derives the
+  forwarded set from _build_native_tg_search_command and asserts every SearchConfig field is
+  forwarded, refused, gate-handled, or in a documented KNOWN_GAP set. Goes RED the instant a future
+  PR adds an unclassified output-affecting field (same flag-drop class as the -u/-uu no-op fixed in
+  #336).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Features
+
+- Add `tg inventory` (walk-only repo manifest) + green main (--rank test capture)
+  ([#343](https://github.com/oimiragieo/tensor-grep/pull/343),
+  [`ab717a1`](https://github.com/oimiragieo/tensor-grep/commit/ab717a10ca955f8ce2b8b86f7f857797438bc67f))
+
+* feat: add `tg inventory` — single-pass walk-only repository manifest
+
+Adds a first-contact repo manifest command (real-AI-use feedback P0: "no batch/ inventory mode").
+  Walk-only, no AST parse — reuses the same gitignore-aware walker (repo_map._iter_repo_files) that
+  orient/callers/blast-radius trust, so counts stay truth-consistent and .git/.tensor-grep/vendor
+  dirs are excluded for free. Emits file/byte counts by language and by category
+  (code/doc/config/test/other), a top-level-directory breakdown, and the largest files, via --json
+  or a text summary.
+
+Design (3-lens design council, round-4 [e]): - Binary files detected (_looks_like_binary_file —
+  previously dead code, now wired in) and tracked separately so a committed blob never inflates a
+  language/category count. - Truncation surfaced honestly via scan_limit.possibly_truncated +
+  truncation_cause (never silent); default cap 50000 (walk is stat-only, NOT the 512 AST budget). -
+  Fail-closed on a nonexistent path (raises/exits 1 — a missing path must never read as a valid
+  empty repo). - Deterministic output: languages/categories by bytes desc + name tie-break,
+  top_level_dirs lexicographic — byte-stable across runs for agent diffing. - Language labels are an
+  honest extension heuristic (coverage.language_scope).
+
+Registration (all 4 sites + docs): KNOWN_COMMANDS (commands.py), native Rust Commands::Inventory
+  enum + dispatch arm (main.rs), PUBLIC_TOP_LEVEL_COMMANDS (test_routing_parity.py), @app.command
+  (main.py); README + tensor-grep SKILL.
+
+Tests: 18 unit (fail-closed, exclusions, binary handling, classification, truncation honesty,
+  determinism, registration guards) + routing-parity green (46) + dogfooded on this repo (1861
+  files, binaries correctly separated) via the rebuilt native binary.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: fix --rank bm25 capture for the non-delegation path (#342 follow-up)
+
+#25/#342 made `--rank` correctly refuse native delegation so the BM25 rerank runs in-process.
+  test_search_rank_reorders_by_bm25 read the fd-level stream (capfd), which only captured output
+  back when `--rank` wrongly delegated to the native subprocess; with the rerank now in-process the
+  JSON is emitted via typer.echo -> CliRunner's captured stdout. Read result.stdout instead.
+  Verified passing with the native binary both present and disabled (the fd-vs-in-process split only
+  surfaces when the native binary is built, which PR CI skips but main/release CI builds).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.18.5 (2026-07-03)
 
 ### Bug Fixes
