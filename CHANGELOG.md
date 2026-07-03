@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.19.6 (2026-07-03)
+
+### Bug Fixes
+
+- Tg orient excludes documentation files from central-file ranking (dogfood)
+  ([#352](https://github.com/oimiragieo/tensor-grep/pull/352),
+  [`6bd2bef`](https://github.com/oimiragieo/tensor-grep/commit/6bd2bef52ecb81c5468ed5bbe24d4d04b5da7a9d))
+
+Dogfood (v1.19.3, a doc-heavy repo with 36 CLAUDE.md files) found orient's top "central files" were
+  all docs (graph_score 10.0), burying main.tsx / the real code architecture.
+  _central_files_from_map ranked ALL files by import in-degree, and its by_stem resolver could even
+  let a doc (config.md) shadow a code module (config.py meant by `import config`).
+
+Fix: exclude documentation suffixes (.md/.markdown/.rst/.adoc/.txt) from the centrality graph
+  entirely — they neither rank as central nor absorb a code import via a stem collision. Falls back
+  to all files only for a pure-docs repo so the capsule is never empty. "Central files" now surfaces
+  CODE architecture as intended, regardless of how doc-heavy the repo is.
+
+TDD: docs never central + code wins the stem collision (config.py in-degree 2, config.md absent) +
+  pure-docs fallback; existing orient tests unchanged; dogfooded on this repo (0 docs in central).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.5 (2026-07-03)
 
 ### Bug Fixes
