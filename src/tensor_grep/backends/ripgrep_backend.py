@@ -145,8 +145,18 @@ class RipgrepBackend(ComputeBackend):
                         if "text" not in _path_obj and isinstance(file_path, str):
                             path_str = file_path
 
-                        # Note: Ripgrep JSON also outputs absolute offsets, but MatchLine requires line_num/text
-                        matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
+                        # Stash rg's per-occurrence byte offsets (submatches[]) for --vimgrep/
+                        # --column output shaping. Counting stays one-per-matching-line (below) so
+                        # total_matches / parity with the other backends is unchanged.
+                        _subs = data_match.get("submatches") or None
+                        matches.append(
+                            MatchLine(
+                                line_number=line_number,
+                                text=text,
+                                file=path_str,
+                                submatches=tuple(_subs) if _subs else None,
+                            )
+                        )
                         total_matches += 1
                         if path_str:
                             match_counts_by_file[path_str] = (
