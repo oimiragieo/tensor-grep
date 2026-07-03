@@ -114,8 +114,26 @@ echo "=========================================================="
 # which executes an unverified remote script (audit: bring Linux/macOS to install.ps1 parity;
 # see https://github.com/astral-sh/uv/issues/13074). Bump UV_VERSION + every checksum together.
 UV_VERSION="0.11.25"
-if ! command -v uv &> /dev/null; then
+# H6 hardening: trust a uv already on PATH ONLY if it reports EXACTLY the pinned version; any
+# mismatch/unparsable value falls CLOSED into the checksum-verified download below, so a stale or
+# hijacked PATH uv can no longer bypass the pinned-uv supply-chain gate. (Mirror of install.ps1.)
+uv_trusted=0
+if command -v uv &> /dev/null; then
+    uv_ver="$(uv --version 2>/dev/null | awk '{print $2}')"
+    # Shell string equality is EXACT, never a glob, so "0.11.253" cannot false-match "0.11.25".
+    if [ "${uv_ver}" = "${UV_VERSION}" ]; then
+        uv_trusted=1
+    else
+        echo "Existing PATH uv reports '${uv_ver:-unknown}', not pinned ${UV_VERSION}; ignoring it and downloading the pinned, checksum-verified release instead." >&2
+    fi
+fi
+if [ "${uv_trusted}" = "1" ]; then
+    echo "[1/4] Found existing uv ${UV_VERSION} on PATH (matches pinned version)."
+else
     echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION}, checksum-verified)..."
+    # Residual risk (accepted): a version-string gate catches stale/accidental uv but not a
+    # deliberate PATH-hijack that hardcodes --version to print the pin (no committed resident-binary
+    # hash exists; only the release archive is hashed). Fake binary is explicitly out of scope.
     uv_os="$(uname -s)"
     uv_machine="$(uname -m)"
     case "${uv_os}-${uv_machine}" in
@@ -165,8 +183,6 @@ if ! command -v uv &> /dev/null; then
         echo "ERROR: uv install completed but 'uv' is not on PATH ($HOME/.local/bin)." >&2
         exit 1
     fi
-else
-    echo "[1/4] Found existing uv installation."
 fi
 
 # 2. Detect GPU Configuration
