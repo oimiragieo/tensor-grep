@@ -49,14 +49,15 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - **`tg orient [PATH]`** — one-call codebase orientation capsule for agents. Ranks files by import in-degree (imported-by-many = foundational), identifies entry points via main/cli/index/lib heuristics, produces a symbol map, and emits AST-boundary code snippets within a token budget. Pure-CPU, no API key, no GPU. Options: `--max-tokens` (default 3000; bounds the snippet budget only, not the whole capsule), `--max-central-files` (default 10), `--json`. JSON keys include `central_files[{file,graph_score,symbols}]`, `entry_points`, `symbol_map`, `snippets`, `token_estimate`, `token_budget_label`, `truncated`, `scan_limit`, `routing_reason="orient"`. Honest caveat: in-degree centrality is import-graph based and works best on Python; Rust/JS edges resolve fully only in whole-repo scans.
 - **`tg map`** — machine-readable file/symbol map of a codebase.
 - **`tg inventory [PATH]`** — single-pass, walk-only repository manifest for first-contact triage: file/byte counts by language and by category (code/doc/config/test/other), a top-level-directory breakdown, and the largest files. Reuses the same gitignore-aware walker as `orient`/`callers` (so counts stay truth-consistent and `.git`/`.tensor-grep`/vendor dirs are excluded for free), detects and separates binary files so they never inflate language counts, and surfaces truncation honestly via `scan_limit`. Pure-CPU, no AST parse (much faster than `tg map`), no API key. Options: `--max-repo-files` (default 50000), `--json`. JSON keys: `totals`, `binary`, `languages[]`, `categories[]`, `top_level_dirs[]`, `largest_files[]`, `scan_limit`, `coverage.language_scope="extension-heuristic"`. Honest caveat: language labels are an extension heuristic, not a linguist-grade classifier.
+- **Scan-limit tiers** — why a `tg inventory` file count and a `tg map`/`tg orient` file count can differ on the same repo: `tg map` and `tg orient` AST-index a bounded set of files (`--max-repo-files` defaults to `DEFAULT_AGENT_REPO_MAP_LIMIT = 512`, full parse per file); `tg inventory` walks up to `DEFAULT_MAX_INVENTORY_FILES = 50000` files (stat + 8KB content sniff, no parse); a raw `tg search` scans the full tree with no file-count cap. A larger `tg inventory` total than `tg map`'s `files` count on the same repo is expected behavior, not a bug.
 - **`tg context PATH "query"`** — semantic context capsule for a natural-language question.
 - **`tg context-render`** / **`tg edit-plan`** — rendered context and structured edit plans with daemon response caching for sub-second warm calls.
 
 ### Symbol intelligence
 - **`tg defs`** — find definitions.
 - **`tg source`** — show source for a symbol.
-- **`tg refs`** — find references.
-- **`tg callers`** — who calls a function.
+- **`tg refs`** — find references. Recommended for TypeScript/JS symbol navigation: dogfooding (v1.19.3) found `tg refs` returned 14 reference sites on a TS-heavy repo where `tg callers` returned 1 for the same symbol.
+- **`tg callers`** — who calls a function. Python-first: call-site resolution is strongest against Python ASTs and can under-match (or take minutes) on large TypeScript/JS repos. Prefer `tg refs` for TS/JS symbol lookups; see [docs/harness_api.md](docs/harness_api.md) for the exact contract note.
 - **`tg impact`** — what a symbol affects.
 - **`tg blast-radius`** / **`tg blast-radius-render`** / **`tg blast-radius-plan`** — ranked impact graph with rendered and plan-ready output.
 
