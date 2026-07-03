@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v1.18.2 (2026-07-03)
+
+### Bug Fixes
+
+- Bound two round-2 DoS vectors — LTL O(n^2)->O(n) + reject rubber-stamp max_depth (round-2 #26)
+  ([#337](https://github.com/oimiragieo/tensor-grep/pull/337),
+  [`7a40839`](https://github.com/oimiragieo/tensor-grep/commit/7a4083995adf5cbce9481ddda113ec9f2cbcd00d))
+
+Two bounded resource/DoS hardening fixes:
+
+1) CPUBackend._search_ltl was O(n^2). The `A -> eventually B` matcher scanned FORWARD to EOF for
+  every left hit, so an adversarial/large file where A matches often and B rarely (e.g. every line
+  matches A, none matches B) did ~n*(n-1)/2 right-regex probes — a hang. Fix: one BACKWARD pass
+  precomputes the nearest right-match index at-or-after each position, so each left hit resolves its
+  "eventually B" in O(1). Total O(n), IDENTICAL results (still the first right match strictly after
+  the left line; max_count break preserved).
+
+2) scan_guardrails treated ANY non-None max_depth as a sufficient traversal bound, so `tg scan
+  --max-depth 1000000 C:\` (or a system/generated/workspace root) rubber-stamped past the broad-scan
+  refusal entirely. Fix: a max_depth only counts as a real bound when 0 <= depth <=
+  _MAX_REASONABLE_SCAN_DEPTH (50); deeper hostile-root scans must opt in via
+  --allow-broad-generated-scan. A glob/file-type still bounds regardless (unchanged).
+
+TDD: 5 tests — LTL finds the eventually-sequence + returns 0 on no-right + a spy proving the
+  right-regex probe count is O(n) not O(n^2); _is_bounded_depth/_has_scan_bound reject 1_000_000 and
+  None (watched fail: was True) but accept <=50 and any glob. 35 cpu + 18 broad-scan tests green;
+  ruff+mypy clean. Task #26 (both remaining Python items); lib.rs GIL defers with #24 rust.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.18.1 (2026-07-03)
 
 ### Bug Fixes
