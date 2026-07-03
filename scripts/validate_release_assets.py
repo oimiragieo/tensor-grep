@@ -3352,7 +3352,7 @@ def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
     if not isinstance(bench_dependencies, list):
         return ["pyproject.toml [project.optional-dependencies].bench must be a list"]
 
-    expected_ruff_pin = "ruff==0.15.11"
+    expected_ruff_pin = "ruff==0.15.20"
     if expected_ruff_pin not in {str(entry) for entry in dev_dependencies}:
         errors.append(
             "pyproject.toml [project.optional-dependencies].dev must pin "
