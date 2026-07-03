@@ -15,6 +15,11 @@ from tensor_grep.cli import repo_map as _repo_map
 
 _CHARS_PER_TOKEN = 3.5
 
+# Documentation suffixes excluded from the code-centrality ranking: a doc file is never a useful
+# "central CODE file", and in doc-heavy repos (many cross-linked CLAUDE.md / README) it would
+# otherwise dominate the graph and bury the real architecture.
+_CENTRAL_DOC_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".adoc", ".txt"})
+
 _ENTRY_NAMES = {
     "main.py",
     "__main__.py",
@@ -36,14 +41,24 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
     all_files = [str(f) for f in rm.get("files", [])]
     if not all_files:
         return []
+    # "Central files" surface CODE architecture. Documentation files (heavily cross-referenced in
+    # doc-heavy repos — e.g. 36 CLAUDE.md files) must not rank as central, and must not absorb a code
+    # import via a stem collision (config.md shadowing config.py in by_stem). Exclude docs from the
+    # graph entirely; fall back to all files only if the repo is pure docs so we still return context.
+    code_files = [
+        f for f in all_files if Path(f).suffix.lower() not in _CENTRAL_DOC_SUFFIXES
+    ] or all_files
+    code_file_set = set(code_files)
     imports_by_file: dict[str, list[str]] = {
         str(entry["file"]): [str(i) for i in entry.get("imports", [])]
         for entry in rm.get("imports", [])
+        if str(entry["file"]) in code_file_set
     }
     # build_repo_map records imports as module names ("hub"), not file paths ("hub.py"); resolve them
-    # to files by stem so the import graph has real edges.
+    # to files by stem so the import graph has real edges. Docs are excluded so they cannot shadow a
+    # code module.
     by_stem: dict[str, str] = {}
-    for source in all_files:
+    for source in code_files:
         by_stem.setdefault(Path(source).stem, source)
     resolved_imports: dict[str, list[str]] = {}
     for source, modules in imports_by_file.items():
@@ -53,12 +68,12 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
             if candidate and candidate != source:
                 targets.append(candidate)
         resolved_imports[source] = targets
-    reverse_importers = _repo_map._reverse_importers(all_files, resolved_imports)
+    reverse_importers = _repo_map._reverse_importers(code_files, resolved_imports)
     # Centrality = in-degree (how many files import this one). NOTE: the reused reverse-import
     # PageRank, seeded by all files, ranks IMPORTERS above the imported -- backwards for "show me the
     # core files" -- so we rank by import in-degree directly.
-    centrality = {source: float(len(reverse_importers.get(source, ()))) for source in all_files}
-    ranked = sorted(all_files, key=lambda source: (-centrality[source], source))
+    centrality = {source: float(len(reverse_importers.get(source, ()))) for source in code_files}
+    ranked = sorted(code_files, key=lambda source: (-centrality[source], source))
     result: list[dict[str, Any]] = []
     for file_path in ranked[:max_central_files]:
         file_symbols = [
