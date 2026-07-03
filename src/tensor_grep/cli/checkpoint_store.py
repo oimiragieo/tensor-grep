@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tensor_grep.cli._index_lock import index_lock
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 _CHECKPOINT_VERSION = 1
@@ -497,7 +498,11 @@ def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
     records.sort(key=lambda record: record.created_at, reverse=True)
     if not records:
         return None
-    _write_index(root, records)
+    # q10 RMW race: this is a 4th writer of index.json (reached from the discovery/list path
+    # via _full_checkpoint_index_paths) that can otherwise clobber, or be clobbered by,
+    # create_checkpoint's RMW outside the new lock.
+    with index_lock(_index_path(root)):
+        _write_index(root, records)
     return _index_path(root)
 
 
@@ -618,6 +623,35 @@ def _configured_checkpoint_max() -> int:
     return value if value > 0 else _DEFAULT_CHECKPOINT_MAX
 
 
+def _select_retained_checkpoints(
+    root: Path,
+    records: list[CheckpointRecord],
+    *,
+    max_records: int | None = None,
+) -> tuple[list[CheckpointRecord], list[Path]]:
+    """Pure selector for bounded on-disk checkpoint retention (round-4 DoS).
+
+    Keep at most ``max_records`` newest records (``records`` must already be newest-first).
+    Returns ``(retained, dirs_to_delete)`` and performs NO filesystem mutation -- the caller
+    removes ``dirs_to_delete`` (metadata.json + the full snapshot copy for each dropped
+    checkpoint). Doing no I/O here lets ``create_checkpoint`` run this selector INSIDE the
+    index lock and defer the slow, index-unrelated ``rmtree`` calls until after the lock is
+    released (q10 RMW race fix).
+    """
+    limit = _configured_checkpoint_max() if max_records is None else max(1, int(max_records))
+    if len(records) <= limit:
+        return records, []
+    retained = records[:limit]
+    dirs_to_delete: list[Path] = []
+    for dropped in records[limit:]:
+        try:
+            dirs_to_delete.append(_checkpoint_dir(root, dropped.checkpoint_id))
+        except (OSError, ValueError):
+            # ValueError: a traversal-shaped id in a tampered index is refused by _checkpoint_dir.
+            pass
+    return retained, dirs_to_delete
+
+
 def _prune_checkpoint_records(
     root: Path,
     records: list[CheckpointRecord],
@@ -626,20 +660,15 @@ def _prune_checkpoint_records(
 ) -> list[CheckpointRecord]:
     """Bound on-disk checkpoint retention (round-4 DoS).
 
-    Keep at most ``max_records`` newest records (``records`` must already be newest-first). Each
-    dropped checkpoint's entire directory (metadata.json + the full snapshot copy) is removed so
-    disk usage stays bounded — an uncapped store grows by ~one full scope copy per checkpoint.
+    Thin wrapper over ``_select_retained_checkpoints`` that removes the dropped checkpoints'
+    directories immediately, so any existing caller/test that expects synchronous pruning is
+    unchanged. Each dropped checkpoint's entire directory (metadata.json + the full snapshot
+    copy) is removed so disk usage stays bounded — an uncapped store grows by ~one full scope
+    copy per checkpoint.
     """
-    limit = _configured_checkpoint_max() if max_records is None else max(1, int(max_records))
-    if len(records) <= limit:
-        return records
-    retained = records[:limit]
-    for dropped in records[limit:]:
-        try:
-            shutil.rmtree(_checkpoint_dir(root, dropped.checkpoint_id), ignore_errors=True)
-        except (OSError, ValueError):
-            # ValueError: a traversal-shaped id in a tampered index is refused by _checkpoint_dir.
-            pass
+    retained, dirs_to_delete = _select_retained_checkpoints(root, records, max_records=max_records)
+    for directory in dirs_to_delete:
+        shutil.rmtree(directory, ignore_errors=True)
     return retained
 
 
@@ -681,20 +710,28 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         original_path=scope.original_path,
     )
 
-    records = _load_index(root)
-    records.insert(
-        0,
-        CheckpointRecord(
-            version=_CHECKPOINT_VERSION,
-            checkpoint_id=checkpoint_id,
-            mode=mode,
-            root=str(root),
-            created_at=created_at,
-            file_count=len(entries),
-        ),
-    )
-    records = _prune_checkpoint_records(root, records)
-    _write_index(root, records)
+    # q10 RMW race: load->mutate->write must be atomic w.r.t. every other writer of this
+    # index.json, cross-process and cross-thread, or a concurrent insert can be lost (see
+    # _index_lock.index_lock docstring / AGENTS.md Backend Fail-Closed Contract). Retention
+    # selection stays inside the lock (pure, no I/O); the actual rmtree of dropped snapshot
+    # dirs happens AFTER release so the lock is never held across slow directory removal.
+    with index_lock(_index_path(root)):
+        records = _load_index(root)
+        records.insert(
+            0,
+            CheckpointRecord(
+                version=_CHECKPOINT_VERSION,
+                checkpoint_id=checkpoint_id,
+                mode=mode,
+                root=str(root),
+                created_at=created_at,
+                file_count=len(entries),
+            ),
+        )
+        records, dropped_dirs = _select_retained_checkpoints(root, records)
+        _write_index(root, records)
+    for directory in dropped_dirs:
+        shutil.rmtree(directory, ignore_errors=True)
     _prime_bounded_discovery_caches_for_root(root)
     return result
 
