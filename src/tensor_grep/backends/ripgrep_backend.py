@@ -111,12 +111,6 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            if result.returncode > 1:
-                stderr = result.stderr.strip()
-                raise RuntimeError(
-                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
-                )
-
             import json
 
             matches = []
@@ -166,7 +160,18 @@ class RipgrepBackend(ComputeBackend):
                 except json.JSONDecodeError:
                     pass
 
-            return SearchResult(
+            # Parse-first, THEN branch on the exit code. rg exit 2 = a SOFT per-file error (e.g.
+            # one unreadable/missing path among many); if it still emitted matches for the readable
+            # files, KEEP them + flag incomplete so we exit 2 like rg AND surface a "suppression !=
+            # absence" marker. Only a genuine total failure (exit >2, or exit 2 with nothing parsed)
+            # stays fail-closed with the byte-identical RuntimeError message.
+            partial = result.returncode == 2 and total_matches > 0
+            if result.returncode > 1 and not partial:
+                stderr = result.stderr.strip()
+                raise RuntimeError(
+                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
+                )
+            search_result = SearchResult(
                 matches=matches,
                 matched_file_paths=matched_file_paths,
                 match_counts_by_file=match_counts_by_file,
@@ -177,6 +182,12 @@ class RipgrepBackend(ComputeBackend):
                 routing_distributed=False,
                 routing_worker_count=1,
             )
+            if partial:
+                reason = result.stderr.strip() or "rg exit 2 (partial results)"
+                sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
+                search_result.result_incomplete = True
+                search_result.incomplete_reason = reason
+            return search_result
 
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
@@ -194,15 +205,16 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            if result.returncode > 1:
+            path_parts = result.stdout.split("\0") if config.null else result.stdout.splitlines()
+            matched_file_paths = [path for path in path_parts if path]
+            # rg exit 2 with some matched files = soft partial error: keep them, flag incomplete.
+            partial = result.returncode == 2 and bool(matched_file_paths)
+            if result.returncode > 1 and not partial:
                 stderr = result.stderr.strip()
                 raise RuntimeError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
-
-            path_parts = result.stdout.split("\0") if config.null else result.stdout.splitlines()
-            matched_file_paths = [path for path in path_parts if path]
-            return SearchResult(
+            search_result = SearchResult(
                 matches=[],
                 matched_file_paths=matched_file_paths,
                 match_counts_by_file=dict.fromkeys(matched_file_paths, 1),
@@ -213,6 +225,12 @@ class RipgrepBackend(ComputeBackend):
                 routing_distributed=False,
                 routing_worker_count=1,
             )
+            if partial:
+                reason = result.stderr.strip() or "rg exit 2 (partial results)"
+                sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
+                search_result.result_incomplete = True
+                search_result.incomplete_reason = reason
+            return search_result
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
 
@@ -229,12 +247,6 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            if result.returncode > 1:
-                stderr = result.stderr.strip()
-                raise RuntimeError(
-                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
-                )
-
             lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
             total_matches = 0
             total_files = 0
@@ -277,8 +289,14 @@ class RipgrepBackend(ComputeBackend):
                         matched_file_paths.append(file_path)
                         match_counts_by_file[file_path] = count_value
 
+            partial = result.returncode == 2 and total_matches > 0
+            if result.returncode > 1 and not partial:
+                stderr = result.stderr.strip()
+                raise RuntimeError(
+                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
+                )
             routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
-            return SearchResult(
+            search_result = SearchResult(
                 matches=[],
                 matched_file_paths=matched_file_paths,
                 match_counts_by_file=match_counts_by_file,
@@ -289,6 +307,12 @@ class RipgrepBackend(ComputeBackend):
                 routing_distributed=False,
                 routing_worker_count=1,
             )
+            if partial:
+                reason = result.stderr.strip() or "rg exit 2 (partial results)"
+                sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
+                search_result.result_incomplete = True
+                search_result.incomplete_reason = reason
+            return search_result
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
 

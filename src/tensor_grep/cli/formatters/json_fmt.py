@@ -105,6 +105,12 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
         envelope["staging_bytes"] = result.staging_bytes
     if result.fallback_reason is not None:
         envelope["fallback_reason"] = result.fallback_reason
+    # Partial results (rg exit 2) — a machine-visible "suppression != absence" marker so --json/
+    # --ndjson agents don't read a truncated result as complete. Emitted only when incomplete, so
+    # the envelope shape is byte-identical for normal (complete) results.
+    if result.result_incomplete:
+        envelope["result_incomplete"] = True
+        envelope["incomplete_reason"] = result.incomplete_reason
     return envelope
 
 
@@ -164,6 +170,8 @@ class JsonFormatter(OutputFormatter):
             "transfer_time_ms",
             "staging_bytes",
             "fallback_reason",
+            "result_incomplete",
+            "incomplete_reason",
         ):
             if key in envelope:
                 data[key] = envelope[key]
