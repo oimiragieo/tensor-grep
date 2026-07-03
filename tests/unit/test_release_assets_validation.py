@@ -1062,7 +1062,7 @@ def test_should_require_dev_tooling_security_floors_for_ci_format_parity():
     """
     errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
     joined_errors = "\n".join(errors)
-    assert "ruff==0.15.11" in joined_errors
+    assert "ruff==0.15.20" in joined_errors
     assert "pytest>=9.0.3" in joined_errors
 
 
@@ -1081,7 +1081,7 @@ def test_should_accept_dev_tooling_security_floors_for_ci_format_parity():
     version = "1.3.2"
 
     [project.optional-dependencies]
-    dev = ["ruff==0.15.11", "pytest>=9.0.3"]
+    dev = ["ruff==0.15.20", "pytest>=9.0.3"]
     bench = ["pytest>=9.0.3"]
     """
     errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
