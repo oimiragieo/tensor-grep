@@ -77,6 +77,15 @@ def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict
         payload["range"] = match.range
     if match.meta_variables is not None:
         payload["metaVariables"] = match.meta_variables
+    # audit q6: mirror RipgrepFormatter._submatch_columns -- rg's per-occurrence byte offsets
+    # (match.submatches) were parsed onto MatchLine but never read here, so --json lost
+    # column/offset info and could not report multiple occurrences on one line. Emit the same
+    # dicts rg's own --json submatches use (keys: "match"/"start"/"end"); omit the key entirely
+    # (no null/empty noise) for non-rg backends / context lines that have none.
+    if match.submatches:
+        subs = [dict(sub) for sub in match.submatches if isinstance(sub, dict)]
+        if subs:
+            payload["submatches"] = subs
     return payload
 
 
