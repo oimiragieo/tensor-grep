@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.18.4 (2026-07-03)
+
+### Bug Fixes
+
+- --vimgrep/--column emit one row per rg occurrence at its true byte column (round-4 PR-A slice 2)
+  ([#340](https://github.com/oimiragieo/tensor-grep/pull/340),
+  [`76b9ef8`](https://github.com/oimiragieo/tensor-grep/commit/76b9ef870d834d3654790bfd368f0c9e811314d0))
+
+rg's --json Match events carry submatches[] with authoritative per-occurrence byte offsets, but the
+  parser discarded them (ripgrep_backend.py:117). So for a multi-match line, --vimgrep/--column
+  reported ONLY the first occurrence's column and emitted ONE row, diverging from real `rg
+  --vimgrep` (which emits N rows, one per occurrence at its true byte column).
+
+Council-vetted narrow fix (REJECTED the naive "iterate submatches -> inflate total_matches", which
+  every sibling backend + the GPU/CPU parity oracle would regress, and which mis-zeroes -v):
+  counting stays one-per-matching-line; only OUTPUT SHAPING changes. - result.py: MatchLine gains a
+  frozen `submatches: tuple[...] | None = None` (default None keeps every other backend
+  byte-for-byte unchanged; tuple keeps the dataclass hashable). - ripgrep_backend.py: the match
+  branch additionally stashes submatches; total_matches/count += 1 UNCHANGED. Context branch
+  unchanged (context lines carry no submatches). - ripgrep_fmt.py: --vimgrep and --column emit one
+  row per submatch, column = submatch.start+1 (rg start is a 0-based byte offset, so +1 is rg's
+  1-based byte column directly — no Python re.search, no first-occurrence guess). No submatches
+  (non-rg backend / context) -> single row via the existing _column_for_match, unchanged.
+
+TDD: 4 tests — backend stashes 2 submatches while total_matches stays 1; --vimgrep and --column
+
+emit 3 rows at cols 1/9/17 for "foo bar foo baz foo" (watched fail: 1 row); no-submatches stays
+  single-row. 87 formatter/parity tests green (no regression); ruff+mypy clean. Task #34 (PR-A slice
+  2 of 3). Deferred to slice 3: the -o --pcre2 crash (main.py) + json_fmt column mirror.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.18.3 (2026-07-03)
 
 ### Bug Fixes
