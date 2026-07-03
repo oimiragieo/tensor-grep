@@ -1,6 +1,90 @@
 # CHANGELOG
 
 
+## v1.19.7 (2026-07-03)
+
+### Bug Fixes
+
+- Round-5 mechanical batch — inventory walk-cap, json submatches, MCP error sanitize, dir-scan DoS
+  caps ([#353](https://github.com/oimiragieo/tensor-grep/pull/353),
+  [`fa5fc23`](https://github.com/oimiragieo/tensor-grep/commit/fa5fc23ce9796b56da7cbbc5586039ed064dd234))
+
+* fix(cli): emit MatchLine.submatches in --json/--ndjson output
+
+JsonFormatter._match_payload built each match dict from a hardcoded key tuple that never read
+  MatchLine.submatches (rg's per-occurrence byte offsets), unlike RipgrepFormatter
+  (ripgrep_fmt.py::_submatch_columns). This dropped column/offset info that the vimgrep/column path
+  relies on and made --json unable to report multiple occurrences on one line.
+
+Mirror ripgrep_fmt.py's guard: when match.submatches is present, emit the same dicts rg's own --json
+  submatches use ("match"/"start"/"end") under a "submatches" key on the match object; when absent
+  (non-rg backends, context lines), omit the key entirely instead of emitting null/empty noise.
+
+Added tests/unit/test_json_fmt_submatches.py (TDD): a MatchLine with submatches asserts the emitted
+  list has correct start/end; a MatchLine without submatches asserts the key is omitted.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(mcp): sanitize tool error responses, stop leaking tracebacks/paths
+
+Three MCP tool handlers (tg_search, tg_ast_search, tg_classify_logs) caught broad exceptions and
+  echoed str(exc)/traceback.format_exc() straight into the client-facing response (plain text, and a
+  JSON "detail" field for the structured-json mode). That can disclose absolute filesystem paths,
+  internal module structure, or a full stack trace to the MCP client - an information-disclosure bug
+  (q11).
+
+Add _sanitized_tool_error / _sanitized_tool_error_text helpers: they log the full exception (message
+  + traceback) to stderr for server-side debugging, and return only a stable "<tool> failed due to
+  an internal error (<ExceptionType>)" message to the wire, matching the existing {code, message,
+  retryable} error-envelope shape used elsewhere in this file. The call still fails closed - callers
+  still get a clear failure signal, just not the internals.
+
+Add tests/unit/test_mcp_error_sanitization.py covering all three fixed handlers (structured-json and
+  plain-text modes) plus the new helpers directly: a handler raising with a path-bearing message
+  must not echo that path/traceback in the response, must still signal failure, and the full detail
+  must land on stderr instead.
+
+* fix(inventory): thread --max-repo-files into the walk instead of walk-then-slice
+
+build_inventory() called _iter_repo_files(root, max_files=None), which walks the ENTIRE tree before
+  slicing to max_files afterward. On a huge repo that is unbounded work despite the cap.
+  _iter_repo_files already supports a real bucketed early-stop (repo_map.py) -- thread the requested
+  cap straight into the iterator so the walk itself stops once it has enough files.
+
+Request max_files + 1 (not max_files) so the truncation notice can still distinguish "exactly
+  max_files files exist" from "more files exist" without walking any further than one file past the
+  cap. The truncated-reporting contract (scan_limit.possibly_truncated / truncation_cause) is
+  unchanged.
+
+Adds tests/unit/test_inventory_max_files.py: a spy on _iter_repo_files proves the walker is now
+  called with a bounded max_files (not None), and an os.scandir counter over a 40-top-level-dir
+  fixture proves the walk stops after touching only a handful of directories near the cap instead of
+  all 40.
+
+* fix(io): cap directory-scan entries + .gitignore read size (Q14/Q15)
+
+DirectoryScanner.walk() had no cap on how many dir/file entries it would visit, so a pathological
+  tree (deep/wide fanout, or a fan-bomb) could make a single scan run unbounded. _load_ignore_spec()
+  also slurped .gitignore whole with no size limit, so a giant file could blow memory.
+
+Add a defensive traversal budget (env-overridable via TG_DIR_SCAN_MAX_ENTRIES, default 200_000
+  entries): once exceeded, the walk stops descending and sets scan_truncated/scan_truncation_cause
+  rather than silently dropping the rest of the tree, mirroring the possibly_truncated /
+  truncation_cause DoS-guard style already used in cli/inventory.py and cli/repo_map.py.
+
+Add a byte cap on .gitignore reads (env-overridable via TG_GITIGNORE_MAX_BYTES, default 1 MiB):
+  reads at most the cap, discards a dangling partial final line at the cut boundary, and flags
+  gitignore_truncated instead of loading the file whole.
+
+Tests (tests/unit/test_directory_scanner_hardening.py) confirmed RED against the pre-fix code
+  (TypeError on the new constructor kwargs) and GREEN after the fix; existing directory-scanner and
+  ast_workflows tests still pass unchanged.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.6 (2026-07-03)
 
 ### Bug Fixes
