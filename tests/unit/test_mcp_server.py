@@ -1936,6 +1936,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkey
     # and assert the RESOLVED absolute path is what reaches the native argv.
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / "src").mkdir()  # path="src" must exist under cwd or the pre-confinement existence check rejects it
     monkeypatch.chdir(cwd)
     resolved_manifest = cwd / "rewrite-audit.json"
 
@@ -2072,6 +2073,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, mon
     # legitimate flag-forwarding path.
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / "src").mkdir()  # path="src" must exist under cwd or the pre-confinement existence check rejects it
     monkeypatch.chdir(cwd)
     monkeypatch.setenv("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ", "1")
     resolved_manifest = cwd / "rewrite-audit.json"
