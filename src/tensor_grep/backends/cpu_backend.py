@@ -21,6 +21,14 @@ class InvalidRegexError(ValueError):
     """Raised when regex syntax is invalid and fixed-string fallback was not requested."""
 
 
+class _RustUtf8DecodeMismatch(RuntimeError):
+    """Internal signal: Rust returned no matches on a non-UTF-8 file; retry via Python decode.
+
+    Typed so the fallback handler can triage a non-UTF-8 retry (fall open, safe) apart from a
+    Rust *syntax* rejection (ReDoS class, must fail closed) by exception type, not message luck.
+    """
+
+
 class CPUBackend(ComputeBackend):
     _shared_literal_index_cache: ClassVar[
         OrderedDict[tuple[str, bool], tuple[tuple[int, int], list[str], dict[str, list[int]]]]
@@ -124,7 +132,20 @@ class CPUBackend(ComputeBackend):
         literals: list[str] = []
         current: list[str] = []
         for ch in pattern:
-            if ch in {".", "*", "^", "$"}:
+            if ch == "*":
+                # The atom immediately before '*' is optional (zero-or-more) and must never be
+                # folded into a required literal — e.g. "colou*r" matches "color" (zero u's), so
+                # the required substring is "colo", not "colou". The guard above already excludes
+                # groups/classes/alternation, so the atom is always the single trailing char.
+                # Pop just that char (not the whole run) so "flagx*ok" still yields "flag". The
+                # `if current` guards avoid IndexError when '*' leads or follows .^$* (".*abc").
+                if current:
+                    current.pop()
+                if current:
+                    literals.append("".join(current))
+                current = []
+                continue
+            if ch in {".", "^", "$"}:
                 if current:
                     literals.append("".join(current))
                     current = []
@@ -316,7 +337,7 @@ class CPUBackend(ComputeBackend):
                     try:
                         Path(file_path).read_text(encoding="utf-8")
                     except UnicodeDecodeError as exc:
-                        raise RuntimeError(
+                        raise _RustUtf8DecodeMismatch(
                             "Rust backend UTF-8 decode mismatch, using Python fallback"
                         ) from exc
 
@@ -338,9 +359,32 @@ class CPUBackend(ComputeBackend):
                     routing_worker_count=1,
                 )
 
+            except _RustUtf8DecodeMismatch as exc:
+                # Non-UTF-8 file: Rust already compiled + ran the pattern in O(n) (ReDoS-safe).
+                # Fall through to the Python latin-1/replace decode path for compatibility.
+                logger.debug(
+                    "Rust UTF-8 decode mismatch for %s, using Python decode: %s", file_path, exc
+                )
+            except (ImportError, ModuleNotFoundError) as exc:
+                # Native extension genuinely absent: Python `re` is the ONLY available engine.
+                # Availability over ReDoS-strictness for this environment condition (expected).
+                logger.debug("rust_core unavailable for %s, using Python regex: %s", file_path, exc)
             except Exception as exc:
-                # Fallback to python `re` only if `tensor_grep.rust_core` is entirely broken or
-                # not supporting the feature.
+                # Lazy import avoids a circular import (rust_backend imports InvalidRegexError from
+                # this module); by call time both modules are fully loaded. Single source of truth.
+                from tensor_grep.backends.rust_backend import _is_invalid_regex_error
+
+                if _is_invalid_regex_error(exc) and not getattr(config, "pcre2", False):
+                    # Rust rejected the pattern's SYNTAX (backreference / look-around) — the
+                    # canonical ReDoS class. Refuse to run it through the backtracking Python
+                    # engine; direct the user to the explicit --pcre2 opt-in (mirrors ripgrep -P).
+                    raise InvalidRegexError(
+                        "pattern needs backreference/look-around syntax the linear-time engine "
+                        f"rejects; pass --pcre2 to opt into the backtracking engine explicitly ({exc})"
+                    ) from exc
+                # Rust ACCEPTED the syntax then failed at runtime (native panic / IO / version
+                # skew): the pattern provably contains no catastrophic-backtracking construct, so
+                # the Python fallback is ReDoS-safe and preserves correctness. Keep falling open.
                 logger.warning(
                     "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
                 )
