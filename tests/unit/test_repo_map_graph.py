@@ -77,7 +77,11 @@ def test_reverse_import_pagerank_caps_broad_query_seed_sets() -> None:
     elapsed = time.perf_counter() - started_at
 
     assert ranks
-    assert elapsed < 2.0
+    # Regression guard, not a micro-benchmark: with _GRAPH_PAGERANK_SEED_FILE_LIMIT=64 the capped
+    # run is ~0.5s; an UNCAPPED regression (all 3173 seeds) is ~50x the work (~25s+). A tight 2.0s
+    # bound false-failed on loaded/hardlink-degraded CI runners (observed 2.7s on windows-py3.11),
+    # so use a generous ceiling that still catches the O(seeds) blowup this test exists to prevent.
+    assert elapsed < 10.0
 
 
 def test_context_tests_skip_framework_scan_without_cheap_test_evidence(monkeypatch) -> None:
