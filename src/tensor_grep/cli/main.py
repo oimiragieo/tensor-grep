@@ -155,7 +155,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg context-render PATH "invoice flow"`
 - `tg edit-plan PATH "add retry with tests"`
 - `tg agent PATH "change behavior" --json`
-- `tg blast-radius-render PATH create_invoice`
+- `tg blast-radius PATH create_invoice --json`  (caller graph; `blast-radius-render` = prose bundle)
 - `tg session open PATH`
 - `tg session daemon start PATH`
 
@@ -2693,6 +2693,13 @@ def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]
         except Exception:
             pass
         status["stale"] = stale
+    if not status["exists"]:
+        # Round-5 UX: a cold cache silently costs ~20-30s on the first query over a large tree.
+        # Surface a self-service remediation (agents read this via `doctor --json`).
+        status["remediation"] = (
+            "run `tg map .` once to warm the AST cache "
+            "(avoids ~20-30s first-query latency on large trees)"
+        )
     return status
 
 
@@ -2889,6 +2896,13 @@ def _build_doctor_payload(
     gpu_status["search_ready"] = (
         cast(dict[str, Any], gpu_status["search_runtime_probe"]).get("status") == "supported"
     )
+    if gpu_status.get("available") and not gpu_status["search_ready"]:
+        # Round-5 UX: `available=True search_ready=False` reads as "GPU is broken". It is not —
+        # GPU search is experimental/opt-in. State that so agents/users don't chase a non-bug.
+        gpu_status["search_ready_note"] = (
+            "GPU search is experimental/opt-in; search_ready=False is expected and not a "
+            "failure -- text and AST search are unaffected"
+        )
     # Complete the promotion_proof tier now that the runtime probe result is available.
     # This is the highest tier: GPU search actually routed through NativeGpuBackend.
     cast(dict[str, Any], gpu_status["tier"])["promotion_proof"] = gpu_status["search_ready"]
@@ -3141,6 +3155,11 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         f"gpu: available={gpu_payload.get('available', False)} "
         f"search_ready={gpu_payload.get('search_ready', False)}"
     )
+    if gpu_payload.get("available") and not gpu_payload.get("search_ready"):
+        lines.append(
+            "  note: search_ready=False is expected -- GPU search is experimental/opt-in, "
+            "not a failure; text and AST search are unaffected"
+        )
     if gpu_tier:
         lines.append(
             f"  tier: installed={gpu_tier.get('installed', False)} "
@@ -3158,6 +3177,11 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         lines.append(f"  size: {ast_payload.get('size_bytes')} bytes")
         lines.append(f"  mtime: {ast_payload.get('mtime')}")
         lines.append(f"  stale: {ast_payload.get('stale')}")
+    else:
+        lines.append(
+            "  hint: cache cold -- run `tg map .` once to warm it "
+            "(avoids ~20-30s first-query latency on large trees)"
+        )
 
     ast_grep_payload = cast(dict[str, Any], payload.get("ast_grep", {}))
     ast_grep_options = "/".join(
@@ -7820,7 +7844,13 @@ def blast_radius(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Return exact callers plus a transitive file/test blast radius for a symbol."""
+    """Return exact callers plus a transitive file/test blast radius for a symbol.
+
+    The machine-readable caller GRAPH. Pass --json for callers, caller_tree,
+    affected_files, blast_radius_score, imports, tests, and graph_trust_summary
+    (~3s on a mid-size repo). Use this, not blast-radius-render, when you want the
+    impact graph rather than a prose paste-in.
+    """
     from tensor_grep.cli.repo_map import build_symbol_blast_radius
 
     try:
@@ -7911,7 +7941,12 @@ def blast_radius_render(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Return a prompt-ready blast-radius bundle for a symbol."""
+    """Return a prompt-ready blast-radius bundle for a symbol.
+
+    Emits PROSE for pasting into a prompt. For the machine-readable caller graph
+    (callers/caller_tree/affected_files/blast_radius_score), use
+    `tg blast-radius SYMBOL --json` instead -- it is faster and agent-consumable.
+    """
     from tensor_grep.cli.repo_map import (
         build_symbol_blast_radius_render,
         build_symbol_blast_radius_render_json,
@@ -7999,7 +8034,10 @@ def blast_radius_plan(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Return a machine-readable blast-radius planning bundle without rendered source text."""
+    """Return a machine-readable blast-radius planning bundle without rendered source text.
+
+    Like `blast-radius --json` but shaped as an edit/action plan (no source snippets).
+    """
     from tensor_grep.cli.repo_map import (
         build_symbol_blast_radius_plan,
         build_symbol_blast_radius_plan_json,
