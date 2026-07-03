@@ -1,6 +1,67 @@
 # CHANGELOG
 
 
+## v1.18.0 (2026-07-03)
+
+### Features
+
+- `tg blast-radius --mermaid` renders the caller graph as a Mermaid diagram (real-use TG-6)
+  ([#335](https://github.com/oimiragieo/tensor-grep/pull/335),
+  [`2fc53c6`](https://github.com/oimiragieo/tensor-grep/commit/2fc53c6d9d4c42a69f9de0ecc2210aff7b69be77))
+
+Real AI-user feedback: an agent doing a doc audit wanted a visual/agent-consumable caller graph. The
+  data already exists (`blast-radius --json` returns callers with exact file+line in ~3s); this adds
+  a `--mermaid` flag that formats those exact call sites as a `graph TD` — one node per unique
+  caller file, one edge to the symbol labeled with the line (or "N calls").
+
+Faithful by construction: only DIRECT callers are drawn (they carry exact file+line evidence). The
+  depth-layered caller_tree has no exact file-to-file edges, so inventing transitive edges would lie
+  to the reader (agent-native contract) — omitted, with a `%% truncated` comment emitted from
+  payload.result_incomplete instead. Output is deterministic (sorted nodes) so it is diff-friendly
+  for doc generators. `--mermaid` is a tg-native command flag (no rg passthrough, no bootstrap/rust
+  allowlist); `--json`/text output paths are unchanged.
+
+Dogfooded end-to-end via the real command path (python -m, not CliRunner): SearchConfig -> 8 caller
+  files with per-file line/call-count edges, valid Mermaid.
+
+TDD: 6 tests (graph-TD shape + per-file edges, multi-call-site dedup with count label, deterministic
+  + quote-escaping, empty-callers with no fabricated edges, truncation note, command-level --mermaid
+  smoke via mocked builder). ruff + mypy clean; 69 blast-radius/CLI tests green. Task #35 (TG-6).
+  Follow-ups: --direction callees (TG-5), tg inventory/diff-docs.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- Disambiguate blast-radius* help + doctor warm-cache/GPU hints (real-use discoverability bundle)
+  ([#334](https://github.com/oimiragieo/tensor-grep/pull/334),
+  [`0b28c20`](https://github.com/oimiragieo/tensor-grep/commit/0b28c20772fff252cc2ca57bf3c447bc28920173))
+
+Real AI-user feedback (Claude Code doc audit, ~1900 files): the agent burned 3.5 min on `tg
+  blast-radius-render` (a prose bundle) and got class-def-only output, when the caller GRAPH it
+  wanted — callers/caller_tree/affected_files/blast_radius_score/imports/tests — already ships via
+  `tg blast-radius --json` in ~3s. It also hit `ast_cache exists=False` (20-30s cold first queries,
+  no remediation) and `gpu available=True search_ready=False` (reads as broken). This bundle fixes 4
+  of the 5 named gaps with pure help/output strings — no new command, no registration sites, no
+  behavior risk (the expensive thing the AI thought it needed already exists).
+
+- TG-1/TG-3: docstrings on all three blast-radius* commands now state WHEN to use each —
+  blast-radius = machine-readable caller graph (lists the --json keys), blast-radius-render = PROSE
+  for a prompt (points to `blast-radius --json`), blast-radius-plan = machine edit-plan. Top-of-file
+  AI-workflows usage block now shows `blast-radius ... --json` (the graph), not the render command.
+  - TG-2: doctor emits a remediation when the AST cache is cold — human `hint:` line AND a
+  `remediation` key in `_doctor_ast_cache_status` JSON (agents read `doctor --json`): run `tg map .`
+  once to warm it. - TG-13: doctor explains `available=True search_ready=False` as expected (GPU
+  search is experimental/opt-in, not a failure) — human `note:` line AND a `search_ready_note` JSON
+  key.
+
+TDD: 6 tests (help contract via CliRunner for the 3 commands; doctor renderer + ast_cache status via
+  synthetic payloads for the cold-cache hint and GPU explainer, each with a negative case). ruff +
+  mypy clean. Grounded against shipped tg 1.17.28 (blast-radius --json verified rich in 3.1s). Task
+  #35 (first PR of the roadmap); the graph GAPS (--direction callees, --format mermaid) + tg
+  inventory/diff-docs follow.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.17.31 (2026-07-03)
 
 ### Bug Fixes
