@@ -6730,14 +6730,23 @@ def docs_coverage(
         help="Maximum repo files to scan before truncating (walk-only; defaults to 50000).",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Emit a paste-ready Markdown table of undocumented files (path/size/first line).",
+    ),
 ) -> None:
     """List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)."""
     import json as _json
 
-    from tensor_grep.cli.docs_coverage import build_docs_coverage, render_docs_coverage_text
+    from tensor_grep.cli.docs_coverage import (
+        build_docs_coverage,
+        render_docs_coverage_fix_markdown,
+        render_docs_coverage_text,
+    )
 
     try:
-        payload = build_docs_coverage(path, max_files=max_repo_files)
+        payload = build_docs_coverage(path, max_files=max_repo_files, include_details=fix)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -6747,6 +6756,9 @@ def docs_coverage(
         return
     # Text output can embed a resolved filesystem path (non-English username -> non-ASCII); route
     # through the cp1252-safe writer, never bare typer.echo (the #346 crash class).
+    if fix:
+        _safe_stdout_line(render_docs_coverage_fix_markdown(payload))
+        return
     _safe_stdout_line(render_docs_coverage_text(payload))
 
 

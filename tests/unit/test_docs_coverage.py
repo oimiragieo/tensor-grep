@@ -6,7 +6,39 @@ only (not semantic), lenient path-or-basename match so it under-reports gaps rat
 
 import pytest
 
-from tensor_grep.cli.docs_coverage import build_docs_coverage, render_docs_coverage_text
+from tensor_grep.cli.docs_coverage import (
+    build_docs_coverage,
+    render_docs_coverage_fix_markdown,
+    render_docs_coverage_text,
+)
+
+
+def test_fix_emits_paste_ready_markdown_table(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "bar.py").write_text(
+        "\ndef undocumented_thing():  # a | pipe to escape\n    return 1\n", encoding="utf-8"
+    )
+    (tmp_path / "CLAUDE.md").write_text("The main module is foo.py.\n", encoding="utf-8")
+
+    payload = build_docs_coverage(str(tmp_path), include_details=True)
+    details = payload["uncovered_details"]
+    assert [d["path"] for d in details] == ["src/bar.py"]
+    assert details[0]["size_bytes"] > 0
+    # first NON-BLANK line, not the leading blank line
+    assert details[0]["first_line"].startswith("def undocumented_thing()")
+
+    table = render_docs_coverage_fix_markdown(payload)
+    assert "| File | Size | First line |" in table
+    assert "`src/bar.py`" in table
+    assert "\\|" in table  # the pipe inside the first line is escaped so the table stays valid
+    assert "src/foo.py" not in table  # covered files are not in the fix table
+
+
+def test_details_absent_unless_requested(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "bar.py").write_text("y = 2\n", encoding="utf-8")
+    assert "uncovered_details" not in build_docs_coverage(str(tmp_path))
 
 
 def test_uncovered_source_file_flagged(tmp_path):

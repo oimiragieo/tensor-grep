@@ -112,8 +112,39 @@ def _relative_posix(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
+def _human_size(num_bytes: int) -> str:
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{num_bytes} B"
+
+
+def _uncovered_file_detail(path: Path, root: Path) -> dict[str, Any]:
+    """path + size + first non-blank line, for the --fix paste-ready table (bounded reads)."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    first_line = ""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                stripped = raw.strip()
+                if stripped:
+                    first_line = stripped[:100]
+                    break
+    except OSError:
+        first_line = ""
+    return {"path": _relative_posix(path, root), "size_bytes": int(size), "first_line": first_line}
+
+
 def build_docs_coverage(
-    path: str = ".", *, max_files: int = DEFAULT_MAX_INVENTORY_FILES
+    path: str = ".",
+    *,
+    max_files: int = DEFAULT_MAX_INVENTORY_FILES,
+    include_details: bool = False,
 ) -> dict[str, Any]:
     """Report which source files are not referenced by any governing doc under ``path``.
 
@@ -168,18 +199,19 @@ def build_docs_coverage(
             continue
     haystack = "\n".join(doc_texts)
 
-    uncovered: list[str] = []
+    uncovered_pairs: list[tuple[str, Path]] = []
     covered = 0
     for file_path in source_paths:
         rel = _relative_posix(file_path, resolved_root)
         if rel in haystack or file_path.name in haystack:
             covered += 1
         else:
-            uncovered.append(rel)
-    uncovered.sort()
+            uncovered_pairs.append((rel, file_path))
+    uncovered_pairs.sort(key=lambda item: item[0])
+    uncovered = [rel for rel, _ in uncovered_pairs]
 
     total = len(source_paths)
-    return {
+    payload: dict[str, Any] = {
         "path": str(resolved_root),
         "totals": {
             "source_files": total,
@@ -201,6 +233,30 @@ def build_docs_coverage(
             "excluded": "tests, fixtures, tool-state (.claude/.git/.tensor-grep), vendor, build/cache",
         },
     }
+    if include_details:
+        # --fix table source: path + size + first non-blank line per uncovered file.
+        payload["uncovered_details"] = [
+            _uncovered_file_detail(file_path, resolved_root) for _, file_path in uncovered_pairs
+        ]
+    return payload
+
+
+def render_docs_coverage_fix_markdown(payload: dict[str, Any]) -> str:
+    """Paste-ready Markdown table of undocumented source files (path/size/first line) -- the exact
+    manual step an agent otherwise hand-rolls to start closing the gaps (dogfood 1.23.0)."""
+    details = payload.get("uncovered_details") or []
+    if not details:
+        return "All source files are referenced by a governing doc. (Nothing to add.)"
+    lines = [
+        f"<!-- {len(details)} undocumented source file(s) under {payload['path']} -->",
+        "| File | Size | First line |",
+        "| --- | ---: | --- |",
+    ]
+    for detail in details:
+        # Escape the Markdown cell delimiter so a `|` in the first line can't break the table.
+        first = str(detail.get("first_line", "")).replace("|", "\\|")
+        lines.append(f"| `{detail['path']}` | {_human_size(int(detail['size_bytes']))} | {first} |")
+    return "\n".join(lines)
 
 
 def render_docs_coverage_text(payload: dict[str, Any]) -> str:
