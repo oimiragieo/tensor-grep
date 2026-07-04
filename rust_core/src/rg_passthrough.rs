@@ -13,7 +13,7 @@ const LEGACY_TG_RG_BINARY_ENV: &str = "TG_RG_BINARY";
 const TG_DISABLE_RG_ENV: &str = "TG_DISABLE_RG";
 static RG_BINARY_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RipgrepSearchArgs {
     pub files: bool,
     pub json: bool,
@@ -386,18 +386,39 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         command.arg("-g").arg(glob);
     }
 
-    if !args.files {
-        for pattern in &args.patterns {
-            command.arg("-e").arg(pattern);
-        }
-    }
-
-    for path in &args.paths {
-        command.arg(path);
+    for operand in ripgrep_operand_args(args) {
+        command.arg(operand);
     }
 
     let status = command.status().context("failed to execute ripgrep")?;
     Ok(status.code().unwrap_or(1))
+}
+
+/// Build ripgrep's operand args: search patterns (flag-safe via `-e`), an end-of-options `--`
+/// sentinel, then the user paths. The `--` is load-bearing SECURITY (CWE-88): without it a user
+/// path beginning with `-` — e.g. `--pre=CMD` — is parsed by rg's own option parser as a FLAG, not
+/// a positional path, escalating toward arbitrary command execution via `--pre`. Extracted so the
+/// sentinel placement is unit-testable without spawning rg (#326's helper was lost in a refactor;
+/// the raw path loop had silently shipped since).
+fn ripgrep_operand_args(args: &RipgrepSearchArgs) -> Vec<String> {
+    let mut operands: Vec<String> = Vec::new();
+    if !args.files {
+        for pattern in &args.patterns {
+            operands.push("-e".to_string());
+            operands.push(pattern.clone());
+        }
+    }
+    // Emit the sentinel ONLY when there are paths to protect: everything after `--` is a
+    // positional path, never an option (even if it begins with `-`). With no user path there is
+    // nothing to guard, and an unconditional trailing `--` would alter the no-path / piped-stdin
+    // invocation (rg then reads stdin), which the parity tests correctly pin.
+    if !args.paths.is_empty() {
+        operands.push("--".to_string());
+        for path in &args.paths {
+            operands.push(path.clone());
+        }
+    }
+    operands
 }
 
 pub fn execute_ripgrep_pcre2_version() -> anyhow::Result<i32> {
@@ -575,5 +596,54 @@ mod tests {
         let selected = select_ripgrep_binary_candidate(vec![path_rg.clone()], Some(bundled_rg));
 
         assert_eq!(selected, Some(path_rg));
+    }
+
+    fn args_with(patterns: Vec<&str>, paths: Vec<&str>, files: bool) -> RipgrepSearchArgs {
+        let mut args = RipgrepSearchArgs::default();
+        args.patterns = patterns.into_iter().map(String::from).collect();
+        args.paths = paths.into_iter().map(String::from).collect();
+        args.files = files;
+        args
+    }
+
+    #[test]
+    fn operand_args_insert_end_of_options_sentinel_before_paths() {
+        // A path beginning with `-` must land AFTER `--` so rg treats it as a path, not a flag
+        // (CWE-88: `--pre=CMD` would otherwise be an option -> RCE).
+        let args = args_with(vec!["TODO"], vec!["--pre=/bin/sh", "src"], false);
+        let operands = ripgrep_operand_args(&args);
+        let sentinel = operands
+            .iter()
+            .position(|a| a == "--")
+            .expect("`--` sentinel present");
+        let evil = operands.iter().position(|a| a == "--pre=/bin/sh").unwrap();
+        let path = operands.iter().position(|a| a == "src").unwrap();
+        assert!(
+            sentinel < evil,
+            "the -- sentinel must precede the injected path"
+        );
+        assert!(sentinel < path);
+        // Patterns stay flag-safe via -e, before the sentinel.
+        assert_eq!(operands[0], "-e");
+        assert_eq!(operands[1], "TODO");
+    }
+
+    #[test]
+    fn operand_args_no_sentinel_when_no_paths() {
+        // No user path -> nothing to protect -> no trailing `--` (preserves the piped-stdin /
+        // no-default-path invocation the parity tests pin).
+        let operands = ripgrep_operand_args(&args_with(vec!["x"], vec![], false));
+        assert!(!operands.contains(&"--".to_string()));
+        assert_eq!(operands, vec!["-e".to_string(), "x".to_string()]);
+    }
+
+    #[test]
+    fn operand_args_files_mode_omits_patterns_but_keeps_sentinel() {
+        // --files mode emits no -e patterns, but paths must still be sentinel-guarded.
+        let operands = ripgrep_operand_args(&args_with(vec!["ignored"], vec!["-l"], true));
+        assert!(!operands.iter().any(|a| a == "-e"));
+        let sentinel = operands.iter().position(|a| a == "--").unwrap();
+        let path = operands.iter().position(|a| a == "-l").unwrap();
+        assert!(sentinel < path);
     }
 }
