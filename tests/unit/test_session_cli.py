@@ -1623,7 +1623,7 @@ def test_top_level_context_render_uses_running_daemon_response_cache(
             "max_sources": 5,
             "max_symbols_per_file": 6,
             "max_render_chars": None,
-            "max_tokens": None,
+            "max_tokens": 16000,
             "model": None,
             "optimize_context": False,
             "render_profile": "llm",
