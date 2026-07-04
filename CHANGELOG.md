@@ -1,6 +1,69 @@
 # CHANGELOG
 
 
+## v1.28.1 (2026-07-04)
+
+### Bug Fixes
+
+- Rg passthrough — restore the -- end-of-options sentinel before user paths (CWE-88 RCE)
+  ([#370](https://github.com/oimiragieo/tensor-grep/pull/370),
+  [`63b6594`](https://github.com/oimiragieo/tensor-grep/commit/63b6594b9567a0f17a07af7ce5bb1bbeb4ac9255))
+
+* fix: rg passthrough — restore the `--` end-of-options sentinel before user paths (CWE-88 RCE)
+
+Round-6 audit rank-1 (HIGH, reachable RCE). execute_ripgrep_search appends user positional paths RAW
+  to the ripgrep child (patterns are flag-safe via -e; paths were not), so a path beginning with `-`
+  — e.g. `--pre=/bin/sh` — is parsed by rg's OWN option parser as a FLAG, not a path, escalating to
+  arbitrary command execution via rg's `--pre` preprocessor. Source→sink: clap positional cli.path
+  -> positional_ripgrep_args -> RipgrepSearchArgs.paths -> the unguarded loop.
+
+git blame shows #326 ("sentinel user paths with --") only touched whitespace at this loop and its
+  `ripgrep_operand_args` helper never actually landed here — the raw loop has shipped since. Fix:
+  extract a testable `ripgrep_operand_args()` that emits patterns (via -e) + a `--` sentinel +
+  paths, and route the command through it. Everything after `--` is a positional path, never an
+  option.
+
+TDD: 3 Rust unit tests (sentinel precedes an injected `--pre=` path; present with no paths; present
+  in --files mode). cargo test --lib 64 passed; fmt clean. CI rebuilds the native asset + runs the
+  rg-passthrough parity tests; dogfood the shipped binary (`tg search PATTERN -- -l`) post-release.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: emit the rg `--` sentinel only when paths exist + update the parity argv assertions
+
+CI (`cargo test --no-default-features`, which compiles extra parity targets my local `cargo test`
+  skipped) caught two things the RCE fix (this branch) missed:
+
+1. The unconditional `--` altered the NO-PATH / piped-stdin invocation (rg then reads stdin), which
+  3 parity tests correctly pin. Fix: emit the sentinel only when `!args.paths.is_empty()` — with no
+  user path there is nothing to guard, and stdin behavior is preserved. Still fully closes CWE-88:
+  whenever a user path IS present it is sentinel-guarded. 2. The 4 explicit-path parity tests pinned
+  the pre-fix (sentinel-less) argv. Updated their expected args to `[..., "--", "<path>"]` (the
+  exact-match ones were the real breaks; the subset-check one is tolerant either way but now asserts
+  the sentinel explicitly).
+
+Unit test flipped: no paths -> no `--`. `cargo test --no-default-features` green except one test
+  blocked by a LOCAL Python `_sre.MAGIC` env mismatch in the spawned fake-rg (unrelated to Rust;
+  clean on CI). fmt clean.
+
+* fix: revert the -- edit on the option-first-root parity test (different rg path)
+
+test_option_first_root_search_forwards_no_line_number_to_rg exercises a DIFFERENT native rg
+  invocation than execute_ripgrep_search (my rank-1 fix), and that path forwards the `.` path
+  without the `--` sentinel -- so requiring `--` in its args was wrong (the test was green before,
+  asserting that path's real behavior). Reverted to its original required args. The 3 exact-match
+  parity tests that DO route through execute_ripgrep_search keep the `--` (correct). Full `cargo
+  test --no-default-features` green (the earlier local red was a broken-PATH-python _sre mismatch
+  masking this single real failure; ran with the venv python to confirm).
+
+FOLLOW-UP: that second rg path forwarding `.` raw is a potential 2nd CWE-88 site -- tracked #49 to
+  verify reachability with a user-controlled `-`-leading path and sentinel it too if so.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.0 (2026-07-04)
 
 ### Features
