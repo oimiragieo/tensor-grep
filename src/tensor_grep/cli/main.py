@@ -6980,8 +6980,14 @@ def context_render(
     max_render_chars: int | None = typer.Option(
         None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
     ),
-    max_tokens: int | None = typer.Option(
-        None, "--max-tokens", min=1, help="Approximate maximum tokens to emit in rendered_context."
+    max_tokens: int = typer.Option(
+        # Bound a prompt-ready render bundle by default, mirroring the `context` command (dogfood
+        # 1.23.0: context-render defaulted to ~800KB, too big for prompt injection). 0 = unbounded;
+        # downstream normalizes <=0 -> None (repo_map.py _normalize / _apply_context_token_budget).
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Bound the rendered_context to ~N tokens for prompt injection (0 = unbounded).",
     ),
     model: str | None = typer.Option(
         None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
@@ -8606,8 +8612,14 @@ def session_context_render_cmd(
     max_render_chars: int | None = typer.Option(
         None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
     ),
-    max_tokens: int | None = typer.Option(
-        None, "--max-tokens", min=1, help="Approximate maximum tokens to emit in rendered_context."
+    max_tokens: int = typer.Option(
+        # Bound a prompt-ready render bundle by default, mirroring the `context` command (dogfood
+        # 1.23.0: context-render defaulted to ~800KB, too big for prompt injection). 0 = unbounded;
+        # downstream normalizes <=0 -> None (repo_map.py _normalize / _apply_context_token_budget).
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Bound the rendered_context to ~N tokens for prompt injection (0 = unbounded).",
     ),
     model: str | None = typer.Option(
         None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
