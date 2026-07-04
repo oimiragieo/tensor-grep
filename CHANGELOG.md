@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.22.0 (2026-07-04)
+
+### Features
+
+- Tg context --max-tokens — bound the pack for prompt injection (dogfood)
+  ([#359](https://github.com/oimiragieo/tensor-grep/pull/359),
+  [`05c7fb0`](https://github.com/oimiragieo/tensor-grep/commit/05c7fb0904639ed5f212f206ca3fae7e01fbe617))
+
+Dogfood v1.19.9: `tg context` returned a 542KB (>150K-token) pack that "blows any context window" —
+  build_context_pack had NO output-size cap (only a files-scanned cap), so an unbounded default
+  included every ranked file's full content/symbols.
+
+Fix: `tg context --max-tokens` (default 16000) bounds the serialized pack. FILE-DRIVEN + coherent —
+  it reduces the ranked-file count via apply_repo_map_output_limits (which keeps each retained file
+  WITH its symbols/imports/matches), so the bounded pack is a smaller top-ranked slice, never a file
+  list gutted of its symbols (verified: 0 orphaned symbols). Adapts to file size (a repo of huge
+  files fits fewer; small files, more). Emits an honest `token_budget` field. `--max-tokens 0` =
+  unbounded.
+
+SCOPED to the CLI: build_context_pack's max_tokens defaults to None (unbounded), so library callers
+  (session / edit-plan / mcp) are UNCHANGED — only the `tg context` command bounds by default.
+
+On this repo: 1206KB -> 73KB (coherent top file + its 102 symbols). TDD: 4 budget tests (bounds +
+  coherence + opt-out + not-truncated-when-small); 32 context regression + docs-governance green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.21.0 (2026-07-04)
 
 ### Features
