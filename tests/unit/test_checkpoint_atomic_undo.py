@@ -30,6 +30,36 @@ def _make_project(root: Path, files: dict[str, str]) -> None:
         target.write_text(content, encoding="utf-8")
 
 
+def test_undo_cleanup_does_not_remove_or_follow_a_directory_symlink(tmp_path: Path) -> None:
+    """Round-7 fresh-eyes: the post-undo empty-dir cleanup sweep must skip symlinks.
+
+    ``root.rglob('*')`` yields a directory symlink, ``is_dir()`` follows it, and ``rmdir()`` would
+    delete the user's symlink (or act through it on some platforms) -- the symlink-follow deletion
+    class. The symlink is created BEFORE the checkpoint so undo's extra-file removal does not touch
+    it and it reaches the cleanup sweep.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"src/alpha.py": "alpha\n"})
+
+    external = tmp_path / "external"
+    (external / "keep").mkdir(parents=True)
+    link = root / "linkdir"
+    try:
+        link.symlink_to(external, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported / not privileged on this platform")
+
+    created = checkpoint_store.create_checkpoint(str(root))
+    (root / "src" / "alpha.py").write_text("alpha-MUTATED\n", encoding="utf-8")  # something to undo
+    checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+
+    assert link.is_symlink(), "the cleanup sweep removed the directory symlink"
+    assert (external / "keep").is_dir(), (
+        "the cleanup sweep acted THROUGH the symlink into its target"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test: corrupt snapshot aborts BEFORE touching any working-tree file
 # ---------------------------------------------------------------------------

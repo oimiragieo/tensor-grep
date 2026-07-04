@@ -1166,6 +1166,12 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
         for directory in sorted(root.rglob("*"), reverse=True):
+            # Never follow or remove a symlink during the empty-dir cleanup sweep: is_dir() follows
+            # the link (True for a symlink -> dir), so an rmdir here could delete a user-placed
+            # directory symlink (or, on some platforms, act through it) -- the symlink-follow
+            # deletion class from the AGENTS.md hardening lens. Only real dirs we created are pruned.
+            if directory.is_symlink():
+                continue
             if not directory.is_dir():
                 continue
             if directory == _checkpoint_storage_dir(root).parent:
