@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.28.7 (2026-07-04)
+
+### Bug Fixes
+
+- Serialize implicit-session removal under index_lock (round-6/7 r3 cross-process RMW race)
+  ([#376](https://github.com/oimiragieo/tensor-grep/pull/376),
+  [`4674a0b`](https://github.com/oimiragieo/tensor-grep/commit/4674a0b54ccdf3f844c80ee64eddf9bfdcbb2b27))
+
+Round-6/7 audit r3 (HIGH). session_daemon._remove_implicit_session_payload did an UNLOCKED
+  _load_index -> filter -> _write_index on the same index.json that open_session/refresh_session
+  mutate under index_lock (session_store.py:617/694). A concurrent locked open_session insert racing
+  the implicit-session eviction cleanup could be lost (the removal writes back the pre-insert set),
+  or the removal clobbered -> an orphaned session payload invisible to `list` and never
+  retention-pruned (reintroducing the round-4 disk-growth DoS). tg-located the fn at
+  session_daemon.py:714 (the audit said session_store.py -- corrected).
+
+Fix: wrap the RMW in `index_lock(_index_path(root))`, mirroring the existing locked writers.
+  IndexLockTimeoutError is swallowed with the other best-effort exceptions -- this implicit cleanup
+  must not crash the eviction path, and skipping under sustained contention loses no insert (it
+  never writes). 1 concurrency test (open racing removal keeps both invariants); 13 index-lock + 34
+  daemon-security green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.6 (2026-07-04)
 
 ### Bug Fixes
