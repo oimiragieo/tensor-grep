@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.28.5 (2026-07-04)
+
+### Bug Fixes
+
+- Serialize ExternalLSPClient.start() check-then-spawn (round-6 r9 concurrency race)
+  ([#374](https://github.com/oimiragieo/tensor-grep/pull/374),
+  [`cb3524d`](https://github.com/oimiragieo/tensor-grep/commit/cb3524dbd5b08c9df718b6f547ce1e847fd718ea))
+
+Round-6/7 audit r9 (HIGH concurrency). start() did an unlocked check-then-spawn: `if self.process is
+  not None and poll() is None: return` then subprocess.Popen. Two ThreadingMixIn daemon worker
+  threads calling into the SAME cached client (get_client is keyed per (root,language) and shared)
+  both pass the None-check and both Popen -> one language-server child is orphaned + routing is
+  corrupted. Becomes live once the warm daemon holds long-lived clients (P0-3).
+
+Fix: a SEPARATE _start_lock (not _lock -- start()'s initialize handshake calls request() which takes
+
+_lock, so reusing it would re-entrant-deadlock) with double-checked locking: fast-path return if
+  already running, else acquire _start_lock, re-check, then _start_locked() does the
+  spawn+handshake. 2 tests (6 concurrent start() -> exactly 1 Popen; _start_lock is not _lock). LSP
+  regression 48 green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.4 (2026-07-04)
 
 ### Bug Fixes
