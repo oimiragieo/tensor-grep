@@ -429,6 +429,50 @@ def test_lifecycle_monitor_shuts_down_on_max_uptime(tmp_path: Path, monkeypatch)
         server.server_close()
 
 
+def test_lifecycle_monitor_defers_shutdown_while_request_in_flight(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # audit r8: a request in flight must block the idle/uptime self-shutdown (no mid-request reset)
+    # until it drains. max-uptime is already exceeded here, so only inflight gates the shutdown.
+    monkeypatch.setattr(session_daemon, "_DAEMON_LIFECYCLE_POLL_SECONDS", 0.01)
+    monkeypatch.setenv(session_daemon._DAEMON_MAX_UPTIME_SECONDS_ENV, "0.05")
+    monkeypatch.setenv(session_daemon._DAEMON_IDLE_SHUTDOWN_SECONDS_ENV, "0")
+
+    server = session_daemon._ThreadedSessionDaemon(
+        tmp_path.resolve(), ("127.0.0.1", 0), token="tok"
+    )
+    serve_thread = _serve(server)
+    stop_event = threading.Event()
+    monitor = threading.Thread(
+        target=session_daemon._run_daemon_lifecycle_monitor,
+        args=(server, stop_event),
+        daemon=True,
+    )
+    try:
+        with server._request_lock:
+            server.inflight_requests = 1  # a request is mid-dispatch
+        server.started_at -= (
+            10.0  # max-uptime already exceeded (but well under the 30s drain grace)
+        )
+        monitor.start()
+        # Uptime is past the cap, but a request is in flight and we are inside the drain grace:
+        # the daemon must NOT tear itself down.
+        serve_thread.join(timeout=0.3)
+        assert serve_thread.is_alive(), "daemon shut down mid-request despite inflight_requests > 0"
+        # Drain the in-flight request -> the monitor may now self-shutdown.
+        with server._request_lock:
+            server.inflight_requests = 0
+        serve_thread.join(timeout=3)
+        assert not serve_thread.is_alive(), (
+            "daemon should self-shutdown once in-flight work drained"
+        )
+    finally:
+        stop_event.set()
+        server.shutdown()
+        serve_thread.join(timeout=2)
+        server.server_close()
+
+
 def test_lifecycle_monitor_returns_when_both_limits_disabled(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv(session_daemon._DAEMON_MAX_UPTIME_SECONDS_ENV, "0")
     monkeypatch.setenv(session_daemon._DAEMON_IDLE_SHUTDOWN_SECONDS_ENV, "0")
