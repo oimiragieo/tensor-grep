@@ -434,10 +434,12 @@ def _envelope(path: Path) -> dict[str, Any]:
     }
 
 
-# dogfood 1.28.3 feature #3: a machine-readable remediation carried IN the JSON scan_limit, so a
-# JSON-consuming agent gets the actionable next step without parsing the stderr warning (a truncated
-# scan with a zero/small count otherwise reads as a real "not found" answer -- a silent-truncation
-# trap). Present (non-null) only when the scan actually dropped project files.
+# dogfood 1.28.3 feature #3: a machine-readable remediation carried as a top-level `scan_remediation`
+# sibling of `scan_limit`, so a JSON-consuming agent gets the actionable next step without parsing the
+# stderr warning (a truncated scan with a zero/small count otherwise reads as a real "not found"
+# answer -- a silent-truncation trap). Kept OUT of the scan_limit dict on purpose: scan_limit is a
+# stable exact-shape contract (facts), scan_remediation is the advice. Non-null only when the scan
+# actually dropped project files.
 _SCAN_LIMIT_TRUNCATED_REMEDIATION = (
     "A truncated scan dropped project files, so a zero or small count is NOT trustworthy. "
     "Re-run scoped to a subdirectory PATH, raise --max-repo-files, or warm the index with "
@@ -449,6 +451,9 @@ def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
     scan_limit = source.get("scan_limit")
     if isinstance(scan_limit, dict):
         payload["scan_limit"] = dict(scan_limit)
+        # Propagate the advice sibling alongside the facts (only when the source carried it).
+        if "scan_remediation" in source:
+            payload["scan_remediation"] = source["scan_remediation"]
 
 
 def _is_test_file(path: Path) -> bool:
@@ -4525,8 +4530,8 @@ def build_repo_map(
                 # the full picture.
                 "possibly_truncated": _truncated,
                 "truncation_cause": _cause if _capped else None,
-                "remediation": _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None,
             }
+            payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -4630,8 +4635,8 @@ def build_repo_map_incremental(
             "scanned_files": capped_file_count,
             "possibly_truncated": _truncated,
             "truncation_cause": _cause if _capped else None,
-            "remediation": _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None,
         }
+        payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
     return payload
 
 

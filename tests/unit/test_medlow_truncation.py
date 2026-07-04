@@ -173,15 +173,16 @@ def test_scan_limit_remediation_present_only_when_truncated() -> None:
         for i in range(20):
             (src / f"module_{i}.py").write_text(f"def func_{i}(): pass\n", encoding="utf-8")
 
-        truncated = build_repo_map(str(root), max_repo_files=5).get("scan_limit", {})
-        assert truncated.get("possibly_truncated") is True
-        assert isinstance(truncated.get("remediation"), str) and truncated["remediation"], (
-            "a truncated scan must carry a non-empty remediation string"
-        )
+        truncated_map = build_repo_map(str(root), max_repo_files=5)
+        assert truncated_map["scan_limit"]["possibly_truncated"] is True
+        assert (
+            isinstance(truncated_map.get("scan_remediation"), str)
+            and truncated_map["scan_remediation"]
+        ), "a truncated scan must carry a non-empty scan_remediation string"
 
-        complete = build_repo_map(str(root), max_repo_files=512).get("scan_limit", {})
-        assert complete.get("possibly_truncated") is False
-        assert complete.get("remediation") is None
+        complete_map = build_repo_map(str(root), max_repo_files=512)
+        assert complete_map["scan_limit"]["possibly_truncated"] is False
+        assert complete_map.get("scan_remediation") is None
 
 
 def test_truncation_cause_none_when_cap_not_reached() -> None:
