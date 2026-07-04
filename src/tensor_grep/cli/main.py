@@ -8577,9 +8577,20 @@ def session_context_cmd(
         "--daemon",
         help="Route this request through the warm localhost session daemon.",
     ),
+    max_tokens: int = typer.Option(
+        # Bound the session context pack for prompt injection, matching the standalone `context`
+        # command (dogfood 1.27.0: `session context --daemon` was UNBOUNDED at ~557KB / 384 files
+        # while standalone capped to ~84KB — a 6x payload bump on the daemon surface agents use for
+        # speed). 0 = unbounded opt-out. Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS.
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Bound the context pack to ~N tokens for prompt injection (0 = unbounded).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a context pack derived from a cached session."""
+    from tensor_grep.cli.repo_map import _apply_context_token_budget
     from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import session_context
 
@@ -8604,6 +8615,7 @@ def session_context_cmd(
                     "path": resolved_path,
                     "query": resolved_query,
                     "refresh_on_stale": refresh_on_stale,
+                    "max_tokens": max_tokens,
                 },
             )
         else:
@@ -8613,6 +8625,10 @@ def session_context_cmd(
                 resolved_path,
                 refresh_on_stale=refresh_on_stale,
             )
+        # Bound the pack for prompt injection on BOTH the direct and daemon paths (the daemon still
+        # returns the full pack today; this guarantees the agent-facing payload is capped). 0 =
+        # unbounded. The budget records token_budget honestly and never orphans a symbol.
+        payload = _apply_context_token_budget(payload, max_tokens)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
