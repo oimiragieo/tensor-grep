@@ -13,6 +13,7 @@ Pure-CPU, no AST parse, no API key.
 
 from __future__ import annotations
 
+import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -140,11 +141,19 @@ def _uncovered_file_detail(path: Path, root: Path) -> dict[str, Any]:
     return {"path": _relative_posix(path, root), "size_bytes": int(size), "first_line": first_line}
 
 
+def _matches_ignore(rel: str, name: str, ignore: tuple[str, ...]) -> bool:
+    """True if a source file should be excluded via --ignore. Matches each glob against BOTH the
+    repo-relative posix path (`commands/*/index.js`) and the bare basename (`*.stub.py`), so an
+    intentional stub group is easy to silence without re-flagging every run."""
+    return any(fnmatch.fnmatch(rel, glob) or fnmatch.fnmatch(name, glob) for glob in ignore)
+
+
 def build_docs_coverage(
     path: str = ".",
     *,
     max_files: int = DEFAULT_MAX_INVENTORY_FILES,
     include_details: bool = False,
+    ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Report which source files are not referenced by any governing doc under ``path``.
 
@@ -182,6 +191,14 @@ def build_docs_coverage(
             )  # a governing doc documents source, not tests
             and not _is_fixture_path(file_path)
             and not _looks_like_binary_file(file_path)
+            # --ignore: an intentional stub group is excluded entirely (not counted as uncovered nor
+            # dragging coverage_pct). Only pay the relative-path cost when globs were actually given.
+            and not (
+                ignore
+                and _matches_ignore(
+                    _relative_posix(file_path, resolved_root), file_path.name, ignore
+                )
+            )
         ):
             source_paths.append(file_path)
 
@@ -222,6 +239,7 @@ def build_docs_coverage(
         },
         "doc_files": sorted(_relative_posix(d, resolved_root) for d in doc_paths),
         "uncovered_files": uncovered,
+        "applied_ignore": list(ignore),
         "scan_limit": {
             "max_files": max_files,
             "possibly_truncated": possibly_truncated,

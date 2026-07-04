@@ -6729,6 +6729,13 @@ def docs_coverage(
         min=1,
         help="Maximum repo files to scan before truncating (walk-only; defaults to 50000).",
     ),
+    ignore: list[str] = typer.Option(
+        [],
+        "--ignore",
+        help="Glob(s) of source files to exclude entirely (repeatable). Matched against the "
+        "repo-relative path and basename, e.g. --ignore 'commands/*/index.js' --ignore '*.stub.py'. "
+        "An intentional stub group stops being re-flagged and no longer drags coverage_pct.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     fix: bool = typer.Option(
         False,
@@ -6746,7 +6753,9 @@ def docs_coverage(
     )
 
     try:
-        payload = build_docs_coverage(path, max_files=max_repo_files, include_details=fix)
+        payload = build_docs_coverage(
+            path, max_files=max_repo_files, include_details=fix, ignore=tuple(ignore)
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
