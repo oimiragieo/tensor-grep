@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.23.0 (2026-07-04)
+
+### Features
+
+- Orient central_files expose a `score` alias (dogfood — agents threshold on `score`)
+  ([#361](https://github.com/oimiragieo/tensor-grep/pull/361),
+  [`75504f1`](https://github.com/oimiragieo/tensor-grep/commit/75504f1b3e318f0c777b828de199e93cf51e96ce))
+
+Dogfood v1.20.0: "orient central_files JSON still has score: null — the ranking is now good but
+  opaque; surface the score so agents can threshold." The composite centrality is already emitted as
+  `graph_score`, but agents thresholding on a generic `score` key found it absent (null). Add
+  `score` as a stable populated alias of `graph_score` so both keys work. Trivial, additive, no
+  ranking change.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.22.1 (2026-07-04)
 
 ### Bug Fixes
