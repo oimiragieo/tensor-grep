@@ -106,9 +106,14 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
             for s in rm.get("symbols", [])
             if str(s.get("file")) == file_path
         ][:6]
+        rounded_score = round(centrality[file_path], 6)
         result.append({
             "file": file_path,
-            "graph_score": round(centrality[file_path], 6),
+            # `graph_score` is the composite centrality; `score` is a stable alias so agents that
+            # threshold on a generic `score` key find it populated (dogfood v1.20.0: "central_files
+            # JSON still has score: null — surface the score so agents can threshold").
+            "graph_score": rounded_score,
+            "score": rounded_score,
             "symbols": file_symbols,
         })
     return result
