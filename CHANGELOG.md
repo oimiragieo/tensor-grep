@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.28.6 (2026-07-04)
+
+### Bug Fixes
+
+- Checkpoint undo cleanup must not follow/remove a directory symlink (round-7, symlink-follow
+  deletion) ([#375](https://github.com/oimiragieo/tensor-grep/pull/375),
+  [`3fdfff1`](https://github.com/oimiragieo/tensor-grep/commit/3fdfff16378dcc58558e0604b2eea1dc957b798f))
+
+Round-7 fresh-eyes audit (HIGH, NEW). undo_checkpoint's post-undo empty-dir cleanup sweep
+  (checkpoint_store.py) iterates root.rglob("*") and rmdir()s empty directories. is_dir() FOLLOWS a
+  symlink, so a user-placed directory symlink pointing at an empty target was is_dir()=True +
+  iterdir()-empty -> rmdir'd, deleting the user's symlink (or acting through it on some platforms)
+  -- the AGENTS.md symlink-follow deletion class (sibling of the round-3 checkpoint symlink fixes,
+  #30).
+
+Fix: skip symlinks in the sweep (`if directory.is_symlink(): continue`) before the is_dir() check --
+  only real directories the operation created are pruned. Test creates the symlink BEFORE the
+  checkpoint (so undo's extra-file removal doesn't touch it and it reaches the sweep) and asserts
+  the symlink survives + its external target is untouched; guarded for platforms without symlink
+  privilege. Checkpoint regression (19) green; ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.5 (2026-07-04)
 
 ### Bug Fixes
