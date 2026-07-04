@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.27.0 (2026-07-04)
+
+### Features
+
+- Docs-coverage --check exits non-zero on drift (CI doc-drift gate, dogfood 1.26.0)
+  ([#368](https://github.com/oimiragieo/tensor-grep/pull/368),
+  [`467a22d`](https://github.com/oimiragieo/tensor-grep/commit/467a22dc90c0a6ed9a7b214adcecbf1b5e4fd4b4))
+
+Dogfood suggestion #5: with --check, docs-coverage exits 1 when any source file is uncovered (or,
+  with --stale, any reference is stale) and 0 when clean -- so `tg docs-coverage --check` (or
+  `--stale --check`) becomes a CI gate that fails the job on doc drift. The report is still printed
+  BEFORE the non-zero exit so CI shows exactly what failed. Respects --ignore (an intentional stub
+  group doesn't fail the gate). 4 CliRunner tests (uncovered->1, clean->0, --ignore->0, --stale->1).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.26.0 (2026-07-04)
 
 ### Features
