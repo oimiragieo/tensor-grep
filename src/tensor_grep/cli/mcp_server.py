@@ -74,6 +74,12 @@ _NATIVE_TG_REMEDIATION = (
     "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
 )
 _DEFAULT_MCP_REPO_SCAN_LIMIT = 512
+# Bound the context payload on the AGENT surface by default (round-6 rank-4). The #359 cap only
+# reached the CLI (typer default 16000); the MCP tools an agent actually calls defaulted to None
+# (unbounded), so a context pack/render could balloon to ~800KB straight into a model's prompt.
+# Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS; 0/None = explicit unbounded opt-out (a guard test
+# pins them equal). Literal keeps the heavy repo_map import lazy.
+_DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000
 
 _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_rulesets",
@@ -1716,16 +1722,21 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_context_pack(query: str, path: str = ".") -> str:
+def tg_context_pack(
+    query: str, path: str = ".", max_tokens: int | None = _DEFAULT_MCP_CONTEXT_MAX_TOKENS
+) -> str:
     """
     Return a ranked repository context pack for edit planning.
 
     Args:
         query: Query text used to rank relevant files, symbols, and tests.
         path: File or directory to inventory.
+        max_tokens: Bound the pack for prompt injection (default ~16000; 0/None = unbounded).
     """
     try:
-        return _inject_mcp_contract_fields(json.dumps(build_context_pack(query, path), indent=2))
+        return _inject_mcp_contract_fields(
+            json.dumps(build_context_pack(query, path, max_tokens=max_tokens), indent=2)
+        )
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -1806,7 +1817,7 @@ def tg_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
-    max_tokens: int | None = None,
+    max_tokens: int | None = _DEFAULT_MCP_CONTEXT_MAX_TOKENS,
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
@@ -1999,7 +2010,7 @@ def tg_session_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
-    max_tokens: int | None = None,
+    max_tokens: int | None = _DEFAULT_MCP_CONTEXT_MAX_TOKENS,
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
