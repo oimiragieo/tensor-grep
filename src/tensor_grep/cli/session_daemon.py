@@ -18,6 +18,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
+from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock
 from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
@@ -26,6 +27,7 @@ from tensor_grep.cli.session_store import (
     _SESSION_VERSION,
     _configured_positive_int,
     _ensure_session_not_stale,
+    _index_path,
     _json_size_bytes,
     _load_index,
     _resolve_request_session_target,
@@ -714,12 +716,20 @@ def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> i
 def _remove_implicit_session_payload(path: str, session_id: str) -> None:
     root = _resolve_root(Path(path))
     try:
-        _session_payload_path(root, session_id).unlink(missing_ok=True)
-        records = [record for record in _load_index(root) if record.session_id != session_id]
-        _write_index(root, records)
-    except (OSError, ValueError):
-        # ValueError: a traversal-shaped session_id is refused by _session_payload_path;
-        # treat implicit cleanup as best-effort (fails closed) rather than raising.
+        # Round-6/7 r3: serialize the index read-modify-write under the SAME cross-process lock
+        # open_session / refresh_session use (session_store.py:617/694). Without it, this unlocked
+        # load->filter->write races a concurrent locked insert: this process reads the index, the
+        # other inserts a new session record, this process writes back the filtered set WITHOUT
+        # that record -> a silently lost session entry (orphaned payload, never retention-pruned).
+        with index_lock(_index_path(root)):
+            _session_payload_path(root, session_id).unlink(missing_ok=True)
+            records = [record for record in _load_index(root) if record.session_id != session_id]
+            _write_index(root, records)
+    except (OSError, ValueError, IndexLockTimeoutError):
+        # ValueError: a traversal-shaped session_id is refused by _session_payload_path.
+        # IndexLockTimeoutError: this implicit cleanup is best-effort -- under sustained lock
+        # contention, skip it (retention prunes the record later) rather than crash the eviction
+        # path; we never WROTE, so no insert is lost by skipping.
         pass
 
 

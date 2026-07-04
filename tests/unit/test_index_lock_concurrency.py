@@ -190,6 +190,45 @@ def test_concurrent_refresh_session_no_lost_insert(
     assert indexed == set(session_ids)
 
 
+def test_concurrent_open_and_implicit_removal_no_lost_insert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-6/7 r3: session_daemon._remove_implicit_session_payload did an UNLOCKED
+    load->filter->write on the SAME index.json that open_session mutates. A concurrent
+    open_session (locked) racing the implicit-session eviction cleanup could lose the open's
+    insert, or the removal could be clobbered. Both must now serialize under index_lock."""
+    from tensor_grep.cli import session_daemon
+
+    root = _make_project(tmp_path)
+    victim = session_store.open_session(str(root)).session_id  # the implicit session to evict
+
+    orig_write_index = session_store._write_index
+
+    def slow_write_index(r: Path, recs: list) -> None:
+        time.sleep(0.05)  # widen the RMW window so the opener holds the lock across the race
+        return orig_write_index(r, recs)
+
+    monkeypatch.setattr(session_store, "_write_index", slow_write_index)
+
+    opened: dict[str, str] = {}
+
+    def opener() -> None:
+        opened["new"] = session_store.open_session(str(root)).session_id
+
+    def remover() -> None:
+        session_daemon._remove_implicit_session_payload(str(root), victim)
+
+    threads = [threading.Thread(target=opener), threading.Thread(target=remover)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    indexed = {rec.session_id for rec in session_store._load_index(root)}
+    assert opened["new"] in indexed  # the concurrent open's insert survived the removal
+    assert victim not in indexed  # and the removal was not clobbered by the open
+
+
 # --------------------------------------------------------------------------------------
 # Non-contended hot path guard (tdd_test_legit A): the lock must not add material overhead
 # on the normal, uncontended path, and must not wrap build_repo_map / the snapshot copy.
