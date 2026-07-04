@@ -1,6 +1,80 @@
 # CHANGELOG
 
 
+## v1.23.2 (2026-07-04)
+
+### Bug Fixes
+
+- Ceo audit batch — json golden contract, MCP stdio DoS cap, atomic Node swap, install-docs supply
+  chain ([#363](https://github.com/oimiragieo/tensor-grep/pull/363),
+  [`bd87975`](https://github.com/oimiragieo/tensor-grep/commit/bd879752bf2bca168ca8a79223e37baec030f437))
+
+* fix: CEO audit batch — json golden contract, MCP stdio cap, atomic Node swap, install-docs supply
+  chain
+
+- #2 (HIGH, contract drift): --json now emits `submatches` (Q6/#353, matching rg --json +
+  ripgrep_fmt), but the e2e golden snapshot still omitted them ->
+  test_output_golden_contract[json_multi_file-python-m] was RED (e2e suite isn't in the unit-only CI
+  job, so #353 merged green). Decided the contract (emit submatches = correct rg-parity) and updated
+  the golden. Full golden suite green (41). - #6 (MED, DoS): the MCP stdio Content-Length
+  compatibility reader did an unbounded stdin.read(n) -- a hostile/huge Content-Length = memory DoS.
+  Cap at 64MB (mirrors the LSP reader), refuse oversized/ non-positive frames fail-closed. 3 new
+  tests. - #7 (MED, robustness): _ensure_node_runtime rmtree'd the runtime BEFORE moving the
+  replacement -> a move/extract failure could brick a working provider runtime. Now stages next-door
+  + backs up + does an atomic os.replace swap + verifies + restores the backup on any failure. - #8
+  (LOW/MED, supply chain): install.md's curl|sh one-liners fetch from mutable `main`; added a
+  supply-chain note pointing to the checksum-verified pip/uvx path + pinned release assets.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: byte-cap all native-asset downloads (audit #5)
+
+_download_native_frontdoor_asset used urlretrieve (a socket timeout, no byte cap), and the detached
+  refresh/upgrade paths called urlretrieve directly. An oversized/malicious CDN response could
+  exhaust disk/memory before the checksum is verified. Rewrote the helper to a chunked, byte-capped
+  + timeout'd download (mirrors lsp_provider_setup._download; 512MB ceiling) and routed ALL three
+  sites (_maybe_download candidates loop, _schedule_windows_native_frontdoor_refresh, upgrade)
+  through it. 2 behavioral tests (oversized -> raises before finishing; within-cap -> succeeds).
+
+* fix: byte-cap native-asset downloads correctly — reporthook, not urlopen (audit #5 fix-up)
+
+The prior commit switched _download_native_frontdoor_asset to urlopen, which (a) broke 8 tests that
+  mock urlretrieve and (b) would NameError inside the detached refresh/upgrade helper SCRIPT strings
+  (those run in a separate process where the module function does not exist). Correct approach: keep
+  urlretrieve + socket timeout and enforce the byte cap via its reporthook (actual bytes read =
+  block_number * read_size; Content-Length/total_size is attacker-controlled and not trusted). The
+  in-process helper uses the reporthook; the two detached script strings get an inline reporthook
+  cap. All native/upgrade/download tests green (83); the reporthook cap has its own 2 behavioral
+  tests.
+
+* fix: rg passthrough — drop manual `cmd /d /c` .cmd wrap (CWE-88 arg injection, audit #3)
+
+command_for_executable manually wrapped a .cmd/.bat rg shim as `cmd /d /c <program> <args>`. That
+  makes cmd.exe the program, so Rust std applies plain CreateProcess argv quoting and cmd.exe
+  RE-PARSES the search args -- a `&`/`|`/`%` in an (MCP-)caller-supplied pattern injects a command
+  (the BatBadBut / CVE-2024-24576 class) whenever ripgrep resolves to a .cmd shim (scoop/npm).
+
+Since Rust 1.77.2 (the crate pins 1.96.0) std detects a .bat/.cmd program and spawns it via cmd.exe
+  WITH the CVE-fixed per-arg escaping, so plain Command::new(program) is both correct and
+  injection-safe. Removed the manual wrap + the now-dead is_windows_batch_script helper. cargo check
+  + clippy + fmt clean; CI rebuilds + runs the native rg-passthrough parity tests.
+
+* revert: restore json_multi_file golden (submatches are backend-sensitive, not stale)
+
+CI proved finding #2 was misdiagnosed. The audit ran on an rg-equipped box, where Q6/#353 makes
+  `--json` emit `submatches`; the golden (authored on CI, which has no ripgrep -> Python backend ->
+  no submatches) omitted them, so it read as "stale". But updating the golden to HAVE submatches
+  broke every CI test-python job (macOS/Windows/Linux all lack rg -> runtime emits none). The real
+  defect is test NON-DETERMINISM: the golden output depends on whether ripgrep is on PATH. That
+  needs a backend-forcing fix in the golden harness (tracked, #47), not a snapshot edit. Reverting
+  keeps #363's five solid security/robustness fixes (#3 rg-injection, #5 download caps, #6 MCP cap,
+  #7 atomic Node, #8 docs) green on CI.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.23.1 (2026-07-04)
 
 ### Bug Fixes
