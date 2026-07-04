@@ -6747,6 +6747,12 @@ def docs_coverage(
         "--stale",
         help="Inverse mode: report governing-doc references to files that no longer exist.",
     ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Exit non-zero when any file is uncovered (or, with --stale, any reference is stale) "
+        "-- turns docs-coverage into a CI doc-drift gate. Respects --ignore.",
+    ),
 ) -> None:
     """List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)."""
     import json as _json
@@ -6766,6 +6772,9 @@ def docs_coverage(
                 typer.echo(_json.dumps(stale_payload))
             else:
                 _safe_stdout_line(render_docs_stale_text(stale_payload))
+            # --check exits AFTER emitting the report, so CI shows what failed AND fails the job.
+            if check and stale_payload["totals"]["stale"] > 0:
+                raise typer.Exit(1)
             return
         payload = build_docs_coverage(
             path, max_files=max_repo_files, include_details=fix, ignore=tuple(ignore)
@@ -6776,13 +6785,14 @@ def docs_coverage(
 
     if json_output:
         typer.echo(_json.dumps(payload))
-        return
     # Text output can embed a resolved filesystem path (non-English username -> non-ASCII); route
     # through the cp1252-safe writer, never bare typer.echo (the #346 crash class).
-    if fix:
+    elif fix:
         _safe_stdout_line(render_docs_coverage_fix_markdown(payload))
-        return
-    _safe_stdout_line(render_docs_coverage_text(payload))
+    else:
+        _safe_stdout_line(render_docs_coverage_text(payload))
+    if check and payload["totals"]["uncovered"] > 0:
+        raise typer.Exit(1)
 
 
 @app.command()

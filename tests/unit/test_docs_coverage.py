@@ -5,6 +5,7 @@ only (not semantic), lenient path-or-basename match so it under-reports gaps rat
 """
 
 import pytest
+from typer.testing import CliRunner
 
 from tensor_grep.cli.docs_coverage import (
     build_docs_coverage,
@@ -13,6 +14,7 @@ from tensor_grep.cli.docs_coverage import (
     render_docs_coverage_text,
     render_docs_stale_text,
 )
+from tensor_grep.cli.main import app
 
 
 def test_stale_reference_flagged_when_cited_file_deleted(tmp_path):
@@ -42,6 +44,39 @@ def test_stale_ignores_bare_basenames_and_urls(tmp_path):
     )
     # bare basename (no separator) + a URL are never treated as repo paths
     assert build_docs_stale_references(str(tmp_path))["stale_references"] == []
+
+
+def test_check_exits_nonzero_on_uncovered_and_prints_report(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "bar.py").write_text("y = 2\n", encoding="utf-8")  # no doc -> uncovered
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--check"])
+    assert result.exit_code == 1
+    assert "bar.py" in result.output  # the report is still emitted before the non-zero exit
+
+
+def test_check_exits_zero_when_all_covered(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "bar.py").write_text("y = 2\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("bar.py is the module.\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--check"])
+    assert result.exit_code == 0
+
+
+def test_check_respects_ignore(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.stub.py").write_text("y = 2\n", encoding="utf-8")  # only an ignored stub
+    result = CliRunner().invoke(
+        app, ["docs-coverage", str(tmp_path), "--check", "--ignore", "*.stub.py"]
+    )
+    assert result.exit_code == 0  # ignored -> nothing uncovered -> gate passes
+
+
+def test_check_stale_exits_nonzero(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "exists.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("See `src/gone.py`.\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--stale", "--check"])
+    assert result.exit_code == 1
 
 
 def test_fix_emits_paste_ready_markdown_table(tmp_path):
