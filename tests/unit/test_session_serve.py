@@ -526,3 +526,40 @@ def test_daemon_request_separates_connect_and_response_timeouts(monkeypatch) -> 
     assert seen_timeouts[0] == session_daemon_module._DAEMON_CONNECT_TIMEOUT_SECONDS
     assert seen_timeouts[1] == session_daemon_module._DAEMON_RESPONSE_TIMEOUT_SECONDS
     assert seen_timeouts[1] > seen_timeouts[0]
+
+
+def test_daemon_served_symbol_commands_thread_requested_provider(monkeypatch) -> None:
+    """Moat P0-4: every daemon-served symbol command must forward the requested engine.
+
+    Before the fix, all 7 branches called build_symbol_*_from_map with NO semantic_provider kwarg,
+    silently pinning daemon-routed refs/callers/impact/blast-radius to native even when the client
+    asked for lsp/hybrid. The builders are monkeypatched via the name AS IMPORTED INTO session_store.
+    """
+    monkeypatch.setattr(session_store, "_ensure_session_not_stale", lambda *a, **k: None)
+
+    recorded: dict[str, str] = {}
+
+    def _spy(_repo_map, _symbol, *, semantic_provider="native", **_kwargs):
+        recorded["provider"] = semantic_provider
+        return {"symbol": _symbol}
+
+    cases = [
+        ("defs", "build_symbol_defs_from_map"),
+        ("impact", "build_symbol_impact_from_map"),
+        ("refs", "build_symbol_refs_from_map"),
+        ("callers", "build_symbol_callers_from_map"),
+        ("blast_radius", "build_symbol_blast_radius_from_map"),
+        ("blast_radius_render", "build_symbol_blast_radius_render_from_map"),
+        ("blast_radius_plan", "build_symbol_blast_radius_plan_from_map"),
+    ]
+    for command, builder_name in cases:
+        recorded.clear()
+        monkeypatch.setattr(session_store, builder_name, _spy)
+        session_store._serve_session_request_from_payload(
+            "sid",
+            {"command": command, "symbol": "foo", "provider": "lsp"},
+            {"repo_map": {}},
+        )
+        assert recorded.get("provider") == "lsp", (
+            f"{command} dropped semantic_provider (forced native)"
+        )
