@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.28.8 (2026-07-04)
+
+### Bug Fixes
+
+- Confine ruleset_scan.baseline to the policy dir (round-7 arbitrary JSON-file disclosure)
+  ([#377](https://github.com/oimiragieo/tensor-grep/pull/377),
+  [`1a07fa1`](https://github.com/oimiragieo/tensor-grep/commit/1a07fa17090ea6ba49bd5bb634aeb4c5ec86f87e))
+
+Round-7 fresh-eyes (MED-HIGH). apply_policy._validate_ruleset_scan resolved `ruleset_scan.baseline`
+  under policy_dir ONLY for relative paths; an ABSOLUTE path (or a `..`-escaping relative one)
+  bypassed the anchor entirely, and _load_json_object then READ it. When the policy file itself is
+  untrusted (e.g. committed in a repo an agent applies), that is an arbitrary-JSON-file read /
+  disclosure primitive.
+
+Fix: resolve the baseline (absolute or relative) and require it to be within policy_dir via
+  relative_to(), raising PolicyValidationError otherwise -- the same confinement shape as the
+  round-3 path-traversal chokepoints. 1 rejection test (absolute baseline outside the policy dir
+  refused); 71 apply-policy tests green; ruff/mypy clean. tg-navigated.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.7 (2026-07-04)
 
 ### Bug Fixes
