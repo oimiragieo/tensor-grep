@@ -146,6 +146,22 @@ def _validate_ruleset_scan(
         baseline_path = Path(baseline)
         if not baseline_path.is_absolute():
             baseline_path = (policy_dir / baseline_path).resolve()
+        else:
+            baseline_path = baseline_path.resolve()
+        # Confine the baseline to the policy directory (round-7 fresh-eyes). Without this, an
+        # absolute path, or a `..`-escaping relative path, bypasses the policy_dir anchor and
+        # _load_json_object below reads an arbitrary JSON file -- a disclosure primitive when the
+        # policy file itself is untrusted (e.g. committed in a cloned repo an agent applies).
+        try:
+            baseline_path.relative_to(policy_dir.resolve())
+        except ValueError:
+            raise _policy_validation_error({
+                "field": "ruleset_scan.baseline",
+                "message": (
+                    "baseline path must be within the policy directory "
+                    f"({policy_dir}): {baseline_path}"
+                ),
+            }) from None
         if not baseline_path.exists():
             raise _policy_validation_error({
                 "field": "ruleset_scan.baseline",

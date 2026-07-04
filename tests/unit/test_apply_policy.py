@@ -430,6 +430,41 @@ def test_load_apply_policy_resolves_relative_baseline_against_policy_file(tmp_pa
     assert policy.ruleset_scan.baseline == str(baseline_path.resolve())
 
 
+def test_load_apply_policy_rejects_baseline_outside_policy_dir(tmp_path: Path) -> None:
+    # Round-7 fresh-eyes: an absolute (or ..-escaping) baseline that leaves the policy directory
+    # must be refused -- otherwise _load_json_object reads an arbitrary JSON file, a disclosure
+    # primitive when the policy file itself is untrusted.
+    from tensor_grep.cli.apply_policy import PolicyValidationError, load_apply_policy
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.json"
+    secret.write_text(json.dumps({"token": "s3cr3t"}), encoding="utf-8")
+
+    policy_root = tmp_path / "repo"
+    policy_root.mkdir()
+    policy_path = _write_policy(
+        policy_root,
+        {
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": {
+                "enabled": True,
+                "pack": "auth-safe",
+                "language": "python",
+                "baseline": str(secret),  # absolute path OUTSIDE the policy directory
+            },
+            "on_failure": "warn",
+        },
+    )
+
+    with pytest.raises(PolicyValidationError) as excinfo:
+        load_apply_policy(str(policy_path))
+    messages = " ".join(detail.get("message", "") for detail in excinfo.value.details)
+    assert "within the policy directory" in messages
+
+
 def test_evaluate_apply_policy_reports_success_for_all_null_checks(tmp_path: Path) -> None:
     from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
 
