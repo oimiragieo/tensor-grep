@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v1.23.3 (2026-07-04)
+
+### Bug Fixes
+
+- Context-render bounds --max-tokens by default (dogfood 1.23.0 — was ~800KB unbounded)
+  ([#364](https://github.com/oimiragieo/tensor-grep/pull/364),
+  [`7869eb2`](https://github.com/oimiragieo/tensor-grep/commit/7869eb2c244ddc3e6d3f44f2911464f7aa75f3fd))
+
+* fix: context-render bounds --max-tokens by default (dogfood 1.23.0 — was ~800KB unbounded)
+
+`tg context-render` and `tg session context-render` defaulted --max-tokens to None, so a
+  "prompt-ready" render bundle ballooned to ~800KB (dogfood 1.23.0: too big for prompt injection).
+  Mirror the `tg context` command: default to 16000 tokens, min=0, 0 = explicit unbounded opt-out.
+  The downstream already normalizes <=0 -> None (repo_map.py:6069/9749/10333), so 0 stays unbounded
+  and a positive value caps. Two CliRunner tests pin the default (16000) and the 0=unbounded
+  opt-out.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: context-render daemon request now carries the 16000 default max_tokens
+
+The context-render default cap (this PR) changed the CLI default from None -> 16000, so the daemon
+  request in test_top_level_context_render_uses_running_daemon_response_cache now sends
+  max_tokens=16000 (not None). Updated the expected request. (Miss: I ran the new + budget + mcp
+  tests locally but not test_session_cli.py, which asserts the exact daemon request dict; CI caught
+  it. Ran the full session_cli + a broad context/render/daemon sweep = 161 green before re-push.)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.23.2 (2026-07-04)
 
 ### Bug Fixes
