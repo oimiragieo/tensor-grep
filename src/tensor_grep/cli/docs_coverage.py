@@ -14,6 +14,7 @@ Pure-CPU, no AST parse, no API key.
 from __future__ import annotations
 
 import fnmatch
+import re
 from pathlib import Path
 from typing import Any
 
@@ -298,4 +299,122 @@ def render_docs_coverage_text(payload: dict[str, Any]) -> str:
             lines.append(f"  ... and {len(uncovered) - 200} more (see --json)")
     else:
         lines.append("\nAll source files are referenced by a governing doc.")
+    return "\n".join(lines)
+
+
+# --stale extraction. We ONLY mine deliberate references -- backtick-quoted spans and markdown link
+# targets -- never bare prose, and require a path separator + a known extension, to keep precision
+# high in doc-heavy repos (dogfood lesson: a naive doc scan floods with illustrative paths). Anchors
+# / line suffixes (`foo.py#L10`, `foo.py:10`) are stripped.
+_DOC_PATH_RE = re.compile(r"`([^`\n]+)`|\]\(([^)\s]+)\)")
+_REFERENCE_SUFFIXES = _SOURCE_SUFFIXES | frozenset({
+    ".md",
+    ".rst",
+    ".txt",
+    ".toml",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".cfg",
+    ".ini",
+    ".sh",
+    ".ps1",
+    ".lock",
+})
+
+
+def _looks_like_repo_path(token: str) -> bool:
+    token = token.strip()
+    if not token or " " in token or "://" in token or token[:1] in {"#", "@"}:
+        return False
+    if token.startswith(("http", "mailto:")):
+        return False
+    if "/" not in token:  # a bare basename is too ambiguous to flag as stale
+        return False
+    return Path(token).suffix.lower() in _REFERENCE_SUFFIXES
+
+
+def _extract_doc_path_references(text: str) -> set[str]:
+    refs: set[str] = set()
+    for match in _DOC_PATH_RE.finditer(text):
+        token = (match.group(1) or match.group(2) or "").split("#", 1)[0].split(":", 1)[0]
+        token = token.strip().lstrip("./")
+        if _looks_like_repo_path(token):
+            refs.add(token)
+    return refs
+
+
+def build_docs_stale_references(
+    path: str = ".", *, max_files: int = DEFAULT_MAX_INVENTORY_FILES
+) -> dict[str, Any]:
+    """Inverse of coverage: governing-doc references to files that no longer exist (doc drift the
+    other way). A reference is stale only when it resolves to NEITHER the doc's own directory nor the
+    repo root AND its parent directory DOES exist -- a moved/deleted file, not a fictional example
+    path (precision guard so illustrative snippets don't flood)."""
+    root = Path(path)
+    if not root.exists():
+        raise FileNotFoundError(f"docs-coverage path does not exist: {path}")
+
+    walked = _iter_repo_files(root, max_files=max_files + 1)
+    possibly_truncated = len(walked) > max_files
+    if possibly_truncated:
+        walked = walked[:max_files]
+    resolved_root = root.resolve()
+
+    doc_paths = [
+        file_path
+        for file_path in walked
+        if not any(part in _EXCLUDED_DIR_PARTS for part in file_path.parts)
+        and _is_governing_doc(file_path.name)
+    ]
+
+    stale: list[dict[str, str]] = []
+    references_checked = 0
+    for doc_path in doc_paths:
+        try:
+            text = doc_path.read_text(encoding="utf-8", errors="replace")[:_MAX_DOC_BYTES]
+        except OSError:
+            continue
+        doc_rel = _relative_posix(doc_path, resolved_root)
+        for reference in sorted(_extract_doc_path_references(text)):
+            references_checked += 1
+            candidates = (doc_path.parent / reference, resolved_root / reference)
+            if any(candidate.exists() for candidate in candidates):
+                continue
+            if any(candidate.parent.exists() for candidate in candidates):
+                stale.append({"doc": doc_rel, "reference": reference})
+    stale.sort(key=lambda item: (item["doc"], item["reference"]))
+
+    return {
+        "path": str(resolved_root),
+        "totals": {
+            "doc_files": len(doc_paths),
+            "references_checked": references_checked,
+            "stale": len(stale),
+        },
+        "stale_references": stale,
+        "scan_limit": {
+            "max_files": max_files,
+            "possibly_truncated": possibly_truncated,
+            "truncation_cause": "project-files" if possibly_truncated else None,
+        },
+    }
+
+
+def render_docs_stale_text(payload: dict[str, Any]) -> str:
+    """ASCII-only text render of the --stale report."""
+    totals = payload["totals"]
+    lines = [
+        f"Stale doc references for {payload['path']}",
+        f"docs={totals['doc_files']}  references_checked={totals['references_checked']}  "
+        f"stale={totals['stale']}",
+    ]
+    stale = payload["stale_references"]
+    if stale:
+        lines.append(f"\nReferences to files that no longer exist ({len(stale)}):")
+        lines.extend(f"  {item['doc']} -> {item['reference']}" for item in stale[:200])
+        if len(stale) > 200:
+            lines.append(f"  ... and {len(stale) - 200} more (see --json)")
+    else:
+        lines.append("\nNo stale references found (every cited path still exists).")
     return "\n".join(lines)
