@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.20.0 (2026-07-04)
+
+### Features
+
+- Composite orient centrality (fan-in cap + fan-out + symbol density) + .tsx entrypoints
+  ([#357](https://github.com/oimiragieo/tensor-grep/pull/357),
+  [`66daa52`](https://github.com/oimiragieo/tensor-grep/commit/66daa52b60e0e31958b38574d77697ecd32b4b03))
+
+Dogfood (v1.19.9, ~1900-file TS repo): orient's top "central files" were leaf data files
+  (constants.ts/figures.ts/barrel index.ts imported by many) while the real hubs (QueryEngine.ts,
+  state.ts, tools.ts) were absent — pure import in-degree ranks a widely-imported data SINK above a
+  real hub. Entry points listed index.ts barrels, not main.tsx.
+
+Fix: composite centrality = min(fan_in, 12) + fan_out + min(symbol_density, 25). A real
+  architectural hub both RECEIVES and SENDS import edges AND has substance (many symbols); a data
+  sink only receives, so capping in-degree + adding fan-out + symbol density demotes it — no fragile
+  filename/leaf heuristic. Plus main.tsx/app.tsx/cli.tsx/index.tsx added to entry-point detection.
+
+On THIS repo the composite now ranks the real hubs (repo_map.py/main.py/mcp_server.py) top, and
+  main.py/main.rs appear in entry_points. TDD: a data sink (imported by 20, imports 0, 1 symbol) no
+  longer outranks a hub (imported by 3, imports 6, 20 symbols) — RED under pure in-degree. Docs
+  still excluded (#352); existing orient tests green. HONEST SCOPE: validated on a fixture + this
+  repo's non-regression, NOT on the user's TS corpus (I don't have it) — a ranking improvement, not
+  proven on the exact reported tree.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.19.9 (2026-07-03)
 
 ### Bug Fixes
