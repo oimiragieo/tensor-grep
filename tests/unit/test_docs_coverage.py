@@ -8,9 +8,40 @@ import pytest
 
 from tensor_grep.cli.docs_coverage import (
     build_docs_coverage,
+    build_docs_stale_references,
     render_docs_coverage_fix_markdown,
     render_docs_coverage_text,
+    render_docs_stale_text,
 )
+
+
+def test_stale_reference_flagged_when_cited_file_deleted(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "exists.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(
+        "See `src/exists.py` and `src/gone.py` for details.\n", encoding="utf-8"
+    )
+    payload = build_docs_stale_references(str(tmp_path))
+    stale = {(item["doc"], item["reference"]) for item in payload["stale_references"]}
+    assert ("CLAUDE.md", "src/gone.py") in stale  # deleted file, real parent dir -> stale
+    assert all(ref != "src/exists.py" for _, ref in stale)  # existing file not flagged
+    assert "src/gone.py" in render_docs_stale_text(payload)
+
+
+def test_stale_ignores_fictional_path_without_real_parent(tmp_path):
+    # Precision guard: an illustrative path whose DIRECTORY never existed is not "stale".
+    (tmp_path / "CLAUDE.md").write_text(
+        "Example: `some/imaginary/path.py` is how you would do it.\n", encoding="utf-8"
+    )
+    assert build_docs_stale_references(str(tmp_path))["stale_references"] == []
+
+
+def test_stale_ignores_bare_basenames_and_urls(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text(
+        "Run `pytest`, see `config.py`, visit `https://example.com/x.py`.\n", encoding="utf-8"
+    )
+    # bare basename (no separator) + a URL are never treated as repo paths
+    assert build_docs_stale_references(str(tmp_path))["stale_references"] == []
 
 
 def test_fix_emits_paste_ready_markdown_table(tmp_path):

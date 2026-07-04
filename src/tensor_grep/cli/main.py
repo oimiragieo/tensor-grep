@@ -6742,17 +6742,31 @@ def docs_coverage(
         "--fix",
         help="Emit a paste-ready Markdown table of undocumented files (path/size/first line).",
     ),
+    stale: bool = typer.Option(
+        False,
+        "--stale",
+        help="Inverse mode: report governing-doc references to files that no longer exist.",
+    ),
 ) -> None:
     """List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)."""
     import json as _json
 
     from tensor_grep.cli.docs_coverage import (
         build_docs_coverage,
+        build_docs_stale_references,
         render_docs_coverage_fix_markdown,
         render_docs_coverage_text,
+        render_docs_stale_text,
     )
 
     try:
+        if stale:
+            stale_payload = build_docs_stale_references(path, max_files=max_repo_files)
+            if json_output:
+                typer.echo(_json.dumps(stale_payload))
+            else:
+                _safe_stdout_line(render_docs_stale_text(stale_payload))
+            return
         payload = build_docs_coverage(
             path, max_files=max_repo_files, include_details=fix, ignore=tuple(ignore)
         )
