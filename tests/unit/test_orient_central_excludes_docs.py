@@ -27,6 +27,21 @@ def test_docs_are_never_central_and_code_wins_stem_collision() -> None:
     assert cfg["graph_score"] == 3.0
 
 
+def test_central_files_expose_score_alias() -> None:
+    # dogfood v1.20.0: agents thresholding on a generic `score` key found it null. `score` is a
+    # populated alias of `graph_score` so both work.
+    rm = {
+        "files": ["src/a.py", "src/b.py"],
+        "imports": [{"file": "src/b.py", "imports": ["a"]}],
+        "symbols": [{"name": "A", "kind": "class", "file": "src/a.py"}],
+    }
+    central = _central_files_from_map(rm, max_central_files=10)
+    assert central
+    for entry in central:
+        assert entry["score"] == entry["graph_score"]
+        assert entry["score"] is not None
+
+
 def test_hub_outranks_leaf_constant() -> None:
     # A data SINK (constants.py: imported by 20, imports nothing, 1 symbol) must NOT outrank a real
     # HUB (hub.py: imported by 3, imports 6 modules, 20 symbols). Pure import in-degree ranked the
