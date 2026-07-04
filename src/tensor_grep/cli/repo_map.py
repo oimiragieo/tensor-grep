@@ -10585,6 +10585,26 @@ def _configured_lsp_operation_budget_seconds() -> float:
         return _DEFAULT_LSP_OPERATION_BUDGET_SECONDS
 
 
+def _wait_for_lsp_readiness(
+    client: Any,
+    deadline_monotonic: float,
+    *,
+    probe: Any = None,
+    no_progress_grace_seconds: float = 1.0,
+) -> None:
+    """Best-effort P0-2 readiness gate. Tolerates clients without wait_until_ready (duck-typed
+    fakes/third-party stubs) — the gate is a pre-step that improves first-query completeness;
+    it must never be a new failure mode for the query itself."""
+    waiter = getattr(client, "wait_until_ready", None)
+    if waiter is None:
+        return
+    waiter(
+        deadline_monotonic,
+        probe=probe,
+        no_progress_grace_seconds=no_progress_grace_seconds,
+    )
+
+
 def _lsp_operation_deadline() -> float:
     return time.monotonic() + _configured_lsp_operation_budget_seconds()
 
@@ -10768,6 +10788,10 @@ def _external_workspace_symbols(
             client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(
                 language=language, workspace_root=repo_root
             )
+
+            # P0-2 (zero-grace variant): wait out an advertised indexing round; silent servers
+            # proceed instantly.
+            _wait_for_lsp_readiness(client, deadline_monotonic, no_progress_grace_seconds=0.0)
 
             def _request_symbols(
                 *,
@@ -10985,6 +11009,10 @@ def _external_definitions(
 
             _run_lsp_with_operation_budget(client, deadline_monotonic, _ensure_document)
 
+            # P0-2 (zero-grace variant): progress-advertising servers wait for their indexing
+            # round to end; silent servers proceed instantly (no latency tax on the 2s budget).
+            _wait_for_lsp_readiness(client, deadline_monotonic, no_progress_grace_seconds=0.0)
+
             def _request_definition(
                 *,
                 current_client: Any = client,
@@ -11069,6 +11097,28 @@ def _external_references(
                 deadline_monotonic,
                 _ensure_document,
             )
+
+            # P0-2 readiness gate: wait for the server's workspace index to settle before the
+            # references query — firing immediately answers from a half-built index (the 2-of-14
+            # under-return). Probe = workspace/symbol hit-count stability for servers that never
+            # emit workDoneProgress. A timeout here is honest-partial territory (the P0-1 union +
+            # diverged stamps make the result truthful); it must NOT read as a provider failure.
+            def _symbol_count_probe(
+                *, current_client: Any = client, query: str = symbol
+            ) -> int | None:
+                hits = current_client.request("workspace/symbol", {"query": query})
+                return len(hits) if isinstance(hits, list) else 0
+
+            def _bounded_probe(
+                *,
+                current_client: Any = client,
+                deadline: float = deadline_monotonic,
+                probe_fn: Any = _symbol_count_probe,
+            ) -> int | None:
+                probed = _run_lsp_with_operation_budget(current_client, deadline, probe_fn)
+                return probed if isinstance(probed, int) else None
+
+            _wait_for_lsp_readiness(client, deadline_monotonic, probe=_bounded_probe)
 
             def _request_references(
                 *,
