@@ -6781,6 +6781,15 @@ def context(
     max_repo_files: int | None = typer.Option(
         None, "--max-repo-files", min=1, help="Maximum repo files to scan before ranking."
     ),
+    max_tokens: int = typer.Option(
+        # Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS (literal keeps the heavy repo_map import lazy,
+        # matching inventory's 50_000 pattern; a guard test pins them). The pack is for prompt
+        # injection, so bound it by default -- an unbounded pack ballooned to >1MB (dogfood v1.19.9).
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Bound the context pack to ~N tokens for prompt injection (0 = unbounded).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a ranked repository context pack for edit planning."""
@@ -6800,6 +6809,7 @@ def context(
                     resolved_path,
                     max_files=max_files,
                     max_repo_files=max_repo_files,
+                    max_tokens=max_tokens,
                 )
             )
             return
@@ -6809,6 +6819,7 @@ def context(
             resolved_path,
             max_files=max_files,
             max_repo_files=max_repo_files,
+            max_tokens=max_tokens,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
