@@ -79,6 +79,33 @@ def test_check_stale_exits_nonzero(tmp_path):
     assert result.exit_code == 1
 
 
+def test_exclusion_matches_relative_parts_not_ancestor_dirs(tmp_path):
+    # Round-6 rank-2: a project checked out UNDER a dir named build/venv/target/... must not have
+    # its whole tree excluded (source_files=0 -> coverage_pct=100.0 false green). Only dirs BELOW
+    # the scan root count as excluded.
+    proj = tmp_path / "build" / "proj"  # ancestor 'build' is an _EXCLUDED_DIR_PART
+    (proj / "src").mkdir(parents=True)
+    (proj / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+    (proj / "build").mkdir()  # an INNER build/ that SHOULD still be excluded
+    (proj / "build" / "generated.py").write_text("y = 1\n", encoding="utf-8")
+    payload = build_docs_coverage(str(proj))
+    assert payload["totals"]["source_files"] == 1  # real.py counted, inner build/ excluded
+    assert "src/real.py" in payload["uncovered_files"]
+    assert "build/generated.py" not in payload["uncovered_files"]
+    assert payload["totals"]["coverage_pct"] != 100.0  # was a false 100% before the fix
+
+
+def test_stale_exclusion_matches_relative_parts(tmp_path):
+    proj = tmp_path / "target" / "proj"  # ancestor 'target' is an _EXCLUDED_DIR_PART
+    proj.mkdir(parents=True)
+    (proj / "src").mkdir()
+    (proj / "src" / "exists.py").write_text("x = 1\n", encoding="utf-8")
+    (proj / "CLAUDE.md").write_text("See `src/gone.py`.\n", encoding="utf-8")
+    payload = build_docs_stale_references(str(proj))
+    assert payload["totals"]["doc_files"] == 1  # doc under a 'target' ancestor is still scanned
+    assert any(s["reference"] == "src/gone.py" for s in payload["stale_references"])
+
+
 def test_fix_emits_paste_ready_markdown_table(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "foo.py").write_text("x = 1\n", encoding="utf-8")

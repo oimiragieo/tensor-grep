@@ -142,6 +142,22 @@ def _uncovered_file_detail(path: Path, root: Path) -> dict[str, Any]:
     return {"path": _relative_posix(path, root), "size_bytes": int(size), "first_line": first_line}
 
 
+def _has_excluded_ancestor(file_path: Path, resolved_root: Path) -> bool:
+    """True if any directory component BELOW the scan root is a tool-state/vendor/build dir.
+
+    Match against the RELATIVE-to-root parts, never the absolute path: _iter_repo_files returns
+    resolved (absolute) paths, so checking `file_path.parts` would exclude the ENTIRE repo whenever
+    the checkout itself lives under an ancestor named build/venv/target/... (e.g. a CI path like
+    /build/tensor-grep) -> source_files=0 -> coverage_pct=100.0, a silent false-green. Mirrors
+    inventory._is_test_path's relative-parts handling.
+    """
+    try:
+        relative_parts = file_path.resolve().relative_to(resolved_root).parts
+    except ValueError:
+        relative_parts = file_path.parts
+    return any(part in _EXCLUDED_DIR_PARTS for part in relative_parts)
+
+
 def _matches_ignore(rel: str, name: str, ignore: tuple[str, ...]) -> bool:
     """True if a source file should be excluded via --ignore. Matches each glob against BOTH the
     repo-relative posix path (`commands/*/index.js`) and the bare basename (`*.stub.py`), so an
@@ -181,7 +197,7 @@ def build_docs_coverage(
     for file_path in walked:
         # Tool-state / vendor / build trees are never "documented source" -- skip them entirely so
         # they cannot flood either the doc set or the uncovered set.
-        if any(part in _EXCLUDED_DIR_PARTS for part in file_path.parts):
+        if _has_excluded_ancestor(file_path, resolved_root):
             continue
         if _is_governing_doc(file_path.name):
             doc_paths.append(file_path)
@@ -364,7 +380,7 @@ def build_docs_stale_references(
     doc_paths = [
         file_path
         for file_path in walked
-        if not any(part in _EXCLUDED_DIR_PARTS for part in file_path.parts)
+        if not _has_excluded_ancestor(file_path, resolved_root)
         and _is_governing_doc(file_path.name)
     ]
 
