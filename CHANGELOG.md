@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.22.1 (2026-07-04)
+
+### Bug Fixes
+
+- Force UTF-8 stdout/stderr at the CLI entry — root fix for the typer.echo cp1252 crash class (Q7)
+  ([#360](https://github.com/oimiragieo/tensor-grep/pull/360),
+  [`1c76e49`](https://github.com/oimiragieo/tensor-grep/commit/1c76e497f280d52b9657292f9e404f0b0ed26d61))
+
+Round-5 Q7 + the recurring #346/#42 crash class: typer.echo/print raises UnicodeEncodeError on a
+  legacy cp1252 Windows console for ANY non-ASCII output -- a filesystem path with a non-English
+  username, a U+2028 in a match, an emoji/warning marker. Round-4 fixed individual sites through
+  _safe_stdout_line, but that is whack-a-mole across ~25 dynamic-path echo sites.
+
+Root fix: _force_utf8_streams() at bootstrap.main_entry() reconfigures stdout/stderr to UTF-8 with
+  errors="replace" ONCE, before any command runs -- covering every output path (native passthrough,
+  full CLI, ast workflow). Guarded: no-op where already UTF-8 or the stream can't be reconfigured (a
+  pipe with pending bytes), and errors="replace" guarantees the reconfigure itself never raises.
+  _safe_stdout_line stays as the per-line belt-and-suspenders.
+
+Verified: 4 unit tests (reconfigures cp1252, no-ops on utf-8, survives reconfigure error + a
+  non-TextIO stream) + the FULL unit suite green (3122 passed; the lone agent-capsule ranking
+  failure was a local stale-worktree corpus-pollution artifact -- passes on a clean tree, unrelated
+  to this change). Also removed 8 stale workflow worktrees.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.22.0 (2026-07-04)
 
 ### Features
