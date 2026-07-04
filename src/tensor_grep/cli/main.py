@@ -7640,10 +7640,10 @@ def _resolve_path_and_symbol(
     if symbol_option is not None:
         typer.echo(
             "Warning: --symbol is deprecated for "
-            f"tg {command_name}; use a path-first positional form instead "
-            f"(for example: tg {command_name} <PATH> <SYMBOL>). "
-            "The --symbol form remains accepted during the 1.13.x deprecation cycle "
-            "and will not be removed before 1.14.0.",
+            f"tg {command_name}; pass SYMBOL as a positional instead "
+            f"(shorthand `tg {command_name} <SYMBOL>` with PATH defaulting to '.', or "
+            f"`tg {command_name} <PATH> <SYMBOL>` to scope a large repo). "
+            "The --symbol form remains accepted for backward compatibility.",
             err=True,
         )
         return path, symbol_option

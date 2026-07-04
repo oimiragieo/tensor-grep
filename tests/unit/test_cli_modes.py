@@ -3457,7 +3457,11 @@ def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
             + result.output
         )
         assert f"Warning: --symbol is deprecated for tg {command}" in result.stderr
-        assert f"for example: tg {command} <PATH> <SYMBOL>" in result.stderr
+        # 1.28 dogfood: the warning documents BOTH the shorthand (PATH defaults to '.') and the
+        # path-first form, and no longer carries the stale 1.13.x/1.14.0 deprecation-cycle text.
+        assert f"`tg {command} <SYMBOL>`" in result.stderr
+        assert f"`tg {command} <PATH> <SYMBOL>`" in result.stderr
+        assert "1.14.0" not in result.stderr
         payload = json.loads(result.stdout)
         assert payload["routing_reason"] == routing_reason
         assert payload["symbol"] == "create_invoice"
