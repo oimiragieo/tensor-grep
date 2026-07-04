@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v1.29.0 (2026-07-04)
+
+### Bug Fixes
+
+- Daemon lifecycle monitor must not shut down mid-request (round-7 r8 in-flight drain)
+  ([#378](https://github.com/oimiragieo/tensor-grep/pull/378),
+  [`b18f294`](https://github.com/oimiragieo/tensor-grep/commit/b18f294dc7cc19f2b67bd63ca45aef1cd641e1b2))
+
+Round-7 audit r8 (HIGH). The session daemon is a detached child with daemon_threads=True;
+  note_activity() fired only at request START and _run_daemon_lifecycle_monitor called
+  server.shutdown() (which does NOT join dispatched threads) the moment idle_for>=idle_limit (900s)
+  OR uptime>=max_uptime (86400s), with ZERO in-flight check. A request whose own handling exceeds
+  the idle window, or any request straddling the hard max-uptime, got torn down and the client saw a
+  reset.
+
+Fix: track inflight_requests (incr under _request_lock right after auth+note_activity, decr in a
+  finally). The monitor now treats inflight>0 as "do not shut down" -- the idle path waits until the
+  request drains; the hard max-uptime path waits up to _DAEMON_SHUTDOWN_DRAIN_GRACE_SECONDS (30s) so
+  a wedged request cannot postpone shutdown forever. Also populates the already-reserved
+  inflight_requests stats field (contract declared it, response never set it). 1 lifecycle test
+  (uptime exceeded + inflight>0 stays up; drain -> shuts down); 27 daemon-security green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Features
+
+- Thread semantic_provider through all 7 daemon-served symbol commands (moat P0-4)
+  ([#379](https://github.com/oimiragieo/tensor-grep/pull/379),
+  [`97b9c06`](https://github.com/oimiragieo/tensor-grep/commit/97b9c067fcbbbe3b6a519b962f63cce8ee312062))
+
+Moat P0-4 (the #1 CEO graph-latency ask, round-7-vetted). All 7 symbol branches in
+  _serve_session_request_from_payload (defs/impact/refs/callers/blast_radius/_render/_plan) called
+  build_symbol_*_from_map with NO semantic_provider= kwarg, so every DAEMON-routed graph command was
+  silently pinned to the native engine even when the client asked for lsp/hybrid -- a correctness
+  bug and the blocker for routing the slow graph family through the warm daemon.
+
+Fix: compute provider = str(request.get("provider", "native")) once and thread it into all 7
+  builders. repo_map._normalize_semantic_provider already fails closed to native for an unknown
+  value, so no re-validation here. Verified all 7 builders accept semantic_provider
+  (inspect.signature) before threading. 1 parametrized test asserts each of the 7 commands forwards
+  provider='lsp' (spy on the builder AS IMPORTED INTO session_store); 16 session-serve tests green;
+  ruff/mypy clean.
+
+Next (P0-3): invert the main.py daemon-route guard so `tg refs`/callers/etc. actually reach the
+  daemon, with routing_reason payload-parity normalization (session-refs -> symbol-refs).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.8 (2026-07-04)
 
 ### Bug Fixes
