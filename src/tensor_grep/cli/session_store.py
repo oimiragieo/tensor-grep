@@ -1157,11 +1157,16 @@ def _serve_session_request_from_payload(
         response["routing_reason"] = "session-context-edit-plan"
         return response
 
+    # moat P0-4: thread the requested engine through EVERY daemon-served symbol command. Without
+    # this, all 7 branches dropped semantic_provider and silently pinned refs/callers/impact/
+    # blast-radius to native even when the client asked for lsp/hybrid. repo_map normalizes +
+    # fails closed to native for an unknown value, so no re-validation here.
+    provider = str(request.get("provider", "native"))
     if command == "defs":
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("defs requests require a non-empty symbol")
-        response = build_symbol_defs_from_map(repo_map, symbol)
+        response = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=provider)
         response["session_id"] = session_id
         response["routing_reason"] = "session-defs"
         return response
@@ -1170,7 +1175,7 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("impact requests require a non-empty symbol")
-        response = build_symbol_impact_from_map(repo_map, symbol)
+        response = build_symbol_impact_from_map(repo_map, symbol, semantic_provider=provider)
         response["session_id"] = session_id
         response["routing_reason"] = "session-impact"
         return response
@@ -1179,7 +1184,7 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("refs requests require a non-empty symbol")
-        response = build_symbol_refs_from_map(repo_map, symbol)
+        response = build_symbol_refs_from_map(repo_map, symbol, semantic_provider=provider)
         response["session_id"] = session_id
         response["routing_reason"] = "session-refs"
         return response
@@ -1188,7 +1193,7 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("callers requests require a non-empty symbol")
-        response = build_symbol_callers_from_map(repo_map, symbol)
+        response = build_symbol_callers_from_map(repo_map, symbol, semantic_provider=provider)
         response["session_id"] = session_id
         response["routing_reason"] = "session-callers"
         return response
@@ -1201,6 +1206,7 @@ def _serve_session_request_from_payload(
             repo_map,
             symbol,
             max_depth=int(request.get("max_depth", 3)),
+            semantic_provider=provider,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius"
@@ -1225,6 +1231,7 @@ def _serve_session_request_from_payload(
             optimize_context=bool(request.get("optimize_context", False)),
             render_profile=str(request.get("render_profile", "full")),
             profile=bool(request.get("profile", False)),
+            semantic_provider=provider,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-render"
@@ -1240,6 +1247,7 @@ def _serve_session_request_from_payload(
             max_depth=int(request.get("max_depth", 3)),
             max_files=int(request.get("max_files", 3)),
             max_symbols=int(request.get("max_symbols", 5)),
+            semantic_provider=provider,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-plan"
