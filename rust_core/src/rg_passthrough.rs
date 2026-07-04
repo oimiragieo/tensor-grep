@@ -441,25 +441,13 @@ pub fn ripgrep_is_available() -> bool {
 }
 
 fn command_for_executable(program: &Path) -> Command {
-    #[cfg(windows)]
-    {
-        if is_windows_batch_script(program) {
-            let mut command = Command::new("cmd");
-            command.arg("/d").arg("/c").arg(program);
-            return command;
-        }
-    }
+    // Do NOT manually wrap a .cmd/.bat via `cmd /d /c <program> <args>`: that makes cmd.exe the
+    // program, so std applies plain CreateProcess argv quoting and cmd.exe RE-PARSES the search
+    // args -- a `&`/`|`/`%` in an (MCP-)caller-supplied pattern injects a command (CWE-88 / the
+    // BatBadBut CVE-2024-24576 class) when rg resolves to a .cmd shim. Since Rust 1.77.2 (we pin
+    // 1.96.0) std detects a .bat/.cmd program and spawns it through cmd.exe WITH the CVE-fixed
+    // per-arg escaping, so plain Command::new(program) is both correct and injection-safe.
     Command::new(program)
-}
-
-#[cfg(windows)]
-fn is_windows_batch_script(program: &Path) -> bool {
-    program
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
-        })
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {
