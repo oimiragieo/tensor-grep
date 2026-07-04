@@ -321,6 +321,10 @@ class ExternalLSPClient:
         self.process: subprocess.Popen[Any] | None = None
         self._request_id = 0
         self._lock = threading.Lock()
+        # Serializes start()'s check-then-spawn so concurrent daemon worker threads sharing this
+        # cached client cannot both Popen (round-6 r9). SEPARATE from _lock: start()'s initialize
+        # handshake calls request() which takes _lock, so reusing it would re-entrant-deadlock.
+        self._start_lock = threading.Lock()
         self._max_open_documents = (
             _configured_positive_int(
                 _LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES_ENV_VAR,
@@ -416,8 +420,18 @@ class ExternalLSPClient:
         self._debug_trace.append(entry)
 
     def start(self) -> None:
+        # Fast path (no lock): already running.
         if self.process is not None and self.process.poll() is None:
             return
+        # Serialize the check-then-spawn (round-6 r9): two daemon worker threads calling into the
+        # SAME cached client (get_client is shared per (root,language)) must not both pass the None
+        # check and both Popen, orphaning one child. Double-checked under _start_lock.
+        with self._start_lock:
+            if self.process is not None and self.process.poll() is None:
+                return
+            self._start_locked()
+
+    def _start_locked(self) -> None:
         if self.disabled_until_monotonic > time.monotonic():
             raise LSPTransportError(self.last_error or "LSP provider temporarily unavailable")
         if self.process is not None:
