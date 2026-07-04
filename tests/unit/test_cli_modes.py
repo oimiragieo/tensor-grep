@@ -8294,7 +8294,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         downloads.append(str(url))
         if str(url).endswith("tg-windows-amd64-nvidia.exe"):
             raise OSError("404 Not Found")
@@ -8374,7 +8374,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
             )
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         downloads.append(str(url))
         path = Path(filename)
         if str(url).endswith("tg-windows-amd64-nvidia.exe"):
@@ -8443,7 +8443,7 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         downloads.append(str(url))
         Path(filename).write_text("bad installed native", encoding="utf-8")
         return filename, None
@@ -8502,7 +8502,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         downloads.append(str(url))
         Path(filename).write_text("new native", encoding="utf-8")
         return filename, None
@@ -9515,7 +9515,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         Path(filename).write_text("new native", encoding="utf-8")
         return filename, None
 
@@ -9694,7 +9694,7 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
             return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         downloads.append(str(url))
         Path(filename).write_text("new native", encoding="utf-8")
         return filename, None
@@ -9755,7 +9755,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         downloads.append(str(url))
         Path(filename).write_text("new native", encoding="utf-8")
         return filename, None
@@ -9816,7 +9816,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename):
+    def _fake_urlretrieve(url, filename, *args, **kwargs):
         Path(filename).write_text("new native", encoding="utf-8")
         return filename, None
 
@@ -10479,7 +10479,7 @@ def test_native_frontdoor_download_helpers_use_timeouts(monkeypatch, tmp_path):
     # Asset download bounds urlretrieve with a socket timeout and restores the prior default.
     seen_timeout: list = []
 
-    def _fake_urlretrieve(url, dest):
+    def _fake_urlretrieve(url, dest, *args, **kwargs):
         seen_timeout.append(socket.getdefaulttimeout())
         Path(dest).write_bytes(b"x")
 
