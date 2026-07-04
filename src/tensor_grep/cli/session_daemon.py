@@ -117,7 +117,39 @@ def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
     from tensor_grep.cli.session_store import _write_json_atomic
 
     # audit S3: daemon.json carries the IPC token; write it 0600 so the secret is not exposed.
-    _write_json_atomic(_daemon_metadata_path(root), payload, mode=_DAEMON_METADATA_MODE)
+    metadata_path = _daemon_metadata_path(root)
+    _write_json_atomic(metadata_path, payload, mode=_DAEMON_METADATA_MODE)
+    _restrict_windows_file_to_current_user(metadata_path)
+
+
+def _restrict_windows_file_to_current_user(path: Path) -> None:
+    """Best-effort Windows ACL lockdown of the daemon token file (round-7 r7).
+
+    On POSIX the 0600 mode from _write_json_atomic isolates the token. On Windows os.chmod only
+    toggles the read-only DOS bit -- it grants NO per-user access control, so any local account that
+    can reach the session root could read the IPC token. Remove inherited ACLs and grant only the
+    current user. The HMAC compare_digest gate remains the ENFORCED control; this is defense in
+    depth and fails OPEN (a failed icacls must never break daemon startup).
+    """
+    if sys.platform != "win32":
+        return
+    import getpass
+
+    try:
+        user = os.environ.get("USERNAME") or getpass.getuser()
+    except Exception:
+        return
+    if not user:
+        return
+    try:
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def _daemon_token(metadata: dict[str, Any] | None) -> str:
