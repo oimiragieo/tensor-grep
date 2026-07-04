@@ -74,6 +74,9 @@ _DAEMON_MAX_UPTIME_SECONDS_ENV = "TG_SESSION_DAEMON_MAX_UPTIME_SECONDS"
 _DEFAULT_DAEMON_IDLE_SHUTDOWN_SECONDS = 900.0
 _DEFAULT_DAEMON_MAX_UPTIME_SECONDS = 86400.0
 _DAEMON_LIFECYCLE_POLL_SECONDS = 5.0
+# audit r8: cap the wait for in-flight requests to drain at the hard max-uptime shutdown, so a
+# wedged request cannot postpone the daemon's self-shutdown forever.
+_DAEMON_SHUTDOWN_DRAIN_GRACE_SECONDS = 30.0
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -901,6 +904,9 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
         self.request_count = 0
         # audit I7: track last client activity so an idle daemon can shut itself down.
         self.last_activity_at = monotonic()
+        # audit r8: count in-flight (dispatched, not-yet-completed) requests so the lifecycle
+        # monitor never tears the daemon down mid-request. Guarded by _request_lock.
+        self.inflight_requests = 0
         self._request_lock = threading.Lock()
         self._response_cache_lock = threading.Lock()
         self._implicit_session_lock = threading.Lock()
@@ -957,6 +963,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
             server.request_count += 1
         request_session_id = ""
         request_path = str(server.root)
+        inflight_incremented = False
 
         try:
             request = cast(dict[str, Any], json.loads(line))
@@ -971,6 +978,11 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 self.wfile.flush()
                 return
             server.note_activity()
+            # audit r8: mark this request in-flight (after auth, so unauthorized clients don't
+            # count) so the lifecycle monitor won't shut the daemon down mid-dispatch.
+            with server._request_lock:
+                server.inflight_requests += 1
+            inflight_incremented = True
             session_id = str(request.get("session_id", "")).strip()
             request_path = _resolve_daemon_request_path(
                 server.root,
@@ -1031,6 +1043,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     ),
                     "uptime_seconds": max(0.0, monotonic() - server.started_at),
                     "request_count": server.request_count,
+                    "inflight_requests": server.inflight_requests,
                 }
             elif command == "health":
                 payload, cache_status = _load_payload_with_status_retry(
@@ -1123,6 +1136,10 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 "session_id": request_session_id,
                 "error": {"code": "invalid_request", "message": str(exc)},
             }
+        finally:
+            if inflight_incremented:
+                with server._request_lock:
+                    server.inflight_requests -= 1
 
         self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
         self.wfile.flush()
@@ -1144,10 +1161,24 @@ def _run_daemon_lifecycle_monitor(
         now = monotonic()
         with server._request_lock:
             idle_for = now - server.last_activity_at
+            inflight = server.inflight_requests
         uptime = now - server.started_at
-        if (idle_limit > 0 and idle_for >= idle_limit) or (max_uptime > 0 and uptime >= max_uptime):
-            threading.Thread(target=server.shutdown, daemon=True).start()
-            return
+        idle_reached = idle_limit > 0 and idle_for >= idle_limit
+        uptime_reached = max_uptime > 0 and uptime >= max_uptime
+        if not (idle_reached or uptime_reached):
+            continue
+        # audit r8: never tear the daemon down while a request is in flight -- that resets the
+        # client mid-dispatch. Wait for in-flight work to drain. Bound the wait ONLY for the hard
+        # max-uptime cap (a wedged request must not postpone shutdown forever); the idle path has
+        # no such hard deadline, so it simply waits until inflight == 0.
+        if inflight > 0:
+            past_hard_drain = (
+                max_uptime > 0 and uptime >= max_uptime + _DAEMON_SHUTDOWN_DRAIN_GRACE_SECONDS
+            )
+            if not past_hard_drain:
+                continue
+        threading.Thread(target=server.shutdown, daemon=True).start()
+        return
 
 
 def run_session_daemon_server(path: str = ".") -> None:
