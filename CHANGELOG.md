@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.26.0 (2026-07-04)
+
+### Features
+
+- Docs-coverage --stale flags governing-doc references to files that no longer exist (dogfood
+  1.23.0) ([#367](https://github.com/oimiragieo/tensor-grep/pull/367),
+  [`0fb0a47`](https://github.com/oimiragieo/tensor-grep/commit/0fb0a472bb876fb8943cd704929df80a4b46e698))
+
+Third docs-coverage upgrade: the inverse of coverage -- doc drift the OTHER way (a CLAUDE.md still
+  citing a moved/deleted file). Mines only DELIBERATE references (backtick spans + markdown link
+  targets), requires a path separator + a known extension, and flags a reference stale only when it
+  resolves to NEITHER the doc's dir nor the repo root AND its parent directory DOES exist (a
+  moved/deleted file, not a fictional example path). That precision guard is the diff-docs FP-trap
+  lesson applied up front: dogfooded on tensor-grep's own corpus (8 docs, 42 refs) = 0 false
+  positives. --stale [--json]; 3 tests (real-stale detected, fictional-path guard, bare-basename/URL
+  guard).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.25.0 (2026-07-04)
 
 ### Features
