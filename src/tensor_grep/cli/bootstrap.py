@@ -817,7 +817,31 @@ def _run_requires_ast_workflow(run_args: list[str]) -> bool:
     )
 
 
+def _force_utf8_streams() -> None:
+    """Make stdout/stderr UTF-8 with ``errors="replace"`` so non-ASCII CLI output never raises
+    ``UnicodeEncodeError`` on a legacy cp1252 Windows console (the #346 / #42 crash class: a
+    filesystem path with a non-English username, a U+2028 in a match, an emoji marker, ...). The
+    root fix for the whole ``typer.echo``/``print`` sweep -- one reconfigure at the entry point
+    covers every command instead of routing each site through ``_safe_stdout_line``. No-op where the
+    stream is already UTF-8 or cannot be reconfigured (a pipe with pending bytes, a non-TextIO
+    stream); ``errors="replace"`` guarantees it can never itself raise on write.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        if "utf" in (getattr(stream, "encoding", None) or "").lower():
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # Stream already has buffered output or is detached -- degrade to the per-line
+            # _safe_stdout_line fallback still in place at the call sites; do not crash startup.
+            pass
+
+
 def main_entry() -> None:
+    _force_utf8_streams()
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:
         _print_version()
