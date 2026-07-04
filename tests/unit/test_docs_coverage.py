@@ -41,6 +41,31 @@ def test_details_absent_unless_requested(tmp_path):
     assert "uncovered_details" not in build_docs_coverage(str(tmp_path))
 
 
+def test_ignore_glob_excludes_stub_group_entirely(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "a.stub.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "b.stub.py").write_text("x = 1\n", encoding="utf-8")
+    # no governing doc -> everything is uncovered by default
+    base = build_docs_coverage(str(tmp_path))
+    assert set(base["uncovered_files"]) == {"src/a.stub.py", "src/b.stub.py", "src/real.py"}
+    # --ignore drops the stub group: not flagged, and not counted (coverage_pct reflects real source)
+    filtered = build_docs_coverage(str(tmp_path), ignore=("*.stub.py",))
+    assert filtered["uncovered_files"] == ["src/real.py"]
+    assert filtered["totals"]["source_files"] == 1
+    assert filtered["applied_ignore"] == ["*.stub.py"]
+
+
+def test_ignore_matches_relative_path_glob(tmp_path):
+    (tmp_path / "commands" / "a").mkdir(parents=True)
+    (tmp_path / "commands" / "a" / "index.js").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "real.js").write_text("y = 2\n", encoding="utf-8")
+    filtered = build_docs_coverage(str(tmp_path), ignore=("commands/*/index.js",))
+    assert "commands/a/index.js" not in filtered["uncovered_files"]
+    assert "src/real.js" in filtered["uncovered_files"]
+
+
 def test_uncovered_source_file_flagged(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "foo.py").write_text("x = 1\n", encoding="utf-8")
