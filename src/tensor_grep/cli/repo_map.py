@@ -10696,7 +10696,17 @@ def _merge_agreement_status(
     elif fallback_used and lsp_count == 0:
         agreement_status = "fallback-native"
     elif normalized_provider == "lsp":
-        agreement_status = "lsp-only" if lsp_count > 0 else "native-fallback"
+        if lsp_count == 0:
+            agreement_status = "native-fallback"
+        elif native_count > lsp_count:
+            # native found strictly MORE refs than the LSP index proved -> the LSP result is
+            # incomplete. Report the divergence honestly instead of a clean lsp-only proof (P0-1:
+            # dogfood's 2-of-14 partial was masked as authoritative lsp-only). "diverged" was
+            # structurally unreachable in lsp mode before this. When native<=lsp (they agree, or LSP
+            # proved everything native saw) it stays lsp-only.
+            agreement_status = "diverged"
+        else:
+            agreement_status = "lsp-only"
     elif native_count > 0 and lsp_count > 0 and merged_count == native_count == lsp_count:
         agreement_status = "agreed"
     elif native_count > 0 and lsp_count > 0:
@@ -11827,6 +11837,9 @@ def build_symbol_refs_from_map(
     normalized_provider = _normalize_semantic_provider(semantic_provider)
     external_refs: list[dict[str, Any]] = []
     fallback_used = False
+    # Native ref count captured BEFORE any lsp/hybrid merge -> the divergence signal for
+    # provider_agreement (a partial LSP result must surface as diverged, not a clean lsp-only proof).
+    native_reference_count = len(references)
     if normalized_provider != "native":
         external_refs = [
             dict(current)
@@ -11835,29 +11848,33 @@ def build_symbol_refs_from_map(
             )
             if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
         ]
-        if normalized_provider == "lsp":
-            proof_refs = [dict(current) for current in external_refs if _is_lsp_proof_row(current)]
-            fallback_used = not bool(proof_refs)
-            references = proof_refs or references
-        else:
-            merged_refs: dict[tuple[str, int, int], dict[str, Any]] = {}
-            for current_ref in [*external_refs, *references]:
-                key = (
-                    str(current_ref["file"]),
-                    int(current_ref["line"]),
-                    int(current_ref.get("end_line", current_ref["line"])),
-                )
-                if key in merged_refs:
-                    merged_refs[key] = _merge_navigation_duplicate(
-                        merged_refs[key],
-                        dict(current_ref),
-                    )
-                else:
-                    merged_refs[key] = dict(current_ref)
-            references = list(merged_refs.values())
-            references.sort(
-                key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
+        # Merge (union) native + external refs for BOTH lsp and hybrid. A partial / under-indexed
+        # LSP result must NEVER discard the correct native answer: the old `references = proof_refs
+        # or references` REPLACED the native rows with the LSP rows, then recomputed native_count
+        # from the replaced list -> always 0 -> falsely reported lsp-only / lsp_proof:True (dogfood
+        # v1.20.0: `tg refs --provider lsp` returned 2 of 14, marked authoritative -- a silent
+        # wrong-output / fail-closed-contract violation). Union keeps the native truth; the
+        # provider_agreement + lsp_proof below are then stamped honestly (native>lsp -> diverged).
+        proof_refs = [dict(current) for current in external_refs if _is_lsp_proof_row(current)]
+        merged_refs: dict[tuple[str, int, int], dict[str, Any]] = {}
+        for current_ref in [*external_refs, *references]:
+            key = (
+                str(current_ref["file"]),
+                int(current_ref["line"]),
+                int(current_ref.get("end_line", current_ref["line"])),
             )
+            if key in merged_refs:
+                merged_refs[key] = _merge_navigation_duplicate(merged_refs[key], dict(current_ref))
+            else:
+                merged_refs[key] = dict(current_ref)
+        references = list(merged_refs.values())
+        references.sort(
+            key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
+        )
+        if normalized_provider == "lsp" and len(proof_refs) < native_reference_count:
+            # LSP proved fewer refs than the native scan -> its index is incomplete for this symbol;
+            # flag a fallback so the partial is not mis-reported as a clean lsp-only proof.
+            fallback_used = True
 
     references = _dedupe_symbol_references(references)
     for reference in references:
@@ -11897,7 +11914,7 @@ def build_symbol_refs_from_map(
         fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
-        native_count=len([current for current in references if not _is_lsp_proof_row(current)]),
+        native_count=native_reference_count,
         lsp_count=lsp_proof_count,
         merged_count=len(references),
         fallback_used=fallback_used,
