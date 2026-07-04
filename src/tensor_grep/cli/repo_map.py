@@ -5730,12 +5730,64 @@ def _build_context_pack_from_map(
     return payload
 
 
+# Default output-token budget for the `tg context` CLI (dogfood v1.19.9: an UNBOUNDED pack ballooned
+# to >1MB — "blows any context window"). The pack is for prompt injection, so bound it by default at
+# the CLI layer only; build_context_pack itself defaults to unbounded so library callers
+# (session/edit-plan/mcp) are unchanged unless they opt in.
+_DEFAULT_CONTEXT_MAX_TOKENS = 16000
+
+
+def _estimate_payload_tokens(payload: dict[str, Any]) -> int:
+    return _estimate_tokens(json.dumps(payload, ensure_ascii=False))
+
+
+def _apply_context_token_budget(payload: dict[str, Any], max_tokens: int | None) -> dict[str, Any]:
+    """Bound the serialized context pack to ~``max_tokens`` so it stays prompt-injection-ready.
+
+    FILE-DRIVEN + coherent: reduces the ranked-file count via ``apply_repo_map_output_limits`` (which
+    keeps each retained file WITH its symbols/imports/matches consistently), so the bounded pack is a
+    smaller top-ranked slice, never a file list gutted of its symbols. Adapts to file size -- a repo
+    of huge files fits fewer, a repo of small files fits more. ``max_tokens`` of ``None`` / ``<= 0``
+    is a no-op (unbounded opt-out). Records ``token_budget`` honestly.
+    """
+    if max_tokens is None or max_tokens <= 0:
+        return payload
+    estimated = _estimate_payload_tokens(payload)
+    if estimated <= max_tokens:
+        capped = dict(payload)
+        capped["token_budget"] = {
+            "max_tokens": max_tokens,
+            "estimated_tokens": estimated,
+            "truncated": False,
+        }
+        return capped
+    file_count = len(payload.get("files", []))
+    capped = payload
+    while file_count > 1 and estimated > max_tokens:
+        # Proportional first guess, then strictly shrink so we always make progress.
+        guess = max(1, min(file_count - 1, file_count * max_tokens // max(estimated, 1)))
+        capped = apply_repo_map_output_limits(payload, max_files=guess)
+        estimated = _estimate_payload_tokens(capped)
+        file_count = guess
+    if capped is payload:  # over budget even before shrinking (single-file pack); take the top file
+        capped = apply_repo_map_output_limits(payload, max_files=1)
+        estimated = _estimate_payload_tokens(capped)
+    capped = dict(capped)
+    capped["token_budget"] = {
+        "max_tokens": max_tokens,
+        "estimated_tokens": estimated,
+        "truncated": True,
+    }
+    return capped
+
+
 def build_context_pack(
     query: str,
     path: str | Path = ".",
     *,
     max_files: int | None = None,
     max_repo_files: int | None = None,
+    max_tokens: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     # Match map/agent/blast-radius: when the caller does not bound the scan,
@@ -5754,7 +5806,8 @@ def build_context_pack(
         query,
         _profiling_collector=_profiling_collector,
     )
-    return apply_repo_map_output_limits(context_payload, max_files=max_files)
+    limited = apply_repo_map_output_limits(context_payload, max_files=max_files)
+    return _apply_context_token_budget(limited, max_tokens)
 
 
 def build_context_pack_json(
@@ -5763,9 +5816,16 @@ def build_context_pack_json(
     *,
     max_files: int | None = None,
     max_repo_files: int | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     return json.dumps(
-        build_context_pack(query, path, max_files=max_files, max_repo_files=max_repo_files),
+        build_context_pack(
+            query,
+            path,
+            max_files=max_files,
+            max_repo_files=max_repo_files,
+            max_tokens=max_tokens,
+        ),
         indent=2,
     )
 
