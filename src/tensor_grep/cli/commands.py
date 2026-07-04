@@ -48,6 +48,7 @@ KNOWN_COMMANDS = {
     "map",
     "orient",
     "inventory",
+    "docs-coverage",
     "session",
     "doctor",
     "checkpoint",

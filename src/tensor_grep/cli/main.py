@@ -6703,6 +6703,36 @@ def inventory(
     typer.echo(render_inventory_text(payload))
 
 
+@app.command(name="docs-coverage")
+def docs_coverage(
+    path: str = typer.Argument(".", help="File or directory to check for governing-doc coverage"),
+    max_repo_files: int = typer.Option(
+        50_000,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before truncating (walk-only; defaults to 50000).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)."""
+    import json as _json
+
+    from tensor_grep.cli.docs_coverage import build_docs_coverage, render_docs_coverage_text
+
+    try:
+        payload = build_docs_coverage(path, max_files=max_repo_files)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(_json.dumps(payload))
+        return
+    # Text output can embed a resolved filesystem path (non-English username -> non-ASCII); route
+    # through the cp1252-safe writer, never bare typer.echo (the #346 crash class).
+    _safe_stdout_line(render_docs_coverage_text(payload))
+
+
 @app.command()
 def orient(
     path: str = typer.Argument(".", help="File or directory to orient on"),

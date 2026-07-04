@@ -928,6 +928,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)
+    #[command(name = "docs-coverage", disable_help_flag = true)]
+    DocsCoverage {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Open, query, and manage cached edit-loop sessions
     #[command(name = "session", disable_help_flag = true)]
     Session {
@@ -3577,6 +3583,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Map { args } => handle_python_passthrough("map", args),
         Commands::Orient { args } => handle_python_passthrough("orient", args),
         Commands::Inventory { args } => handle_python_passthrough("inventory", args),
+        Commands::DocsCoverage { args } => handle_python_passthrough("docs-coverage", args),
         Commands::Session { args } => handle_python_passthrough("session", args),
         Commands::Doctor { args } => handle_python_passthrough("doctor", args),
         Commands::RepairLauncher { args } => handle_python_passthrough("repair-launcher", args),
