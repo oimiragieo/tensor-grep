@@ -51,6 +51,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "map",
     "orient",
     "inventory",
+    "docs-coverage",
     "session",
     "doctor",
     "checkpoint",
