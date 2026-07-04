@@ -35,6 +35,13 @@ irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/instal
 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
 ```
 
+> **Supply-chain note.** These one-liners fetch the install script from the mutable `main` branch. For
+> a reproducible, verifiable install, prefer `pip install tensor-grep==<version>` or `uvx
+> tensor-grep@<version>` (checksum-verified through PyPI), or download a pinned asset from the
+> [Releases page](https://github.com/oimiragieo/tensor-grep/releases) and verify its published
+> checksum before running. As with any `curl | sh` installer, review the script before piping it to a
+> shell.
+
 ## Option 2: Using `npx`
 
 If you have Node.js installed, you can use `npx` to download and run the correct binary for your platform automatically:

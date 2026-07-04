@@ -338,18 +338,40 @@ def _ensure_node_runtime(root: Path) -> Path:
 
     archive_name = _node_archive_name()
     url = f"https://nodejs.org/dist/v{_NODE_VERSION}/{archive_name}"
+    runtime_dir.parent.mkdir(parents=True, exist_ok=True)
+    # Stage the new runtime NEXT TO runtime_dir (same filesystem -> atomic rename), and BACK UP the
+    # existing runtime instead of deleting it up front. A download/extract/move failure must never
+    # brick a previously-working provider runtime (audit): on any failure the backup is restored.
+    staged_dir = runtime_dir.with_name(f".{runtime_dir.name}.staging-{os.getpid()}")
+    backup_dir = runtime_dir.with_name(f".{runtime_dir.name}.backup-{os.getpid()}")
+    for stale in (staged_dir, backup_dir):
+        if stale.exists():
+            shutil.rmtree(stale, ignore_errors=True)
     with tempfile.TemporaryDirectory(prefix="tg-node-") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
         archive_path = temp_dir / archive_name
         _download(url, archive_path)
         _verify_node_archive(archive_path, archive_name)
         extracted_dir = _extract_archive(archive_path, temp_dir / "extract")
+        shutil.move(
+            str(extracted_dir), str(staged_dir)
+        )  # into place (cross-fs copy) before any swap
+    had_previous = runtime_dir.exists()
+    if had_previous:
+        os.replace(str(runtime_dir), str(backup_dir))  # atomic move-aside, not a destructive delete
+    try:
+        os.replace(str(staged_dir), str(runtime_dir))  # atomic swap-in (same filesystem)
+        if not node_executable.is_file():
+            raise RuntimeError(f"Managed Node runtime install failed: missing {node_executable}")
+    except Exception:
+        # Restore the previous working runtime on any failure of the swap/verify.
         if runtime_dir.exists():
-            shutil.rmtree(runtime_dir)
-        runtime_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(extracted_dir), str(runtime_dir))
-    if not node_executable.is_file():
-        raise RuntimeError(f"Managed Node runtime install failed: missing {node_executable}")
+            shutil.rmtree(runtime_dir, ignore_errors=True)
+        if had_previous:
+            os.replace(str(backup_dir), str(runtime_dir))
+        raise
+    if had_previous:
+        shutil.rmtree(backup_dir, ignore_errors=True)
     return runtime_dir
 
 

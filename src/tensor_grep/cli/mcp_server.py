@@ -3786,6 +3786,12 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     return _execute_rewrite_diff_command(command)
 
 
+# Bound the Content-Length compatibility read. Official MCP stdio is newline-delimited; this framed
+# path is a legacy shim, and a hostile/buggy client sending a huge Content-Length must not drive an
+# unbounded stdin.read (memory DoS). Mirrors lsp_external_provider._MAX_LSP_MESSAGE_BYTES.
+_MAX_MCP_STDIO_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
 async def _read_stdio_message_payload(stdin: anyio.AsyncFile[str]) -> str | None:
     line = await stdin.readline()
     if line == "":
@@ -3799,6 +3805,9 @@ async def _read_stdio_message_payload(stdin: anyio.AsyncFile[str]) -> str | None
         content_length = int(line.split(":", 1)[1].strip())
     except (IndexError, ValueError):
         return line
+    if content_length <= 0 or content_length > _MAX_MCP_STDIO_MESSAGE_BYTES:
+        # Fail closed: a non-positive or oversized frame is refused rather than read unbounded.
+        return None
     while True:
         header = await stdin.readline()
         if header == "":
