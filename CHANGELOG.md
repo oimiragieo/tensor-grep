@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v1.25.0 (2026-07-04)
+
+### Features
+
+- Docs-coverage --ignore <glob> excludes intentional stub groups (dogfood 1.23.0)
+  ([#366](https://github.com/oimiragieo/tensor-grep/pull/366),
+  [`3aa18bc`](https://github.com/oimiragieo/tensor-grep/commit/3aa18bc9de7f0fe2b3ceb4f572956f70458756ef))
+
+Second docs-coverage upgrade from the 1.23.0 dogfood: intentional stub groups (e.g. disabled
+  commands/*/index.js) re-flagged every run and dragged coverage_pct. --ignore (repeatable) excludes
+  matching source files ENTIRELY -- not counted as uncovered, not in the denominator. Each glob
+  matches BOTH the repo-relative posix path (`commands/*/index.js`) and the basename (`*.stub.py`);
+  payload carries applied_ignore for transparency. Filter short-circuits when no globs are given. 2
+  tests (path-glob + basename-glob, exclusion + count) + dogfooded on tensor-grep's own tree.
+
+Placed the CLI option before --json + the build param before nothing shared, so it merges cleanly
+  alongside the in-flight --fix PR (#365).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.24.0 (2026-07-04)
 
 ### Features
