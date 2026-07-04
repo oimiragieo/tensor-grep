@@ -158,6 +158,32 @@ def test_truncation_cause_project_files_when_real_files_dropped() -> None:
         )
 
 
+def test_scan_limit_remediation_present_only_when_truncated() -> None:
+    """dogfood 1.28.3 feature #3: a truncated scan carries a machine-readable
+    scan_limit.remediation so a JSON-consuming agent gets the actionable next step without parsing
+    the stderr warning (a truncated zero/small count otherwise reads as a real answer). A complete
+    scan carries remediation=None."""
+    from tensor_grep.cli.repo_map import build_repo_map
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _make_git_repo(root)
+        src = root / "src"
+        src.mkdir()
+        for i in range(20):
+            (src / f"module_{i}.py").write_text(f"def func_{i}(): pass\n", encoding="utf-8")
+
+        truncated = build_repo_map(str(root), max_repo_files=5).get("scan_limit", {})
+        assert truncated.get("possibly_truncated") is True
+        assert isinstance(truncated.get("remediation"), str) and truncated["remediation"], (
+            "a truncated scan must carry a non-empty remediation string"
+        )
+
+        complete = build_repo_map(str(root), max_repo_files=512).get("scan_limit", {})
+        assert complete.get("possibly_truncated") is False
+        assert complete.get("remediation") is None
+
+
 def test_truncation_cause_none_when_cap_not_reached() -> None:
     """truncation_cause should be None when cap is not reached."""
     from tensor_grep.cli.repo_map import build_repo_map

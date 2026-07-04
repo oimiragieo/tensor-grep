@@ -434,6 +434,17 @@ def _envelope(path: Path) -> dict[str, Any]:
     }
 
 
+# dogfood 1.28.3 feature #3: a machine-readable remediation carried IN the JSON scan_limit, so a
+# JSON-consuming agent gets the actionable next step without parsing the stderr warning (a truncated
+# scan with a zero/small count otherwise reads as a real "not found" answer -- a silent-truncation
+# trap). Present (non-null) only when the scan actually dropped project files.
+_SCAN_LIMIT_TRUNCATED_REMEDIATION = (
+    "A truncated scan dropped project files, so a zero or small count is NOT trustworthy. "
+    "Re-run scoped to a subdirectory PATH, raise --max-repo-files, or warm the index with "
+    "`tg session daemon start`."
+)
+
+
 def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
     scan_limit = source.get("scan_limit")
     if isinstance(scan_limit, dict):
@@ -4505,14 +4516,16 @@ def build_repo_map(
                 if _capped
                 else "project-files"
             )
+            _truncated = _capped and _cause == "project-files"
             payload["scan_limit"] = {
                 "max_repo_files": normalized_max_repo_files,
                 "scanned_files": capped_file_count,
                 # possibly_truncated is True only when project (non-vendor) files
                 # were dropped; kept for back-compat but see truncation_cause for
                 # the full picture.
-                "possibly_truncated": _capped and _cause == "project-files",
+                "possibly_truncated": _truncated,
                 "truncation_cause": _cause if _capped else None,
+                "remediation": _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None,
             }
     return _attach_profiling(payload, _profiling_collector)
 
@@ -4611,11 +4624,13 @@ def build_repo_map_incremental(
             if _capped
             else "project-files"
         )
+        _truncated = _capped and _cause == "project-files"
         payload["scan_limit"] = {
             "max_repo_files": normalized_max_repo_files,
             "scanned_files": capped_file_count,
-            "possibly_truncated": _capped and _cause == "project-files",
+            "possibly_truncated": _truncated,
             "truncation_cause": _cause if _capped else None,
+            "remediation": _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None,
         }
     return payload
 
