@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.28.3 (2026-07-04)
+
+### Bug Fixes
+
+- Mcp context tools bound max_tokens by default — the #359 cap missed the agent surface (round-6
+  rank-4) ([#372](https://github.com/oimiragieo/tensor-grep/pull/372),
+  [`e7834f0`](https://github.com/oimiragieo/tensor-grep/commit/e7834f0ed52865dbc4375bbaf9314af5b6cea7b4))
+
+Round-6 audit rank-4 (HIGH). The context byte-cap (#359) only reached the CLI (typer default 16000);
+  the MCP tools an agent ACTUALLY calls — tg_context_render, tg_session_context_render — defaulted
+  to max_tokens=None (unbounded), and tg_context_pack had no max_tokens param at all. So a context
+  pack/render could balloon (~800KB, the original dogfood symptom) straight into a model prompt on
+  the real agent surface. Fix: default all three to _DEFAULT_MCP_CONTEXT_MAX_TOKENS (16000, mirrors
+  repo_map._DEFAULT_CONTEXT_MAX_TOKENS; 0/None = explicit unbounded opt-out). tg_edit_plan stays
+  None (emits no rendered source text). 4 tests incl. a constant-mirror drift guard; mcp context
+  regression (20) green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.2 (2026-07-04)
 
 ### Bug Fixes
