@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v1.28.0 (2026-07-04)
+
+### Features
+
+- Lsp readiness gate — wait for the server index to settle before querying (moat P0-2)
+  ([#369](https://github.com/oimiragieo/tensor-grep/pull/369),
+  [`a487978`](https://github.com/oimiragieo/tensor-grep/commit/a487978781ab5b2d5fc5bf1c5086753e2dc6906a))
+
+Second slice of the warm-LSP moat (#45; P0-1 = the union/diverged fix, #362). The 2-of-14
+  under-return's OTHER half: textDocument/references fired immediately after one didOpen while the
+  server was still building its workspace index — window/workDoneProgress/create was a bare no-op
+  ACK and $/progress notifications were dropped at _dispatch_response (id-less -> return), so
+  indexing state was structurally invisible.
+
+Client (lsp_external_provider.py): - window/workDoneProgress/create registers the token as an
+  in-flight indexing round (create->begin window counts as active, not ready). - $/progress
+  begin/report/end consumed; begin re-invalidates cached readiness (file-churn re-index). -
+  wait_until_ready(deadline, probe=..., no_progress_grace_seconds=...): ready when a progress round
+  has ENDED and none is active; workspace/symbol hit-count stability probe for servers that never
+  emit progress; bounded silent-server grace so silence can't burn the whole deadline; readiness
+  cached (a warm daemon answers instantly on 2nd+ calls). - LOAD-BEARING: a readiness timeout does
+  NOT arm disabled_until_monotonic — the 30s cooldown stays reserved for real initialize failures
+  (else one slow first index blackballs the language for 30s of daemon uptime).
+
+repo_map.py: gate all 3 external query sites via a duck-type-tolerant _wait_for_lsp_readiness
+  (fakes/stubs skip the gate): references = full probe gate (budget-bounded workspace/symbol probe);
+  definitions + workspace-symbols = zero-grace variant (progress-advertising servers wait their
+  round out, silent servers proceed instantly — no latency tax on the 2s one-shot budget). A gate
+  timeout is honest-partial territory: P0-1's union + diverged stamps keep the result truthful.
+
+TDD: 7 new tests (tests/unit/test_lsp_readiness_gate.py) driving the exact _reader_loop entry
+  points; wide regression 683 passed / 1 skipped; ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.27.0 (2026-07-04)
 
 ### Features
