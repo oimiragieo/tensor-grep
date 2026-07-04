@@ -574,19 +574,29 @@ def _managed_native_frontdoor_path() -> Path | None:
     return native_path if native_path.is_file() else None
 
 
+_MAX_NATIVE_ASSET_DOWNLOAD_BYTES = 512 * 1024 * 1024
+
+
 def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
-    import socket
     import urllib.request
 
-    # urlretrieve has NO timeout param; bound it with a process socket timeout so a stalled read on
-    # the release CDN can't hang install/upgrade indefinitely (audit: reliability). Restore the
-    # prior default afterward so we don't leak a global timeout into the rest of the process.
-    previous_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(60)
-    try:
-        urllib.request.urlretrieve(url, destination)
-    finally:
-        socket.setdefaulttimeout(previous_timeout)
+    # Byte-cap AND time-bound the native-asset download (urlretrieve has neither): a malicious or
+    # oversized CDN response must not exhaust disk/memory before the checksum is verified, and a
+    # stalled read must not hang install/upgrade (audit #5 + reliability). Chunked read mirrors
+    # lsp_provider_setup._download; native binaries are tens of MB, so the cap is a generous ceiling.
+    total = 0
+    with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
+                raise RuntimeError(
+                    f"Native asset download exceeded {_MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
+                    f"(possible oversized or malicious response): {url}"
+                )
+            output.write(chunk)
 
 
 def _native_frontdoor_checksums_url(version: str) -> str:
@@ -1538,7 +1548,7 @@ def _schedule_windows_native_frontdoor_refresh(
                 temp_path = native_path.with_name(native_path.name + ".download-" + uuid4().hex)
                 try:
                     try:
-                        urllib.request.urlretrieve(url, temp_path)
+                        _download_native_frontdoor_asset(url, temp_path)
                     except Exception as exc:
                         errors.append(f"{flavor} asset unavailable: {exc}")
                         continue
@@ -10563,7 +10573,7 @@ def upgrade() -> None:
                             )
                             try:
                                 try:
-                                    urllib.request.urlretrieve(url, temp_path)
+                                    _download_native_frontdoor_asset(url, temp_path)
                                 except Exception as exc:
                                     errors.append(f"{flavor} asset unavailable: {exc}")
                                     continue
