@@ -1152,7 +1152,7 @@ fn test_option_first_root_count_matches_forwards_to_search_frontdoor() {
 fn test_option_first_root_search_forwards_no_line_number_to_rg() {
     let dir = tempdir().unwrap();
     let fake_rg =
-        fake_rg_asserting_args_script(dir.path(), &["-N", "-F", "ERROR", "--", "."], "accepted\n");
+        fake_rg_asserting_args_script(dir.path(), &["-N", "-F", "ERROR", "."], "accepted\n");
     fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
 
     let output = tg()
