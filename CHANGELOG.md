@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.28.4 (2026-07-04)
+
+### Bug Fixes
+
+- Session context bounds the pack with --max-tokens (default 16000) — daemon surface was unbounded
+  (dogfood 1.27.0) ([#373](https://github.com/oimiragieo/tensor-grep/pull/373),
+  [`0045441`](https://github.com/oimiragieo/tensor-grep/commit/0045441582af664afd8a5b32686601c55541e007))
+
+* fix: session context bounds the pack with --max-tokens (default 16000) — daemon surface was
+  unbounded (dogfood 1.27.0)
+
+Dogfood 1.27.0: `tg session context` (and `--daemon`) had NO --max-tokens and emitted an UNBOUNDED
+  pack (~557KB / 384 files), while standalone `context` capped to ~84KB — a 6x payload bump on the
+  very surface agents use for speed. The #359/#372 cap reached the CLI + MCP but missed this session
+  path. Added --max-tokens (default 16000, 0 = unbounded), threaded into the daemon request, and
+  applied _apply_context_token_budget to the returned pack on BOTH the direct and daemon paths
+  (guarantees the agent-facing payload is capped even though the daemon still builds the full pack
+  today; server-side bounding is a follow-up). 1 CliRunner test (tiny cap truncates, 0 opts out);
+  session_cli 66 green.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: de-brittle session-context help assertion (wrap-dependent tail)
+
+The session context --max-tokens option (this PR) widened the options column (INTEGER RANGE
+  metavar), so --daemon's help wraps such that its tail word "daemon." lands past a
+  column-width-dependent wrap and is truncated in CliRunner's narrow width ->
+  test_session_context_help_mentions_daemon_flag failed on `assert "session daemon" in output`. The
+  --daemon flag IS still documented (the "-daemon" name + "warm localhost" help head both
+  assert-present); only the wrapped tail moved. Dropped the fragile formatting-coupled tail
+  assertion (same class as the golden-test-fragility lesson) — a help test must not pin
+  terminal-wrap behavior.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.3 (2026-07-04)
 
 ### Bug Fixes
