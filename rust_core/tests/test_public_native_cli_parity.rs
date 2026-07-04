@@ -249,7 +249,7 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_exact_args_script(
         dir.path(),
-        &["-e", "needle", "fixture.txt"],
+        &["-e", "needle", "--", "fixture.txt"],
         "fixture.txt:needle file\n",
     );
     fs::write(dir.path().join("fixture.txt"), "needle file\n").unwrap();
@@ -1152,7 +1152,7 @@ fn test_option_first_root_count_matches_forwards_to_search_frontdoor() {
 fn test_option_first_root_search_forwards_no_line_number_to_rg() {
     let dir = tempdir().unwrap();
     let fake_rg =
-        fake_rg_asserting_args_script(dir.path(), &["-N", "-F", "ERROR", "."], "accepted\n");
+        fake_rg_asserting_args_script(dir.path(), &["-N", "-F", "ERROR", "--", "."], "accepted\n");
     fs::write(dir.path().join("app.log"), "ERROR failed\nINFO ok\n").unwrap();
 
     let output = tg()
@@ -1412,7 +1412,7 @@ fn test_format_rg_explicit_dot_path_is_forwarded_for_files_with_matches() {
     let dir = tempdir().unwrap();
     let fake_rg = fake_rg_exact_args_script(
         dir.path(),
-        &["-l", "-g", "AGENTS.md", "-e", "tensor-grep", "."],
+        &["-l", "-g", "AGENTS.md", "-e", "tensor-grep", "--", "."],
         "AGENTS.md\n",
     );
     fs::write(dir.path().join("AGENTS.md"), "tensor-grep\n").unwrap();
@@ -1505,7 +1505,7 @@ fn test_format_rg_column_no_column_forwards_to_rg_with_no_column_last() {
     ] {
         let fake_rg = fake_rg_exact_args_script(
             dir.path(),
-            &["--no-column", "-F", "-n", "-e", "ERROR", "app.log"],
+            &["--no-column", "-F", "-n", "-e", "ERROR", "--", "app.log"],
             "app.log:1:ERROR failed\n",
         );
         let output = tg()

@@ -408,10 +408,15 @@ fn ripgrep_operand_args(args: &RipgrepSearchArgs) -> Vec<String> {
             operands.push(pattern.clone());
         }
     }
-    // Everything after `--` is a positional path, never an option — even if it begins with `-`.
-    operands.push("--".to_string());
-    for path in &args.paths {
-        operands.push(path.clone());
+    // Emit the sentinel ONLY when there are paths to protect: everything after `--` is a
+    // positional path, never an option (even if it begins with `-`). With no user path there is
+    // nothing to guard, and an unconditional trailing `--` would alter the no-path / piped-stdin
+    // invocation (rg then reads stdin), which the parity tests correctly pin.
+    if !args.paths.is_empty() {
+        operands.push("--".to_string());
+        for path in &args.paths {
+            operands.push(path.clone());
+        }
     }
     operands
 }
@@ -624,9 +629,12 @@ mod tests {
     }
 
     #[test]
-    fn operand_args_sentinel_present_even_with_no_paths() {
+    fn operand_args_no_sentinel_when_no_paths() {
+        // No user path -> nothing to protect -> no trailing `--` (preserves the piped-stdin /
+        // no-default-path invocation the parity tests pin).
         let operands = ripgrep_operand_args(&args_with(vec!["x"], vec![], false));
-        assert!(operands.contains(&"--".to_string()));
+        assert!(!operands.contains(&"--".to_string()));
+        assert_eq!(operands, vec!["-e".to_string(), "x".to_string()]);
     }
 
     #[test]
