@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.28.2 (2026-07-04)
+
+### Bug Fixes
+
+- Docs-coverage excluded-dir check must match relative parts, not ancestor dirs (round-6 rank-2)
+  ([#371](https://github.com/oimiragieo/tensor-grep/pull/371),
+  [`5983099`](https://github.com/oimiragieo/tensor-grep/commit/59830991cdbb5b3242ac3fbb0a085b08466165e9))
+
+Round-6 audit rank-2 (HIGH, silent false-green). _iter_repo_files returns RESOLVED (absolute) paths,
+  and both build_docs_coverage and build_docs_stale_references checked `part in _EXCLUDED_DIR_PARTS
+  for part in file_path.parts` against the ABSOLUTE parts. So any project checked out under an
+  ancestor directory named build/venv/target/dist/vendor/node_modules/... (e.g. a CI path like
+  /build/proj) matched on the ANCESTOR -> every file excluded -> source_files=0 ->
+  coverage_pct=100.0 / 0 stale: a tool the CEO runs daily silently reports "all covered".
+  Reproduced: proj under build/ -> 0 files.
+
+Fix: _has_excluded_ancestor() matches _EXCLUDED_DIR_PARTS against the relative-to-root parts only
+
+(mirrors inventory._is_test_path). Verified: a project under build/ now counts its real source AND
+  still excludes an INNER build/ dir. 2 regression tests (coverage + stale modes).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.28.1 (2026-07-04)
 
 ### Bug Fixes
