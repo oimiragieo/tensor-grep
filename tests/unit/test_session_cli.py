@@ -56,6 +56,38 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert context["tests"][0] == str(test_path.resolve())
 
 
+def test_session_context_bounds_pack_by_max_tokens(tmp_path: Path) -> None:
+    # dogfood 1.27.0: `session context` was UNBOUNDED (~557KB) while standalone `context` capped.
+    # It now bounds the pack by default; a tiny --max-tokens truncates, 0 opts out.
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    for index in range(40):
+        (src / f"m{index}.py").write_text(
+            f"def f{index}():\n    return {index}\n", encoding="utf-8"
+        )
+    runner = CliRunner()
+    session_id = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)[
+        "session_id"
+    ]
+
+    capped = json.loads(
+        runner.invoke(
+            app,
+            ["session", "context", session_id, str(project), "f1", "--max-tokens", "200", "--json"],
+        ).stdout
+    )
+    assert capped["token_budget"]["truncated"] is True  # 40 files trimmed to ~200 tokens
+
+    unbounded = json.loads(
+        runner.invoke(
+            app,
+            ["session", "context", session_id, str(project), "f1", "--max-tokens", "0", "--json"],
+        ).stdout
+    )
+    assert unbounded.get("token_budget", {}).get("truncated", False) is False  # 0 = opt-out
+
+
 def test_session_open_can_cap_initial_repo_map(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
