@@ -20,6 +20,11 @@ _CHARS_PER_TOKEN = 3.5
 # otherwise dominate the graph and bury the real architecture.
 _CENTRAL_DOC_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".adoc", ".txt"})
 
+# Composite-centrality tuning (see _central_files_from_map): cap in-degree so a widely-imported data
+# sink can't dominate, and bound symbol density so one giant file can't either.
+_CENTRAL_FAN_IN_CAP = 12
+_CENTRAL_SYMBOL_DENSITY_CAP = 25
+
 _ENTRY_NAMES = {
     "main.py",
     "__main__.py",
@@ -31,6 +36,12 @@ _ENTRY_NAMES = {
     "index.js",
     "main.js",
     "app.ts",
+    # .tsx entrypoints (React/Ink CLIs): a real CLI entry is often main.tsx/app.tsx, not just the
+    # index.ts barrel (dogfood 2026-07-03 — orient listed index.ts barrels, missed main.tsx).
+    "main.tsx",
+    "app.tsx",
+    "cli.tsx",
+    "index.tsx",
     "main.rs",
     "lib.rs",
 }
@@ -69,10 +80,24 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
                 targets.append(candidate)
         resolved_imports[source] = targets
     reverse_importers = _repo_map._reverse_importers(code_files, resolved_imports)
-    # Centrality = in-degree (how many files import this one). NOTE: the reused reverse-import
-    # PageRank, seeded by all files, ranks IMPORTERS above the imported -- backwards for "show me the
-    # core files" -- so we rank by import in-degree directly.
-    centrality = {source: float(len(reverse_importers.get(source, ()))) for source in code_files}
+    # Composite centrality (dogfood 2026-07-03, v1.19.9): pure import in-degree surfaced LEAF data
+    # files (constants.ts / figures.ts / barrel index.ts imported by many) at the top and buried the
+    # real hubs (QueryEngine.ts, state.ts). A real architectural hub both RECEIVES and SENDS import
+    # edges AND has substance (many symbols); a data sink only receives. So: cap the in-degree
+    # contribution (a file imported by 50 is not proportionally more central than one imported by 12
+    # -- past that it is a common utility/constant, not a hub), and ADD fan-out (imports others) +
+    # symbol density. This demotes pure sinks without a fragile name/leaf heuristic.
+    symbol_counts: dict[str, int] = {}
+    for symbol in rm.get("symbols", []):
+        symbol_file = str(symbol.get("file"))
+        if symbol_file in code_file_set:
+            symbol_counts[symbol_file] = symbol_counts.get(symbol_file, 0) + 1
+    centrality: dict[str, float] = {}
+    for source in code_files:
+        fan_in = min(len(reverse_importers.get(source, ())), _CENTRAL_FAN_IN_CAP)
+        fan_out = len(resolved_imports.get(source, []))
+        density = min(symbol_counts.get(source, 0), _CENTRAL_SYMBOL_DENSITY_CAP)
+        centrality[source] = float(fan_in + fan_out + density)
     ranked = sorted(code_files, key=lambda source: (-centrality[source], source))
     result: list[dict[str, Any]] = []
     for file_path in ranked[:max_central_files]:
