@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.21.0 (2026-07-04)
+
+### Features
+
+- Tg docs-coverage — list source files not referenced by any governing doc (dogfood)
+  ([#358](https://github.com/oimiragieo/tensor-grep/pull/358),
+  [`c8ed9a5`](https://github.com/oimiragieo/tensor-grep/commit/c8ed9a5f68602782d112f453d1f4532e3bfea019))
+
+From the v1.19.9 dogfood, where an AI agent wrote this in ~30 lines and called it "the most valuable
+  thing in this whole sweep": given a repo, which source files does no CLAUDE.md / README /
+  AGENTS.md mention? The concrete doc-drift signal for keeping per-directory agent docs honest.
+  Reference-EXISTENCE only (not semantic content), so it under-reports gaps rather than flooding --
+  distinct from (and far cheaper than) the deferred semantic diff-docs (#38).
+
+New `tg docs-coverage [PATH]` (walk-only, reuses the gitignore-aware inventory/orient walker): a
+  source file is "covered" if a governing doc mentions its repo-relative path OR basename. Excludes
+  tests, fixtures, tool-state (.claude/.git/.tensor-grep), vendor, and build/cache trees -- without
+  that scoping the real-repo dogfood flooded (5079 -> 149 uncovered; 79% was .claude/worktrees +
+  vendored external_repos, the diff-docs FP-flood trap). Per-doc 2MB read cap (DoS). Text output
+  routed through _safe_stdout_line (ASCII-safe, pre-empts the #346 cp1252 crash on non-ASCII paths).
+
+All 5 registration sites: Typer command (main.py), commands.py, PUBLIC_TOP_LEVEL_COMMANDS
+  (test_routing_parity), the native front-door passthrough (rust_core/src/main.rs DocsCoverage
+  variant + handler, cargo-check verified), and README. TDD: 5 unit tests + dogfooded on this repo
+  (149 uncovered = a TRUE signal; tensor-grep documents in AGENTS.md, not per-file CLAUDE.md).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.20.0 (2026-07-04)
 
 ### Features
