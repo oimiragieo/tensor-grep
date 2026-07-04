@@ -578,25 +578,27 @@ _MAX_NATIVE_ASSET_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 
 def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
+    import socket
     import urllib.request
 
-    # Byte-cap AND time-bound the native-asset download (urlretrieve has neither): a malicious or
-    # oversized CDN response must not exhaust disk/memory before the checksum is verified, and a
-    # stalled read must not hang install/upgrade (audit #5 + reliability). Chunked read mirrors
-    # lsp_provider_setup._download; native binaries are tens of MB, so the cap is a generous ceiling.
-    total = 0
-    with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as output:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > _MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
-                raise RuntimeError(
-                    f"Native asset download exceeded {_MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
-                    f"(possible oversized or malicious response): {url}"
-                )
-            output.write(chunk)
+    # urlretrieve has NO timeout param -> bound it with a process socket timeout so a stalled CDN
+    # read can't hang install/upgrade. A reporthook enforces a BYTE CAP on the ACTUAL bytes read
+    # (block_number * read_size) so an oversized/malicious response can't exhaust disk before the
+    # checksum is verified (audit #5) -- Content-Length/total_size is attacker-controlled, so we
+    # count real blocks. Restore the prior default timeout afterward (don't leak a global timeout).
+    def _enforce_byte_cap(block_number: int, read_size: int, total_size: int) -> None:
+        if block_number * read_size > _MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
+            raise RuntimeError(
+                f"Native asset download exceeded {_MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
+                f"(possible oversized or malicious response): {url}"
+            )
+
+    previous_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(60)
+    try:
+        urllib.request.urlretrieve(url, destination, reporthook=_enforce_byte_cap)
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
 
 
 def _native_frontdoor_checksums_url(version: str) -> str:
@@ -1548,7 +1550,12 @@ def _schedule_windows_native_frontdoor_refresh(
                 temp_path = native_path.with_name(native_path.name + ".download-" + uuid4().hex)
                 try:
                     try:
-                        _download_native_frontdoor_asset(url, temp_path)
+
+                        def _cap(block_num, block_size, total_size):
+                            if block_num * block_size > 512 * 1024 * 1024:
+                                raise RuntimeError("native asset download exceeded 512MB")
+
+                        urllib.request.urlretrieve(url, temp_path, reporthook=_cap)
                     except Exception as exc:
                         errors.append(f"{flavor} asset unavailable: {exc}")
                         continue
@@ -10573,7 +10580,12 @@ def upgrade() -> None:
                             )
                             try:
                                 try:
-                                    _download_native_frontdoor_asset(url, temp_path)
+
+                                    def _cap(block_num, block_size, total_size):
+                                        if block_num * block_size > 512 * 1024 * 1024:
+                                            raise RuntimeError("native asset download exceeded 512MB")
+
+                                    urllib.request.urlretrieve(url, temp_path, reporthook=_cap)
                                 except Exception as exc:
                                     errors.append(f"{flavor} asset unavailable: {exc}")
                                     continue
