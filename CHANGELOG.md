@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.23.1 (2026-07-04)
+
+### Bug Fixes
+
+- --provider lsp refs must not discard native truth or mask a partial as lsp-only (moat P0-1)
+  ([#362](https://github.com/oimiragieo/tensor-grep/pull/362),
+  [`cdd4ea0`](https://github.com/oimiragieo/tensor-grep/commit/cdd4ea0451b891b3b1fe3bb14aef9427b856cc75))
+
+Dogfood v1.20.0: `tg refs --provider lsp` returned 2 of 14 refs and reported them authoritative
+  (lsp_proof:True, agreement=lsp-only). Root cause = TWO defects in build_symbol_refs_from_map +
+  _merge_agreement_status (found by the warm-LSP design workflow, verified against the code):
+
+1. MASKING: `references = proof_refs or references` REPLACED the correct native answer (14 rows)
+  with the partial LSP rows (2). A silent wrong-output / fail-closed-contract violation. Fix: union
+  native + external for BOTH lsp and hybrid (never discard native truth). 2. FALSE PROOF: the lsp
+  branch of _merge_agreement_status forced agreement="lsp-only" whenever lsp_count>0, ignoring
+  native_count -- so "diverged" was structurally unreachable in lsp mode, and native_count was
+  recomputed from the already-replaced list (always 0). Fix: capture the PRE-merge
+  native_reference_count and report "diverged" when native found strictly more than LSP proved.
+
+This is the standalone, no-daemon slice of the warm-LSP moat (full plan in scratchpad); the
+  cold-start latency (route through the warm session daemon) + readiness gate are P0-2..P2.
+
+TDD: a partial LSP result keeps both native ref files + reports diverged, not lsp-only. Full
+  semantic-provider + agent-capsule + callers/blast regression green (95 tests).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.23.0 (2026-07-04)
 
 ### Features
