@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.24.0 (2026-07-04)
+
+### Features
+
+- Docs-coverage --fix emits a paste-ready Markdown table of undocumented files (dogfood 1.23.0)
+  ([#365](https://github.com/oimiragieo/tensor-grep/pull/365),
+  [`4344b7d`](https://github.com/oimiragieo/tensor-grep/commit/4344b7d95614e9c7a683c2891eb30ee30fca632e))
+
+The 1.23.0 dogfood: `tg docs-coverage` found 18 real gaps, then the agent hand-rolled a Markdown
+  table of the uncovered files (path/size/first-line) to start closing them. `--fix` emits exactly
+  that table directly: `| File | Size | First line |`, sorted, pipe-escaped so a `|` in a first line
+  can't break the table. build_docs_coverage(include_details=True) enriches each uncovered file with
+  size + first non-blank line via bounded reads; --json includes uncovered_details too. Dogfooded on
+  tensor-grep's own tree (33 files). 3 tests (table shape + pipe-escape +
+  details-absent-by-default).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.23.3 (2026-07-04)
 
 ### Bug Fixes
