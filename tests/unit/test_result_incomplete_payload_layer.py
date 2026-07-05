@@ -78,3 +78,18 @@ def test_mark_result_incomplete_helper_does_not_clobber_existing_remediation() -
     repo_map._mark_result_incomplete(payload, remediation="different")
     assert payload["result_incomplete"] is True
     assert payload["scan_remediation"] == "already set"
+
+
+def test_build_symbol_source_truncated_no_match_carries_result_incomplete(tmp_path):
+    # codex review (round-6): build_symbol_source_from_map rebuilds a fresh envelope via
+    # _copy_scan_limit, which must also carry result_incomplete -- else MCP tg_symbol_source emits
+    # scan_remediation but result_incomplete=None on a truncated no_match.
+    import tensor_grep.cli.repo_map as repo_map
+
+    (tmp_path / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "c.py").write_text("def gamma():\n    return 3\n", encoding="utf-8")
+    payload = repo_map.build_symbol_source("gamma", str(tmp_path), max_repo_files=1)
+    if payload.get("no_match") and payload.get("scan_limit", {}).get("possibly_truncated"):
+        assert payload.get("result_incomplete") is True
+        assert payload.get("scan_remediation")

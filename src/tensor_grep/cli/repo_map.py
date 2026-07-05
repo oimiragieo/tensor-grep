@@ -462,6 +462,13 @@ def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
         # Propagate the advice sibling alongside the facts (only when the source carried it).
         if "scan_remediation" in source:
             payload["scan_remediation"] = source["scan_remediation"]
+    # Carry the payload-level honesty flag too (codex review, round-6): builders that rebuild a FRESH
+    # envelope via this helper (e.g. build_symbol_source_from_map) would otherwise drop
+    # result_incomplete on a truncated no_match while keeping scan_remediation -> a non-CLI consumer
+    # (MCP tg_symbol_source, *_json) sees the advice but not the machine-checkable flag. Parity: only
+    # when the source set it True (a complete result never carries it).
+    if source.get("result_incomplete"):
+        payload["result_incomplete"] = True
 
 
 def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> None:
