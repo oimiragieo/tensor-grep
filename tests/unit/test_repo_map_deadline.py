@@ -151,3 +151,22 @@ def test_step6_blast_radius_no_deadline_is_complete(tmp_path: Path) -> None:
     rm = repo_map.build_repo_map(str(tmp_path))
     result = repo_map.build_symbol_blast_radius_from_map(rm, "widget")  # no deadline
     assert "partial" not in result
+
+
+def test_step6_refs_honors_scan_deadline(tmp_path: Path) -> None:
+    # moat P0-6 step 6: refs runs the same per-file reference scan -> must honor --deadline for
+    # central symbols (1.35.0 dogfood: `refs QueryEngine --deadline 15` -> 45s timeout, no partial).
+    _make_caller_repo(tmp_path, 6)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    result = repo_map.build_symbol_refs_from_map(
+        rm, "widget", deadline_monotonic=time.monotonic() - 1.0
+    )
+    assert result.get("partial") is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_step6_refs_no_deadline_is_complete(tmp_path: Path) -> None:
+    _make_caller_repo(tmp_path, 4)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    result = repo_map.build_symbol_refs_from_map(rm, "widget")  # no deadline
+    assert "partial" not in result

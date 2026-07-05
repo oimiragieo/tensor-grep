@@ -11884,7 +11884,9 @@ def build_symbol_refs(
     repo_map = build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
-    result = build_symbol_refs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    result = build_symbol_refs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     _copy_partial_signal(result, repo_map)
     return result
 
@@ -11894,6 +11896,7 @@ def build_symbol_refs_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     if payload.get("no_match"):
@@ -11908,7 +11911,16 @@ def build_symbol_refs_from_map(
     bounded_files = _repo_map_file_universe(repo_map)
     bounded_file_set = {str(current) for current in bounded_files}
     references: list[dict[str, Any]] = []
+    refs_scan_deadline_hit = False
+    refs_files_scanned = 0
     for current in bounded_files:
+        # moat P0-6 step 6: bound the reference-scan traversal so a CENTRAL symbol honors --deadline
+        # instead of hanging past it (1.35.0 dogfood: `refs QueryEngine --deadline 15` -> 45s timeout,
+        # no partial). Same per-file-scan hot loop as callers.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            refs_scan_deadline_hit = True
+            break
+        refs_files_scanned += 1
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
         if current.suffix == ".py":
             current_refs, _ = _python_references_and_calls(current, symbol)
@@ -12071,6 +12083,13 @@ def build_symbol_refs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
+    if refs_scan_deadline_hit:
+        payload["partial"] = True
+        payload["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "reference_files_scanned": refs_files_scanned,
+            "reference_files_total": len(bounded_files),
+        }
     return payload
 
 
