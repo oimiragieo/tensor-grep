@@ -470,6 +470,15 @@ def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> Non
             payload["deadline_limit"] = dict(deadline_limit)
 
 
+def _deadline_monotonic_from_seconds(deadline_seconds: float | None) -> float | None:
+    """Convert a relative --deadline (seconds-from-now) to an ABSOLUTE time.monotonic() timestamp,
+    computed ONCE at the top of a builder so that multiple internal build_repo_map calls (e.g. the
+    blast-radius literal-seed retry) SHARE one budget instead of each getting a fresh N seconds."""
+    if deadline_seconds is None:
+        return None
+    return time.monotonic() + deadline_seconds
+
+
 def _is_test_file(path: Path) -> bool:
     name = path.name
     return (
@@ -11573,19 +11582,28 @@ def build_symbol_impact(
     *,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    # moat P0-6 step 3: convert the relative --deadline once to an ABSOLUTE monotonic timestamp so
+    # the underlying repo scan can bound itself and return partial results.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     payload = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    return build_symbol_impact_from_map(
+    result = build_symbol_impact_from_map(
         payload,
         symbol,
         semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
+    _copy_partial_signal(
+        result, payload
+    )  # guarantee the deadline signal reaches the top-level output
+    return result
 
 
 def build_symbol_impact_from_map(
@@ -11860,9 +11878,15 @@ def build_symbol_refs(
     *,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, max_repo_files=max_repo_files)
-    return build_symbol_refs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = build_repo_map(
+        path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
+    )
+    result = build_symbol_refs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    _copy_partial_signal(result, repo_map)
+    return result
 
 
 def build_symbol_refs_from_map(
@@ -12074,19 +12098,24 @@ def build_symbol_callers(
     *,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    return build_symbol_callers_from_map(
+    result = build_symbol_callers_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
+    _copy_partial_signal(result, repo_map)
+    return result
 
 
 def build_symbol_callers_from_map(
@@ -12429,11 +12458,17 @@ def build_symbol_blast_radius(
     max_repo_files: int | None = None,
     max_callers: int | None = None,
     max_files: int | None = None,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    # moat P0-6 step 3: ONE absolute deadline shared across BOTH the initial scan and the
+    # literal-seed retry below -- a per-call re-derivation would double the wall-clock for exactly
+    # the already-truncated huge repos that need a deadline most.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     payload = build_symbol_blast_radius_from_map(
@@ -12459,6 +12494,7 @@ def build_symbol_blast_radius(
                 path,
                 max_repo_files=max_repo_files,
                 extra_files=seed_files,
+                deadline_monotonic=deadline_monotonic,
                 _profiling_collector=_profiling_collector,
             )
             payload = build_symbol_blast_radius_from_map(
@@ -12471,11 +12507,13 @@ def build_symbol_blast_radius(
             payload_scan_limit = payload.get("scan_limit")
             if isinstance(payload_scan_limit, dict):
                 payload_scan_limit["literal_seed_files"] = [str(current) for current in seed_files]
-    return _apply_blast_radius_output_limits(
+    result = _apply_blast_radius_output_limits(
         payload,
         max_callers=max_callers,
         max_files=max_files,
     )
+    _copy_partial_signal(result, repo_map)  # deadline signal from the (possibly retried) scan
+    return result
 
 
 def _apply_blast_radius_output_limits(
