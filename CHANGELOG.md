@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.30.0 (2026-07-05)
+
+### Features
+
+- Carry a machine-readable scan_limit.remediation in JSON (dogfood 1.28.3 #3)
+  ([#381](https://github.com/oimiragieo/tensor-grep/pull/381),
+  [`aaf1250`](https://github.com/oimiragieo/tensor-grep/commit/aaf12508e6d22222ae08ebb93e930e49ada592fe))
+
+* feat: carry a machine-readable scan_limit.remediation in JSON (dogfood 1.28.3 #3)
+
+Dogfood 1.28.3 (both reporters): a root-level truncated graph query (512-file cap) warns on STDERR
+  but a JSON-consuming agent only sees a small/zero count with no signal it's truncated -> "easy to
+  misread as failure" (a silent-truncation trap). The JSON scan_limit already carried
+  possibly_truncated + scanned_files, but the actionable remedy lived only in the stderr text.
+
+Add scan_limit.remediation -- a non-null, machine-readable next-step string ("re-run scoped / raise
+  --max-repo-files / warm the daemon") ONLY when the scan actually dropped project files, else None.
+  It propagates to every symbol command via the existing _copy_scan_limit, so callers/refs/impact/
+  blast-radius all expose it. 1 test (present when truncated, None when complete) + dogfooded the
+  real build_symbol_callers payload; 10 truncation + 32 scan_limit tests green; ruff/mypy clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: move remediation to a scan_remediation sibling (keep scan_limit exact-shape contract)
+
+CI: the remediation-inside-scan_limit approach broke 10 exact-dict `scan_limit == {...}` contract
+  assertions (test_blast_radius_prioritizes... et al) across 3 test files, because scan_limit is a
+  stable exact-shape contract. Move the advice to a top-level `scan_remediation` sibling of
+  scan_limit (facts vs advice), propagated to symbol commands via _copy_scan_limit. scan_limit is
+  unchanged (4 keys), so no contract test breaks; dogfooded build_symbol_callers -> scan_remediation
+  set + scan_limit keys back to the original 4. Green.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.29.0 (2026-07-04)
 
 ### Bug Fixes
