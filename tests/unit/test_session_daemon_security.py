@@ -150,6 +150,40 @@ def test_daemon_handler_sets_socket_timeout() -> None:
     assert timeout is not None and timeout > 0
 
 
+def test_write_daemon_metadata_locks_down_token_file_on_windows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # round-7 r7: on Windows, 0600 is a no-op ACL, so the token file must be restricted via icacls.
+    calls: list[list[str]] = []
+
+    def _fake_run(argv, **_kwargs):
+        calls.append(list(argv))
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(session_daemon.subprocess, "run", _fake_run)
+    monkeypatch.setattr(session_daemon.sys, "platform", "win32")
+    monkeypatch.setenv("USERNAME", "testuser")
+
+    session_daemon._write_daemon_metadata(tmp_path.resolve(), {"token": "sekret", "version": 1})
+
+    icacls_calls = [argv for argv in calls if argv and argv[0] == "icacls"]
+    assert icacls_calls, "daemon.json write did not lock down ACLs on Windows"
+    argv = icacls_calls[0]
+    assert "/inheritance:r" in argv and "/grant:r" in argv and "testuser:F" in argv
+
+
+def test_restrict_windows_file_is_noop_off_windows(tmp_path: Path, monkeypatch) -> None:
+    called: list[object] = []
+    monkeypatch.setattr(session_daemon.subprocess, "run", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(session_daemon.sys, "platform", "linux")
+    session_daemon._restrict_windows_file_to_current_user(tmp_path / "daemon.json")
+    assert called == []  # no subprocess spawned on non-Windows
+
+
 # ---------------------------------------------------------------- S3: path confinement
 
 
