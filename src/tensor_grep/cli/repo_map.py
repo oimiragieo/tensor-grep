@@ -447,6 +447,14 @@ _SCAN_LIMIT_TRUNCATED_REMEDIATION = (
 )
 
 
+def _mark_result_incomplete(payload: dict[str, Any], *, remediation: str) -> None:
+    """Payload-level honesty signal (round-6 council): set result_incomplete + remediation at ASSEMBLY
+    time so non-CLI consumers (MCP tools, *_json) get the same truncation signal the CLI emitter adds.
+    Additive; callers gate it on possibly_truncated so complete results never grow the key."""
+    payload["result_incomplete"] = True
+    payload.setdefault("scan_remediation", remediation)
+
+
 def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
     scan_limit = source.get("scan_limit")
     if isinstance(scan_limit, dict):
@@ -454,6 +462,13 @@ def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
         # Propagate the advice sibling alongside the facts (only when the source carried it).
         if "scan_remediation" in source:
             payload["scan_remediation"] = source["scan_remediation"]
+    # Carry the payload-level honesty flag too (codex review, round-6): builders that rebuild a FRESH
+    # envelope via this helper (e.g. build_symbol_source_from_map) would otherwise drop
+    # result_incomplete on a truncated no_match while keeping scan_remediation -> a non-CLI consumer
+    # (MCP tg_symbol_source, *_json) sees the advice but not the machine-checkable flag. Parity: only
+    # when the source set it True (a complete result never carries it).
+    if source.get("result_incomplete"):
+        payload["result_incomplete"] = True
 
 
 def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> None:
@@ -11451,6 +11466,7 @@ def build_symbol_defs_from_map(
                 f" The broad scan stopped after {scan_limit.get('scanned_files')} files; "
                 "narrow PATH or raise --max-repo-files."
             )
+            _mark_result_incomplete(payload, remediation=_SCAN_LIMIT_TRUNCATED_REMEDIATION)
         payload["files"] = []
         payload["symbols"] = []
         payload["imports"] = []
