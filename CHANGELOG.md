@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.30.3 (2026-07-05)
+
+### Bug Fixes
+
+- Checkpoint undo commit-phase revert must restore removed files (round-7 rank-6 data loss)
+  ([#380](https://github.com/oimiragieo/tensor-grep/pull/380),
+  [`8f6cc35`](https://github.com/oimiragieo/tensor-grep/commit/8f6cc35fbda8c3e521384d9bd804927d2f9c9981))
+
+Round-7 fresh-eyes (MEDIUM data-loss). In undo_checkpoint's COMMIT PHASE, files unlinked in the two
+  removal loops recorded only their PATH in committed_removes; if a later staged copy2() raised (a
+  documented Windows delete-pending/lock race here), the except handler restored
+  committed_overwrites via write_bytes but the committed_removes loop was literally `pass` --
+  permanently losing those files while framing it as a safe best-effort revert.
+
+Fix: snapshot each file's bytes BEFORE unlink (committed_removes is now list[tuple[Path, bytes]]);
+  the revert recreates them via write_bytes (mkdir parents first). 1 test simulates a commit-phase
+  copy2 failure (scoped to the repo root so staging still works) and asserts the removed file is
+  restored with its content; 7 atomic-undo tests green; ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.30.2 (2026-07-05)
 
 ### Bug Fixes
