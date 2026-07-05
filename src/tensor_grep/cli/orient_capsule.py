@@ -19,6 +19,24 @@ _CHARS_PER_TOKEN = 3.5
 # "central CODE file", and in doc-heavy repos (many cross-linked CLAUDE.md / README) it would
 # otherwise dominate the graph and bury the real architecture.
 _CENTRAL_DOC_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".adoc", ".txt"})
+# Config/data suffixes also excluded (round-8 audit): a package.json / *.yaml / *.toml / *.lock has
+# no import edges and no symbols, so in a config- or doc-heavy "harness" repo it would surface as a
+# spurious "central" file over the real code (the recurring dogfood complaint that orient ranks
+# non-code as central). build_repo_map's fallback-source set includes these, so they reach here.
+_CENTRAL_CONFIG_DATA_SUFFIXES = frozenset({
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".xml",
+    ".csv",
+    ".lock",
+    ".env",
+})
+# The full non-code exclusion applied to the centrality ranking (docs + config/data).
+_CENTRAL_NON_CODE_SUFFIXES = _CENTRAL_DOC_SUFFIXES | _CENTRAL_CONFIG_DATA_SUFFIXES
 
 # Composite-centrality tuning (see _central_files_from_map): cap in-degree so a widely-imported data
 # sink can't dominate, and bound symbol density so one giant file can't either.
@@ -57,7 +75,7 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
     # import via a stem collision (config.md shadowing config.py in by_stem). Exclude docs from the
     # graph entirely; fall back to all files only if the repo is pure docs so we still return context.
     code_files = [
-        f for f in all_files if Path(f).suffix.lower() not in _CENTRAL_DOC_SUFFIXES
+        f for f in all_files if Path(f).suffix.lower() not in _CENTRAL_NON_CODE_SUFFIXES
     ] or all_files
     code_file_set = set(code_files)
     imports_by_file: dict[str, list[str]] = {
