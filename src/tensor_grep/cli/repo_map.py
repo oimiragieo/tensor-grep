@@ -456,6 +456,20 @@ def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
             payload["scan_remediation"] = source["scan_remediation"]
 
 
+def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> None:
+    """Moat P0-6 step 2: carry the deadline PARTIAL signal forward when a symbol builder repackages a
+    build_repo_map / build_symbol_defs result into its own payload. Without this, a deadline-truncated
+    map silently loses partial:true + deadline_limit the moment it is wrapped, so the agent sees a
+    small result with no signal it was cut short. Only propagates when the source was actually
+    partial (a complete result carries neither key -- parity). Kept separate from _copy_scan_limit:
+    scan_limit is the file-cap fact, partial is the time-budget outcome."""
+    if source.get("partial"):
+        payload["partial"] = True
+        deadline_limit = source.get("deadline_limit")
+        if isinstance(deadline_limit, dict):
+            payload["deadline_limit"] = dict(deadline_limit)
+
+
 def _is_test_file(path: Path) -> bool:
     name = path.name
     return (
@@ -11531,6 +11545,7 @@ def build_symbol_source_from_map(
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
     _copy_lsp_evidence_status(payload, defs_payload)
     _copy_scan_limit(payload, defs_payload)
+    _copy_partial_signal(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -11733,6 +11748,7 @@ def build_symbol_impact_from_map(
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
     _copy_lsp_evidence_status(payload, defs_payload)
     _copy_scan_limit(payload, defs_payload)
+    _copy_partial_signal(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -12382,6 +12398,7 @@ def build_symbol_callers_from_map(
         fallback_used=fallback_used,
     )
     _copy_scan_limit(payload, defs_payload)
+    _copy_partial_signal(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
