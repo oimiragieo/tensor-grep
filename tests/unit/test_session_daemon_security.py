@@ -150,6 +150,24 @@ def test_daemon_handler_sets_socket_timeout() -> None:
     assert timeout is not None and timeout > 0
 
 
+def test_daemon_response_timeout_defaults_and_env_override(monkeypatch) -> None:
+    # moat P0-6 step 5: the client read timeout is env-configurable so a >60s warm-daemon query is
+    # not killed with zero JSON (the "60s cap errors" dogfood complaint).
+    monkeypatch.delenv(session_daemon._DAEMON_RESPONSE_TIMEOUT_ENV, raising=False)
+    assert session_daemon._daemon_response_timeout() == 60.0
+
+    monkeypatch.setenv(session_daemon._DAEMON_RESPONSE_TIMEOUT_ENV, "180")
+    assert session_daemon._daemon_response_timeout() == 180.0
+
+
+def test_daemon_response_timeout_rejects_nonpositive_and_garbage(monkeypatch) -> None:
+    # A non-positive / unparseable value must fall back to the 60s default -- never an instant
+    # (zero) timeout that would make every daemon request fail immediately.
+    for bad_value in ("0", "-5", "abc", ""):
+        monkeypatch.setenv(session_daemon._DAEMON_RESPONSE_TIMEOUT_ENV, bad_value)
+        assert session_daemon._daemon_response_timeout() == 60.0
+
+
 def test_write_daemon_metadata_locks_down_token_file_on_windows(
     tmp_path: Path, monkeypatch
 ) -> None:
