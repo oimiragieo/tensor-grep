@@ -6706,8 +6706,9 @@ def inventory(
         "--deadline",
         min=0.1,
         help=(
-            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
-            "whatever was found so far, instead of running unbounded."
+            "Stop the inventory scan after N seconds and return a partial manifest labeled "
+            "scan_limit.truncation_cause='deadline' (counts are a floor), instead of running unbounded "
+            "on a huge tree."
         ),
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),

@@ -241,3 +241,48 @@ class TestRegistration:
         from tensor_grep.cli.commands import KNOWN_COMMANDS
 
         assert "inventory" in KNOWN_COMMANDS
+
+
+class TestDeadlineCliWiring:
+    # codex review (round-6): the CLI --deadline flag needs acceptance + min-rejection + thread-through
+    # coverage, not just build_inventory() behavior.
+    def test_inventory_deadline_flag_accepted_and_threaded(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from tensor_grep.cli import main as tg_main
+
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        recorded: dict = {}
+
+        def _spy(path, *, max_files=None, deadline_seconds=None):
+            recorded["deadline_seconds"] = deadline_seconds
+            return {
+                "totals": {"files": 0, "bytes": 0},
+                "binary": {"files": 0, "bytes": 0},
+                "languages": [],
+                "categories": [],
+                "top_level_dirs": [],
+                "largest_files": [],
+                "path": str(path),
+                "scan_limit": {"possibly_truncated": False, "truncation_cause": None},
+            }
+
+        # The inventory command imports build_inventory from tensor_grep.cli.inventory at call time,
+        # so patch it at the source module (not on main, where it isn't a module-level attr).
+        monkeypatch.setattr("tensor_grep.cli.inventory.build_inventory", _spy)
+        result = CliRunner().invoke(
+            tg_main.app, ["inventory", str(tmp_path), "--deadline", "5", "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        assert recorded.get("deadline_seconds") == 5.0
+
+    def test_inventory_deadline_rejects_sub_floor_value(self, tmp_path):
+        from typer.testing import CliRunner
+
+        from tensor_grep.cli import main as tg_main
+
+        # min=0.1 -> a sub-floor deadline is a usage error, not a silent 0-budget run.
+        result = CliRunner().invoke(
+            tg_main.app, ["inventory", str(tmp_path), "--deadline", "0.001"]
+        )
+        assert result.exit_code == 2
