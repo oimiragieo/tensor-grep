@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.35.0 (2026-07-05)
+
+### Features
+
+- Make the daemon client response timeout env-configurable (moat P0-6 step 5)
+  ([#390](https://github.com/oimiragieo/tensor-grep/pull/390),
+  [`e834a8d`](https://github.com/oimiragieo/tensor-grep/commit/e834a8d7f2f81fdd21d98ce546c10576edfd694b))
+
+Moat P0-6 step 5 (partial). The warm-daemon client read timeout was a hard 60s
+  (_DAEMON_RESPONSE_TIMEOUT_SECONDS), so a large repo whose daemon-routed graph query legitimately
+  needs >60s got a bare "timed out" / exit 1 / ZERO JSON -- the recurring dogfood "60s cap errors,
+  work discarded" complaint. Make it configurable via TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS
+  (both client entry points: request_session_daemon + request_running_session_daemon); a
+  non-positive/unparseable value falls back to 60s (never an instant timeout).
+
+SCOPE NOTE (verified while wiring): the daemon-served graph commands run on the CACHED session
+  repo_map (build_symbol_*_from_map, no re-scan), so the scan-deadline built in steps 1-4 does NOT
+  bound them -- full partial-at-deadline on the DAEMON path needs a separate TRAVERSAL-deadline in
+  the _from_map builders + a profile of the daemon's real bottleneck. Tracked for a follow-up; this
+  step removes the hard-60s wall so a slow-but-completing daemon query succeeds instead of erroring.
+  2 tests (default 60; env override 180; non-positive/garbage -> 60); 31 daemon-security green;
+  ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.34.0 (2026-07-05)
 
 ### Features
