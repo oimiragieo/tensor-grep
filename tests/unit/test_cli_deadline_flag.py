@@ -110,3 +110,49 @@ def test_complete_found_exits_0(tmp_path: Path, monkeypatch) -> None:
         _exit_code_for_payload(tmp_path, monkeypatch, {"callers": [{"file": "m.py", "line": 1}]})
         == 0
     )
+
+
+def test_blast_radius_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # cursor review 1.40.0: blast-radius bypassed _emit_symbol_command_result and exited 0 even on a
+    # --deadline partial. It must exit 2 (incomplete) like callers.
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _spy(symbol, path=".", **_kwargs):
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "definitions": [{"file": "m.py", "line": 1}],
+            "callers": [],
+            "files": [],
+            "tests": [],
+            "partial": True,
+            "deadline_limit": {"deadline_exceeded": True},
+        }
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
+    result = CliRunner().invoke(app, ["blast-radius", "foo", str(tmp_path), "--json"])
+    assert result.exit_code == 2, result.output
+
+
+def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # cursor review 1.40.0: impact's second caller-scan pass can be deadline-truncated; impact must
+    # carry that partial signal so it exits 2 like `tg callers`.
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _impact(symbol, path=".", **_kwargs):
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "files": ["m.py"],
+            "tests": [],
+            "callers": [],
+            "no_match": False,
+        }
+
+    def _callers(symbol, path=".", **_kwargs):
+        return {"callers": [], "partial": True, "deadline_limit": {"deadline_exceeded": True}}
+
+    monkeypatch.setattr(repo_map, "build_symbol_impact", _impact)
+    monkeypatch.setattr(repo_map, "build_symbol_callers", _callers)
+    result = CliRunner().invoke(app, ["impact", "foo", str(tmp_path), "--json"])
+    assert result.exit_code == 2, result.output

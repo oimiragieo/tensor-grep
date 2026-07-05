@@ -7911,6 +7911,15 @@ def impact(
                 deadline_seconds=deadline,
             )
             payload["callers"] = list(callers_payload.get("callers", []))
+            # Propagate the caller-scan's --deadline partial signal (cursor review 1.40.0): impact's
+            # second pass can be deadline-truncated even when the first pass wasn't, so carry partial +
+            # deadline_limit onto the impact payload or _emit_symbol_command_result would exit 0 while
+            # `tg callers` with the same flags exits 2.
+            if callers_payload.get("partial"):
+                payload["partial"] = True
+                caller_deadline_limit = callers_payload.get("deadline_limit")
+                if isinstance(caller_deadline_limit, dict):
+                    payload["deadline_limit"] = dict(caller_deadline_limit)
             for caller in payload["callers"]:
                 caller_file = str(caller.get("file", ""))
                 if caller_file and caller_file not in payload["files"]:
@@ -8205,26 +8214,34 @@ def blast_radius(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    if mermaid_output:
-        # Faithful diagram of the exact call sites (no truncation caveat needed — the
-        # renderer emits a `%% truncated` comment from payload.result_incomplete itself).
-        typer.echo(_render_blast_radius_mermaid(payload))
-        return
-
-    # Surface output-cap truncation (callers_truncated/files_truncated) so a capped blast radius
-    # can never look complete — the same false-confidence vector as a truncated callers=0.
+    # Annotate completeness BEFORE any output path so mermaid/json/text all see result_incomplete and
+    # honor the shared exit contract (cursor review 1.40.0): a --deadline partial or output-cap
+    # truncation must exit 2, never a silent exit 0 that reads as complete. (The mermaid renderer also
+    # reads payload.result_incomplete for its `%% truncated` comment.)
     caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-        return
+    # Exit 2 ONLY for SCAN incompleteness (--deadline partial, or a --max-repo-files scan cap) -- the
+    # analysis didn't finish. An OUTPUT cap (--max-callers/--max-files) is a COMPLETE analysis with a
+    # capped display (callers_truncated/files_truncated) and stays exit 0: the agent raises the cap for
+    # more. So gate on partial/scan_limit, NOT result_incomplete (which _annotate also sets on output cap).
+    scan_limit = payload.get("scan_limit")
+    scan_truncated = isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+    incomplete = bool(payload.get("partial") or scan_truncated)
 
-    typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
-    typer.echo(
-        f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
-        f"files={len(payload['files'])} tests={len(payload['tests'])}"
-    )
-    if caveat is not None:
-        typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+    if mermaid_output:
+        typer.echo(_render_blast_radius_mermaid(payload))
+    elif json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
+        typer.echo(
+            f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
+            f"files={len(payload['files'])} tests={len(payload['tests'])}"
+        )
+        if caveat is not None:
+            typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+
+    if incomplete:
+        raise typer.Exit(2)
 
 
 @app.command(name="blast-radius-render")
