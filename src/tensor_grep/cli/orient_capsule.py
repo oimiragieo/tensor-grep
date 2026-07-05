@@ -7,6 +7,7 @@ map, and AST-boundary snippets within a token budget. Pure-CPU, no API key, no G
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 from typing import Any
@@ -165,6 +166,36 @@ def _ast_chunked_snippet(path_str: str, symbols: list[dict[str, Any]]) -> str | 
     return None
 
 
+def _apply_ignore_globs(rm: dict[str, Any], ignore: tuple[str, ...]) -> dict[str, Any]:
+    """Drop files matching any --ignore glob (basename OR repo-relative posix path) from the map
+    before ranking (1.35 dogfood): `tg orient . --ignore 'seo/**' 'core/skills/**'` excludes vendor /
+    skill trees that would otherwise rank as 'central' on a doc- or harness-heavy repo, even though
+    they are .py CODE (so the doc/config suffix exclusions don't catch them)."""
+    if not ignore:
+        return rm
+    root = Path(str(rm.get("path", ".")))
+
+    def _excluded(file_str: str) -> bool:
+        candidate = Path(file_str)
+        try:
+            rel = candidate.relative_to(root).as_posix()
+        except ValueError:
+            rel = candidate.as_posix()
+        return any(
+            fnmatch.fnmatch(rel, glob) or fnmatch.fnmatch(candidate.name, glob) for glob in ignore
+        )
+
+    filtered = dict(rm)
+    filtered["files"] = [f for f in rm.get("files", []) if not _excluded(str(f))]
+    filtered["symbols"] = [
+        s for s in rm.get("symbols", []) if not _excluded(str(s.get("file", "")))
+    ]
+    filtered["imports"] = [
+        i for i in rm.get("imports", []) if not _excluded(str(i.get("file", "")))
+    ]
+    return filtered
+
+
 def build_orient_capsule(
     path: str | Path = ".",
     *,
@@ -173,6 +204,7 @@ def build_orient_capsule(
     max_tokens: int = 3000,
     max_repo_files: int | None = None,
     render_profile: str = "compact",
+    ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build a bounded codebase orientation capsule (no API key, no GPU)."""
     from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
@@ -181,6 +213,7 @@ def build_orient_capsule(
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
     )
     rm = _repo_map.build_repo_map(path, max_repo_files=effective_max_repo_files)
+    rm = _apply_ignore_globs(rm, ignore)
 
     central_files = _central_files_from_map(rm, max_central_files=max_central_files)
     entry_points = _detect_entry_points(rm)

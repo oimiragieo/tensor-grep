@@ -6802,6 +6802,15 @@ def orient(
     max_central_files: int = typer.Option(
         10, "--max-central-files", help="Number of top central files to surface", min=1
     ),
+    ignore: list[str] = typer.Option(
+        [],
+        "--ignore",
+        help=(
+            "Glob(s) to exclude from the centrality ranking (basename or repo-relative path), e.g. "
+            "--ignore 'seo/**' --ignore 'core/skills/**'. Excludes vendor/skill CODE trees that "
+            "otherwise rank as 'central' on a harness repo. Repeatable."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
@@ -6810,11 +6819,16 @@ def orient(
     if json_output:
         typer.echo(
             build_orient_capsule_json(
-                path, max_tokens=max_tokens, max_central_files=max_central_files
+                path,
+                max_tokens=max_tokens,
+                max_central_files=max_central_files,
+                ignore=tuple(ignore),
             )
         )
         return
-    payload = build_orient_capsule(path, max_tokens=max_tokens, max_central_files=max_central_files)
+    payload = build_orient_capsule(
+        path, max_tokens=max_tokens, max_central_files=max_central_files, ignore=tuple(ignore)
+    )
     typer.echo(f"# Codebase orientation: {payload['path']}")
     typer.echo(f"central files ({len(payload['central_files'])}):")
     for cf in payload["central_files"]:
