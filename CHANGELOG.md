@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.30.4 (2026-07-05)
+
+### Bug Fixes
+
+- Exclude config/data files from orient centrality (round-8 audit — orient ranks non-code as
+  central) ([#385](https://github.com/oimiragieo/tensor-grep/pull/385),
+  [`d9449e0`](https://github.com/oimiragieo/tensor-grep/commit/d9449e0f19069f57de6cc0421c5e487a4cf528e1))
+
+Round-8 fresh-eyes audit (MEDIUM-HIGH). orient's _central_files_from_map excluded only doc suffixes
+  (_CENTRAL_DOC_SUFFIXES = md/rst/txt/adoc), but build_repo_map's fallback-source set also admits
+  config/data files (json/yaml/toml/lock/ini/xml/csv). Those have no import edges and no symbols,
+  yet in a config- or doc-heavy "harness" repo they surface as spurious "central" files over the
+  real code -- the recurring dogfood complaint that orient ranks non-code as central.
+
+Fix: add _CENTRAL_CONFIG_DATA_SUFFIXES and exclude docs + config/data (_CENTRAL_NON_CODE_SUFFIXES)
+  from the centrality candidate set; pure-config repos still fall back to all files (never empty). 2
+  tests (config/data never central + real code still ranks; pure-config falls back); 11 orient tests
+  green; ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.30.3 (2026-07-05)
 
 ### Bug Fixes
