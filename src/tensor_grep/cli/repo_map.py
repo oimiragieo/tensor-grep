@@ -4458,6 +4458,7 @@ def build_repo_map(
     *,
     max_repo_files: int | None = None,
     extra_files: list[Path] | None = None,
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
@@ -4497,7 +4498,17 @@ def build_repo_map(
 
         imports: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
+        # moat P0-6: a supplied ABSOLUTE monotonic deadline stops the CPU-bound per-file parse loop
+        # early and returns partial results (partial:true + deadline_limit) instead of running
+        # unbounded, so a huge repo degrades gracefully instead of the caller's hard timeout
+        # discarding all work. The file LIST above is already walked cheaply; only symbol/import
+        # PARSING is bounded here. Break + keep what we have -- never raise, never zero the results.
+        deadline_hit = False
+        files_scanned = 0
         for current in context_files:
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                deadline_hit = True
+                break
             if _profiling_collector is None:
                 current_imports, current_symbols = _imports_and_symbols_for_path(current)
             else:
@@ -4512,6 +4523,7 @@ def build_repo_map(
                     "provenance": _symbol_navigation_provenance_for_path(str(current)),
                 })
             symbols.extend(current_symbols)
+            files_scanned += 1
 
         payload["files"] = source_files
         payload["symbols"] = symbols
@@ -4538,6 +4550,18 @@ def build_repo_map(
                 "truncation_cause": _cause if _capped else None,
             }
             payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
+        # moat P0-6: signal a deadline-truncated parse as a top-level `partial` flag (the one field
+        # an agent's parser checks) plus a `deadline_limit` sibling. Kept SEPARATE from scan_limit
+        # on purpose: scan_limit means "the FILE LIST was capped by max_repo_files" (remedy: raise
+        # --max-repo-files), a deadline means "PARSING ran out of time" (remedy: raise --deadline /
+        # scope the query) -- conflating the two causes gives wrong-knob advice.
+        if deadline_hit:
+            payload["partial"] = True
+            payload["deadline_limit"] = {
+                "deadline_exceeded": True,
+                "files_scanned": files_scanned,
+                "files_total": len(context_files),
+            }
     return _attach_profiling(payload, _profiling_collector)
 
 
