@@ -7525,7 +7525,9 @@ def _annotate_result_completeness(
     Shared by the symbol-command emitter and the blast-radius command (which has its own output).
     """
     truncation = _scan_truncation_warning(payload)
-    payload["result_incomplete"] = truncation is not None
+    payload["result_incomplete"] = bool(payload.get("result_incomplete")) or (
+        truncation is not None
+    )
     caveat = truncation
     if (
         caveat is None
