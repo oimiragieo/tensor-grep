@@ -146,6 +146,11 @@ def _category_for(path: Path, root: Path) -> str:
 
 
 def _relative_posix(path: Path, root: Path) -> str:
+    # Round-8 audit: `tg inventory <FILE>` walks a single file whose path IS the root, so
+    # relative_to(root) yields a useless "." -- report the basename instead so largest_files names
+    # the file. (For a directory root, files are always deeper, so path == root never fires there.)
+    if path == root:
+        return path.name
     try:
         return path.relative_to(root).as_posix()
     except ValueError:

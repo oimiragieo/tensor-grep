@@ -34,6 +34,11 @@ class TestFailClosedAndBasics:
         assert inv["totals"]["files"] == 1
         assert inv["top_level_dirs"] == []
         assert any(rec["language"] == "python" for rec in inv["languages"])
+        # Round-8 audit: a single-file target must NAME the file in largest_files, not report "."
+        # (the file IS the root, so relative_to(root) would collapse to ".").
+        largest = inv["largest_files"]
+        assert largest and largest[0]["path"] == "solo.py"
+        assert all(rec["path"] != "." for rec in largest)
 
 
 class TestWalkExclusions:
