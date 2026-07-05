@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.39.1 (2026-07-05)
+
+### Performance Improvements
+
+- Cache caller-scan re-parse + memoize Path.resolve() (#52) — 7.9x on central symbols
+  ([#396](https://github.com/oimiragieo/tensor-grep/pull/396),
+  [`7545671`](https://github.com/oimiragieo/tensor-grep/commit/7545671406daf7f37f2194baac0936a225fa80e1))
+
+* perf: cache the caller-scan re-parse + memoize Path.resolve() (#52) — 7.9x on central symbols
+
+Fix A of the scale/honesty campaign. Dogfood + profiler (cProfile on claude-code-main) found the
+  central-symbol slowness (`callers QueryEngine` = 25s+) is the CALLER-SCAN re-doing work per file:
+  (1) re-reading + re-parsing files build_repo_map already parsed, and (2) -- the real 90% --
+  re-resolving the SAME paths thousands of times via Path.resolve() in JS/TS import resolution
+  (27,669 resolve() -> 83,114 nt._getfinalpathname syscalls = ~18s).
+
+Two caches, both keyed for correctness + daemon-safe: - Parse cache: _read_source_cached
+  (mtime-keyed, byte-capped at 2MB, maxsize 4096) dedups the doubled read;
+  _file_imports_symbol_from_definition (str-first-arg) @_mtime_aware_cache. Cross-call value
+  (warm-daemon repeated queries) + Python repos. - Resolve cache: _resolved_path_str
+  @lru_cache(8192) memoizes Path.resolve() in the JS/TS resolution path (pure fn of the path string
+  -> behavior-identical). THIS is the central-symbol win. - Daemon safety: both register cache_clear
+  in _MTIME_CACHE_CLEAR_REGISTRY, swept by _clear_all_source_caches() on session refresh
+  (session_store.refresh_session) -- previously cache_clear was DEAD code; a warm-daemon edit could
+  otherwise serve a stale parse/resolution.
+
+DOGFOOD (claude-code-main, max_repo_files=300): caller_scan 19.99s -> 2.52s (7.9x), total 24.1s ->
+  6.2s, callers=1 UNCHANGED. resolve cache hits=36392/misses=1921. 472 tests (parse+resolve
+  correctness, staleness-invalidation, daemon-sweep, byte-cap); ruff/mypy clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: sweep JS/TS + Rust repo contexts on refresh too (Fable review advisory B)
+
+Fable's final review (SHIP) flagged that _JS_TS_REPO_CONTEXTS / _RUST_REPO_CONTEXTS (parsed tsconfig
+  + re_export_cache, keyed by root) were NOT in _clear_all_source_caches, so they survived a daemon
+  refresh -- a pre-existing warm-daemon staleness gap that Fix A's sweep now closes (the 'never
+  serve a stale parse' claim is now actually true). Clear both on refresh; they rebuild on demand.
+  +1 regression test.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.39.0 (2026-07-05)
 
 ### Features
