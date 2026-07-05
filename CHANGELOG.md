@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.39.0 (2026-07-05)
+
+### Features
+
+- Tg inventory --deadline wall-clock bound (#53)
+  ([#395](https://github.com/oimiragieo/tensor-grep/pull/395),
+  [`093bba0`](https://github.com/oimiragieo/tensor-grep/commit/093bba04ee93aebea6bdbfb6020a98b4f3a6d390))
+
+* feat: tg inventory --deadline wall-clock bound (#53) so a huge workspace can't hang
+
+Fix C of the scale/honesty campaign (council-plan-vetted). `tg inventory C:/dev/projects` (50k
+  default cap) hung >2min on a 50k+ workspace -- the cost is the per-file
+  stat()+_looks_like_binary_file (8KB read/file, ~29s/10k), NOT the walk (0.9s/10k). Do NOT lower
+  the default cap (rejected by design). Add a wall-clock `--deadline` that breaks the per-file loop
+  + returns a partial, honestly-labeled inventory (scan_limit.truncation_cause="deadline",
+  possibly_truncated=True) instead of hanging.
+
+Dogfooded on C:/dev/projects: `tg inventory . --deadline 15` -> ~15s, "stopped after the time budget
+  (cause=deadline)" (was >2min hang). The dogfood CAUGHT a labeling bug the council missed: when the
+  deadline breaks the loop early (fewer than max_files processed), the deadline is the BINDING
+  constraint -> label "deadline", NOT "project-files" (raising --max-repo-files wouldn't help;
+  --deadline would). Fixed the precedence + a cause-aware renderer message. 24 inventory tests
+  (deadline binds over cap when it fires early; cap-only stays project-files; parity when no
+  deadline); ruff/mypy clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: correct inventory --deadline help text + add CLI wiring tests (codex review)
+
+Codex review of Fix C (no blocking issues) flagged 2 LOWs: the --deadline help was copied from the
+  graph commands and wrongly promised "partial:true JSON" (inventory emits
+  scan_limit.truncation_cause='deadline', not a top-level partial); and there was no CliRunner
+  coverage for the flag. Corrected the help to describe what inventory actually emits; added CLI
+  tests (flag accepted + threaded via a build_inventory spy; sub-floor value rejected exit 2). 24
+  inventory tests green.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.38.0 (2026-07-05)
 
 ### Features
