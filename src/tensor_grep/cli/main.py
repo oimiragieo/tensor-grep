@@ -7206,6 +7206,15 @@ def agent(
         min=0.1,
         help="Maximum seconds for each opt-in agent GPU evidence command.",
     ),
+    ignore: list[str] = typer.Option(
+        [],
+        "--ignore",
+        help=(
+            "Glob(s) to exclude from the capsule ranking (basename or repo-relative path), e.g. "
+            "--ignore 'seo/**' --ignore 'core/skills/**'. Excludes vendor/skill CODE trees that "
+            "otherwise rank as the primary target on a harness repo. Repeatable."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
@@ -7232,6 +7241,7 @@ def agent(
                     semantic_provider=provider,
                     gpu_device_ids=parsed_gpu_device_ids,
                     gpu_timeout_s=gpu_timeout_s,
+                    ignore=tuple(ignore),
                 )
             )
             return
@@ -7247,6 +7257,7 @@ def agent(
             semantic_provider=provider,
             gpu_device_ids=parsed_gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
+            ignore=tuple(ignore),
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
