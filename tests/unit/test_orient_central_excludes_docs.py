@@ -27,6 +27,38 @@ def test_docs_are_never_central_and_code_wins_stem_collision() -> None:
     assert cfg["graph_score"] == 3.0
 
 
+def test_config_and_data_files_are_never_central() -> None:
+    # round-8 audit: config/data files (package.json, *.yaml, *.toml, *.lock) have no import edges
+    # and no symbols, yet in a config-heavy "harness" repo could surface as spurious "central" files
+    # over the real code -- the recurring dogfood complaint that orient ranks non-code as central.
+    rm = {
+        "files": [
+            "package.json",
+            "config.yaml",
+            "Cargo.toml",
+            "deps.lock",
+            "src/hub.py",
+            "src/a.py",
+        ],
+        "imports": [{"file": "src/a.py", "imports": ["hub"]}],
+        "symbols": [{"name": "Hub", "kind": "class", "file": "src/hub.py"}],
+    }
+    central = _central_files_from_map(rm, max_central_files=10)
+    files = [c["file"] for c in central]
+    assert not any(
+        f.endswith((".json", ".yaml", ".yml", ".toml", ".lock", ".ini", ".cfg", ".xml", ".csv"))
+        for f in files
+    )
+    assert "src/hub.py" in files  # real code still ranks as central
+
+
+def test_pure_config_repo_falls_back_not_empty() -> None:
+    # A repo that is ONLY config/data must still return orientation context (fallback), not empty.
+    rm = {"files": ["package.json", "config.yaml"], "imports": [], "symbols": []}
+    central = _central_files_from_map(rm, max_central_files=10)
+    assert len(central) >= 1
+
+
 def test_central_files_expose_score_alias() -> None:
     # dogfood v1.20.0: agents thresholding on a generic `score` key found it null. `score` is a
     # populated alias of `graph_score` so both work.
