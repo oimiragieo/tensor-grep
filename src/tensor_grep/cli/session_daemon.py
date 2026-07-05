@@ -48,6 +48,12 @@ _DAEMON_START_LOCK_FILE = ".daemon-start.lock"
 _DAEMON_HOST = "127.0.0.1"
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
+# moat P0-6 step 5: the client-side socket read timeout for a daemon response is env-configurable so
+# a large repo whose warm-daemon graph query legitimately needs >60s is NOT killed by a hard cap that
+# returns a bare "timed out" / exit 1 / zero JSON (the recurring dogfood "60s cap errors" complaint).
+# Full partial-at-deadline for the DAEMON path needs a separate traversal-deadline (the served graph
+# commands run on the cached map, so the scan-deadline of steps 1-4 does not bound them) -- tracked.
+_DAEMON_RESPONSE_TIMEOUT_ENV = "TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS"
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 _DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
@@ -585,6 +591,19 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     return response
 
 
+def _daemon_response_timeout() -> float:
+    """Resolve the client read timeout, honoring TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS. A
+    non-positive / unparseable value falls back to the 60s default (never an instant/zero timeout)."""
+    raw = os.environ.get(_DAEMON_RESPONSE_TIMEOUT_ENV)
+    if raw is None:
+        return _DAEMON_RESPONSE_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _DAEMON_RESPONSE_TIMEOUT_SECONDS
+    return value if value > 0 else _DAEMON_RESPONSE_TIMEOUT_SECONDS
+
+
 def request_session_daemon(path: str, request: dict[str, Any]) -> dict[str, Any]:
     status = start_session_daemon(path)
     # audit S3: read the token from the (0600) daemon.json the daemon just published so the
@@ -595,6 +614,7 @@ def request_session_daemon(path: str, request: dict[str, Any]) -> dict[str, Any]
         str(status.get("host", _DAEMON_HOST)),
         int(status["port"]),
         request,
+        response_timeout=_daemon_response_timeout(),
         token=token,
     )
 
@@ -608,6 +628,7 @@ def request_running_session_daemon(path: str, request: dict[str, Any]) -> dict[s
         str(metadata.get("host", _DAEMON_HOST)),
         int(metadata["port"]),
         request,
+        response_timeout=_daemon_response_timeout(),
         token=_daemon_token(metadata),
     )
 
