@@ -60,6 +60,39 @@ def test_undo_cleanup_does_not_remove_or_follow_a_directory_symlink(tmp_path: Pa
     )
 
 
+def test_undo_commit_failure_restores_a_removed_file(tmp_path: Path, monkeypatch) -> None:
+    """Round-7 rank-6: if the commit phase raises AFTER unlinking an extra file, the best-effort
+    revert must recreate that file from the bytes snapshotted before unlink -- not lose it.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"src/a.py": "a-original\n"})
+    created = checkpoint_store.create_checkpoint(str(root))
+
+    (root / "src" / "a.py").write_text("a-MODIFIED\n", encoding="utf-8")  # staged + copied on undo
+    extra = root / "src" / "extra.py"
+    extra.write_text("extra-content\n", encoding="utf-8")  # not in snapshot -> removed during undo
+    assert extra.exists()
+
+    original_copy2 = checkpoint_store.shutil.copy2
+    resolved_root = root.resolve()
+
+    def _boom_copy2(src, dst, *args, **kwargs):
+        # Fail ONLY the commit-phase swap (dst under the repo root); let staging copies proceed.
+        dst_resolved = Path(dst).resolve()
+        if dst_resolved == resolved_root or resolved_root in dst_resolved.parents:
+            raise OSError("simulated commit-phase failure")
+        return original_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _boom_copy2)
+
+    with pytest.raises(Exception):  # noqa: B017 - the commit failure is re-raised by design
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+
+    assert extra.exists(), "commit-phase revert permanently lost the removed file"
+    assert extra.read_text(encoding="utf-8") == "extra-content\n"
+
+
 # ---------------------------------------------------------------------------
 # Test: corrupt snapshot aborts BEFORE touching any working-tree file
 # ---------------------------------------------------------------------------

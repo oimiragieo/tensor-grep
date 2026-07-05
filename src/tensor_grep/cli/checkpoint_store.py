@@ -1113,7 +1113,10 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         # here we attempt a best-effort revert of already-committed changes.
 
         removed_paths = 0
-        committed_removes: list[Path] = []
+        # round-7 rank-6: store (path, prior_bytes) -- NOT just the path -- so a commit-phase
+        # failure can recreate a file it already unlinked. Previously the revert had only the path
+        # and permanently lost the content.
+        committed_removes: list[tuple[Path, bytes]] = []
         committed_overwrites: list[tuple[Path, bytes]] = []
 
         try:
@@ -1121,8 +1124,13 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
             for rel_path in sorted(set(current_entries) - expected_paths, reverse=True):
                 current_path = root / Path(rel_path)
                 if current_path.exists():
+                    try:
+                        removed_bytes: bytes | None = current_path.read_bytes()
+                    except OSError:
+                        removed_bytes = None
                     current_path.unlink()
-                    committed_removes.append(current_path)
+                    if removed_bytes is not None:
+                        committed_removes.append((current_path, removed_bytes))
                     removed_paths += 1
 
             # Remove files that the snapshot records as deleted.
@@ -1130,8 +1138,13 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 if not exists:
                     target = resolved_targets[rel_path]
                     if target.exists():
+                        try:
+                            removed_bytes = target.read_bytes()
+                        except OSError:
+                            removed_bytes = None
                         target.unlink()
-                        committed_removes.append(target)
+                        if removed_bytes is not None:
+                            committed_removes.append((target, removed_bytes))
                         removed_paths += 1
 
             # Swap staged copies into the working tree.
@@ -1156,9 +1169,14 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     path_to_restore.write_bytes(prior_bytes)
                 except OSError:
                     pass
-            for _removed_path in committed_removes:
-                # We cannot recreate removed files without their snapshot; skip.
-                pass
+            for removed_path, removed_bytes in reversed(committed_removes):
+                # round-7 rank-6: recreate files unlinked earlier in THIS commit phase from the
+                # bytes snapshotted before their unlink, so a partial commit does not lose data.
+                try:
+                    removed_path.parent.mkdir(parents=True, exist_ok=True)
+                    removed_path.write_bytes(removed_bytes)
+                except OSError:
+                    pass
             raise
 
     finally:
