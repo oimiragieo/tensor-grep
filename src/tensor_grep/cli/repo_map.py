@@ -11884,7 +11884,9 @@ def build_symbol_refs(
     repo_map = build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
-    result = build_symbol_refs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    result = build_symbol_refs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     _copy_partial_signal(result, repo_map)
     return result
 
@@ -11894,6 +11896,7 @@ def build_symbol_refs_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     if payload.get("no_match"):
@@ -11908,7 +11911,16 @@ def build_symbol_refs_from_map(
     bounded_files = _repo_map_file_universe(repo_map)
     bounded_file_set = {str(current) for current in bounded_files}
     references: list[dict[str, Any]] = []
+    refs_scan_deadline_hit = False
+    refs_files_scanned = 0
     for current in bounded_files:
+        # moat P0-6 step 6: bound the reference-scan traversal so a CENTRAL symbol honors --deadline
+        # instead of hanging past it (1.35.0 dogfood: `refs QueryEngine --deadline 15` -> 45s timeout,
+        # no partial). Same per-file-scan hot loop as callers.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            refs_scan_deadline_hit = True
+            break
+        refs_files_scanned += 1
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
         if current.suffix == ".py":
             current_refs, _ = _python_references_and_calls(current, symbol)
@@ -12071,6 +12083,13 @@ def build_symbol_refs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
+    if refs_scan_deadline_hit:
+        payload["partial"] = True
+        payload["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "reference_files_scanned": refs_files_scanned,
+            "reference_files_total": len(bounded_files),
+        }
     return payload
 
 
@@ -12112,6 +12131,7 @@ def build_symbol_callers(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     _copy_partial_signal(result, repo_map)
@@ -12123,6 +12143,7 @@ def build_symbol_callers_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -12164,8 +12185,18 @@ def build_symbol_callers_from_map(
             for definition_file in definition_files
         )
 
+    caller_scan_deadline_hit = False
+    caller_files_scanned = 0
     with _profiling_phase(_profiling_collector, "caller_scan"):
         for current in bounded_files:
+            # moat P0-6 step 6: bound the CALLER-SCAN traversal, not just the repo-map parse. A
+            # CENTRAL symbol's cost is scanning many files for references here (leaf symbols were
+            # bounded by the parse-loop deadline; central ones hung past it because this loop was
+            # unbounded -- dogfood 1.35.0). Break + return partial callers instead of overrunning.
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                caller_scan_deadline_hit = True
+                break
+            caller_files_scanned += 1
             if not _should_scan_for_symbol_callers(current):
                 continue
             if current.suffix == ".py":
@@ -12398,6 +12429,17 @@ def build_symbol_callers_from_map(
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
+    if caller_scan_deadline_hit:
+        # moat P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
+        # holds what was found before the budget). graph_completeness downgrades so an agent does not
+        # trust a small/zero caller count on a deadline-truncated central-symbol scan.
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        payload["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "caller_files_scanned": caller_files_scanned,
+            "caller_files_total": len(bounded_files),
+        }
     payload["ranking_quality"] = _ranking_quality(
         context_payload["file_matches"],
         context_payload["test_matches"],
@@ -12476,6 +12518,7 @@ def build_symbol_blast_radius(
         symbol,
         max_depth=max_depth,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     scan_limit = payload.get("scan_limit")
@@ -12502,6 +12545,7 @@ def build_symbol_blast_radius(
                 symbol,
                 max_depth=max_depth,
                 semantic_provider=semantic_provider,
+                deadline_monotonic=deadline_monotonic,
                 _profiling_collector=_profiling_collector,
             )
             payload_scan_limit = payload.get("scan_limit")
@@ -12626,6 +12670,7 @@ def build_symbol_blast_radius_from_map(
     *,
     max_depth: int = 3,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -12667,6 +12712,7 @@ def build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     impact_payload = build_symbol_impact_from_map(
@@ -12963,6 +13009,15 @@ def build_symbol_blast_radius_from_map(
     _copy_lsp_evidence_status(payload, callers_payload)
     if "scan_limit" in repo_map:
         payload["scan_limit"] = dict(repo_map["scan_limit"])
+    # moat P0-6 step 6: the direct-caller scan may have been cut by --deadline for a CENTRAL symbol
+    # -> carry its partial + deadline_limit onto the blast radius so a caller does not trust a
+    # truncated caller_tree / blast_radius_score as complete.
+    if callers_payload.get("partial"):
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        caller_deadline_limit = callers_payload.get("deadline_limit")
+        if isinstance(caller_deadline_limit, dict):
+            payload["deadline_limit"] = dict(caller_deadline_limit)
     return _attach_profiling(payload, _profiling_collector)
 
 
