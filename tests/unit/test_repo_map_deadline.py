@@ -100,3 +100,35 @@ def test_step3_deadline_none_leaves_builders_unbounded(tmp_path: Path) -> None:
     result = repo_map.build_symbol_callers("f1", str(tmp_path))  # no deadline
     assert "partial" not in result
     assert "deadline_limit" not in result
+
+
+def _make_caller_repo(root: Path, callers: int) -> None:
+    src = root / "src"
+    src.mkdir(parents=True)
+    (src / "target.py").write_text("def widget():\n    return 1\n", encoding="utf-8")
+    for index in range(callers):
+        (src / f"caller{index}.py").write_text(
+            "from src.target import widget\n\n\ndef use():\n    return widget()\n", encoding="utf-8"
+        )
+
+
+def test_step6_caller_scan_honors_already_expired_deadline(tmp_path: Path) -> None:
+    # moat P0-6 step 6: the CALLER-SCAN traversal (not just the repo-map parse) must honor the
+    # deadline -- this is why central symbols hung past --deadline while leaf symbols didn't.
+    _make_caller_repo(tmp_path, 6)
+    rm = repo_map.build_repo_map(str(tmp_path))  # full map, no deadline
+    result = repo_map.build_symbol_callers_from_map(
+        rm, "widget", deadline_monotonic=time.monotonic() - 1.0
+    )
+    assert result.get("partial") is True
+    assert result["graph_completeness"] == "partial"
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_step6_caller_scan_no_deadline_is_complete(tmp_path: Path) -> None:
+    _make_caller_repo(tmp_path, 4)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    result = repo_map.build_symbol_callers_from_map(rm, "widget")  # no deadline
+    assert "partial" not in result
+    assert result["graph_completeness"] == "moderate"
+    assert len(result["callers"]) >= 1  # found the real callers when unbounded

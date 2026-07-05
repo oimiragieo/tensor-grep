@@ -12112,6 +12112,7 @@ def build_symbol_callers(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     _copy_partial_signal(result, repo_map)
@@ -12123,6 +12124,7 @@ def build_symbol_callers_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -12164,8 +12166,18 @@ def build_symbol_callers_from_map(
             for definition_file in definition_files
         )
 
+    caller_scan_deadline_hit = False
+    caller_files_scanned = 0
     with _profiling_phase(_profiling_collector, "caller_scan"):
         for current in bounded_files:
+            # moat P0-6 step 6: bound the CALLER-SCAN traversal, not just the repo-map parse. A
+            # CENTRAL symbol's cost is scanning many files for references here (leaf symbols were
+            # bounded by the parse-loop deadline; central ones hung past it because this loop was
+            # unbounded -- dogfood 1.35.0). Break + return partial callers instead of overrunning.
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                caller_scan_deadline_hit = True
+                break
+            caller_files_scanned += 1
             if not _should_scan_for_symbol_callers(current):
                 continue
             if current.suffix == ".py":
@@ -12398,6 +12410,17 @@ def build_symbol_callers_from_map(
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
+    if caller_scan_deadline_hit:
+        # moat P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
+        # holds what was found before the budget). graph_completeness downgrades so an agent does not
+        # trust a small/zero caller count on a deadline-truncated central-symbol scan.
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        payload["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "caller_files_scanned": caller_files_scanned,
+            "caller_files_total": len(bounded_files),
+        }
     payload["ranking_quality"] = _ranking_quality(
         context_payload["file_matches"],
         context_payload["test_matches"],
