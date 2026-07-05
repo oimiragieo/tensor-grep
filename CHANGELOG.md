@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.40.0 (2026-07-05)
+
+### Features
+
+- Tg agent --ignore <glob> to exclude vendor/skill trees (1.35 dogfood #51)
+  ([#397](https://github.com/oimiragieo/tensor-grep/pull/397),
+  [`9dfe197`](https://github.com/oimiragieo/tensor-grep/commit/9dfe19759c3938f2e8c3a257e029b2ffae429b6a))
+
+Mirrors the shipped tg orient --ignore (#392) for the agent command: on a harness/doc repo, root `tg
+  agent . "task"` ranks vendor/SEO/skill scripts as the primary target over real code (dogfood #51
+  HIGH). Add a repeatable --ignore <glob> that filters the repo map (files/symbols/imports) before
+  ranking, reusing orient_capsule._apply_ignore_globs (local import -> no circular). Threaded
+  through build_context_render -> build_agent_capsule / _json -> the CLI (both text + JSON paths).
+
+Dogfooded on gotcontext-saddle "audit the read gate": WITHOUT --ignore primary =
+  core/skills/seo/scripts/font_audit.py#audit (reproduces #51); WITH --ignore 'core/skills/**'
+  primary = core/hooks/gotcontext_read_gate.py#read_block_enabled, no core/skills paths anywhere. 31
+  tests (incl. the agent-capsule LSP seam kept intact); ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.39.1 (2026-07-05)
 
 ### Performance Improvements
