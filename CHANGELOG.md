@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.31.0 (2026-07-05)
+
+### Features
+
+- Build_repo_map deadline -> partial results (moat P0-6 step 1)
+  ([#384](https://github.com/oimiragieo/tensor-grep/pull/384),
+  [`c972794`](https://github.com/oimiragieo/tensor-grep/commit/c972794cf74804131433dde4718047e76196409e))
+
+* feat: build_repo_map deadline -> partial results (moat P0-6 step 1)
+
+Moat P0-6 step 1 (round-8-designed). The #1 recurring dogfood pain: a huge-repo graph query hits the
+  caller's hard 60s timeout and returns a bare error with ZERO JSON -- all work discarded. Step 1
+  adds the core mechanism: build_repo_map accepts an ABSOLUTE `deadline_monotonic` and, at the top
+  of the CPU-bound per-file parse loop, breaks early when the deadline passes -- KEEPING the
+  imports/symbols gathered so far and returning normally (never raises). The file LIST is already
+  walked cheaply; only per-file parsing is bounded.
+
+Signal (chairman-decided shape): top-level `payload['partial']=True` (the one field an agent parser
+  checks) + a `deadline_limit` sibling {deadline_exceeded, files_scanned, files_total}. Kept
+  SEPARATE from scan_limit on purpose -- scan_limit means the FILE LIST was capped (remedy: raise
+  --max-repo-files); a deadline means PARSING ran out of time (remedy: raise --deadline / scope) --
+  conflating causes gives wrong-knob advice. deadline_monotonic=None is a pure no-op (parity).
+
+3 TDD tests (already-expired -> immediate partial; mid-scan via a deterministic fake clock ->
+  partial work RETAINED not zeroed; None -> no partial/deadline_limit keys); ruff/mypy clean. Next:
+  step 2 (_copy_partial_signal to symbol builders) + step 3 (thread deadline_seconds) + step 4 (CLI
+  flag) + step 5 (daemon client timeout = the 60s-error fix).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* style: ruff format --preview the P0-6 step-1 test (CI formatting gate)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.30.5 (2026-07-05)
 
 ### Bug Fixes
