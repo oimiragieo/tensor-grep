@@ -7826,6 +7826,15 @@ def impact(
         min=1,
         help="Maximum repo files to scan before returning a bounded result.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
@@ -7843,6 +7852,7 @@ def impact(
             resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            deadline_seconds=deadline,
         )
         # H5: impact previously surfaced only definition/import-derived `files` and so
         # under-reported call sites relative to `tg callers` (which finds the CLI
@@ -7854,6 +7864,7 @@ def impact(
                 resolved_path,
                 semantic_provider=provider,
                 max_repo_files=max_repo_files,
+                deadline_seconds=deadline,
             )
             payload["callers"] = list(callers_payload.get("callers", []))
             for caller in payload["callers"]:
@@ -7901,6 +7912,15 @@ def refs(
         min=1,
         help="Maximum repo files to scan before returning a bounded result.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
@@ -7918,6 +7938,7 @@ def refs(
             resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            deadline_seconds=deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -7955,6 +7976,15 @@ def callers(
         min=1,
         help="Maximum repo files to scan before returning a bounded result.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
@@ -7972,6 +8002,7 @@ def callers(
             resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            deadline_seconds=deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -8084,6 +8115,15 @@ def blast_radius(
         min=1,
         help="Maximum impacted files to include in output; raise for fuller broad impact analysis.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     mermaid_output: bool = typer.Option(
         False,
@@ -8115,6 +8155,7 @@ def blast_radius(
             max_repo_files=max_repo_files,
             max_callers=max_callers,
             max_files=max_files,
+            deadline_seconds=deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
