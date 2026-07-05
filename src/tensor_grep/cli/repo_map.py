@@ -45,6 +45,53 @@ def _mtime_key(path_str: str) -> tuple[int, int]:
         return (-1, -1)
 
 
+# Fix A / Guard 3: every _mtime_aware_cache-decorated function registers its cache_clear
+# here so a warm daemon can sweep ALL of them in one call when a session is refreshed/detected
+# stale. Without this, a same-(mtime_ns,size) edit landing between two daemon calls could keep
+# serving a stale cached parse/read forever (the mtime key alone can't tell them apart).
+_MTIME_CACHE_CLEAR_REGISTRY: list[Callable[[], None]] = []
+
+
+def _clear_all_source_caches() -> None:
+    """Sweep every _mtime_aware_cache-decorated cache (Fix A / Guard 3).
+
+    Must be invoked whenever the daemon re-reads/refreshes a session (see
+    session_store.refresh_session), since these caches are process-global and outlive any
+    single session payload.
+    """
+    for clear in _MTIME_CACHE_CLEAR_REGISTRY:
+        clear()
+    # Fable final-review (advisory B): the JS/TS + Rust per-repo contexts hold parsed tsconfig +
+    # re_export_cache keyed by root; they are NOT _mtime_aware_cache wrappers, so without this they
+    # survive a refresh and a warm daemon could serve a stale re-export / tsconfig-alias resolution
+    # after an edit. Clear them too so the sweep is actually complete (they rebuild on demand).
+    _JS_TS_REPO_CONTEXTS.clear()
+    _RUST_REPO_CONTEXTS.clear()
+
+
+# Fix B: the JS/TS import-resolution path (_js_ts_module_candidates / _js_ts_candidate_files /
+# _js_ts_resolve_exported_symbol / _js_ts_import_match_details / _normalized_repo_root) calls
+# Path.resolve() on the SAME handful of path strings thousands of times per caller_scan --
+# profiled at ~27,669 resolve() calls / ~83,114 nt._getfinalpathname syscalls on a real repo
+# (~18s of ~22s wall time), because caller_scan re-derives candidate module paths for every
+# (candidate file, definition file) pair even when the underlying importer path / repo root /
+# module name repeats across pairs. Path.resolve() is a pure function of the path string for the
+# lifetime of a single resolution (no dependency on the target FILE's mtime -- it's a syscall
+# that walks the filesystem to canonicalize the string), so memoize it directly by string.
+#
+# Guard 3 (daemon safety): this is a PLAIN lru_cache, not _mtime_aware_cache -- there's no single
+# file whose mtime this could key off (the input is a path STRING, not a file whose bytes we're
+# reading), and a moved file / retargeted symlink mid-session could change what a given string
+# resolves to. Register its cache_clear in the same _MTIME_CACHE_CLEAR_REGISTRY sweep the parse
+# cache uses so a daemon session refresh/detected-staleness flushes it too.
+@lru_cache(maxsize=8192)
+def _resolved_path_str(path_str: str) -> str:
+    return str(Path(path_str).resolve())
+
+
+_MTIME_CACHE_CLEAR_REGISTRY.append(_resolved_path_str.cache_clear)
+
+
 def _mtime_aware_cache(
     maxsize: int = 256,
 ) -> Callable[[Callable[..., _CacheR]], Callable[..., _CacheR]]:
@@ -83,6 +130,7 @@ def _mtime_aware_cache(
                 cache.clear()
 
         wrapper.cache_clear = cache_clear  # type: ignore[attr-defined]
+        _MTIME_CACHE_CLEAR_REGISTRY.append(cache_clear)
         return cast("Callable[..., _CacheR]", wrapper)
 
     return decorator
@@ -991,6 +1039,40 @@ def _file_contains_literal_symbol(path: Path, symbol: str) -> bool:
     return symbol.encode("utf-8") in data
 
 
+# Fix A: caller_scan (build_symbol_callers_from_map) calls _file_may_contain_literal_symbol
+# and _file_may_import_symbol_definition on every candidate file, each doing its OWN
+# path.read_bytes() -- a doubled full-file read per candidate, profiled at ~90% of wall time on
+# a real repo (see AGENTS.md / dogfood notes). Route both through one mtime-aware cached read so
+# the bytes are read once per (path, mtime, size) no matter how many callers need them.
+#
+# Guard 2: _file_may_import_symbol_definition itself is NOT decorated with @_mtime_aware_cache
+# (its 2nd arg, definition_files: list[str], is unhashable -- decorating it directly would raise
+# TypeError on every call). Only the byte-read is cached, via this dedicated helper.
+#
+# Guard 4: bound both the entry count (maxsize) and the per-entry size (byte cap) so this
+# cache cannot be dominated by one giant generated file sitting in memory. Files above the cap
+# bypass the cache entirely and are read directly, mirroring _SYMBOL_LITERAL_SEED_MAX_BYTES.
+_SOURCE_READ_CACHE_MAXSIZE = 4096
+
+
+def _read_source_cached(path_str: str) -> bytes:
+    """Read raw file bytes, cached by (mtime_ns, size); see Fix A note above."""
+    try:
+        size = Path(path_str).stat().st_size
+    except OSError:
+        size = -1
+    if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+        # Either stat failed (let read_bytes() raise/propagate the real error below) or the
+        # file is too large to be worth caching -- read it directly, uncached (Guard 4).
+        return Path(path_str).read_bytes()
+    return _read_source_cached_bounded(path_str)
+
+
+@_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
+def _read_source_cached_bounded(path_str: str) -> bytes:
+    return Path(path_str).read_bytes()
+
+
 def _file_may_contain_literal_symbol(path: Path, symbol: str) -> bool:
     normalized_symbol = (symbol or "").strip()
     if not normalized_symbol:
@@ -1002,7 +1084,7 @@ def _file_may_contain_literal_symbol(path: Path, symbol: str) -> bool:
     if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         return True
     try:
-        data = path.read_bytes()
+        data = _read_source_cached(str(path))
     except OSError:
         return True
     if b"\0" in data[:8192]:
@@ -1020,7 +1102,7 @@ def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) 
     if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         return True
     try:
-        data = path.read_bytes()
+        data = _read_source_cached(str(path))
     except OSError:
         return True
     if b"\0" in data[:8192]:
@@ -1346,7 +1428,10 @@ def _js_ts_default_import_bindings(source: str) -> list[dict[str, Any]]:
 def _normalized_repo_root(repo_root: Path | str | None) -> Path | None:
     if repo_root is None:
         return None
-    return Path(str(repo_root)).expanduser().resolve()
+    # Fix B: repo_root is constant across an entire caller_scan, but this is called on every
+    # _js_ts_repo_context / _js_ts_resolve_exported_symbol invocation -- route through the
+    # process-wide resolve() cache instead of re-walking the filesystem each time.
+    return Path(_resolved_path_str(str(Path(str(repo_root)).expanduser())))
 
 
 def _dedupe_labels(labels: list[str]) -> list[str]:
@@ -1431,16 +1516,20 @@ def _js_ts_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
 
 
 def _js_ts_candidate_files(base: Path) -> list[Path]:
-    normalized_base = base.resolve()
+    # Fix B: called once per (importer, module) candidate lookup, and the same `base` string
+    # recurs across many definition_file iterations in caller_scan -- route every resolve()
+    # through the cached helper.
+    normalized_base = Path(_resolved_path_str(str(base)))
     candidates: list[Path] = []
     if normalized_base.suffix in _JS_TS_SUFFIXES:
         candidates.append(normalized_base)
     else:
         candidates.extend(
-            (normalized_base.with_suffix(suffix)).resolve() for suffix in sorted(_JS_TS_SUFFIXES)
+            Path(_resolved_path_str(str(normalized_base.with_suffix(suffix))))
+            for suffix in sorted(_JS_TS_SUFFIXES)
         )
         candidates.extend(
-            ((normalized_base / "index").with_suffix(suffix)).resolve()
+            Path(_resolved_path_str(str((normalized_base / "index").with_suffix(suffix))))
             for suffix in sorted(_JS_TS_SUFFIXES)
         )
     deduped: list[Path] = []
@@ -1476,7 +1565,9 @@ def _js_ts_module_candidates(
     repo_root: Path | str | None = None,
 ) -> dict[str, Any]:
     if module_name.startswith("."):
-        base = (importer_path.parent / module_name).resolve()
+        # Fix B: same (importer_path, module_name) pair recurs across many definition_file
+        # iterations of caller_scan -- cache the resolve() by string.
+        base = Path(_resolved_path_str(str(importer_path.parent / module_name)))
         return {
             "paths": _js_ts_candidate_files(base),
             "provenance": [],
@@ -1485,9 +1576,12 @@ def _js_ts_module_candidates(
 
     context = _js_ts_repo_context(repo_root)
     tsconfig = context.get("tsconfig", {})
-    base_dir = Path(
-        str(tsconfig.get("base_url") or context.get("root") or importer_path.parent.resolve())
-    ).resolve()
+    base_dir_str = str(
+        tsconfig.get("base_url")
+        or context.get("root")
+        or _resolved_path_str(str(importer_path.parent))
+    )
+    base_dir = Path(_resolved_path_str(base_dir_str))
 
     for current in tsconfig.get("paths", []):
         pattern = str(current.get("pattern", ""))
@@ -1497,14 +1591,14 @@ def _js_ts_module_candidates(
             if expanded is None:
                 continue
             return {
-                "paths": _js_ts_candidate_files((base_dir / expanded).resolve()),
+                "paths": _js_ts_candidate_files(Path(_resolved_path_str(str(base_dir / expanded)))),
                 "provenance": ["tsconfig-path-alias"],
                 "confidence": 0.88,
             }
 
     if tsconfig.get("base_url"):
         return {
-            "paths": _js_ts_candidate_files((base_dir / module_name).resolve()),
+            "paths": _js_ts_candidate_files(Path(_resolved_path_str(str(base_dir / module_name)))),
             "provenance": ["tsconfig-base-url"],
             "confidence": 0.76,
         }
@@ -1519,7 +1613,9 @@ def _js_ts_module_match_details(
     repo_root: Path | str | None = None,
 ) -> dict[str, Any]:
     candidate_info = _js_ts_module_candidates(importer_path, module_name, repo_root)
-    resolved_definition = str(Path(definition_path).resolve())
+    # Fix B: definition_path is constant for the entire outer symbol scan across every
+    # candidate/importer pair -- avoid re-resolving it on every call.
+    resolved_definition = _resolved_path_str(definition_path)
     if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
         return {
             "matched": True,
@@ -1574,7 +1670,9 @@ def _js_ts_resolve_exported_symbol(
     _visited: set[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     normalized_root = _normalized_repo_root(repo_root)
-    normalized_module = module_path.expanduser().resolve()
+    # Fix B: this resolve() runs BEFORE the re_export_cache lookup below, so an uncached
+    # resolve() here defeats that cache's purpose on repeat calls for the same module path.
+    normalized_module = Path(_resolved_path_str(str(module_path.expanduser())))
     if normalized_module.suffix not in _JS_TS_SUFFIXES:
         return None
 
@@ -1696,7 +1794,9 @@ def _js_ts_import_match_details(
     repo_root: Path | str | None = None,
     is_default: bool = False,
 ) -> dict[str, Any] | None:
-    resolved_definition = str(Path(definition_path).resolve())
+    # Fix B: definition_path is constant across every binding/candidate iteration of the outer
+    # caller_scan any()-loop -- avoid re-resolving it per call.
+    resolved_definition = _resolved_path_str(definition_path)
     resolved = _js_ts_resolve_imported_symbol(
         importer_path,
         module_name,
@@ -2483,12 +2583,25 @@ def _rust_module_matches_definition(
     )
 
 
+# Fix A / Guard 1: this scans+parses the importer file (ast.parse for Python, regex/AST for
+# JS/TS/Rust) once PER (file, definition) PAIR, and caller_scan calls it in an any() loop over
+# every definition_file for every candidate file -- N definitions means N re-reads/re-parses of
+# the same file. @_mtime_aware_cache requires a str first-positional arg (its wrapper keys the
+# cache on path_str directly), so the parameter is `path_str: str` here, not `Path` -- callers
+# that still pass a Path work at runtime (Path(path_str) below accepts either), but the one hot
+# call site (build_symbol_callers_from_map's _should_scan_for_symbol_callers) is updated to pass
+# str(current) explicitly so the cache key is a plain, consistently-typed string.
+#
+# Guard 4: bound the cache's entry count -- this key includes symbol+definition_path+repo_root,
+# so it can grow faster than a plain per-file cache; keep it generous but finite.
+@_mtime_aware_cache(maxsize=2048)  # Fix A: mtime+size in key; replaces per-call read+parse
 def _file_imports_symbol_from_definition(
-    file_path: Path,
+    path_str: str,
     symbol: str,
     definition_path: str,
     repo_root: Path | str | None = None,
 ) -> bool:
+    file_path = Path(path_str)
     try:
         source = file_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -12193,7 +12306,7 @@ def build_symbol_callers_from_map(
             return False
         return any(
             _file_imports_symbol_from_definition(
-                current,
+                str(current),
                 symbol,
                 definition_file,
                 repo_root,
