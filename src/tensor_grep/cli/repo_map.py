@@ -61,6 +61,12 @@ def _clear_all_source_caches() -> None:
     """
     for clear in _MTIME_CACHE_CLEAR_REGISTRY:
         clear()
+    # Fable final-review (advisory B): the JS/TS + Rust per-repo contexts hold parsed tsconfig +
+    # re_export_cache keyed by root; they are NOT _mtime_aware_cache wrappers, so without this they
+    # survive a refresh and a warm daemon could serve a stale re-export / tsconfig-alias resolution
+    # after an edit. Clear them too so the sweep is actually complete (they rebuild on demand).
+    _JS_TS_REPO_CONTEXTS.clear()
+    _RUST_REPO_CONTEXTS.clear()
 
 
 # Fix B: the JS/TS import-resolution path (_js_ts_module_candidates / _js_ts_candidate_files /
