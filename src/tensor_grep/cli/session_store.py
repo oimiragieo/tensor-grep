@@ -17,6 +17,7 @@ from uuid import uuid4
 from tensor_grep.cli._index_lock import index_lock, replace_with_retry
 from tensor_grep.cli.repo_map import (
     DEFAULT_AGENT_REPO_MAP_LIMIT,
+    _clear_all_source_caches,
     _is_repo_context_file,
     _iter_repo_files,
     apply_repo_map_output_limits,
@@ -642,6 +643,15 @@ def refresh_session(
     max_repo_files: int | None = None,
     payload_cache: _SessionServeCache | None = None,
 ) -> SessionRefreshResult:
+    # Fix A / Guard 3: this is the single choke point every refresh path funnels through -- the
+    # explicit `tg session refresh` CLI/MCP command, and the daemon's refresh_on_stale recovery
+    # (session_daemon._handle: except Exception -> refresh_session(...) when
+    # _ensure_session_not_stale raised SessionStaleError). Sweep the process-global mtime-aware
+    # source/parse caches (repo_map._read_source_cached / _file_imports_symbol_from_definition
+    # and friends) here, BEFORE rebuilding, so a warm daemon can never serve a parse/read from
+    # before this refresh -- even in the pathological same-(mtime_ns,size) edit case the mtime
+    # key alone cannot detect.
+    _clear_all_source_caches()
     root = _resolve_root(Path(path))
     existing = get_session(session_id, path)
     effective_max_repo_files = _effective_session_max_repo_files(max_repo_files, existing)
