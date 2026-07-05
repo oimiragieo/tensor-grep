@@ -7918,7 +7918,8 @@ def impact(
             if callers_payload.get("partial"):
                 payload["partial"] = True
                 caller_deadline_limit = callers_payload.get("deadline_limit")
-                if isinstance(caller_deadline_limit, dict):
+                # Don't clobber a deadline_limit the first (impact) pass already set (cursor review LOW).
+                if isinstance(caller_deadline_limit, dict) and "deadline_limit" not in payload:
                     payload["deadline_limit"] = dict(caller_deadline_limit)
             for caller in payload["callers"]:
                 caller_file = str(caller.get("file", ""))
