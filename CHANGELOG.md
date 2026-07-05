@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.32.0 (2026-07-05)
+
+### Features
+
+- Propagate the deadline partial signal through symbol builders (moat P0-6 step 2)
+  ([#387](https://github.com/oimiragieo/tensor-grep/pull/387),
+  [`8ec5417`](https://github.com/oimiragieo/tensor-grep/commit/8ec5417d326e236ea6d1dddad415452d40a59836))
+
+Moat P0-6 step 2 (round-8-designed). Step 1 added partial:true + deadline_limit to build_repo_map,
+  but a symbol builder repackages a build_symbol_defs result into its OWN payload -- dropping the
+  signal the moment it wraps, so callers/impact/source would show a small deadline-truncated result
+  with no indication it was cut short.
+
+Fix: a _copy_partial_signal(payload, source) helper (sibling of _copy_scan_limit; scan_limit is the
+  file-cap fact, partial is the time-budget outcome) that forwards partial + deadline_limit only
+  when the source was actually partial (complete results carry neither -> parity). Wired at all 3
+  _copy_scan_limit call sites (build_symbol_source_from_map / _impact_from_map / _callers_from_map).
+  3 TDD tests (helper copy + defensive-copy + no-op-when-complete; a real builder propagates a
+  partial defs payload); 13 step-1/scan_limit parity green; ruff/mypy clean.
+
+Next: step 3 (thread deadline_seconds through the 4 top-level builders -> one absolute budget shared
+  across the blast-radius literal-seed retry) + step 4 (CLI --deadline) + step 5 (daemon 60s-fix).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.31.0 (2026-07-05)
 
 ### Features
