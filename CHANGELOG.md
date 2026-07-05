@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.36.0 (2026-07-05)
+
+### Features
+
+- Tg orient --ignore <glob> to exclude vendor/skill trees (1.35 dogfood)
+  ([#392](https://github.com/oimiragieo/tensor-grep/pull/392),
+  [`783f1c0`](https://github.com/oimiragieo/tensor-grep/commit/783f1c0140d04f68f0520cba612a6e76cf19e34a))
+
+Dogfood 1.35.0 (recurring HIGH/Medium every dogfood): on a doc/harness repo, `tg orient .` ranks
+  vendor / SEO / skill-tree scripts as "central" over the real code. Those are .py CODE, so the
+  existing doc/config suffix exclusions (#385) don't catch them. Add a repeatable `--ignore <glob>`
+  (mirrors docs-coverage's --ignore) that drops matching files -- basename OR repo-relative posix
+  path -- from the map before ranking, so `tg orient . --ignore 'seo/**' --ignore 'core/skills/**'`
+  surfaces the real architecture. _apply_ignore_globs filters files+symbols+imports once, so central
+  files, entry points, symbol map, and snippets all honor it; empty ignore is an identity no-op
+  (parity). 2 tests (tree excluded + code preserved; basename/relpath matching) + dogfooded the real
+  binary; 13 orient tests green; ruff/mypy clean.
+
+Next (same dogfood): thread --ignore into `agent` too, + populate validation_commands when a primary
+  target + related test resolve.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.35.1 (2026-07-05)
 
 ### Bug Fixes
