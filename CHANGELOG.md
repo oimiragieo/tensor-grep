@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v1.37.0 (2026-07-05)
+
+### Features
+
+- Bound the caller-scan traversal with --deadline (moat P0-6 step 6 — central-symbol hangs)
+  ([#393](https://github.com/oimiragieo/tensor-grep/pull/393),
+  [`5d4b305`](https://github.com/oimiragieo/tensor-grep/commit/5d4b30562e54cc823dc32b6c4b0a18968b3716a4))
+
+* feat: bound the caller-scan traversal with --deadline (moat P0-6 step 6 — central-symbol hangs)
+
+Moat P0-6 step 6. Dogfood 1.35.0 PROFILED the exact gap: --deadline bounded leaf symbols (~23s,
+  partial:true) but CENTRAL symbols (QueryEngine) ran 90s+ ignoring it. Root cause: steps 1-4
+  bounded build_repo_map's PARSE loop, but a central symbol's cost is the CALLER-SCAN TRAVERSAL in
+  build_symbol_callers_from_map (scanning many files for references), which was unbounded.
+
+Fix: thread deadline_monotonic into build_symbol_callers_from_map and check it at the top of the
+
+caller-scan loop -> break + return partial:true with the callers found so far, graph_completeness
+  downgraded to "partial" (so an agent does not trust a small/zero caller count on a truncated
+  scan), + deadline_limit {caller_files_scanned, caller_files_total}. Threaded from the top-level
+  build_symbol_callers (so `tg callers X --deadline N` bounds the scan; impact routes through
+  callers). 2 TDD tests (already-expired -> partial + graph_completeness partial; no deadline ->
+  complete). 7 P0-6 tests green; ruff/mypy clean.
+
+Also addresses under-detection framing (partial:true + callers=0): graph_completeness=partial now
+  signals the count is NOT trustworthy on a deadline-truncated scan. Next: same deadline check in
+  build_symbol_blast_radius_from_map's reverse-import traversal + the daemon path.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* feat: extend the caller-scan deadline to blast-radius (moat P0-6 step 6)
+
+blast-radius runs the SAME direct-caller scan (build_symbol_callers_from_map) for its caller_tree,
+  so a central symbol hung 90s+ past --deadline there too (1.35.0 dogfood: `blast-radius QueryEngine
+  --deadline 10` -> 90s, no JSON). Thread deadline_monotonic through
+  build_symbol_blast_radius_from_map into the caller-scan + both top-level scans (initial +
+  literal-seed retry), and carry the caller scan's partial + deadline_limit onto the blast-radius
+  payload with graph_completeness downgraded to "partial" so an agent does not trust a truncated
+  caller_tree / blast_radius_score. 2 more TDD tests (already-expired -> partial; no deadline ->
+  complete); 9 P0-6 green; ruff/mypy clean.
+
+* feat: extend the scan deadline to refs (moat P0-6 step 6 — completes the graph family)
+
+refs runs the same per-file reference scan (build_symbol_refs_from_map) as callers, so a central
+  symbol hung past --deadline there too (1.35.0 dogfood: `refs QueryEngine --deadline 15` -> 45s
+  timeout, no partial). Thread deadline_monotonic into the reference-scan loop -> break +
+  partial:true with references-so-far + deadline_limit; threaded from the top-level
+  build_symbol_refs. 2 more TDD tests. 11 P0-6 green; ruff/mypy clean.
+
+With this, the traversal deadline covers ALL FOUR graph commands (callers/impact/refs/blast-radius)
+  -- central symbols now return partial JSON on --deadline instead of hanging, closing the 1.35.0
+  dogfood's #1 finding for the direct path.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.36.0 (2026-07-05)
 
 ### Features
