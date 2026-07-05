@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.34.0 (2026-07-05)
+
+### Features
+
+- --deadline CLI flag on the 4 graph commands (moat P0-6 step 4)
+  ([#389](https://github.com/oimiragieo/tensor-grep/pull/389),
+  [`2615674`](https://github.com/oimiragieo/tensor-grep/commit/26156740fc3b8c20d1c42d32562cbd24d5a99fd1))
+
+* feat: --deadline CLI flag on the 4 graph commands (moat P0-6 step 4)
+
+Moat P0-6 step 4 (round-8-designed). Steps 1-3 built the deadline mechanism end-to-end through
+  build_repo_map + the 4 builders; step 4 exposes it as a `--deadline <seconds>` typer.Option on the
+  callers / refs / impact / blast-radius commands, threaded as deadline_seconds= into every
+  build_symbol_* call (impact threads it into BOTH its impact + callers passes). min=0.1 (a
+  sub-floor budget is a usage error, not a silent 0-budget run); default None = today's unbounded
+  behavior.
+
+VERIFIED on the REAL binary (not CliRunner, which bypasses bootstrap): `tg callers X . --deadline
+  0.1 --json` -> partial:true + deadline_limit {files_scanned:1, files_total:463}; no --deadline ->
+  exit 0, 9 callers, no partial. The exit code composes with the existing contract: a
+  deadline-truncated no-match exits 1 with result_incomplete=True, identical to --max-repo-files
+  truncation (the partial flag in the JSON is the primary agent signal; the exit code is
+  unchanged/consistent, not a regression). 4 TDD tests (flag threads the value; None when absent;
+  present on all 4; sub-floor rejected); ruff/mypy clean.
+
+Next: step 5 (daemon client-timeout default budget = the actual fix for the 60s-error/zero-JSON
+  pain).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: de-brittle the --deadline present-check (invoke-based, not help-text width) — CI fix
+
+The help-text parse of 'callers --help' failed on CI (width-dependent wrapping) while the
+  invoke-based threading test passed -> the flag IS registered. Assert acceptance via [cmd
+  --deadline 5 --help] -> exit 0 instead of grepping help output. Same fragility class as the
+  --daemon help test.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.33.0 (2026-07-05)
 
 ### Features
