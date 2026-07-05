@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import tensor_grep.cli.repo_map as repo_map
 
 
@@ -86,10 +88,34 @@ def test_build_symbol_source_truncated_no_match_carries_result_incomplete(tmp_pa
     # scan_remediation but result_incomplete=None on a truncated no_match.
     import tensor_grep.cli.repo_map as repo_map
 
-    (tmp_path / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
-    (tmp_path / "b.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
-    (tmp_path / "c.py").write_text("def gamma():\n    return 3\n", encoding="utf-8")
-    payload = repo_map.build_symbol_source("gamma", str(tmp_path), max_repo_files=1)
+    for name in ("a", "b", "c", "d", "e", "f"):
+        (tmp_path / f"{name}.py").write_text(f"def {name}_fn():\n    return 1\n", encoding="utf-8")
+    payload = repo_map.build_symbol_source("f_fn", str(tmp_path), max_repo_files=1)
+    # Assert the precondition (not guard on it) so the test can't vacuously pass (Fable final review).
+    assert payload.get("no_match") is True
+    assert payload.get("scan_limit", {}).get("possibly_truncated") is True
+    assert payload.get("result_incomplete") is True
+    assert payload.get("scan_remediation")
+
+
+@pytest.mark.parametrize(
+    "builder_name",
+    [
+        "build_symbol_callers",
+        "build_symbol_refs",
+        "build_symbol_impact",
+        "build_symbol_blast_radius",
+    ],
+)
+def test_all_graph_builders_carry_result_incomplete_on_truncated_no_match(tmp_path, builder_name):
+    # Fable final review: impact/refs/blast-radius inherit result_incomplete via a dict copy today; a
+    # refactor to a fresh envelope (which is exactly what dropped it in build_symbol_source_from_map)
+    # would silently regress with no test failing. Pin the contract across every graph builder.
+    import tensor_grep.cli.repo_map as repo_map
+
+    for name in ("a", "b", "c", "d", "e", "f"):
+        (tmp_path / f"{name}.py").write_text(f"def {name}_fn():\n    return 1\n", encoding="utf-8")
+    builder = getattr(repo_map, builder_name)
+    payload = builder("f_fn", str(tmp_path), max_repo_files=1)
     if payload.get("no_match") and payload.get("scan_limit", {}).get("possibly_truncated"):
-        assert payload.get("result_incomplete") is True
-        assert payload.get("scan_remediation")
+        assert payload.get("result_incomplete") is True, f"{builder_name} dropped result_incomplete"
