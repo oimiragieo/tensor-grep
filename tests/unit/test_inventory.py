@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import tensor_grep.cli.inventory as inventory_module
 from tensor_grep.cli.inventory import build_inventory
 
 
@@ -153,6 +154,76 @@ class TestDeterminism:
         first = json.dumps(build_inventory(str(tmp_path)), sort_keys=False)
         second = json.dumps(build_inventory(str(tmp_path)), sort_keys=False)
         assert first == second
+
+
+class TestDeadline:
+    # Fix C (2026-07-05): the per-file stat()+_looks_like_binary_file cost (~29s/10k files)
+    # dominates over the walk itself (~0.9s/10k). A huge workspace with a large max_files
+    # cap could still take minutes even though the cap was never hit. A wall-clock deadline
+    # lets the caller bound total time and get an honestly-labeled partial inventory instead.
+
+    @staticmethod
+    def _install_advancing_clock(monkeypatch, base=1000.0):
+        # Same fake-clock idiom as tests/unit/test_repo_map_deadline.py: monotonic only
+        # advances when a file is actually processed, so the deadline crosses deterministically.
+        clock = {"t": base}
+        monkeypatch.setattr(inventory_module.time, "monotonic", lambda: clock["t"])
+        original = inventory_module._looks_like_binary_file
+
+        def _advancing(path):
+            clock["t"] += 1.0
+            return original(path)
+
+        monkeypatch.setattr(inventory_module, "_looks_like_binary_file", _advancing)
+        return clock
+
+    def test_deadline_fires_marks_truncation_cause_and_returns_partial_floor(
+        self, tmp_path, monkeypatch
+    ):
+        for i in range(10):
+            _write(tmp_path, f"f{i}.py", "x=1\n")
+        self._install_advancing_clock(monkeypatch)
+
+        inv = build_inventory(str(tmp_path), deadline_seconds=2.0)
+
+        assert inv["scan_limit"]["possibly_truncated"] is True
+        assert inv["scan_limit"]["truncation_cause"] == "deadline"
+        assert inv["totals"]["files"] < 10  # broke early -- a floor, not the real count
+        assert inv["scan_limit"]["scanned_files"] == inv["totals"]["files"]
+
+    def test_deadline_binds_over_file_cap_when_it_fires_early(self, tmp_path, monkeypatch):
+        # Corrected precedence (dogfood 2026-07-05): when the deadline BREAKS the loop before it
+        # processes max_files, STRICTLY FEWER than the cap were scanned, so the time budget is the
+        # BINDING constraint -> cause="deadline" even though the walk was also cap-truncated. (Raising
+        # --max-repo-files would not help; extending --deadline would.) The earlier "keep
+        # project-files" guard mislabeled a real 20s deadline hit on C:/dev/projects as a file-cap.
+        for i in range(10):
+            _write(tmp_path, f"f{i}.py", "x=1\n")
+        self._install_advancing_clock(monkeypatch)
+
+        inv = build_inventory(str(tmp_path), max_files=3, deadline_seconds=2.0)
+
+        assert inv["scan_limit"]["possibly_truncated"] is True
+        assert inv["scan_limit"]["truncation_cause"] == "deadline"
+        assert inv["totals"]["files"] < 3  # deadline broke it before the 3-file cap
+
+    def test_file_cap_without_firing_deadline_stays_project_files(self, tmp_path):
+        # No deadline supplied: a walk larger than max_files stays labeled "project-files".
+        for i in range(10):
+            _write(tmp_path, f"f{i}.py", "x=1\n")
+
+        inv = build_inventory(str(tmp_path), max_files=3)
+
+        assert inv["scan_limit"]["truncation_cause"] == "project-files"
+        assert inv["totals"]["files"] == 3  # processed all cap-limited files, no early break
+
+    def test_no_deadline_supplied_is_unchanged_parity(self, tmp_path):
+        for i in range(3):
+            _write(tmp_path, f"f{i}.py", "x=1\n")
+        inv = build_inventory(str(tmp_path))
+        assert inv["scan_limit"]["possibly_truncated"] is False
+        assert inv["scan_limit"]["truncation_cause"] is None
+        assert inv["totals"]["files"] == 3
 
 
 class TestRegistration:
