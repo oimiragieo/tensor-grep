@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.30.5 (2026-07-05)
+
+### Bug Fixes
+
+- Don't misclassify UTF-16/32 text as binary (round-8 audit)
+  ([#386](https://github.com/oimiragieo/tensor-grep/pull/386),
+  [`341b74e`](https://github.com/oimiragieo/tensor-grep/commit/341b74e18d13183bf2433678b327208e34cca608))
+
+Round-8 fresh-eyes audit. _looks_like_binary_file returned `b"\0" in data[:8192]`. UTF-16
+  interleaves a NUL after every ASCII char, so EVERY UTF-16/32 text file was flagged binary and
+  dropped from the walk -> entirely invisible to every tg command (search/map/orient/graph).
+  Windows-relevant: PowerShell and redirected output and some editors default to UTF-16.
+
+Fix: a leading UTF-16 (0xFF 0xFE / 0xFE 0xFF) or UTF-32-BE (0x00 0x00 0xFE 0xFF) BOM means text ->
+  return False before the NUL heuristic. 4 tests (UTF-16 LE/BE + UTF-8 not binary; real NUL binary
+  still detected); ruff/mypy/format clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.30.4 (2026-07-05)
 
 ### Bug Fixes
