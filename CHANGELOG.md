@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v1.30.1 (2026-07-05)
+
+### Bug Fixes
+
+- Refresh the --symbol deprecation warning (shorthand + drop stale 1.14.0 text) — dogfood 1.28.3
+  ([#382](https://github.com/oimiragieo/tensor-grep/pull/382),
+  [`b13e30d`](https://github.com/oimiragieo/tensor-grep/commit/b13e30de28468065176e7ea4ab73b554dc0ee448))
+
+Dogfood 1.28.3 (deprecation message drift): the runtime --symbol warning told users to "use a
+  path-first positional form" and still referenced the "1.13.x deprecation cycle ... not removed
+  before 1.14.0" -- both stale on 1.28.x, where single-arg shorthand (`tg <cmd> SYMBOL`, PATH
+  defaults to '.') now works.
+
+Updated the warning to document BOTH forms (shorthand for convenience, `tg <cmd> PATH SYMBOL` to
+  scope a large repo) and dropped the stale version reference for a version-agnostic "remains
+  accepted for backward compatibility". Updated the contract assertion to pin the new guidance +
+  assert the stale 1.14.0 text is gone; test_symbol_commands_warn_for_legacy_symbol_option green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.30.0 (2026-07-05)
 
 ### Features
