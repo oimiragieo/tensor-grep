@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.35.1 (2026-07-05)
+
+### Bug Fixes
+
+- Single-file inventory names the file, not "." (round-8 audit)
+  ([#391](https://github.com/oimiragieo/tensor-grep/pull/391),
+  [`4707b27`](https://github.com/oimiragieo/tensor-grep/commit/4707b2720d14242ff5c6134e94d5c55312658c7a))
+
+Round-8 fresh-eyes audit (LOW-MED). `tg inventory <FILE>` walks a single file whose path IS the
+  resolved root, so _relative_posix's relative_to(root) collapsed to a useless "." in largest_files
+  -- an agent could not tell which file. Return the basename when path == root (a directory root
+  never hits this since its files are always deeper, so no regression). Dogfooded: single-file ->
+  "solo.py", directory inventory unchanged. 1 test; inventory suite green; ruff/mypy clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.35.0 (2026-07-05)
 
 ### Features
