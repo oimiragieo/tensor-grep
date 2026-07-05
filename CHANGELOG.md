@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.30.2 (2026-07-05)
+
+### Bug Fixes
+
+- Restrict daemon.json token file with a Windows ACL (round-7 r7)
+  ([#383](https://github.com/oimiragieo/tensor-grep/pull/383),
+  [`720a184`](https://github.com/oimiragieo/tensor-grep/commit/720a18471e30137d77feb3d6df79bbf153b39465))
+
+Round-7 r7 (HIGH, HMAC-mitigated). daemon.json carries the IPC HMAC token and is written 0600, but
+  on Windows os.chmod only toggles the read-only DOS bit -- no per-user access control -- so any
+  local account that can reach the session root could read the token. (POSIX 0600 already isolates
+  it.)
+
+Fix: after the atomic write, best-effort `icacls <daemon.json> /inheritance:r /grant:r <user>:F` on
+  win32 to strip inherited ACLs and grant only the current user. Fails OPEN (a failed icacls never
+  breaks daemon startup); the HMAC compare_digest gate remains the ENFORCED control -- this is
+  defense in depth. 2 tests (win32 invokes icacls with the right argv; no-op off Windows) +
+  dogfooded on a real Windows box (daemon.json ACL reduced to `<user>:(F)` only); 28 daemon-security
+  green.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.30.1 (2026-07-05)
 
 ### Bug Fixes
