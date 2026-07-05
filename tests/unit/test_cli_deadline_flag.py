@@ -57,11 +57,15 @@ def test_callers_without_deadline_passes_none(tmp_path: Path, monkeypatch) -> No
     assert recorded.get("deadline_seconds") is None
 
 
-def test_deadline_flag_present_on_all_four_graph_commands() -> None:
+def test_deadline_flag_accepted_on_all_four_graph_commands() -> None:
+    # Robust to --help text wrapping (which is terminal-WIDTH dependent -> CI vs local diverge, the
+    # same fragility as the earlier --daemon help test): assert the flag is REGISTERED by passing it
+    # with --help. An UNKNOWN option exits 2 before eager --help fires; a KNOWN option is consumed,
+    # then --help exits 0. So exit_code == 0 proves --deadline exists without parsing help text.
     runner = CliRunner()
     for command in ("callers", "refs", "impact", "blast-radius"):
-        out = runner.invoke(app, [command, "--help"]).output
-        assert "--deadline" in out, f"{command} is missing the --deadline flag"
+        result = runner.invoke(app, [command, "--deadline", "5", "--help"])
+        assert result.exit_code == 0, f"{command} rejected --deadline: {result.output}"
 
 
 def test_deadline_rejects_sub_floor_value(tmp_path: Path) -> None:
