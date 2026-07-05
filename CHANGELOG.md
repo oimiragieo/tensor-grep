@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.33.0 (2026-07-05)
+
+### Features
+
+- Thread deadline_seconds through the 4 symbol builders (moat P0-6 step 3)
+  ([#388](https://github.com/oimiragieo/tensor-grep/pull/388),
+  [`7f5f8e8`](https://github.com/oimiragieo/tensor-grep/commit/7f5f8e8471b88ac2980d01698852927e242959dc))
+
+Moat P0-6 step 3 (round-8-designed). Steps 1-2 gave build_repo_map a deadline + propagated partial
+  through the _from_map wrappers. Step 3 threads a caller-facing `deadline_seconds` through the 4
+  top-level builders (build_symbol_refs / callers / impact / blast_radius): each converts it ONCE to
+  an absolute time.monotonic() timestamp via _deadline_monotonic_from_seconds and passes
+  deadline_monotonic into build_repo_map. blast_radius passes the SAME absolute deadline into BOTH
+  its scans (the literal-seed retry) so a per-call re-derivation can't double the wall-clock for
+  exactly the truncated huge repos that need a deadline most.
+
+Belt-and-suspenders: each builder also calls _copy_partial_signal(result, repo_map) at its return,
+  so the partial signal reaches the top-level output even for refs/blast_radius (not among the
+  step-2 _copy_scan_limit sites). deadline_seconds=None is a pure no-op (parity). 2 TDD tests (all 4
+  builders surface partial:true under a deadline; None leaves them unbounded); 8 P0-6 tests green;
+  ruff/mypy clean.
+
+Next: step 4 (CLI --deadline flag on the 4 commands) + step 5 (daemon client-timeout = the actual
+  60s-error fix).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.32.0 (2026-07-05)
 
 ### Features
