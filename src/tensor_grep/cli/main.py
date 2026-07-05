@@ -6701,6 +6701,16 @@ def inventory(
         min=1,
         help="Maximum repo files to scan before truncating (walk-only; defaults to 50000).",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the inventory scan after N seconds and return a partial manifest labeled "
+            "scan_limit.truncation_cause='deadline' (counts are a floor), instead of running unbounded "
+            "on a huge tree."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Emit a single-pass repository inventory (files, bytes, languages, categories)."""
@@ -6709,7 +6719,7 @@ def inventory(
     from tensor_grep.cli.inventory import build_inventory, render_inventory_text
 
     try:
-        payload = build_inventory(path, max_files=max_repo_files)
+        payload = build_inventory(path, max_files=max_repo_files, deadline_seconds=deadline)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

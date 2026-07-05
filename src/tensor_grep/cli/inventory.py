@@ -22,6 +22,7 @@ Design (round-4 [e], 3-lens design council 2026-07-03):
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -169,12 +170,21 @@ def _sorted_records(
 
 
 def build_inventory(
-    path: str = ".", *, max_files: int = DEFAULT_MAX_INVENTORY_FILES
+    path: str = ".",
+    *,
+    max_files: int = DEFAULT_MAX_INVENTORY_FILES,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Build a walk-only inventory manifest for ``path``.
 
     Raises ``FileNotFoundError`` when ``path`` does not exist (fail closed — a missing
     path must never read as a valid empty repository).
+
+    ``deadline_seconds``, when supplied, bounds the WALL-CLOCK time of the per-file
+    stat()+``_looks_like_binary_file`` loop (the real cost on a huge workspace — the
+    walk itself is cheap; see module docstring). A deadline that fires returns a
+    partial, honestly-labeled inventory (``scan_limit.truncation_cause == "deadline"``)
+    rather than hanging for minutes. It never lowers ``max_files`` itself.
     """
     root = Path(path)
     if not root.exists():
@@ -208,7 +218,13 @@ def build_inventory(
     dir_files: dict[str, int] = {}
     largest: list[tuple[int, str]] = []
 
+    deadline = time.monotonic() + deadline_seconds if deadline_seconds is not None else None
+    deadline_hit = False
+
     for file_path in walked:
+        if deadline is not None and time.monotonic() >= deadline:
+            deadline_hit = True
+            break
         try:
             size = file_path.stat().st_size
         except OSError:
@@ -241,6 +257,17 @@ def build_inventory(
         cat_bytes[category] = cat_bytes.get(category, 0) + size
 
     largest.sort(key=lambda item: (-item[0], item[1]))
+
+    if deadline_hit:
+        # The deadline BROKE the per-file loop before it processed the full walked set, so the time
+        # budget -- not the file cap -- is the BINDING constraint on the count (strictly fewer than
+        # max_files were processed). Label it "deadline" even when the walk was ALSO cap-truncated:
+        # raising --max-repo-files would not help here, extending --deadline would. If the loop had
+        # instead COMPLETED within budget (deadline_hit=False), the pre-loop "project-files" cap label
+        # stands. (Dogfood 2026-07-05: the earlier "keep project-files" guard mislabeled a real 20s
+        # deadline hit on C:/dev/projects as a file-cap truncation.)
+        possibly_truncated = True
+        truncation_cause = "deadline"
 
     return {
         "version": INVENTORY_SCHEMA_VERSION,
@@ -284,10 +311,16 @@ def render_inventory_text(inventory: dict[str, Any]) -> str:
         lines.append(f"  categories: {cats}")
     scan = inventory["scan_limit"]
     if scan["possibly_truncated"]:
-        lines.append(
-            f"  [!] truncated at max_files={scan['max_files']} "
-            f"(cause={scan['truncation_cause']}); counts are a floor, not complete."
-        )
+        if scan["truncation_cause"] == "deadline":
+            lines.append(
+                "  [!] stopped after the time budget (cause=deadline); "
+                "counts are a floor, not complete."
+            )
+        else:
+            lines.append(
+                f"  [!] truncated at max_files={scan['max_files']} "
+                f"(cause={scan['truncation_cause']}); counts are a floor, not complete."
+            )
     return "\n".join(lines)
 
 
