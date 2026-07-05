@@ -835,6 +835,12 @@ def _looks_like_binary_file(path: Path) -> bool:
             data = handle.read(8192)
     except OSError:
         return False
+    # A UTF-16/UTF-32 BOM means TEXT whose encoding legitimately contains NUL bytes (round-8 audit):
+    # UTF-16 interleaves a NUL after every ASCII char, so the NUL heuristic below would otherwise
+    # misclassify all UTF-16/32 text as binary and make it invisible to every tg command (a real
+    # Windows-relevant loss -- PowerShell/redirected output, some editors default to UTF-16).
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff") or data.startswith(b"\x00\x00\xfe\xff"):
+        return False
     return b"\0" in data
 
 
