@@ -101,3 +101,43 @@ def test_pure_docs_repo_falls_back_not_empty() -> None:
     rm = {"files": ["a.md", "b.md"], "imports": [], "symbols": []}
     central = _central_files_from_map(rm, max_central_files=10)
     assert len(central) >= 1
+
+
+def test_orient_ignore_globs_exclude_matching_tree(tmp_path):
+    # 1.35 dogfood: `tg orient . --ignore 'vendor/**'` must drop a vendor/skill CODE tree from the
+    # capsule (central files, symbol map) so it can't rank as "central" on a harness repo, while
+    # non-ignored code is preserved.
+    from tensor_grep.cli.orient_capsule import build_orient_capsule
+
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "vendor" / "hub.py").write_text(
+        "\n".join(f"class C{i}:\n    pass\n" for i in range(6)), encoding="utf-8"
+    )
+    (tmp_path / "src" / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+    for i in range(8):
+        (tmp_path / "src" / f"m{i}.py").write_text("from vendor.hub import C0\n", encoding="utf-8")
+
+    ignored = build_orient_capsule(str(tmp_path), ignore=("vendor/**",))
+    assert not any("vendor" in c["file"] for c in ignored["central_files"]), (
+        "vendor tree not excluded"
+    )
+    assert not any("vendor" in path for path in ignored["symbol_map"])
+    assert any("app.py" in c["file"] or "m0.py" in c["file"] for c in ignored["central_files"])
+
+
+def test_orient_apply_ignore_globs_matches_basename_and_relpath(tmp_path):
+    from tensor_grep.cli.orient_capsule import _apply_ignore_globs
+
+    rm = {
+        "path": str(tmp_path),
+        "files": [str(tmp_path / "seo" / "x.py"), str(tmp_path / "src" / "keep.py")],
+        "symbols": [{"file": str(tmp_path / "seo" / "x.py"), "name": "A", "kind": "class"}],
+        "imports": [{"file": str(tmp_path / "seo" / "x.py"), "imports": []}],
+    }
+    filtered = _apply_ignore_globs(rm, ("seo/**",))
+    assert filtered["files"] == [str(tmp_path / "src" / "keep.py")]
+    assert filtered["symbols"] == []
+    assert filtered["imports"] == []
+    # empty ignore -> unchanged (identity)
+    assert _apply_ignore_globs(rm, ()) is rm
