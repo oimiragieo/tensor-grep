@@ -12499,6 +12499,7 @@ def build_symbol_blast_radius(
         symbol,
         max_depth=max_depth,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     scan_limit = payload.get("scan_limit")
@@ -12525,6 +12526,7 @@ def build_symbol_blast_radius(
                 symbol,
                 max_depth=max_depth,
                 semantic_provider=semantic_provider,
+                deadline_monotonic=deadline_monotonic,
                 _profiling_collector=_profiling_collector,
             )
             payload_scan_limit = payload.get("scan_limit")
@@ -12649,6 +12651,7 @@ def build_symbol_blast_radius_from_map(
     *,
     max_depth: int = 3,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -12690,6 +12693,7 @@ def build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     impact_payload = build_symbol_impact_from_map(
@@ -12986,6 +12990,15 @@ def build_symbol_blast_radius_from_map(
     _copy_lsp_evidence_status(payload, callers_payload)
     if "scan_limit" in repo_map:
         payload["scan_limit"] = dict(repo_map["scan_limit"])
+    # moat P0-6 step 6: the direct-caller scan may have been cut by --deadline for a CENTRAL symbol
+    # -> carry its partial + deadline_limit onto the blast radius so a caller does not trust a
+    # truncated caller_tree / blast_radius_score as complete.
+    if callers_payload.get("partial"):
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        caller_deadline_limit = callers_payload.get("deadline_limit")
+        if isinstance(caller_deadline_limit, dict):
+            payload["deadline_limit"] = dict(caller_deadline_limit)
     return _attach_profiling(payload, _profiling_collector)
 
 

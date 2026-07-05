@@ -132,3 +132,22 @@ def test_step6_caller_scan_no_deadline_is_complete(tmp_path: Path) -> None:
     assert "partial" not in result
     assert result["graph_completeness"] == "moderate"
     assert len(result["callers"]) >= 1  # found the real callers when unbounded
+
+
+def test_step6_blast_radius_honors_caller_scan_deadline(tmp_path: Path) -> None:
+    # moat P0-6 step 6: blast-radius runs the same direct-caller scan, so it must honor --deadline
+    # for central symbols too (the 1.35.0 dogfood: `blast-radius QueryEngine --deadline 10` hung 90s+).
+    _make_caller_repo(tmp_path, 6)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    result = repo_map.build_symbol_blast_radius_from_map(
+        rm, "widget", deadline_monotonic=time.monotonic() - 1.0
+    )
+    assert result.get("partial") is True
+    assert result["graph_completeness"] == "partial"
+
+
+def test_step6_blast_radius_no_deadline_is_complete(tmp_path: Path) -> None:
+    _make_caller_repo(tmp_path, 4)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    result = repo_map.build_symbol_blast_radius_from_map(rm, "widget")  # no deadline
+    assert "partial" not in result
