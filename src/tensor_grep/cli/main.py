@@ -7594,6 +7594,13 @@ def _emit_symbol_command_result(
         emit_text(payload)
         if caveat is not None:
             typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+    # Exit-code contract (dogfood 1.40.0): a deadline/scan-truncated result is INCOMPLETE -- it must
+    # NOT read as complete (0) nor as a genuine not-found (1). Exit 2 mirrors `tg search`'s
+    # result_incomplete convention so an agent can distinguish "ran out of budget/cap, retry with more"
+    # from "genuinely absent", and never trusts a truncated (possibly empty) result as the full answer.
+    # `--deadline` sets `partial`; a max-repo-files cap sets `result_incomplete`; either -> exit 2.
+    if payload.get("partial") or payload.get("result_incomplete"):
+        raise typer.Exit(2)
     if not_found:
         raise typer.Exit(1)
 
