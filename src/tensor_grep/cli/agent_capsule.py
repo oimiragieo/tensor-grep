@@ -1202,6 +1202,7 @@ def build_agent_capsule(
     semantic_provider: str = "native",
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
+    ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     resolved_path = str(Path(path).resolve())
     requested_semantic_provider = semantic_provider
@@ -1221,6 +1222,7 @@ def build_agent_capsule(
         optimize_context=True,
         render_profile="full",
         semantic_provider=effective_semantic_provider,
+        ignore=ignore,
     )
     target = _primary_target(payload)
     alternatives = _alternative_targets(payload, target)
@@ -1550,6 +1552,7 @@ def build_agent_capsule_json(
     semantic_provider: str = "native",
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
+    ignore: tuple[str, ...] = (),
 ) -> str:
     return json.dumps(
         build_agent_capsule(
@@ -1564,6 +1567,7 @@ def build_agent_capsule_json(
             semantic_provider=semantic_provider,
             gpu_device_ids=gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
+            ignore=ignore,
         ),
         ensure_ascii=False,
         indent=2,

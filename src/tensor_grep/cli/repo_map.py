@@ -10007,9 +10007,17 @@ def build_context_render(
     semantic_provider: str = "native",
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
+    ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     repo_map = build_repo_map(path, max_repo_files=max_repo_files, _profiling_collector=collector)
+    if ignore:
+        # Local import avoids a module-level circular import (orient_capsule imports this module);
+        # reuses orient's tested glob filter (`tg orient --ignore`, PR #392) so `tg agent --ignore`
+        # drops the same vendor/skill CODE trees from ranking before centrality/context-pack scoring.
+        from tensor_grep.cli.orient_capsule import _apply_ignore_globs
+
+        repo_map = _apply_ignore_globs(repo_map, ignore)
     return build_context_render_from_map(
         repo_map,
         query,
