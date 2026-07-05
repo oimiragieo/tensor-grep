@@ -18,7 +18,9 @@ def _make_repo(root: Path, count: int) -> None:
     src = root / "src"
     src.mkdir(parents=True)
     for index in range(count):
-        (src / f"m{index}.py").write_text(f"def f{index}():\n    return {index}\n", encoding="utf-8")
+        (src / f"m{index}.py").write_text(
+            f"def f{index}():\n    return {index}\n", encoding="utf-8"
+        )
 
 
 def test_deadline_already_expired_returns_partial_immediately(tmp_path: Path) -> None:
