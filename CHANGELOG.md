@@ -1,6 +1,61 @@
 # CHANGELOG
 
 
+## v1.38.0 (2026-07-05)
+
+### Features
+
+- Stamp result_incomplete at the payload layer so MCP/_json consumers see truncation (#53)
+  ([#394](https://github.com/oimiragieo/tensor-grep/pull/394),
+  [`1755a1c`](https://github.com/oimiragieo/tensor-grep/commit/1755a1ce7c7ca6ccc090f535baed743210dd7bfd))
+
+* feat: stamp result_incomplete at the payload layer so MCP/_json consumers see truncation (#53)
+
+Fix B of the scale/honesty campaign (Fable + thinktank council-vetted, Exa-validated vs Gemini-CLI
+  #21694 / VS Code #270381 silent-truncation class). Main already stamped result_incomplete + caveat
+  + scan_remediation for a truncated no_match -- but ONLY in the CLI emitter
+  (_annotate_result_completeness). So MCP consumers (mcp_server.py) + build_symbol_callers_json
+  shipped a CLEAN payload for a symbol that was missed because the scan was truncated: a silent
+  false-empty an agent trusts as "no callers".
+
+Fix: add a payload-level _mark_result_incomplete() helper (reuses the existing
+  _SCAN_LIMIT_TRUNCATED_REMEDIATION) called from build_symbol_defs_from_map's no_match branch ONLY
+  inside the existing possibly_truncated guard -> propagates to callers/refs/impact/blast-radius via
+  the payload copy, so MCP + *_json get the signal for free. Make _annotate_result_completeness
+  OR-preserving (bool(payload.get(...)) or truncation is not None) so the assembly-layer True isn't
+  clobbered and stays a real bool.
+
+Dogfooded on C:/dev/projects (50k files): raw build_symbol_callers payload +
+  build_symbol_callers_json now both carry result_incomplete=True + scan_remediation for a truncated
+  no_match (were clean before). 5 TDD tests (fix at payload layer + 2 guards: matched result /
+  complete no_match must NOT carry the key); 468 contract tests green; ruff/mypy clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: _copy_scan_limit also carries result_incomplete (codex review)
+
+Codex review of the Fix-B PR found a builder my tests missed: build_symbol_source_from_map rebuilds
+  a fresh envelope via _copy_scan_limit, which copied scan_limit + scan_remediation but NOT
+  result_incomplete -- so MCP tg_symbol_source / build_symbol_source emitted possibly_truncated +
+  scan_remediation with result_incomplete=None on a truncated no_match (the exact contract Fix B
+  closes). Propagate result_incomplete in _copy_scan_limit (parity: only when the source set it
+  True) so every builder that rebuilds an envelope through this helper gets it. Verified:
+  build_symbol_source now carries result_incomplete=True. +1 regression test; 477 contract tests
+  green.
+
+* test: harden Fix B — cross-builder coverage + de-vacuum the source test (Fable final review)
+
+Fable's final review (SHIP verdict) flagged two non-blocking test gaps: the source test guarded its
+  assertions (vacuous-pass risk) and impact/refs/blast-radius inherit the flag untested (a
+  fresh-envelope refactor would silently regress). Assert the precondition in the source test; add a
+  parametrized test pinning result_incomplete across callers/refs/impact/blast-radius on a truncated
+  no_match. 10 tests green.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.37.0 (2026-07-05)
 
 ### Features
