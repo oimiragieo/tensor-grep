@@ -539,9 +539,19 @@ _CALLER_SCAN_CEILING_REMEDIATION = (
 def _mark_result_incomplete(payload: dict[str, Any], *, remediation: str) -> None:
     """Payload-level honesty signal (round-6 council): set result_incomplete + remediation at ASSEMBLY
     time so non-CLI consumers (MCP tools, *_json) get the same truncation signal the CLI emitter adds.
-    Additive; callers gate it on possibly_truncated so complete results never grow the key."""
+    Additive; callers gate it on possibly_truncated so complete results never grow the key.
+
+    backlog #1 fix: a plain ``setdefault`` was a no-op whenever the payload already carried a
+    ``scan_remediation`` key with value ``None`` (every repo_map/defs payload does -- build_repo_map
+    always stamps ``scan_remediation`` to either a message or ``None``, never omits the key). That
+    silently swallowed the CALLER_SCAN_FILE_CEILING remediation on a repo_map that was itself
+    complete (dogfood-caught: `tg callers` on a real >512-file repo set result_incomplete:true but
+    scan_remediation:null). Only skip when an existing message is genuinely present (truthy), so a
+    MORE SPECIFIC remediation set earlier is still preserved (test:
+    test_mark_result_incomplete_helper_does_not_clobber_existing_remediation)."""
     payload["result_incomplete"] = True
-    payload.setdefault("scan_remediation", remediation)
+    if not payload.get("scan_remediation"):
+        payload["scan_remediation"] = remediation
 
 
 def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
