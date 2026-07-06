@@ -5500,15 +5500,12 @@ def test_agent_capsule_lsp_resolved_tie_reports_resolution_evidence(
     src_dir.mkdir(parents=True)
     primary_path = src_dir / "payments.py"
     primary_path.write_text(
-        "def create_invoice(subtotal):\n"
-        "    return {'subtotal': subtotal, 'tax': subtotal * 0.1}\n",
+        "def create_invoice(subtotal):\n    return {'subtotal': subtotal, 'tax': subtotal * 0.1}\n",
         encoding="utf-8",
     )
     alternative_path = src_dir / "payments.ts"
     alternative_path.write_text(
-        "export function createInvoice(subtotal: number): number {\n"
-        "  return subtotal * 1.1;\n"
-        "}\n",
+        "export function createInvoice(subtotal: number): number {\n  return subtotal * 1.1;\n}\n",
         encoding="utf-8",
     )
 
@@ -5601,9 +5598,7 @@ def test_agent_capsule_lsp_resolved_tie_reports_resolution_evidence(
     assert evidence["tied_alternative_files"] == [str(alternative_path.resolve())]
     consistency = payload["context_consistency"]
     assert consistency["alternative_confidence_tie_resolved_by"] == "lsp"
-    assert consistency["alternative_confidence_tie_resolution_evidence"] == [
-        evidence
-    ]
+    assert consistency["alternative_confidence_tie_resolution_evidence"] == [evidence]
     assert consistency["alternative_confidence_tie"] is False
 
 

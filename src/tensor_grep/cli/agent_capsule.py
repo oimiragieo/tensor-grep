@@ -990,9 +990,7 @@ def _expanded_line_map(
         return _line_map(rendered_source, source.get("start_line") or 1)
 
     fallback_line: int | None = (
-        None
-        if _as_dict(source.get("source_budget")).get("truncated")
-        else 0
+        None if _as_dict(source.get("source_budget")).get("truncated") else 0
     )
     return [
         {
@@ -1397,9 +1395,7 @@ def build_agent_capsule(
     elif tied_alternatives and tie_resolved_by_validation:
         tie_resolved_by = "targeted-validation"
     lsp_resolution_evidence = (
-        _lsp_tie_resolution_evidence(target, tie_candidates)
-        if tie_resolved_by == "lsp"
-        else []
+        _lsp_tie_resolution_evidence(target, tie_candidates) if tie_resolved_by == "lsp" else []
     )
     if tied_alternatives and tie_resolved_by is not None:
         consistency["alternative_confidence_tie_resolved_by"] = tie_resolved_by
@@ -1408,9 +1404,7 @@ def build_agent_capsule(
                 targeted_validation_evidence
             )
         elif tie_resolved_by == "lsp":
-            consistency["alternative_confidence_tie_resolution_evidence"] = (
-                lsp_resolution_evidence
-            )
+            consistency["alternative_confidence_tie_resolution_evidence"] = lsp_resolution_evidence
         tied_alternatives = []
     if tied_alternatives:
         confidence["overall"] = round(min(float(confidence["overall"]), 0.74), 3)

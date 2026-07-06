@@ -7140,16 +7140,14 @@ def _detect_validation_runners_from_root(
     has_python_tests = any(
         current.suffix == ".py" and _is_test_file(current) for current in all_files
     )
-    has_python_project_marker = (
-        any(
-            (root / marker).is_file()
-            for marker in (
-                "pyproject.toml",
-                "pytest.ini",
-                "setup.py",
-                "setup.cfg",
-                "tox.ini",
-            )
+    has_python_project_marker = any(
+        (root / marker).is_file()
+        for marker in (
+            "pyproject.toml",
+            "pytest.ini",
+            "setup.py",
+            "setup.cfg",
+            "tox.ini",
         )
     )
     if has_python_project_marker or has_python_tests:

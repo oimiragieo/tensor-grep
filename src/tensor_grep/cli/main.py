@@ -7731,7 +7731,10 @@ def _build_route_test_payload(
     }
 
 
-@app.command(name="route-test")
+# Hidden/experimental: `route-test` (compare context-render vs edit-plan routing) works but is not yet in
+# the public --help surface -- promoting it needs native-binary registration + PUBLIC_TOP_LEVEL_COMMANDS
+# parity (the 4-registration-sites contract). Ships hidden here; a follow-up PR promotes it to visible.
+@app.command(name="route-test", hidden=True)
 def route_test(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     query_arg: str | None = typer.Argument(

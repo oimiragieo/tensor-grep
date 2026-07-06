@@ -266,7 +266,9 @@ def test_source_budget_tail_graft_preserves_tail_line_map() -> None:
     rendered_lines = rendered_source.splitlines()
     expanded = agent_capsule._expanded_line_map(budgeted, rendered_source)
     marker_index = next(
-        index for index, line in enumerate(rendered_lines) if "lines omitted by source budget" in line
+        index
+        for index, line in enumerate(rendered_lines)
+        if "lines omitted by source budget" in line
     )
     tail_index = next(
         index for index, line in enumerate(rendered_lines) if "raise RuntimeError" in line
@@ -456,10 +458,7 @@ def test_context_consistency_downgrades_when_primary_symbol_source_is_truncated(
     assert consistency["rendered_context_includes_primary_symbol"] is True
     assert consistency["primary_symbol_truncated"] is True
     assert consistency["confidence_downgraded"] is True
-    assert (
-        consistency["omitted_primary_reason"]
-        == "primary_symbol_truncated_by_source_budget"
-    )
+    assert consistency["omitted_primary_reason"] == "primary_symbol_truncated_by_source_budget"
 
 
 @pytest.mark.parametrize("render_profile", ["full", "compact", "llm"])
