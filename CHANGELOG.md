@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.40.4 (2026-07-06)
+
+### Bug Fixes
+
+- Restore exit-2-on-truncation even when found (revert #399, council-verified B)
+  ([#401](https://github.com/oimiragieo/tensor-grep/pull/401),
+  [`129b5ed`](https://github.com/oimiragieo/tensor-grep/commit/129b5ed03033a2badc2dfb4a4bcd04bb1a3dfa2c))
+
+A unanimous design council overturned #399's "found-but-truncated -> exit 0" narrowing. Both lenses
+  (including the one arguing FOR found->0) concluded truncation must trump found: - `tg search`
+  already exits 2 on result_incomplete regardless of matches; #399 made the symbol commands diverge
+  -> two contradictory conventions, the exact failure the honesty campaign fights. - The exit code
+  is one control-flow bit; getting "is this the COMPLETE set" wrong (a blast-radius/refactor that
+  misses call-sites beyond the cap) is worse than a wasted retry. - The "every big-repo query exits
+  2" friction #399 chased is a DEFAULT-CAP miscalibration (512, entangled with the slow TS caller
+  re-parse), to fix separately -- not a reason to fork the contract.
+
+Restores _emit_symbol_command_result + the blast-radius block to `exit 2 on (partial or
+  result_incomplete)` regardless of found/empty; blast-radius still keeps its OUTPUT-cap-stays-0
+  rule (gate on scan-truncation, not the display cap). Tests updated to assert found+truncated -> 2.
+  CONTRACTS.md already documents B. Default-cap auto-scaling tracked as a follow-up (#56).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.40.3 (2026-07-06)
 
 ### Bug Fixes

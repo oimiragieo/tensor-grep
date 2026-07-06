@@ -15,7 +15,7 @@ Installers:
   - Architecture: x64
     InstallerType: portable
     InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.40.4/tg-windows-amd64-cpu.exe
-    InstallerSha256: 1a98a856666605c6edb55c4f3dc2557165575eb95cbcb8f3d78f9af73cab3b76
+    InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589
     Commands:
       - tg
 

@@ -8023,16 +8023,19 @@ def _emit_symbol_command_result(
         emit_text(payload)
         if caveat is not None:
             typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
-    # Exit-code contract (dogfood 1.40.1 -- narrowed from 1.40.0): the exit-2 "incomplete" signal
-    # applies ONLY to an EMPTY result. A result WITH findings is valid and exits 0 even when the scan
-    # was truncated (`result_incomplete`/`partial` in the JSON flags "the set may be incomplete, raise
-    # the budget for more") -- otherwise EVERY symbol query on a repo larger than the default
-    # --max-repo-files cap would exit 2 and an agent looping `if rc==0` could never proceed. An EMPTY
-    # result from a truncated scan is UNTRUSTWORTHY ("nothing found" may be a false negative because the
-    # scan did not finish) -> exit 2 (retry), NOT 1. A complete empty scan is a real not-found -> exit 1.
+    # Exit-code contract (council-verified B, 2026-07-05): a deadline/scan-truncated result is INCOMPLETE
+    # and must NOT read as complete (0) nor as a genuine not-found (1). Exit 2 -- REGARDLESS of whether
+    # results were found -- mirrors `tg search`'s result_incomplete convention (see the search command) so
+    # an agent sees ONE contract across every command, never trusts a truncated caller-set as exhaustive
+    # (a wrong blast-radius/refactor decision), and can distinguish "ran out of budget/cap, retry with
+    # more" from "genuinely absent". A found-but-truncated result exiting 0 was tried (#399) and overturned
+    # by a UNANIMOUS design council: truncation trumps found. The "every big-repo query exits 2" friction
+    # is a DEFAULT-CAP miscalibration (512, entangled with the slow TS caller re-parse), to fix separately
+    # -- NOT a reason to fork the contract in two. `--deadline` sets `partial`; a --max-repo-files cap sets
+    # `result_incomplete`; either -> exit 2.
+    if payload.get("partial") or payload.get("result_incomplete"):
+        raise typer.Exit(2)
     if not_found:
-        if payload.get("partial") or payload.get("result_incomplete"):
-            raise typer.Exit(2)
         raise typer.Exit(1)
 
 
@@ -8660,12 +8663,12 @@ def blast_radius(
     # more. So gate on partial/scan_limit, NOT result_incomplete (which _annotate also sets on output cap).
     scan_limit = payload.get("scan_limit")
     scan_truncated = isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
-    # Only an EMPTY blast radius from a truncated scan is untrustworthy -> exit 2 (dogfood 1.40.1). A
-    # radius that RESOLVED callers is valid even if the scan was capped (matches the symbol-command
-    # rule); an OUTPUT cap (--max-callers/--max-files) is a complete analysis and stays exit 0.
-    incomplete = _symbol_payload_has_no_results(payload, "callers") and bool(
-        payload.get("partial") or scan_truncated
-    )
+    # A SCAN-truncated blast radius is INCOMPLETE regardless of whether callers were found -> exit 2
+    # (council-verified B, 2026-07-05; found-but-truncated->0 was tried in #399 and overturned). A
+    # truncated caller-set silently trusted as exhaustive is exactly the wrong-refactor risk this gate
+    # exists to prevent. An OUTPUT cap (--max-callers/--max-files) is a COMPLETE analysis, capped only for
+    # display -> stays exit 0 (so gate on scan-truncation/partial, never on the output cap).
+    incomplete = bool(payload.get("partial") or scan_truncated)
 
     if mermaid_output:
         typer.echo(_render_blast_radius_mermaid(payload))
