@@ -1,6 +1,57 @@
 # CHANGELOG
 
 
+## v1.40.1 (2026-07-06)
+
+### Bug Fixes
+
+- Symbol commands exit 2 (not 1) on a --deadline/truncated partial (dogfood 1.40.0)
+  ([#398](https://github.com/oimiragieo/tensor-grep/pull/398),
+  [`0773569`](https://github.com/oimiragieo/tensor-grep/commit/077356905398761c3873a5be362640b613489e82))
+
+* fix: symbol commands exit 2 (not 1) on a --deadline/truncated partial (dogfood 1.40.0)
+
+Dogfood 1.40.0: `tg callers X --deadline 0.5 --json` returned valid partial JSON (partial:true,
+  deadline_limit.deadline_exceeded) but exit 1 -- indistinguishable from a genuine not-found, so an
+  agent gating on rc==0 discards the partial results AND an agent using rc can't tell "ran out of
+  budget, retry" from "genuinely absent". This undermines the whole --deadline moat.
+
+Fix _emit_symbol_command_result: a truncated result (payload.partial from --deadline OR
+  result_incomplete from a --max-repo-files cap) exits 2, BEFORE the not_found->exit-1 check.
+  Mirrors `tg search`'s existing `2 if result_incomplete` convention -> a uniform three-state agent
+  contract: 0=complete, 1=genuine not-found (complete scan), 2=incomplete (parse JSON, retry).
+  Rejected exit-0 for partial: it would reintroduce the exact silent-false-empty (a naive rc==0
+  agent trusting a deadline-truncated empty as complete) that the honesty campaign just fixed. 4 TDD
+  tests (partial-empty ->2, result_incomplete->2, genuine not-found->1, complete-found->0);
+  CONTRACTS.md documents the three-state contract. Contract suite green.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: extend exit-2-on-incomplete to blast-radius + impact; keep output-cap at exit 0 (cursor
+  review)
+
+Cursor review of the exit-code fix found blast-radius + impact bypassed the new contract: - impact
+  copied only `callers` from its second caller-scan pass, dropping `partial`/`deadline_limit` -> a
+  deadline-truncated impact exited 0 while `tg callers` exited 2. Now propagates the partial signal.
+  - blast-radius emits + returns (exit 0) on all 3 paths (mermaid/json/text), bypassing
+  _emit_symbol_command_result. Now annotates completeness first + exits 2 when the SCAN was
+  incomplete. Subtlety the tests caught: an OUTPUT cap (--max-callers/--max-files) is a COMPLETE
+  analysis with a capped display -> stays exit 0 (raise the cap for more); only SCAN incompleteness
+  (--deadline `partial` or a --max-repo-files scan cap `scan_limit.possibly_truncated`) exits 2. So
+  blast-radius gates on partial/scan_limit, NOT result_incomplete (which _annotate also sets on
+  output cap). +2 TDD tests (blast-radius partial->2, impact partial->2); 83 blast-radius + 10
+  deadline tests green.
+
+* fix: impact preserves first-pass deadline_limit provenance (cursor review LOW)
+
+Don't overwrite a deadline_limit the impact repo-map pass set with the caller-scan's when both are
+  partial (exit 2 still fires; this is JSON provenance only). Part of the exit-2 contract PR.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.40.0 (2026-07-05)
 
 ### Features
