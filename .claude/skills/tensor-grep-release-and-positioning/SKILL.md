@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-release-and-positioning
-description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-02, v1.17.25.
+description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-05, v1.40.2.
 ---
 
 # tensor-grep: Release Mechanics and Public Positioning
@@ -144,6 +144,45 @@ for its `chore(release): vX` commit to appear on `main` **and** for PyPI to show
 before merging the next one. "Safe to interleave" means *after the prior release has fully
 published*, not merely after its PR CI went green (`AGENTS.md:498`).
 
+### 1.5.1 Worked example: the #384-#399 sequence (2026-07-04/05) — 16 PRs, 0 push-race failures
+
+This is not a hypothetical — it is how the "moat P0-6" `--deadline` program plus the round-8
+security batch actually shipped, and it is worth re-reading as a receipt that the discipline in 1.5
+scales past a single pair of PRs. Sixteen release-bearing PRs (`#384`-`#399`) landed one at a time,
+each waiting for the prior `chore(release)` commit to publish before the next merge, with a
+one-to-one PR-to-release mapping and **zero** push-race rejections across the whole run:
+
+```
+#385 -> v1.30.4   #386 -> v1.30.5   #384 -> v1.31.0   #387 -> v1.32.0   #388 -> v1.33.0
+#389 -> v1.34.0   #390 -> v1.35.0   #391 -> v1.35.1   #392 -> v1.36.0   #393 -> v1.37.0
+#394 -> v1.38.0   #395 -> v1.39.0   #396 -> v1.39.1   #397 -> v1.40.0   #398 -> v1.40.1
+#399 -> v1.40.2
+```
+
+(PR numbers are assigned at creation, not merge order — `#384` merged *after* `#385`/`#386`, which
+is normal and does not break the one-tick-at-a-time property.) Re-derive this yourself rather than
+trusting the table:
+
+```bash
+git log --oneline --all | grep -E "chore\(release\)|#3(8[4-9]|9[0-9])\)"
+```
+
+Reading that output top-to-bottom (newest-first), every `chore(release): vX` commit sits directly
+between two PR-merge commits with no interleaving — the live evidence for "wait for full publish,
+not just green CI."
+
+Zooming out further, the surrounding release cadence was not gentle: roughly **40 `chore(release)`
+commits landed in a 48-hour trailing window** (`v1.22.0` through `v1.40.2`, verified 2026-07-05):
+
+```bash
+git log --format="%ci %s" --all | grep -E "chore\(release\)" | \
+  awk -v cutoff="$(date -u -d '48 hours ago' '+%Y-%m-%d %H:%M:%S')" '{ts=$1" "$2; if (ts >= cutoff) c++} END{print c}'
+```
+
+At that cadence, one-merge-per-tick is the only thing standing between "39-40 releases published
+clean" and "half of them silently dropped to a push-race rejection" — see 1.6.1 below for what this
+cadence means for the surfaces that *aren't* on the automatic pipeline (npm, docs).
+
 ### 1.6 Publish surfaces and their gates
 
 | Surface | Package/formula identity | Gate/verify mechanism |
@@ -158,6 +197,66 @@ The default asset profile is CPU-only `native-frontdoor`. An opt-in repo variabl
 `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE=native-frontdoor-gpu` additionally builds
 `tg-linux-amd64-nvidia` / `tg-windows-amd64-nvidia.exe` (`docs/CI_PIPELINE.md:25`, `ci.yml:1314`).
 macOS stays CPU-only either way.
+
+### 1.6.1 The npm/docs publish gap — semantic-release stamps the version, it does not publish either
+
+Read the npm row of the table above carefully: the gate/verify mechanism listed is "version stamped
+by semantic-release `version_variables`" — that is a **file edit**, not a publish. `ci.yml` (the
+*only* automatic path, per 1.1) contains **zero** `npm publish` or `mkdocs gh-deploy` steps. Verify
+this yourself rather than trusting this sentence:
+
+```bash
+grep -c "npm" .github/workflows/ci.yml          # -> 0 (2026-07-05: confirmed 0 hits, no npm job exists)
+grep -n "gh-deploy" .github/workflows/*.yml     # -> only .github/workflows/release.yml:379
+```
+
+`ci.yml`'s only docs-related step is a **validation** build in the `release-readiness` job
+(`ci.yml:81-82,96-99`: `mkdocs build --strict`) — it confirms the docs site still *builds*, it never
+runs `mkdocs gh-deploy` to publish it.
+
+The actual publish steps — `npm publish --access public` (`release.yml:338-340`, job `publish-npm`
+at `release.yml:314-357`) and `mkdocs gh-deploy --force` (`release.yml:378-379`, job `publish-docs`
+at `release.yml:359-379`) — live *only* in `release.yml`, and that workflow is `workflow_dispatch`-only
+(`release.yml:8-9`, no `push`/`tag` trigger — see 1.1). Nothing in the automatic `main`-push pipeline
+ever invokes it.
+
+**Consequence at the current release cadence** (~40 releases in a 48-hour window, 1.5.1 above):
+PyPI moves on every single `chore(release)` commit; npm and the public docs site only move when a
+human explicitly runs `gh workflow run release.yml --ref vX.Y.Z` and lets `publish-npm` /
+`publish-docs` complete. Nothing forces that dispatch to happen, and nothing alerts on its absence.
+
+**Verified live 2026-07-05** — this is not a theoretical gap:
+
+```bash
+python - << 'PY'
+import json, urllib.request
+print("PyPI:", json.load(urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json"))["info"]["version"])
+try:
+    print("npm registry:", json.load(urllib.request.urlopen("https://registry.npmjs.org/tensor-grep"))["dist-tags"]["latest"])
+except Exception as e:
+    print("npm registry:", e)
+PY
+```
+
+Result: PyPI reports `1.40.2`. The npm registry returns **HTTP 404** for `tensor-grep`
+(`https://registry.npmjs.org/-/v1/search?text=tensor-grep` also returns zero matching results) —
+the package has never been published under this name on the public npm registry, even though
+`npm/package.json:version` has been correctly stamped to `1.40.2` by every `chore(release)` commit
+in the chain. **A stamped version file is not evidence of a published package** — check the
+registry (or the docs site's live URL), not the repo, before claiming npm/docs parity with PyPI.
+
+**Before claiming "released" on npm or docs**:
+
+```bash
+gh workflow run release.yml --ref v<X.Y.Z>
+gh run watch                                                # wait for publish-npm + publish-docs + release-success-gate
+python -c "import json,urllib.request as u; print(json.load(u.urlopen('https://registry.npmjs.org/tensor-grep'))['dist-tags']['latest'])"
+```
+
+If nobody has ever dispatched `release.yml` for a given tag, the gap isn't a code bug — it's a
+missing manual step. The durable fix (not yet built, flag it rather than silently working around
+it) is folding `publish-npm`/`publish-docs` into the `ci.yml` gate chain itself so npm/docs parity
+doesn't depend on a human remembering a separate dispatch.
 
 ### 1.7 Post-publish: dogfood the real artifact, not a mock
 
