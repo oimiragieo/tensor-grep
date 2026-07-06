@@ -11,6 +11,7 @@ from typer._completion_shared import get_completion_script
 from typer.testing import CliRunner
 
 from tensor_grep.cli import bootstrap
+from tensor_grep.cli import main as cli_main
 from tensor_grep.cli.bootstrap import _KNOWN_COMMANDS
 from tensor_grep.cli.commands import KNOWN_COMMANDS
 from tensor_grep.cli.main import app
@@ -20,6 +21,16 @@ def test_bootstrap_commands_match_source_of_truth() -> None:
     assert _KNOWN_COMMANDS == set(KNOWN_COMMANDS), (
         "Bootstrap commands must exactly match KNOWN_COMMANDS"
     )
+
+
+def test_vendored_root_dir_names_match_source_of_truth() -> None:
+    """Review finding L1 (PR #400): cli/bootstrap.py's front-door vendored-root mirror and
+    cli/main.py's `_should_refuse_unbounded_vendored_root_scan` guard must trigger on
+    exactly the same set of heavy top-level dir names, or the two front doors (native/rg
+    fast path vs full CLI) can disagree about whether a root is unbounded."""
+    assert (
+        bootstrap._UNBOUNDED_VENDORED_ROOT_DIR_NAMES == cli_main._UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+    ), "bootstrap's vendored-root trigger set must match cli/main.py's exactly"
 
 
 def test_typer_app_commands_match_source_of_truth() -> None:
@@ -184,15 +195,19 @@ def test_main_entry_should_not_passthrough_single_project_root_with_top_level_ve
 ) -> None:
     """Critical unscoped-search-hang fix C, bootstrap front-door half: a root that is
     itself a single project (so `_search_paths_include_workspace_root` never flags it) but
-    has a heavy vendored dir (e.g. `node_modules`) at its own top level must not be
-    fast-pathed straight into the native binary or rg passthrough -- both bypass
+    has a heavy vendored dir (e.g. a committed Go `vendor/`) at its own top level must not
+    be fast-pathed straight into the native binary or rg passthrough -- both bypass
     cli/main.py's Python guards and backends/cpu_backend.py's wall-clock deadline
-    entirely. It must fall through to the full CLI, which owns the actual refusal."""
+    entirely. It must fall through to the full CLI, which owns the actual refusal.
+
+    Uses `vendor/` (not `node_modules/`, review finding H1): `node_modules` is already
+    walker-skipped by `DirectoryScanner`, so it no longer forces this fallthrough -- see
+    `test_main_entry_should_fast_path_repo_root_with_node_modules` below."""
     called = {"full_cli": False}
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "package.json").write_text("{}", encoding="utf-8")
-    (root / "node_modules").mkdir()
+    (root / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (root / "vendor").mkdir()
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "foo", str(root), "--json"])
     monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
@@ -212,6 +227,36 @@ def test_main_entry_should_not_passthrough_single_project_root_with_top_level_ve
     bootstrap.main_entry()
 
     assert called["full_cli"] is True
+
+
+def test_main_entry_should_fast_path_repo_root_with_node_modules(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Non-regression for review finding H1 (PR #400): `node_modules` is already
+    walker-skipped by `DirectoryScanner` (and normally `.gitignore`d + bounded by Fix B's
+    per-file deadline even if walked), so its mere presence at a repo root must not force
+    the front door to fall through to the full CLI -- the native fast path may still be
+    taken for an ordinary Node/React repo."""
+    seen: dict[str, object] = {}
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "package.json").write_text("{}", encoding="utf-8")
+    (root / "node_modules").mkdir()
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", str(root), "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, argv: seen.update({"argv": list(argv)}) or 0,
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen["argv"] == ["needle", str(root), "--json"]
 
 
 def test_main_entry_still_uses_native_fast_path_for_normal_small_repo_root(

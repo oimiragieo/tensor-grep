@@ -15,6 +15,7 @@ from tensor_grep.cli.runtime_paths import (
     resolve_ripgrep_binary,
 )
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
+from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
 # Saved at import time so _streaming_passthrough_returncode can detect when
 # run_subprocess has been monkey-patched by a test (old mock pattern).
@@ -562,12 +563,14 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
 # gitignored, already skipped by repo_map's walk, and bounded by the native/cpu wall-clock
 # deadline if ever walked -- including them here made this guard refuse a plain unscoped
 # search from tensor-grep's own repo root (verified via real dogfood run).
-_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = {
-    "node_modules",
-    "vendor",
-    "external_repos",
-    "third_party",
-}
+#
+# Review finding H1 (2026-07-05): also excludes any dir already walker-skipped by
+# `DirectoryScanner`'s `_GENERATED_DIR_NAMES` (currently just `node_modules` of the four
+# above) -- that dir was already bounded (walker-skipped + normally `.gitignore`d + Fix B's
+# per-file deadline), so refusing it was a pure false positive against every ordinary
+# Node/React repo. Imported (not hardcoded) from `io/directory_scanner.py` so this set and
+# cli/main.py's equivalent guard can never drift out of sync.
+_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
 
 def _search_paths_include_vendored_root(paths: list[str]) -> bool:

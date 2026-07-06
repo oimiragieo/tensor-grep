@@ -731,19 +731,47 @@ def test_workspace_root_guard_allows_real_repo_root(tmp_path: Path):
     assert project_dirs == []
 
 
-def test_vendored_root_guard_refuses_single_project_root_with_top_level_node_modules(
+def test_vendored_root_guard_refuses_single_project_root_with_top_level_vendor_dir(
     tmp_path: Path,
 ):
     """Critical unscoped-search-hang fix C: `_workspace_project_child_names` SKIPS any root
     that is itself a project (has its own marker), so a single huge vendored repo with e.g.
-    `node_modules/` at its own top level always slipped past
+    a committed Go `vendor/` at its own top level always slipped past
     `_should_refuse_unbounded_workspace_root_scan`. The vendored-root guard closes that gap
-    with a cheap top-level-only probe (never a full walk)."""
+    with a cheap top-level-only probe (never a full walk).
+
+    Uses `vendor/` (not `node_modules/`, review finding H1): `node_modules` is already
+    walker-skipped by `DirectoryScanner`'s `_GENERATED_DIR_NAMES`, so it can never cause the
+    hang this guard exists to fail fast on -- `vendor` is a genuinely walked heavy dir name
+    that survives the walker-skip subtraction."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "pkg.go").write_text("package pkg\n", encoding="utf-8")
+
+    refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [str(repo)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is True
+    assert vendored_dirs == ["vendor"]
+
+
+def test_vendored_root_guard_excludes_walker_skipped_node_modules(tmp_path: Path):
+    """Review finding H1 (PR #400): `node_modules` is already hard-skipped by
+    `DirectoryScanner._should_descend_dir` (via `_GENERATED_DIR_NAMES`), and `rg` respects
+    `.gitignore` (where `node_modules` almost always lives) plus Fix B's per-file deadline.
+    A dir the walker never descends can never cause the unscoped-search hang this guard
+    exists to fail fast on, so it must NOT trigger the refusal -- doing so needlessly
+    exit-2's every ordinary Node/React repo's unscoped search."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "package.json").write_text("{}", encoding="utf-8")
-    (repo / "src").mkdir()
-    (repo / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
     (repo / "node_modules").mkdir()
     (repo / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
 
@@ -753,15 +781,15 @@ def test_vendored_root_guard_refuses_single_project_root_with_top_level_node_mod
         allow_broad_generated_scan=False,
     )
 
-    assert refused is True
-    assert vendored_dirs == ["node_modules"]
+    assert refused is False
+    assert vendored_dirs == []
 
 
 def test_vendored_root_guard_allows_bounded_scan(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "package.json").write_text("{}", encoding="utf-8")
-    (repo / "node_modules").mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
 
     refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
         [str(repo)],
@@ -796,6 +824,33 @@ def test_vendored_root_guard_allows_normal_small_repo(tmp_path: Path):
 def test_plain_search_refuses_unbounded_single_repo_root_with_vendored_top_level_dir(
     tmp_path: Path,
 ):
+    """Uses `vendor/` (not `node_modules/`, review finding H1) -- `node_modules` is
+    walker-skipped so it no longer triggers this refusal; see the sibling non-regression
+    test below for that case."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "pkg.go").write_text("needle\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "needle", str(repo)])
+
+    assert result.exit_code == 2
+    assert "broad root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert "vendor" in result.output
+    assert "--glob" in result.output
+    assert "--max-depth" in result.output
+    assert "--allow-broad-generated-scan" in result.output
+
+
+def test_plain_search_does_not_refuse_repo_root_with_node_modules(tmp_path: Path):
+    """Non-regression for review finding H1 (PR #400): `node_modules` is already
+    walker-skipped by `DirectoryScanner` (and normally `.gitignore`d + bounded by Fix B's
+    per-file deadline even if walked), so a plain Node/React repo's unscoped search must NOT
+    be wrongly refused (exit 2) just because `node_modules/` sits at its top level."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "package.json").write_text("{}", encoding="utf-8")
@@ -806,13 +861,11 @@ def test_plain_search_refuses_unbounded_single_repo_root_with_vendored_top_level
 
     result = CliRunner().invoke(app, ["search", "needle", str(repo)])
 
-    assert result.exit_code == 2
-    assert "broad root scan refused" in result.output
-    assert "safety guard, not a zero-match result" in result.output
-    assert "node_modules" in result.output
-    assert "--glob" in result.output
-    assert "--max-depth" in result.output
-    assert "--allow-broad-generated-scan" in result.output
+    # Not refused (exit 2) -- a real match is exit 0, or exit 1 if the backend used for
+    # this invocation doesn't surface a match through CliRunner's captured output (e.g. a
+    # real `rg` subprocess passthrough writes to the OS-level fd, bypassing click's
+    # in-process capture). The key regression this guards is "not wrongly refused".
+    assert result.exit_code in (0, 1), result.output
 
 
 def test_glob_case_insensitive_matches_case_folded_paths(

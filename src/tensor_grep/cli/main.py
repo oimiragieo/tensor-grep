@@ -44,6 +44,7 @@ from tensor_grep.cli.runtime_paths import (
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
+from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 
 if TYPE_CHECKING:
@@ -3736,12 +3737,15 @@ def _should_refuse_unbounded_workspace_root_scan(
 # was verified (real dogfood run) to make this guard refuse EVERY unscoped default-path
 # search from tensor-grep's own repo root -- a `.tensor-grep/` cache dir is a completely
 # normal thing for any tg-managed repo to have, not a "genuinely pathological root".
-_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = frozenset({
-    "node_modules",
-    "vendor",
-    "external_repos",
-    "third_party",
-})
+#
+# Review finding H1 (2026-07-05): also EXCLUDES any dir already walker-skipped by
+# `DirectoryScanner`'s `_GENERATED_DIR_NAMES` (currently just `node_modules` of the four
+# above) -- the native walker already hard-skips it, and `rg` respects `.gitignore` (where
+# `node_modules` almost always lives) plus Fix B's per-file deadline, so that dir was
+# ALREADY bounded and this refusal was a pure false positive that exit-2'd every ordinary
+# Node/React repo's unscoped search. Imported (not hardcoded) from `io/directory_scanner.py`
+# so this set and `cli/bootstrap.py`'s front-door mirror can never drift out of sync.
+_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
 
 def _root_top_level_vendored_dir_names(paths: list[str]) -> list[str]:
