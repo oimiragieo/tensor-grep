@@ -53,7 +53,16 @@ if TYPE_CHECKING:
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
-_DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
+# backlog #1 (Fable+thinktank plan, 2026-07-06): kept numerically in sync with
+# repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT (raised 512 -> 2000 for routing accuracy -- a file past
+# the old cap never entered the map, so edit-plan/agent/context-render/defs misrouted on repos
+# >512 files). This is a SEPARATE literal (not an import) because it is this module's CLI-option
+# default, shared across both ROUTING commands (edit-plan/agent/context-render/defs/source) and
+# CALLER-SCAN commands (callers/refs/blast-radius/impact/blast-radius-plan). Raising it to 2000
+# is safe for the caller-scan commands ONLY because repo_map.CALLER_SCAN_FILE_CEILING bounds
+# their actual per-file scan work at 512 regardless of how large this default is -- the
+# chokepoint, not a per-command repoint, is what keeps them fast.
+_DEFAULT_AGENT_REPO_SCAN_LIMIT = 2000
 _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
 _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
 _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 15.0

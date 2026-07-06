@@ -1805,7 +1805,8 @@ def test_top_level_context_render_uses_running_daemon_response_cache(
             "optimize_context": False,
             "render_profile": "llm",
             "profile": False,
-            "max_repo_files": 512,
+            # backlog #1: --max-repo-files default raised 512 -> 2000 for routing accuracy.
+            "max_repo_files": 2000,
         }
     ]
 
@@ -1866,7 +1867,8 @@ def test_top_level_edit_plan_uses_running_daemon_response_cache(
             "max_tokens": None,
             "max_symbols": 5,
             "profile": False,
-            "max_repo_files": 512,
+            # backlog #1: --max-repo-files default raised 512 -> 2000 for routing accuracy.
+            "max_repo_files": 2000,
         }
     ]
 
