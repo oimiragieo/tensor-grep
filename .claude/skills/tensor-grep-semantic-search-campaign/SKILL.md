@@ -10,7 +10,10 @@ description: >
   the retrieval-quality + editor-plane + token-economy promotion gates, the Backend
   Fail-Closed Contract for the dense leg, fenced-off wrong paths (no API-key
   embeddings, no GPU dependency, do not break `--format rg` / `--json` / `--ndjson`
-  semantics), and routing promotion through change-control. As of 2026-07-02, v1.17.25.
+  semantics), and routing promotion through change-control. Facts verified at v1.17.25
+  (2026-07-02); re-verified UNCHANGED against v1.40.2 (2026-07-05) — this remains
+  AGENTS.md roadmap #1 but is NOT the currently-active campaign (see the STATUS note
+  and `tensor-grep-large-repo-scale-campaign`).
 ---
 
 # tensor-grep — Local Hybrid Semantic Search Campaign
@@ -18,13 +21,25 @@ description: >
 A decision-gated runbook for building the **APPROVED** local hybrid semantic search
 layer: **BM25 (lexical) + a CPU dense-embedding leg, fused with Reciprocal Rank
 Fusion (RRF), 100% local, no API key, no GPU.** This is roadmap item #1
-(`AGENTS.md:230`) — the #1 validated user ask and the biggest competitive gap.
+(`AGENTS.md:232`) — the #1 validated user ask and the biggest competitive gap.
 
 This skill is the campaign map. It tells you what already exists, what you are
 building, the exact commands + expected numbers at each gate, the wrong paths that
 are fenced off, and how promotion routes through change-control. **You do not ship
 anything user-visible from this skill without beating the gate and doing a conscious
 flag-flip** (see Phase 5).
+
+> **STATUS (as of 2026-07-05, v1.40.2 / origin/main `8829441`):** this campaign
+> remains AGENTS.md's written roadmap item #1 (`AGENTS.md:232`, "Roadmap
+> Sequencing"), and the runbook below is still buildable exactly as specified — a
+> repo-wide grep re-confirmed on 2026-07-05 that **no dense/embedding leg, no RRF
+> fusion, and no `tg index` command exist** in `src/` (same finding as §1/§2, still
+> true ~40 minor versions later). But **no engineering effort has actually gone into
+> it**: ~130 releases' worth of work since this skill was authored (v1.17.25 →
+> v1.40.2) went instead to security-hardening rounds 5-8 and the large-repo /
+> `--deadline` scale program. For the campaign that **is** currently live, load
+> `tensor-grep-large-repo-scale-campaign`. Load **this** skill only when you are
+> actually about to pick the semantic-search build back up.
 
 ---
 
@@ -70,9 +85,9 @@ of v1.17.25.
 
 **How `--rank` is wired (verify before changing):**
 - Flag: `--rank` (alias `--bm25`), default OFF. `SearchConfig.rank_bm25 = False` (`config.py:181-183`). The dense leg is described there as "a separate gated flag."
-- It is a **TG-only** search flag: `bootstrap.py::_TG_ONLY_SEARCH_FLAGS` (`--rank` line 41, `--bm25` line 42) — the bootstrap front door intercepts it and does NOT forward it to ripgrep. This is one of the two flag front doors; see `tensor-grep-config-and-flags`.
-- Setting `--rank` **leaves the ripgrep passthrough fast-path**: the passthrough condition includes `and not config.rank_bm25` (`src/tensor_grep/cli/main.py:3761`), so the request runs the tg engine and results are re-ordered at `main.py:6340-6342` via `rerank_by_bm25`.
-- User docs: `README.md:38` and `README.md:133-134`.
+- It is a **TG-only** search flag: `bootstrap.py::_TG_ONLY_SEARCH_FLAGS` (`--rank` line 42, `--bm25` line 43) — the bootstrap front door intercepts it and does NOT forward it to ripgrep. This is one of the two flag front doors; see `tensor-grep-config-and-flags`.
+- Setting `--rank` **leaves the ripgrep passthrough fast-path**: the `_can_passthrough_rg()` condition includes `and not config.rank_bm25` (`src/tensor_grep/cli/main.py:3883`, re-verified 2026-07-05), so the request runs the tg engine and results are re-ordered right after match aggregation — the `if config.rank_bm25 and all_results.matches:` guard through the `rerank_by_bm25(...)` call at `main.py:6535-6538` (re-verified 2026-07-05).
+- User docs: `README.md:38` and `README.md:136-137`.
 
 **Bottom line:** the **lexical leg (BM25) and the persisted-index building blocks
 already exist and ship default-OFF.** The campaign adds the **dense leg + RRF fusion
@@ -153,7 +168,7 @@ Ship nothing new. **This is a legitimate, non-embarrassing outcome** if the dens
 does not beat the BM25 baseline on both retrieval quality and editor-plane latency.
 "No speed/quality claim without measured numbers vs the baseline" (change-control
 gate C) cuts both ways: if the numbers aren't there, the correct move is to keep the
-shipped `--rank` baseline and record the negative result. `README.md:191` states the
+shipped `--rank` baseline and record the negative result. `README.md:194` states the
 rule explicitly: extend BM25 re-ranking with semantic re-ranking **only when it
 demonstrably beats the shipped `tg search --rank` baseline on both retrieval quality
 and editor-plane benchmarks.**
@@ -166,7 +181,7 @@ and editor-plane benchmarks.**
 | --- | --- | --- |
 | **API-key / hosted embeddings** (OpenAI, Voyage, Cohere, any `*_API_KEY`) | Breaks "no API key, runs on every install, local-first." The whole point is $0, offline. | Static local model only. If a candidate needs a key or a network call at query time, it's disqualified. |
 | **GPU / CUDA dependency for the dense leg** | GPU is EXPERIMENTAL, default-OFF, and currently *slower* than CPU with no promotion-ready path (P1 kernel paused, `AGENTS.md:228-234`). A GPU-gated ranking layer would not run on the common install. | CPU static embeddings. GPU may be an *optional* future accelerator, never a requirement. |
-| **Breaking `--format rg` / `--json` / `--ndjson` semantics** | Those output contracts are the raw-grep parity surface. `--rank` is a **re-order overlay**: same matches, different order. When `--rank` is NOT set, the ripgrep passthrough fast-path (`main.py:3761`) must remain byte-for-byte. | Keep ranking strictly post-processing over an already-produced `SearchResult`. Never change match membership or the rg-shaped output when ranking is off. |
+| **Breaking `--format rg` / `--json` / `--ndjson` semantics** | Those output contracts are the raw-grep parity surface. `--rank` is a **re-order overlay**: same matches, different order. When `--rank` is NOT set, the ripgrep passthrough fast-path (`main.py:3883`) must remain byte-for-byte. | Keep ranking strictly post-processing over an already-produced `SearchResult`. Never change match membership or the rg-shaped output when ranking is off. |
 | **A hard new install dependency** | Every-install must keep working. | Make the dense model an optional extra; degrade to BM25-only when absent (see §6). |
 | **Shipping user-visible before the gate** | Violates experimental-until-proven (change-control gate D). | Default-OFF flag + benchmark + conscious flag-flip (Phase 5). |
 | **Eyeballing "it feels more relevant"** | Ranking surfaces silently FLIP on corpus change; the blast radius is invisible to the call graph (known weak point — flat scorer, incident #302). | Measure `recall@k` / `ndcg@k` on a real corpus. Numbers or it didn't happen. |
@@ -259,7 +274,7 @@ confirm `--rank` is actually wired in `main.py`.
 
 ### Phase 4 — Measure (the real gate)
 
-Two measurements, both required (`README.md:191`):
+Two measurements, both required (`README.md:194`):
 
 1. **Retrieval quality on a realistic corpus** (not the toy). Use
    `benchmarks/run_repo_retrieval_benchmarks.py` (it computes `RetrievalMetrics`:
@@ -380,8 +395,10 @@ planned `SafeBackendMixin` conformance gate.
 Everything below is verifiable from the repo. Re-run these when a claim may have
 drifted; date-stamp any change.
 
-- **Version / date:** `v1.17.25`, verified 2026-07-02. Re-check:
-  `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
+- **Version / date:** facts originally verified `v1.17.25` (2026-07-02); re-verified
+  UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05 — see the
+  STATUS note near the top. Re-check: `grep -m1 release_docs_current_tag AGENTS.md`
+  and `grep -m1 '"version"' npm/package.json`.
 - **BM25 leg + defaults:** `Read src/tensor_grep/core/retrieval_bm25.py` (k1=1.5, b=0.75),
   `retrieval_chunker.py` (chunk_size=30, overlap=5, MAX_CHUNKS=100_000).
 - **`--rank` wiring + default-OFF:** `grep -n "rank_bm25" src/tensor_grep/core/config.py`
