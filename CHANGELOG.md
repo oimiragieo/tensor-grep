@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.40.2 (2026-07-06)
+
+### Bug Fixes
+
+- Exit 2 only for an EMPTY truncated result, not a found-but-scan-capped one (dogfood 1.40.1)
+  ([#399](https://github.com/oimiragieo/tensor-grep/pull/399),
+  [`b4ffc8f`](https://github.com/oimiragieo/tensor-grep/commit/b4ffc8f683611f025f68f187547783439e078d73))
+
+Re-dogfooding #398 on the real 1884-file TS repo caught an over-extension I shipped: `tg callers
+  QueryEngine` (no --deadline) returned callers=1 (FOUND) but exit 2, because the default
+  --max-repo-files cap truncated the scan -> result_incomplete -> exit 2. So EVERY symbol query on a
+  repo larger than the default cap exited 2 even when it found the answer, and an agent looping `if
+  rc==0` could never proceed.
+
+Narrow the exit-2 "incomplete" signal to EMPTY results only: a result WITH findings is valid and
+  exits 0 even when the scan was truncated (result_incomplete/partial in the JSON flags "the set may
+  be incomplete, raise the budget"); an EMPTY result from a truncated scan stays exit 2
+  (untrustworthy -- "nothing found" may be a false negative); an EMPTY complete scan stays exit 1
+  (genuine not-found). Applied to _emit_symbol_command_result (callers/refs/defs/source/impact) AND
+  blast-radius. Verified on the real binary: found+scan-capped -> rc 0, empty+deadline -> rc 2. 13
+  deadline + 84 blast-radius tests.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.40.1 (2026-07-06)
 
 ### Bug Fixes
