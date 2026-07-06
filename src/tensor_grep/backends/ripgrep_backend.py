@@ -111,69 +111,9 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            import json
-
-            matches = []
-            matched_file_paths: list[str] = []
-            match_counts_by_file: dict[str, int] = {}
-            total_matches = 0
-
-            # split on rg's NDJSON record delimiter (\n) — NOT str.splitlines(), which also
-            # breaks on U+2028/U+2029/U+0085 that rg emits UNESCAPED inside a match's line text,
-            # fracturing the JSON record so it fails json.loads and is silently dropped.
-            for line in result.stdout.split("\n"):
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                    if data.get("type") == "match":
-                        data_match = data["data"]
-                        line_number = data_match.get("line_number", 0)
-                        # Decode text-or-bytes: non-UTF-8 files arrive as lines.bytes (base64),
-                        # not lines.text — reading only .text produced a phantom empty match.
-                        text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
-
-                        _path_obj = data_match.get("path", {})
-                        path_str = _decode_rg_field(_path_obj)
-                        # Preserve the single-file fallback: if rg gave no path.text, prefer the
-                        # real caller-supplied path over a lossy U+FFFD decode (keeps match.file
-                        # openable for _resolve_match_path). Non-UTF-8 filenames in a directory
-                        # scan may still yield a lossy path; correct raw-bytes path is out of scope.
-                        if "text" not in _path_obj and isinstance(file_path, str):
-                            path_str = file_path
-
-                        # Stash rg's per-occurrence byte offsets (submatches[]) for --vimgrep/
-                        # --column output shaping. Counting stays one-per-matching-line (below) so
-                        # total_matches / parity with the other backends is unchanged.
-                        _subs = data_match.get("submatches") or None
-                        matches.append(
-                            MatchLine(
-                                line_number=line_number,
-                                text=text,
-                                file=path_str,
-                                submatches=tuple(_subs) if _subs else None,
-                            )
-                        )
-                        total_matches += 1
-                        if path_str:
-                            # O(1) first-seen detection via the counts dict — the previous
-                            # `path_str not in matched_file_paths` was an O(n) scan per match,
-                            # degrading a common-token search on a large repo to O(matches x files).
-                            new_count = match_counts_by_file.get(path_str, 0) + 1
-                            match_counts_by_file[path_str] = new_count
-                            if new_count == 1:
-                                matched_file_paths.append(path_str)
-                    elif data.get("type") == "context":
-                        data_match = data["data"]
-                        line_number = data_match.get("line_number", 0)
-                        text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
-                        _path_obj = data_match.get("path", {})
-                        path_str = _decode_rg_field(_path_obj)
-                        if "text" not in _path_obj and isinstance(file_path, str):
-                            path_str = file_path
-                        matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
-                except json.JSONDecodeError:
-                    pass
+            matches, matched_file_paths, match_counts_by_file, total_matches = (
+                self._parse_ndjson_matches(result.stdout, file_path)
+            )
 
             # Parse-first, THEN branch on the exit code. rg exit 2 = a SOFT per-file error (e.g.
             # one unreadable/missing path among many); if it still emitted matches for the readable
@@ -204,8 +144,134 @@ class RipgrepBackend(ComputeBackend):
                 search_result.incomplete_reason = reason
             return search_result
 
+        except subprocess.TimeoutExpired as e:
+            # Audit H2 (Fable review of #400): the aggregate JSON path previously had NO
+            # handler for a timed-out rg subprocess, so this fell into the broad `except
+            # Exception` below, got wrapped as a RuntimeError, and propagated as an
+            # UNCAUGHT traceback all the way through main.py's search command (exit 1, no
+            # JSON envelope, all partial results silently lost) -- violating the Backend
+            # Fail-Closed Contract (AGENTS.md). That gave agents THREE different "timed
+            # out" signals depending on route: exit 124 from the rg passthrough
+            # (search_passthrough, below -- kept as-is: 124 is the coreutils `timeout`
+            # convention and is load-bearing rg-parity for the streaming/interactive path,
+            # so it is NOT changed here), exit 2 + result_incomplete from the native walk
+            # deadline (main.py, added in #400), and an uncaught traceback + exit 1 from
+            # here. Fix: treat it like rg's own soft partial-failure (exit 2) above --
+            # `subprocess.run(capture_output=True)` attaches whatever stdout rg had
+            # already flushed before being killed to the TimeoutExpired exception, so
+            # best-effort re-use the SAME NDJSON parser to recover any complete match
+            # records instead of discarding them; fall back to an empty-but-well-formed
+            # envelope if nothing parses. Either way: result_incomplete=True + a reason,
+            # NEVER a crash, NEVER a silent empty. main.py's existing
+            # `sys.exit(2 if all_results.result_incomplete else ...)` then exits 2 for
+            # this path too, consistent with the native-walk-deadline signal.
+            timeout_seconds = (
+                e.timeout if e.timeout is not None else configured_ripgrep_timeout_seconds()
+            )
+            partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
+            matches, matched_file_paths, match_counts_by_file, total_matches = (
+                self._parse_ndjson_matches(partial_stdout, file_path)
+            )
+            reason = (
+                f"rg aggregate search exceeded the {timeout_seconds:g}s timeout and was "
+                "stopped; returning partial results. Scope the search to a smaller path, "
+                "or raise TG_RG_TIMEOUT_SECONDS."
+            )
+            sys.stderr.write(
+                f"tg: rg aggregate search timed out, keeping partial results: {reason}\n"
+            )
+            return SearchResult(
+                matches=matches,
+                matched_file_paths=matched_file_paths,
+                match_counts_by_file=match_counts_by_file,
+                total_files=len(matched_file_paths),
+                total_matches=total_matches,
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+                result_incomplete=True,
+                incomplete_reason=reason,
+            )
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+
+    @staticmethod
+    def _parse_ndjson_matches(
+        stdout: str, file_path: str | list[str]
+    ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
+        """Parse rg ``--json`` NDJSON output into match/context records.
+
+        Shared by the success path and the timeout-recovery path above (a
+        ``subprocess.TimeoutExpired`` carries whatever stdout rg had already flushed before
+        being killed via ``e.stdout``) so a timed-out aggregate search can still surface any
+        complete match records instead of discarding them.
+        """
+        import json
+
+        matches: list[MatchLine] = []
+        matched_file_paths: list[str] = []
+        match_counts_by_file: dict[str, int] = {}
+        total_matches = 0
+
+        # split on rg's NDJSON record delimiter (\n) — NOT str.splitlines(), which also
+        # breaks on U+2028/U+2029/U+0085 that rg emits UNESCAPED inside a match's line text,
+        # fracturing the JSON record so it fails json.loads and is silently dropped.
+        for line in stdout.split("\n"):
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+                if data.get("type") == "match":
+                    data_match = data["data"]
+                    line_number = data_match.get("line_number", 0)
+                    # Decode text-or-bytes: non-UTF-8 files arrive as lines.bytes (base64),
+                    # not lines.text — reading only .text produced a phantom empty match.
+                    text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
+
+                    _path_obj = data_match.get("path", {})
+                    path_str = _decode_rg_field(_path_obj)
+                    # Preserve the single-file fallback: if rg gave no path.text, prefer the
+                    # real caller-supplied path over a lossy U+FFFD decode (keeps match.file
+                    # openable for _resolve_match_path). Non-UTF-8 filenames in a directory
+                    # scan may still yield a lossy path; correct raw-bytes path is out of scope.
+                    if "text" not in _path_obj and isinstance(file_path, str):
+                        path_str = file_path
+
+                    # Stash rg's per-occurrence byte offsets (submatches[]) for --vimgrep/
+                    # --column output shaping. Counting stays one-per-matching-line (below) so
+                    # total_matches / parity with the other backends is unchanged.
+                    _subs = data_match.get("submatches") or None
+                    matches.append(
+                        MatchLine(
+                            line_number=line_number,
+                            text=text,
+                            file=path_str,
+                            submatches=tuple(_subs) if _subs else None,
+                        )
+                    )
+                    total_matches += 1
+                    if path_str:
+                        # O(1) first-seen detection via the counts dict — the previous
+                        # `path_str not in matched_file_paths` was an O(n) scan per match,
+                        # degrading a common-token search on a large repo to O(matches x files).
+                        new_count = match_counts_by_file.get(path_str, 0) + 1
+                        match_counts_by_file[path_str] = new_count
+                        if new_count == 1:
+                            matched_file_paths.append(path_str)
+                elif data.get("type") == "context":
+                    data_match = data["data"]
+                    line_number = data_match.get("line_number", 0)
+                    text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
+                    _path_obj = data_match.get("path", {})
+                    path_str = _decode_rg_field(_path_obj)
+                    if "text" not in _path_obj and isinstance(file_path, str):
+                        path_str = file_path
+                    matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
+            except json.JSONDecodeError:
+                pass
+
+        return matches, matched_file_paths, match_counts_by_file, total_matches
 
     def _search_files_with_matches(
         self, file_path: str | list[str], pattern: str, config: SearchConfig
