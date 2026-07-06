@@ -26,7 +26,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map, session_store
-from tensor_grep.cli.main import _DEFAULT_AGENT_REPO_SCAN_LIMIT, app
+from tensor_grep.cli.main import _DEFAULT_AGENT_REPO_SCAN_LIMIT, _scan_truncation_warning, app
 
 runner = CliRunner()
 
@@ -51,6 +51,39 @@ def _make_flat_repo(
         if target_index is not None and index == target_index and symbol:
             body += f"\n\ndef {symbol}():\n    return {index}\n"
         (src / f"m{index:0{width}d}.py").write_text(body, encoding="utf-8")
+    return project
+
+
+def _make_flat_repo_with_tests(
+    root: Path,
+    source_count: int,
+    *,
+    target_index: int,
+    symbol: str,
+) -> Path:
+    """F1 fixture: ``source_count`` trivial source files (one directory, so the ceiling slice
+    is genuinely source-heavy) PLUS 5 pytest-named test files (``_is_test_file`` classifies by
+    ``test_`` filename prefix regardless of directory), one of which (``test_qe.py``) actually
+    references ``symbol`` -- reproducing the dogfood regression: a >CALLER_SCAN_FILE_CEILING
+    source-only universe strands 100% of the (source-first-then-tests-ordered) test files past
+    the ceiling slice, dropping the test file's ref."""
+    project = root / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    width = max(5, len(str(source_count)))
+    for index in range(source_count):
+        body = f"def helper_{index}():\n    return {index}\n"
+        if index == target_index:
+            body += f"\n\nclass {symbol}:\n    def run(self):\n        return True\n"
+        (src / f"m{index:0{width}d}.py").write_text(body, encoding="utf-8")
+    for name in ("test_a.py", "test_b.py", "test_c.py", "test_d.py"):
+        (src / name).write_text("def test_noop():\n    assert True\n", encoding="utf-8")
+    target_module = f"m{target_index:0{width}d}"
+    (src / "test_qe.py").write_text(
+        f"from src.{target_module} import {symbol}\n\n\n"
+        f"def test_query_engine():\n    engine = {symbol}()\n    assert engine.run()\n",
+        encoding="utf-8",
+    )
     return project
 
 
@@ -272,3 +305,52 @@ def test_blast_radius_output_cap_only_stays_exit_0(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
     result = runner.invoke(app, ["blast-radius", str(tmp_path), "f", "--json"])
     assert result.exit_code == 0, result.stdout
+
+
+# --- F1 (dogfood v1.42.0, 24->14 refs regression): the ceiling slice must ORDER literal-hit ---
+# --- files + interleave tests BEFORE slicing, and stamp a structured caller_scan_limit caveat --
+
+
+def test_refs_ceiling_orders_literal_hits_and_surfaces_caller_scan_limit(tmp_path: Path) -> None:
+    project = _make_flat_repo_with_tests(tmp_path, 600, target_index=300, symbol="QueryEngine")
+    rmap = repo_map.build_repo_map(str(project), max_repo_files=700)
+    assert len(rmap.get("tests", [])) == 5
+    universe_size = len(rmap.get("files", [])) + len(rmap.get("tests", []))
+    assert universe_size > repo_map.CALLER_SCAN_FILE_CEILING
+
+    result = repo_map.build_symbol_refs_from_map(rmap, "QueryEngine")
+
+    ref_file_names = {Path(str(ref["file"])).name for ref in result["references"]}
+    assert "test_qe.py" in ref_file_names, result["references"]
+
+    caller_scan_limit = result.get("caller_scan_limit")
+    assert isinstance(caller_scan_limit, dict)
+    assert caller_scan_limit.get("possibly_truncated") is True
+    assert caller_scan_limit.get("ceiling") == repo_map.CALLER_SCAN_FILE_CEILING
+    assert caller_scan_limit.get("files_total") == universe_size
+
+    assert result.get("result_incomplete") is True
+    assert _scan_truncation_warning(result) is not None
+
+
+def test_callers_scan_still_bounded_at_ceiling_with_ordering_enabled(tmp_path, monkeypatch) -> None:
+    """The ordering pass must not go UNBOUNDED: it probes the file universe once (for literal-hit
+    ordering) and then walks the capped 512-file window once for the real scan -- a fixed,
+    non-quadratic cost, not a blowup."""
+    project = _make_flat_repo_with_tests(tmp_path, 600, target_index=300, symbol="QueryEngine")
+    rmap = repo_map.build_repo_map(str(project), max_repo_files=700)
+    universe_size = len(rmap.get("files", [])) + len(rmap.get("tests", []))
+
+    calls = {"n": 0}
+    original = repo_map._file_may_contain_literal_symbol
+
+    def _spy(path: Path, symbol: str) -> bool:
+        calls["n"] += 1
+        return original(path, symbol)
+
+    monkeypatch.setattr(repo_map, "_file_may_contain_literal_symbol", _spy)
+
+    result = repo_map.build_symbol_callers_from_map(rmap, "QueryEngine")
+
+    assert calls["n"] <= universe_size + repo_map.CALLER_SCAN_FILE_CEILING
+    assert result.get("result_incomplete") is True
