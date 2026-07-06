@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 from io import StringIO
 from pathlib import Path
@@ -243,3 +244,87 @@ def test_services_manifest_exposes_editor_profiling_benchmark_command() -> None:
         "benchmark_editor_profiling: python benchmarks/run_editor_profiling.py "
         "--output artifacts/bench_editor_profiling.json"
     ) in services_yaml
+
+
+def test_mcp_context_render_exposes_and_forwards_max_repo_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_context_render)
+    assert signature.parameters["max_repo_files"].default == (
+        mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_build_context_render(
+        query: str,
+        path: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        captured["query"] = query
+        captured["path"] = path
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_context_render", fake_build_context_render)
+
+    payload = json.loads(
+        mcp_server.tg_context_render(
+            "create invoice",
+            ".",
+            max_repo_files=17,
+        )
+    )
+
+    assert payload["ok"] is True
+    assert captured["query"] == "create invoice"
+    assert captured["path"] == "."
+    assert captured["max_repo_files"] == 17
+
+
+def test_mcp_session_edit_plan_exposes_and_forwards_max_repo_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_session_edit_plan)
+    assert signature.parameters["max_repo_files"].default == (
+        mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_session_context_edit_plan(
+        session_id: str,
+        query: str,
+        path: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        captured["session_id"] = session_id
+        captured["query"] = query
+        captured["path"] = path
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        session_store,
+        "session_context_edit_plan",
+        fake_session_context_edit_plan,
+    )
+
+    payload = json.loads(
+        mcp_server.tg_session_edit_plan(
+            "session-1",
+            "create invoice",
+            ".",
+            max_repo_files=23,
+        )
+    )
+
+    assert payload == {"ok": True}
+    assert captured["session_id"] == "session-1"
+    assert captured["query"] == "create invoice"
+    assert captured["path"] == "."
+    assert captured["max_repo_files"] == 23

@@ -1105,6 +1105,20 @@ def test_main_entry_should_route_test_to_full_cli(monkeypatch):
     assert seen == {"full_cli": True}
 
 
+def test_main_entry_should_route_route_test_to_full_cli(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "route-test"])
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: seen.update({"full_cli": True}))
+    monkeypatch.setattr(
+        bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
+    )
+
+    bootstrap.main_entry()
+
+    assert seen == {"full_cli": True}
+
+
 def test_main_entry_should_route_ast_info_to_full_cli(monkeypatch):
     seen: dict[str, object] = {}
 

@@ -572,8 +572,11 @@ def test_related_spans_use_symbol_catalog_lines(tmp_path: Path, renderer: Render
         "start_line": 3,
         "end_line": 5,
         "depth": 1,
-        "reasons": ["caller", "graph-depth"],
-        "provenance": ["parser-backed", "graph-derived"],
+        # build_receipt's file (service.py) BOTH calls create_invoice AND `from src.payments import
+        # create_invoice`, so the span is correctly attributed as a caller (parser-backed) + graph-depth
+        # (graph-derived) + import-consumer (heuristic) -- the richer, accurate attribution.
+        "reasons": ["caller", "graph-depth", "import-consumer"],
+        "provenance": ["parser-backed", "graph-derived", "heuristic"],
         "rationale": "Selected build_receipt because it directly calls the target symbol and sits at depth 1.",
     }
     assert {key: related_span[key] for key in expected} == expected

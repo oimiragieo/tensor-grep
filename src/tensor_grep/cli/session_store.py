@@ -47,6 +47,7 @@ _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV = "TENSOR_GREP_SESSION_RESPONSE_CACH
 _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+_DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # audit I2: bound on-disk session retention; keep at most N newest explicit sessions per root
 # so per-open cost and disk usage stay bounded. Configurable via TG_SESSION_MAX.
 _SESSION_MAX_ENV = "TG_SESSION_MAX"
@@ -1022,11 +1023,16 @@ def session_blast_radius_plan(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    max_repo_files: int | None = _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT,
     refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
     payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
+    repo_map = _limited_session_repo_map(
+        cast(dict[str, Any], payload["repo_map"]),
+        max_repo_files=max_repo_files,
+    )
     response = build_symbol_blast_radius_plan_from_map(
-        payload["repo_map"],
+        repo_map,
         symbol,
         max_depth=max_depth,
         max_files=max_files,
@@ -1251,8 +1257,17 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("blast_radius_plan requests require a non-empty symbol")
+        max_repo_files = request.get(
+            "max_repo_files",
+            _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT,
+        )
         response = build_symbol_blast_radius_plan_from_map(
-            repo_map,
+            _limited_session_repo_map(
+                repo_map,
+                max_repo_files=(
+                    None if max_repo_files in (None, "") else int(cast(int | str, max_repo_files))
+                ),
+            ),
             symbol,
             max_depth=int(request.get("max_depth", 3)),
             max_files=int(request.get("max_files", 3)),

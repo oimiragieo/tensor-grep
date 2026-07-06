@@ -1814,6 +1814,7 @@ def tg_context_render(
     query: str,
     path: str = ".",
     max_files: int = 3,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
@@ -1830,6 +1831,7 @@ def tg_context_render(
     Args:
         query: Query text used to rank and render repo context.
         path: File or directory to inventory.
+        max_repo_files: Maximum repository files to scan before ranking context.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
     try:
@@ -1839,6 +1841,7 @@ def tg_context_render(
                     query,
                     path,
                     max_files=max_files,
+                    max_repo_files=max_repo_files,
                     max_sources=max_sources,
                     max_symbols_per_file=max_symbols_per_file,
                     max_render_chars=max_render_chars,
@@ -1945,6 +1948,7 @@ def tg_session_edit_plan(
     query: str,
     path: str = ".",
     max_files: int = 3,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     max_sources: int = 5,
     max_tokens: int | None = None,
     max_symbols: int = 5,
@@ -1959,6 +1963,7 @@ def tg_session_edit_plan(
         query: Query text used to rank edit targets.
         path: File or directory rooted at the session scope.
         max_files: Maximum files to include in the plan.
+        max_repo_files: Maximum repository files to scan before ranking edit targets.
         max_sources: Maximum related source/span records to retain.
         max_tokens: Accepted for command-surface parity; no rendered source text is emitted.
         max_symbols: Maximum ranked symbols to retain.
@@ -1973,6 +1978,7 @@ def tg_session_edit_plan(
                 query,
                 path,
                 max_files=max_files,
+                max_repo_files=max_repo_files,
                 max_sources=max_sources,
                 max_tokens=max_tokens,
                 max_symbols=max_symbols,
