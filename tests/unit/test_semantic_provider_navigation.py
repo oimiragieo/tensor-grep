@@ -1653,7 +1653,7 @@ def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_defs",
-        lambda symbol, path, semantic_provider="native": {
+        lambda symbol, path, semantic_provider="native", **_: {
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
@@ -1695,7 +1695,7 @@ def test_mcp_source_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_source",
-        lambda symbol, path, semantic_provider="native": {
+        lambda symbol, path, semantic_provider="native", **_: {
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
