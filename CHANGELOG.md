@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.40.5 (2026-07-06)
+
+### Bug Fixes
+
+- Rg-aggregate --json timeout emits result_incomplete envelope + exit 2, not a traceback (#56 H2)
+  ([#403](https://github.com/oimiragieo/tensor-grep/pull/403),
+  [`117c32c`](https://github.com/oimiragieo/tensor-grep/commit/117c32cc843b0b5edd51060d7be82b38f421fddf))
+
+Adversarial review of PR #400 (finding H2) found that when `tg search --json` routes to the ripgrep
+  AGGREGATE backend and the rg subprocess hits its timeout, subprocess.TimeoutExpired fell into
+  RipgrepBackend.search()'s broad `except Exception`, got wrapped as a RuntimeError, and propagated
+  as an uncaught traceback through main.py's search command (exit 1, no JSON envelope, all partial
+  results lost) -- a 3rd, worse "timed out" signal alongside the rg-passthrough path's exit 124 and
+  the native walk-deadline's exit 2 + result_incomplete (#400).
+
+Catch subprocess.TimeoutExpired before the broad except in the aggregate .search() path and return a
+  well-formed SearchResult with result_incomplete=True + incomplete_reason, best-effort recovering
+  any match records rg had already flushed to stdout before being killed
+  (subprocess.run(capture_output=True) attaches it to TimeoutExpired.stdout) via the same NDJSON
+  parser used on the success path (extracted into RipgrepBackend._parse_ndjson_matches, now shared
+  by both). main.py's existing `sys.exit(2 if all_results.result_incomplete else ...)` then exits 2
+  for this path too, with no main.py changes needed. The rg-passthrough path's exit 124 is left
+  unchanged (coreutils `timeout` convention, load-bearing for streaming/interactive rg-parity) --
+  documented in a code comment at the fix site.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.40.4 (2026-07-06)
 
 ### Bug Fixes
