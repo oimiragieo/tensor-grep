@@ -140,12 +140,13 @@ def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypat
     (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
 
     def _impact(symbol, path=".", **_kwargs):
-        # EMPTY impact (files=[]) + a deadline-truncated caller pass -> the empty is untrustworthy ->
-        # exit 2. (A non-empty impact is a valid found result and exits 0, dogfood 1.40.1.)
+        # impact FOUND files, but its second caller-scan pass is deadline-truncated -> impact must carry
+        # that partial signal and exit 2 EVEN THOUGH it found files (council-verified B: truncation trumps
+        # found), so an agent never trusts a truncated impact set as exhaustive.
         return {
             "symbol": symbol,
             "path": str(path),
-            "files": [],
+            "files": ["m.py"],
             "tests": [],
             "callers": [],
             "no_match": False,
@@ -160,29 +161,31 @@ def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypat
     assert result.exit_code == 2, result.output
 
 
-def test_found_with_partial_exits_0(tmp_path: Path, monkeypatch) -> None:
-    # dogfood 1.40.1: a result WITH findings is valid even if the scan was --deadline/cap truncated ->
-    # exit 0 (result_incomplete/partial in JSON flags "maybe more"). Only an EMPTY truncated result -> 2.
+def test_found_with_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # Council-verified B (2026-07-05): truncation trumps found -- a --deadline/cap-truncated result
+    # exits 2 EVEN WITH findings, so an agent never trusts a truncated caller-set as exhaustive. (The
+    # found->exit-0 narrowing was tried in #399 and overturned by a unanimous design council.)
     assert (
         _exit_code_for_payload(
             tmp_path, monkeypatch, {"callers": [{"file": "m.py", "line": 1}], "partial": True}
         )
-        == 0
+        == 2
     )
 
 
-def test_found_with_result_incomplete_exits_0(tmp_path: Path, monkeypatch) -> None:
+def test_found_with_result_incomplete_exits_2(tmp_path: Path, monkeypatch) -> None:
     assert (
         _exit_code_for_payload(
             tmp_path,
             monkeypatch,
             {"callers": [{"file": "m.py", "line": 1}], "result_incomplete": True},
         )
-        == 0
+        == 2
     )
 
 
-def test_blast_radius_found_partial_exits_0(tmp_path: Path, monkeypatch) -> None:
+def test_blast_radius_found_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # Council-verified B: a scan-truncated blast radius exits 2 even when callers were resolved.
     (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
 
     def _spy(symbol, path=".", **_kwargs):
@@ -198,4 +201,4 @@ def test_blast_radius_found_partial_exits_0(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
     result = CliRunner().invoke(app, ["blast-radius", "foo", str(tmp_path), "--json"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
