@@ -120,7 +120,8 @@ def test_build_symbol_callers_from_map_bounds_scan_to_ceiling(tmp_path, monkeypa
     assert calls["n"] <= repo_map.CALLER_SCAN_FILE_CEILING
     assert calls["n"] == repo_map.CALLER_SCAN_FILE_CEILING
     assert result.get("result_incomplete") is True
-    assert "scan_remediation" in result
+    # truthy, not just key-present: the pre-fix setdefault left scan_remediation=None (the dogfood bug)
+    assert result.get("scan_remediation")
 
 
 def test_build_symbol_callers_from_map_below_ceiling_stays_complete(tmp_path, monkeypatch) -> None:
@@ -223,3 +224,51 @@ def test_defs_on_oversized_repo_still_exits_2(tmp_path: Path) -> None:
     scan_limit = payload.get("scan_limit")
     assert isinstance(scan_limit, dict)
     assert scan_limit.get("possibly_truncated") is True
+
+
+# --- BLOCKER (Fable final review of #405): blast-radius must exit 2 on a caller-scan CEILING
+#     truncation (a SCAN truncation), while a mere --max-callers OUTPUT cap stays exit 0. ---
+
+
+def test_blast_radius_exits_2_on_caller_scan_ceiling_truncation(tmp_path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _spy(symbol, path=".", **_kwargs):
+        # ceiling truncation: caller_scan_truncated set, but NOT partial / scan_limit (the 2000-map is
+        # itself complete) -- the blast-radius gate must STILL exit 2, not silently exit 0 at 512.
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "definitions": [{"file": "m.py", "line": 1}],
+            "callers": [{"file": "m.py", "line": 2}],
+            "files": ["m.py"],
+            "tests": [],
+            "result_incomplete": True,
+            "caller_scan_truncated": True,
+            "scan_remediation": "caller-scan bounded to 512 files",
+        }
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "f", "--json"])
+    assert result.exit_code == 2, result.stdout
+
+
+def test_blast_radius_output_cap_only_stays_exit_0(tmp_path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _spy(symbol, path=".", **_kwargs):
+        # OUTPUT cap only (--max-callers trims a COMPLETE analysis) -> exit 0, NOT 2.
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "definitions": [{"file": "m.py", "line": 1}],
+            "callers": [{"file": "m.py", "line": 2}],
+            "files": ["m.py"],
+            "tests": [],
+            "result_incomplete": True,
+            "output_limit": {"possibly_truncated": True, "callers_truncated": True},
+        }
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "f", "--json"])
+    assert result.exit_code == 0, result.stdout

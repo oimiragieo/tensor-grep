@@ -8680,7 +8680,12 @@ def blast_radius(
     # truncated caller-set silently trusted as exhaustive is exactly the wrong-refactor risk this gate
     # exists to prevent. An OUTPUT cap (--max-callers/--max-files) is a COMPLETE analysis, capped only for
     # display -> stays exit 0 (so gate on scan-truncation/partial, never on the output cap).
-    incomplete = bool(payload.get("partial") or scan_truncated)
+    # `caller_scan_truncated` = the backlog-#1 caller-scan ceiling (CALLER_SCAN_FILE_CEILING) dropped
+    # files the 2000-map covers -> a SCAN truncation (exit 2), distinct from an output cap. Without this
+    # the ceiling would silently exit 0 with a caller-set truncated at 512 (Fable final review of #405).
+    incomplete = bool(
+        payload.get("partial") or scan_truncated or payload.get("caller_scan_truncated")
+    )
 
     if mermaid_output:
         typer.echo(_render_blast_radius_mermaid(payload))

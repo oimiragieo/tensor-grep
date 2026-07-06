@@ -13757,6 +13757,10 @@ def build_symbol_blast_radius_from_map(
         # dropped files the map covers -> the blast radius built on top of it is not exhaustive
         # either (session_blast_radius calls this function directly on a full, unbounded session
         # repo_map -- this is the leak fix, since a per-command option default can't reach that path).
+        # `caller_scan_truncated` is a DISTINCT scan-incompleteness signal so the blast-radius CLI gate
+        # can exit 2 on it WITHOUT catching a mere --max-callers/--max-files OUTPUT cap (which also sets
+        # result_incomplete but is a complete analysis capped only for display -> stays exit 0).
+        payload["caller_scan_truncated"] = True
         _mark_result_incomplete(
             payload,
             remediation=str(
