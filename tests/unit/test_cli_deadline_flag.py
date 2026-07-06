@@ -140,10 +140,12 @@ def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypat
     (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
 
     def _impact(symbol, path=".", **_kwargs):
+        # EMPTY impact (files=[]) + a deadline-truncated caller pass -> the empty is untrustworthy ->
+        # exit 2. (A non-empty impact is a valid found result and exits 0, dogfood 1.40.1.)
         return {
             "symbol": symbol,
             "path": str(path),
-            "files": ["m.py"],
+            "files": [],
             "tests": [],
             "callers": [],
             "no_match": False,
@@ -156,3 +158,44 @@ def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypat
     monkeypatch.setattr(repo_map, "build_symbol_callers", _callers)
     result = CliRunner().invoke(app, ["impact", "foo", str(tmp_path), "--json"])
     assert result.exit_code == 2, result.output
+
+
+def test_found_with_partial_exits_0(tmp_path: Path, monkeypatch) -> None:
+    # dogfood 1.40.1: a result WITH findings is valid even if the scan was --deadline/cap truncated ->
+    # exit 0 (result_incomplete/partial in JSON flags "maybe more"). Only an EMPTY truncated result -> 2.
+    assert (
+        _exit_code_for_payload(
+            tmp_path, monkeypatch, {"callers": [{"file": "m.py", "line": 1}], "partial": True}
+        )
+        == 0
+    )
+
+
+def test_found_with_result_incomplete_exits_0(tmp_path: Path, monkeypatch) -> None:
+    assert (
+        _exit_code_for_payload(
+            tmp_path,
+            monkeypatch,
+            {"callers": [{"file": "m.py", "line": 1}], "result_incomplete": True},
+        )
+        == 0
+    )
+
+
+def test_blast_radius_found_partial_exits_0(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _spy(symbol, path=".", **_kwargs):
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "definitions": [{"file": "m.py", "line": 1}],
+            "callers": [{"file": "m.py", "line": 1}],
+            "files": ["m.py"],
+            "tests": [],
+            "partial": True,
+        }
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
+    result = CliRunner().invoke(app, ["blast-radius", "foo", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
