@@ -27,6 +27,24 @@ _GENERATED_RELATIVE_DIRS = {
     ".claude/context",
 }
 
+# Heavy dirs that may legitimately sit at a project ROOT's top level and that an unscoped
+# `tg search` should refuse to blindly walk into (PR #400 fix C, review finding H1). A name
+# already in `_GENERATED_DIR_NAMES` above (e.g. `node_modules`) is already walker-skipped by
+# `_should_descend_dir` -- it can never cause the walker to hang on its own, so it must NOT
+# also appear in the refusal trigger set below (a refusal for a dir the walker never
+# descends is a pure false positive: it wrongly exit-2's every ordinary Node/React repo).
+# Single source of truth: both `cli/main.py`'s `_should_refuse_unbounded_vendored_root_scan`
+# and `cli/bootstrap.py`'s front-door mirror `_search_paths_include_vendored_root` import
+# `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` from here rather than each hardcoding their own
+# (subtracted) copy, so the two guards can never drift out of sync.
+_ALL_HEAVY_ROOT_DIR_NAMES = frozenset({
+    "node_modules",
+    "vendor",
+    "external_repos",
+    "third_party",
+})
+UNBOUNDED_VENDORED_ROOT_DIR_NAMES = frozenset(_ALL_HEAVY_ROOT_DIR_NAMES - _GENERATED_DIR_NAMES)
+
 # The Rust PyO3 directory scanner (`RustDirectoryScanner`) is NOT exported by the `rust_core`
 # extension (only `RustBackend` + functions are), so the old `from rust_core import
 # RustDirectoryScanner` always raised and this flag was permanently False — the Python walk below was

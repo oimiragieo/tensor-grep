@@ -26,6 +26,7 @@ from tensor_grep.cli.main import (
     _safe_stdout_line,
     _select_ast_backend_for_pattern,
     _should_refuse_unbounded_generated_scan,
+    _should_refuse_unbounded_vendored_root_scan,
     _should_refuse_unbounded_workspace_root_scan,
     _write_path_list,
     app,
@@ -728,6 +729,143 @@ def test_workspace_root_guard_allows_real_repo_root(tmp_path: Path):
 
     assert refused is False
     assert project_dirs == []
+
+
+def test_vendored_root_guard_refuses_single_project_root_with_top_level_vendor_dir(
+    tmp_path: Path,
+):
+    """Critical unscoped-search-hang fix C: `_workspace_project_child_names` SKIPS any root
+    that is itself a project (has its own marker), so a single huge vendored repo with e.g.
+    a committed Go `vendor/` at its own top level always slipped past
+    `_should_refuse_unbounded_workspace_root_scan`. The vendored-root guard closes that gap
+    with a cheap top-level-only probe (never a full walk).
+
+    Uses `vendor/` (not `node_modules/`, review finding H1): `node_modules` is already
+    walker-skipped by `DirectoryScanner`'s `_GENERATED_DIR_NAMES`, so it can never cause the
+    hang this guard exists to fail fast on -- `vendor` is a genuinely walked heavy dir name
+    that survives the walker-skip subtraction."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "pkg.go").write_text("package pkg\n", encoding="utf-8")
+
+    refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [str(repo)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is True
+    assert vendored_dirs == ["vendor"]
+
+
+def test_vendored_root_guard_excludes_walker_skipped_node_modules(tmp_path: Path):
+    """Review finding H1 (PR #400): `node_modules` is already hard-skipped by
+    `DirectoryScanner._should_descend_dir` (via `_GENERATED_DIR_NAMES`), and `rg` respects
+    `.gitignore` (where `node_modules` almost always lives) plus Fix B's per-file deadline.
+    A dir the walker never descends can never cause the unscoped-search hang this guard
+    exists to fail fast on, so it must NOT trigger the refusal -- doing so needlessly
+    exit-2's every ordinary Node/React repo's unscoped search."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text("{}", encoding="utf-8")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
+
+    refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [str(repo)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+    assert vendored_dirs == []
+
+
+def test_vendored_root_guard_allows_bounded_scan(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
+
+    refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [str(repo)],
+        SearchConfig(glob=["*.py"]),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+    assert vendored_dirs == []
+
+
+def test_vendored_root_guard_allows_normal_small_repo(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+
+    refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [str(repo)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+    assert vendored_dirs == []
+
+    result = CliRunner().invoke(app, ["search", "needle", str(repo)])
+    assert result.exit_code == 0, result.output
+
+
+def test_plain_search_refuses_unbounded_single_repo_root_with_vendored_top_level_dir(
+    tmp_path: Path,
+):
+    """Uses `vendor/` (not `node_modules/`, review finding H1) -- `node_modules` is
+    walker-skipped so it no longer triggers this refusal; see the sibling non-regression
+    test below for that case."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "pkg.go").write_text("needle\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "needle", str(repo)])
+
+    assert result.exit_code == 2
+    assert "broad root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert "vendor" in result.output
+    assert "--glob" in result.output
+    assert "--max-depth" in result.output
+    assert "--allow-broad-generated-scan" in result.output
+
+
+def test_plain_search_does_not_refuse_repo_root_with_node_modules(tmp_path: Path):
+    """Non-regression for review finding H1 (PR #400): `node_modules` is already
+    walker-skipped by `DirectoryScanner` (and normally `.gitignore`d + bounded by Fix B's
+    per-file deadline even if walked), so a plain Node/React repo's unscoped search must NOT
+    be wrongly refused (exit 2) just because `node_modules/` sits at its top level."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text("{}", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "pkg.js").write_text("needle\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "needle", str(repo)])
+
+    # Not refused (exit 2) -- a real match is exit 0, or exit 1 if the backend used for
+    # this invocation doesn't surface a match through CliRunner's captured output (e.g. a
+    # real `rg` subprocess passthrough writes to the OS-level fd, bypassing click's
+    # in-process capture). The key regression this guards is "not wrongly refused".
+    assert result.exit_code in (0, 1), result.output
 
 
 def test_glob_case_insensitive_matches_case_folded_paths(
@@ -2418,6 +2556,52 @@ def test_cli_search_without_path_defaults_to_current_directory(monkeypatch):
     assert result.exit_code == 0
     assert _LAST_PIPELINE_CONFIG is not None
     assert "safeParseJSON" in result.stdout
+
+
+def test_native_search_walk_stops_at_wall_clock_deadline_and_returns_partial_results(
+    monkeypatch,
+):
+    """Critical unscoped-search-hang fix B: the native (non-Ripgrep) per-file search loop
+    must honor a wall-clock deadline -- reused from the SAME resolver rg's own subprocess
+    timeout uses -- and stop after the CURRENT file rather than hang forever. Results found
+    before expiry must come back as `result_incomplete: true` (never silently empty, never a
+    crash), and the CLI must exit 2 (rg-parity partial-results convention)."""
+    global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
+    _FAKE_WALK = {".": ["a.py", "b.py", "c.py"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            name: SearchResult(
+                matches=[MatchLine(line_number=1, text="needle", file=name)],
+                matched_file_paths=[name],
+                match_counts_by_file={name: 1},
+                total_files=1,
+                total_matches=1,
+            )
+            for name in ("a.py", "b.py", "c.py")
+        }
+    )
+    _LAST_PIPELINE_CONFIG = None
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setenv("TG_RG_TIMEOUT_SECONDS", "10")
+
+    # First monotonic() call computes the deadline (t=0 -> deadline=10). Per-file checks:
+    # before a.py (t=1, still under budget, proceed); before b.py (t=20, expired, stop).
+    # So only a.py is ever searched -- b.py/c.py must never be touched.
+    clock_values = iter([0.0, 1.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0])
+    monkeypatch.setattr(
+        "tensor_grep.backends.cpu_backend.time.monotonic",
+        lambda: next(clock_values),
+    )
+
+    result = CliRunner().invoke(app, ["search", "needle", ".", "--cpu", "--json"])
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is True
+    assert "timeout" in payload["incomplete_reason"]
+    assert payload["total_matches"] == 1
+    assert [m["file"] for m in payload["matches"]] == ["a.py"]
 
 
 def test_cli_json_no_match_emits_valid_empty_payload(monkeypatch):

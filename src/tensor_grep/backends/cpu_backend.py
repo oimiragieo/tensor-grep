@@ -3,18 +3,38 @@ import json
 import logging
 import os
 import re
+import time
 import warnings
 from collections import OrderedDict
 from pathlib import Path
 from typing import ClassVar
 
 from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
 logger = logging.getLogger(__name__)
 _CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES"
 _DEFAULT_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES = 512
+
+
+def compute_native_walk_deadline() -> float:
+    """Wall-clock deadline (``time.monotonic()`` epoch) for a native, in-process multi-file
+    search walk (the CLI's per-file loop over ``CPUBackend``/``TorchBackend`` results).
+
+    Reuses the SAME resolver ripgrep's own subprocess timeout uses
+    (``subprocess_policy.configured_ripgrep_timeout_seconds``) so the native engine path is
+    bounded by the identical budget as the rg route. Without this, a search that cannot
+    route through rg (native ``--json`` aggregate, ``--rank``, tensor-only flags, or rg
+    absent from PATH) has NO limit at all and can hang until manually killed on a
+    large/unscoped tree -- the critical unscoped-search-hang bug (Fix B).
+    """
+    return time.monotonic() + configured_ripgrep_timeout_seconds()
+
+
+def native_walk_deadline_exceeded(deadline: float) -> bool:
+    return time.monotonic() >= deadline
 
 
 class InvalidRegexError(ValueError):
