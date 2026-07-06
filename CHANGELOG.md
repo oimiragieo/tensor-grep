@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.41.0 (2026-07-06)
+
+### Features
+
+- Agent-contract fixes batch (codex-implemented, audited) — validation-evidence, truncation-trust,
+  MCP parity, import-consumer attribution
+  ([#404](https://github.com/oimiragieo/tensor-grep/pull/404),
+  [`d8dc298`](https://github.com/oimiragieo/tensor-grep/commit/d8dc2987d5c4d96c0e8942eb5d16f112149e436e))
+
+* feat: agent-contract fixes batch (codex, audited) — validation-evidence, truncation-trust, MCP
+  parity, recovery-argv
+
+Codex-implemented batch (done offline), preserved + audited: 1. Bare tests/ dir no longer counts as
+  Python validation evidence (prevents false `uv run pytest` suggestions on doc/unknown targets) —
+  repo_map.py. 2. Truncated primary-symbol source now reports primary_symbol_truncated +
+  confidence_downgraded + omitted_primary_reason — repo_map.py. 3. Source-budget tail-graft line
+  maps: omission-marker rows emit line:null (no invented line numbers); tail graft preserves true
+  original line — repo_map.py, agent_capsule.py. 4. LSP equal-confidence tie now carries explicit
+  resolution_evidence — agent_capsule.py. 5. Capsule recovery argv uses positional form (tg source
+  PATH SYMBOL --json), not deprecated hidden flags — agent_capsule.py. 6. MCP tg_context_render +
+  tg_session_edit_plan accept + forward max_repo_files — mcp_server.py. 7. Version metadata
+  reconciled to v1.40.4 + winget checksum. Tests added across test_validation_commands /
+  test_token_budget / test_cli_modes / test_profiling_cli_mcp / test_repo_map_targets.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: related-span now correctly attributed caller+import-consumer (service.py both calls AND
+  imports the target) — update stale expectation
+
+* fix(#404 CI): ruff-format the 4 codex-batch files + hide the incompletely-registered route-test
+  command (contract parity)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.40.5 (2026-07-06)
 
 ### Bug Fixes
