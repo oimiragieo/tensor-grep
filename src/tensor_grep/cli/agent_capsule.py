@@ -63,6 +63,38 @@ def _target_lsp_boost_language(target: dict[str, Any]) -> str | None:
     )
 
 
+def _lsp_tie_resolution_evidence(
+    target: dict[str, Any],
+    tied_alternatives: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not _target_has_lsp_confidence_proof(target):
+        return []
+    evidence: dict[str, Any] = {
+        "kind": "lsp-primary-target-proof",
+        "file": str(target.get("file") or ""),
+        "symbol": target.get("symbol"),
+        "language": _target_lsp_boost_language(target),
+        "lsp_proof": True,
+        "lsp_provider_response": True,
+        "tied_alternative_count": len(tied_alternatives),
+        "tied_alternative_files": [
+            str(alternative.get("file") or "")
+            for alternative in tied_alternatives
+            if alternative.get("file")
+        ],
+        "reason": "primary target has provider-backed LSP proof and tied alternatives do not",
+    }
+    for key in (
+        "semantic_provider",
+        "provenance",
+        "lsp_operation",
+        "lsp_resolution_basis",
+    ):
+        if key in target:
+            evidence[key] = target[key]
+    return [evidence]
+
+
 def _cap_alternative_target_confidences(
     alternatives: list[dict[str, Any]],
     primary_target: dict[str, Any],
@@ -452,7 +484,7 @@ def _collect_capsule_call_site_evidence(
         "max_callers": max_callers,
         "returned_call_sites": len(related_call_sites),
         "omitted_call_sites": int(output_limit.get("omitted_callers", 0) or 0),
-        "provenance": provenance or ["heuristic"],
+        "provenance": provenance,
         "graph_trust_summary": _as_dict(radius_payload.get("graph_trust_summary")),
     }
     return related_call_sites, evidence
@@ -462,7 +494,7 @@ def _alternative_targets(
     payload: dict[str, Any],
     target: dict[str, Any],
     *,
-    limit: int = 4,
+    limit: int | None = 4,
 ) -> list[dict[str, Any]]:
     primary_file = str(target.get("file") or "")
     candidate_targets = _as_dict(payload.get("candidate_edit_targets"))
@@ -515,7 +547,7 @@ def _alternative_targets(
             ])
         alternatives.append(alternative)
 
-    return alternatives[:limit]
+    return alternatives if limit is None else alternatives[:limit]
 
 
 def _line_map(source: str, start_line: object) -> list[dict[str, Any]]:
@@ -957,9 +989,16 @@ def _expanded_line_map(
     if not rendered_to_original:
         return _line_map(rendered_source, source.get("start_line") or 1)
 
+    fallback_line: int | None = (
+        None
+        if _as_dict(source.get("source_budget")).get("truncated")
+        else 0
+    )
     return [
         {
-            "line": rendered_to_original.get(index, index),
+            "line": rendered_to_original.get(index)
+            if index in rendered_to_original
+            else (index if fallback_line == 0 else fallback_line),
             "text": line,
         }
         for index, line in enumerate(rendered_lines, start=1)
@@ -973,15 +1012,16 @@ def _source_refetch_ref(
     max_files: int,
 ) -> dict[str, Any]:
     symbol = source.get("symbol") or source.get("name")
+    source_path = str(source.get("file") or "").strip()
+    refetch_path = source_path or path
     if symbol:
-        return _command_ref(["tg", "source", "--symbol", symbol, "--json", path])
+        return _command_ref(["tg", "source", refetch_path, symbol, "--json"])
     return _command_ref([
         "tg",
         "context-render",
-        "--query",
+        refetch_path,
         query,
         "--json",
-        path,
         "--max-files",
         max_files,
     ])
@@ -1001,10 +1041,9 @@ def _raw_context_ref(
     argv: list[object] = [
         "tg",
         "context-render",
-        "--query",
+        path,
         query,
         "--json",
-        path,
         "--max-files",
         max_files,
         "--max-sources",
@@ -1098,10 +1137,9 @@ def _follow_up_reads(
         ref = _command_ref([
             "tg",
             "context-render",
-            "--query",
+            path,
             query,
             "--json",
-            path,
             "--max-files",
             max_files,
         ])
@@ -1225,8 +1263,10 @@ def build_agent_capsule(
         ignore=ignore,
     )
     target = _primary_target(payload)
-    alternatives = _alternative_targets(payload, target)
+    all_alternatives = _alternative_targets(payload, target, limit=None)
+    alternatives = all_alternatives[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
+    omitted_alternative_targets = max(0, len(all_alternatives) - len(alternatives))
     snippets, omitted_sources, _used_tokens = _build_snippets(
         payload,
         query=query,
@@ -1251,6 +1291,13 @@ def build_agent_capsule(
         validation_commands,
         payload,
     )
+    # Additive, unverified suggestion (test-neighbor filename probe) — read straight from the
+    # payload/edit-plan seed with NO language-alignment filtering and NO influence on trust
+    # checks, confidence caps, or tie resolution. Never merged into `validation_commands` above.
+    suggested_validation_commands = _as_list_of_dicts(
+        payload.get("suggested_validation_commands")
+        or edit_plan_seed.get("suggested_validation_commands"),
+    )
     edit_order = list(edit_plan_seed.get("edit_ordering") or [])
     if not edit_order and target["file"]:
         edit_order = [target["file"]]
@@ -1262,6 +1309,9 @@ def build_agent_capsule(
         follow_up_reads,
         omitted_sources,
     )
+    consistency["alternative_targets_total"] = len(all_alternatives)
+    consistency["alternative_targets_returned"] = len(alternatives)
+    consistency["alternative_targets_omitted_count"] = omitted_alternative_targets
     trust = _capsule_trust_checks(
         query,
         target,
@@ -1346,11 +1396,20 @@ def build_agent_capsule(
         tie_resolved_by = "lsp"
     elif tied_alternatives and tie_resolved_by_validation:
         tie_resolved_by = "targeted-validation"
+    lsp_resolution_evidence = (
+        _lsp_tie_resolution_evidence(target, tie_candidates)
+        if tie_resolved_by == "lsp"
+        else []
+    )
     if tied_alternatives and tie_resolved_by is not None:
         consistency["alternative_confidence_tie_resolved_by"] = tie_resolved_by
         if tie_resolved_by == "targeted-validation":
             consistency["alternative_confidence_tie_resolution_evidence"] = (
                 targeted_validation_evidence
+            )
+        elif tie_resolved_by == "lsp":
+            consistency["alternative_confidence_tie_resolution_evidence"] = (
+                lsp_resolution_evidence
             )
         tied_alternatives = []
     if tied_alternatives:
@@ -1396,6 +1455,8 @@ def build_agent_capsule(
         }
         if tie_resolved_by == "targeted-validation":
             ambiguity["resolution_evidence"] = targeted_validation_evidence
+        elif tie_resolved_by == "lsp":
+            ambiguity["resolution_evidence"] = lsp_resolution_evidence
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
     # Degrade-to-ask safety floor: if ranking buried the implementation so the swap helper found no
@@ -1408,7 +1469,15 @@ def build_agent_capsule(
     if tied_alternatives:
         ask_reasons.append("alternative target confidence ties primary target")
     if not validation_commands:
-        ask_reasons.append("no validation command evidence")
+        if suggested_validation_commands:
+            # Confidence/tie logic never sees this — the strict field stays empty and
+            # `required` stays True either way; this only softens the human-facing text.
+            ask_reasons.append(
+                "no validation command evidence "
+                "(an unverified suggested_validation_commands entry is available)"
+            )
+        else:
+            ask_reasons.append("no validation command evidence")
     if not snippets:
         ask_reasons.append("no snippets included")
     if confidence["overall"] < 0.75:
@@ -1514,6 +1583,7 @@ def build_agent_capsule(
         "gpu_acceleration": gpu_acceleration,
         "validation_plan": validation_plan,
         "validation_commands": validation_commands,
+        "suggested_validation_commands": suggested_validation_commands,
         "edit_order": edit_order,
         "rollback": {
             "checkpoint_recommended": bool(target["file"]),

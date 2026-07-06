@@ -673,6 +673,151 @@ def test_session_serve_edit_plan_applies_repo_map_cap_before_building_plan(
     assert len(captured_repo_maps[0]["files"]) == 2
 
 
+def test_session_blast_radius_plan_accepts_max_repo_files_without_changing_max_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(5):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def target_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    assert opened["file_count"] == 5
+
+    captured_repo_maps: list[dict] = []
+    captured_kwargs: list[dict] = []
+
+    def fake_build_symbol_blast_radius_plan_from_map(
+        repo_map: dict,
+        symbol: str,
+        **kwargs,
+    ) -> dict:
+        captured_repo_maps.append(repo_map)
+        captured_kwargs.append(kwargs)
+        max_files = int(kwargs["max_files"])
+        return {
+            "symbol": symbol,
+            "files": list(repo_map.get("files", []))[:max_files],
+            "tests": list(repo_map.get("tests", []))[:max_files],
+            "symbols": list(repo_map.get("symbols", [])),
+            "output_limit": dict(repo_map.get("output_limit", {})),
+            "max_files": max_files,
+            "max_symbols": kwargs["max_symbols"],
+        }
+
+    monkeypatch.setattr(
+        session_store,
+        "build_symbol_blast_radius_plan_from_map",
+        fake_build_symbol_blast_radius_plan_from_map,
+    )
+
+    radius_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "blast-radius-plan",
+            opened["session_id"],
+            str(project),
+            "target_0",
+            "--max-repo-files",
+            "4",
+            "--max-files",
+            "1",
+            "--json",
+        ],
+    )
+
+    assert radius_plan.exit_code == 0, radius_plan.output
+    payload = json.loads(radius_plan.stdout)
+    assert payload["routing_reason"] == "session-blast-radius-plan"
+    assert payload["max_files"] == 1
+    assert len(payload["files"]) == 1
+    assert payload["output_limit"]["max_files"] == 4
+    assert payload["output_limit"]["original_files"] == 5
+    assert payload["output_limit"]["possibly_truncated"] is True
+    assert len(captured_repo_maps) == 1
+    assert len(captured_repo_maps[0]["files"]) == 4
+    assert captured_kwargs[0]["max_files"] == 1
+
+    show_result = runner.invoke(
+        app, ["session", "show", opened["session_id"], str(project), "--json"]
+    )
+    assert show_result.exit_code == 0, show_result.output
+    shown = json.loads(show_result.stdout)
+    assert len(shown["repo_map"]["files"]) == 5
+
+
+def test_session_serve_blast_radius_plan_applies_repo_map_cap_before_building_plan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(5):
+        (src_dir / f"module_{index}.py").write_text(
+            f"def target_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    session_payload = json.loads(
+        runner.invoke(app, ["session", "show", opened["session_id"], str(project), "--json"]).stdout
+    )
+
+    captured_repo_maps: list[dict] = []
+
+    def fake_build_symbol_blast_radius_plan_from_map(
+        repo_map: dict,
+        symbol: str,
+        **kwargs,
+    ) -> dict:
+        captured_repo_maps.append(repo_map)
+        return {
+            "symbol": symbol,
+            "files": list(repo_map.get("files", [])),
+            "tests": list(repo_map.get("tests", [])),
+            "symbols": list(repo_map.get("symbols", [])),
+            "output_limit": dict(repo_map.get("output_limit", {})),
+            "max_files": kwargs["max_files"],
+            "max_symbols": kwargs["max_symbols"],
+        }
+
+    monkeypatch.setattr(
+        session_store,
+        "build_symbol_blast_radius_plan_from_map",
+        fake_build_symbol_blast_radius_plan_from_map,
+    )
+
+    payload = session_store.serve_session_request(
+        opened["session_id"],
+        {
+            "command": "blast_radius_plan",
+            "symbol": "target_0",
+            "max_repo_files": 2,
+        },
+        str(project),
+        payload=session_payload,
+    )
+
+    assert payload["routing_reason"] == "session-blast-radius-plan"
+    assert len(payload["files"]) == 2
+    assert payload["output_limit"]["original_files"] == 5
+    assert len(captured_repo_maps) == 1
+    assert len(captured_repo_maps[0]["files"]) == 2
+
+
 def test_session_edit_plan_uses_cached_validation_evidence_after_open(
     tmp_path: Path,
     monkeypatch,

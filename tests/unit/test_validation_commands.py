@@ -461,6 +461,7 @@ def test_rust_target_resolution_patterns(
     [
         ("python-source-only", [], []),
         ("python-project-marker", [], ["uv run pytest -q"]),
+        ("bare-tests-dir", [], []),
         ("rust", [], ["cargo test"]),
         ("jest-unknown", ["notes/validation.txt"], ["npx jest"]),
         ("default-unknown", ["notes/validation.txt"], []),
@@ -485,6 +486,8 @@ def test_repo_wide_fallback_detection(
                 '[project]\nname = "sample"\nversion = "0.1.0"\n',
                 encoding="utf-8",
             )
+    elif setup_kind == "bare-tests-dir":
+        (project / "tests").mkdir()
     elif setup_kind == "rust":
         (project / "Cargo.toml").write_text(
             '[package]\nname = "sample"\nversion = "0.1.0"\n',
@@ -700,6 +703,29 @@ def test_python_primary_without_project_or_test_evidence_has_no_validation(
     assert plan == []
     assert alignment["status"] == "no-validation"
     assert alignment["primary_target_language"] == "python"
+    assert alignment["kept_count"] == 0
+    assert alignment["filtered_count"] == 0
+
+
+def test_rust_source_without_manifest_has_no_repo_fallback(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    rust_src = project / "src"
+    rust_src.mkdir(parents=True)
+    primary_file = rust_src / "lib.rs"
+    primary_file.write_text("pub fn parse_flags() -> bool { true }\n", encoding="utf-8")
+
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [],
+        repo_root=project,
+        primary_file=str(primary_file.resolve()),
+        query="rust parser source target",
+    )
+
+    assert plan == []
+    assert alignment["status"] == "no-validation"
+    assert alignment["primary_target_language"] == "rust"
     assert alignment["kept_count"] == 0
     assert alignment["filtered_count"] == 0
 

@@ -173,6 +173,57 @@ def test_exact_query_match_ignores_common_word_symbols() -> None:
     assert chosen is None
 
 
+def test_symbol_name_exact_match_requires_full_query_or_distinctive_token() -> None:
+    assert repo_map._symbol_name_matches_query_exactly("agent", "agent")
+    assert repo_map._symbol_name_matches_query_exactly(
+        "_capsule_validation_alignment",
+        "audit _capsule_validation_alignment routing",
+    )
+    assert repo_map._symbol_name_matches_query_exactly(
+        "QueryEngine",
+        "fix QueryEngine caller routing",
+    )
+
+    assert not repo_map._symbol_name_matches_query_exactly(
+        "agent",
+        "agent capsule validation alignment",
+    )
+    assert not repo_map._symbol_name_matches_query_exactly(
+        "device",
+        "improve GPU device assignment routing",
+    )
+
+
+def test_context_render_and_edit_plan_prefer_multi_term_symbol_over_common_word(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    capsule_path = src_dir / "agent_capsule.py"
+    capsule_path.write_text(
+        "def agent():\n"
+        "    return 'cli summary'\n\n"
+        "def _capsule_validation_alignment(target, validation_plan):\n"
+        "    status = 'aligned'\n"
+        "    return {'status': status, 'target': target, 'plan': validation_plan}\n",
+        encoding="utf-8",
+    )
+
+    query = "agent capsule validation alignment"
+    render_payload = repo_map.build_context_render(query, project, max_files=1)
+    edit_payload = repo_map.build_context_edit_plan(query, project, max_files=1)
+
+    assert render_payload["edit_plan_seed"]["primary_symbol"]["name"] == (
+        "_capsule_validation_alignment"
+    )
+    assert edit_payload["edit_plan_seed"]["primary_symbol"]["name"] == (
+        "_capsule_validation_alignment"
+    )
+    assert render_payload["primary_target"]["symbol"] == "_capsule_validation_alignment"
+    assert edit_payload["primary_target"]["symbol"] == "_capsule_validation_alignment"
+
+
 # --- L6: omitted_sections file null -----------------------------------------
 
 
@@ -203,6 +254,57 @@ def test_primary_omitted_section_emits_null_not_string_none() -> None:
     assert out_none["context_consistency"]["primary_file"] is None
     for section in out_none.get("omitted_sections", []):
         assert section.get("file") != "None"
+
+
+def test_context_consistency_downgrades_when_primary_symbol_missing_from_render() -> None:
+    primary_file = str(Path("src/widget.py").resolve())
+    payload = {
+        "query": "widget update_primary",
+        "ranking_quality": "strong",
+        "edit_plan_seed": {
+            "primary_file": primary_file,
+            "primary_symbol": {
+                "name": "update_primary",
+                "file": primary_file,
+                "line": 20,
+                "start_line": 20,
+                "end_line": 24,
+            },
+            "primary_span": {"start_line": 20, "end_line": 24},
+            "confidence": {"file": 0.9, "symbol": 0.9, "test": 0.0},
+        },
+        "navigation_pack": {
+            "primary_target": {
+                "file": primary_file,
+                "symbol": "update_primary",
+                "line": 20,
+            }
+        },
+        "files": [primary_file],
+        "sources": [
+            {
+                "file": primary_file,
+                "name": "helper",
+                "line_map": [{"original_start_line": 1, "original_end_line": 4}],
+            }
+        ],
+        "sections": [
+            {"kind": "source", "path": primary_file, "symbol": "helper", "start": 1, "end": 4}
+        ],
+    }
+
+    out = repo_map._apply_context_consistency_invariants(payload)
+
+    consistency = out["context_consistency"]
+    assert consistency["primary_file_included"] is True
+    assert consistency["primary_symbol_included"] is False
+    assert consistency["rendered_context_includes_primary_symbol"] is False
+    assert consistency["confidence_downgraded"] is True
+    assert out["ranking_quality"] == "moderate"
+    assert any(
+        section.get("reason") == "primary_symbol_omitted_from_rendered_context"
+        for section in out["omitted_sections"]
+    )
 
 
 # --- L8: gitignore-aware walk -----------------------------------------------

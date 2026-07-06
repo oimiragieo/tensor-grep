@@ -2945,6 +2945,83 @@ def _import_update_target(
     return None
 
 
+def _source_line_text(path: Path, line_number: int) -> str:
+    if line_number <= 0:
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return ""
+    return lines[line_number - 1].strip() if 0 < line_number <= len(lines) else ""
+
+
+def _import_graph_resolution_confidence(provenance: str) -> float:
+    if provenance == "parser-backed":
+        return 0.95
+    if provenance in {"heuristic", "regex-heuristic"}:
+        return 0.65
+    return 0.75
+
+
+def _build_import_graph_consumers_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    definition_files: list[str],
+    *,
+    bounded_files: list[Path] | None = None,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> list[dict[str, Any]]:
+    if not definition_files:
+        return []
+    repo_root = Path(str(repo_map["path"])).resolve()
+    definition_file_set = {str(current) for current in definition_files}
+    files = bounded_files if bounded_files is not None else _repo_map_file_universe(repo_map)
+    consumers: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int, str, str]] = set()
+    with _profiling_phase(_profiling_collector, "import_graph_consumers"):
+        for current in files:
+            current_file = str(current)
+            if current_file in definition_file_set:
+                continue
+            if current.suffix not in ({".py"} | _JS_TS_SUFFIXES | _RUST_SUFFIXES):
+                continue
+            if not _file_may_import_symbol_definition(current, definition_files):
+                continue
+            for definition_file in definition_files:
+                target = _import_update_target(current, symbol, definition_file, repo_root)
+                if target is None:
+                    continue
+                line = int(target.get("start_line", 0) or 0)
+                end_line = int(target.get("end_line", line) or line)
+                module = str(target.get("module", "") or "")
+                provenance = str(target.get("provenance", "heuristic") or "heuristic")
+                key = (current_file, line, end_line, definition_file, module)
+                if key in seen:
+                    continue
+                seen.add(key)
+                consumers.append({
+                    "file": current_file,
+                    "line": line,
+                    "end_line": end_line,
+                    "text": _source_line_text(current, line),
+                    "kind": "import-consumer",
+                    "edge_kind": "reverse-import",
+                    "definition_file": definition_file,
+                    "module": module,
+                    "provenance": provenance,
+                    "resolution_confidence": _import_graph_resolution_confidence(provenance),
+                })
+    consumers.sort(
+        key=lambda item: (
+            str(item["file"]),
+            int(item.get("line", 0) or 0),
+            str(item.get("module", "")),
+            str(item.get("definition_file", "")),
+        )
+    )
+    return consumers
+
+
 def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[str]:
     repo_root = Path(str(repo_map["path"])).resolve()
     definitions = [
@@ -5031,7 +5108,16 @@ def _symbol_lookup_key(text: str) -> str:
 
 
 def _symbol_name_matches_query_exactly(symbol_name: str, query: str) -> bool:
-    return any(symbol_name == token for token in re.findall(r"[A-Za-z0-9_]+", query))
+    normalized_name = symbol_name.strip()
+    normalized_query = query.strip()
+    if not normalized_name:
+        return False
+    if normalized_name == normalized_query:
+        return True
+    return any(
+        normalized_name == token and _is_distinctive_identifier(token)
+        for token in re.findall(r"[A-Za-z0-9_]+", query)
+    )
 
 
 def _symbol_name_matches_query_bridge(symbol_name: str, query: str) -> bool:
@@ -6225,8 +6311,11 @@ def _truncate_source_text_to_budget(
             break
 
     if tail_line is not None and tail_line[0] not in selected_indexes:
-        candidate_lines = [*selected_lines, tail_line[1]]
-        candidate_indexes = [*selected_indexes, tail_line[0]]
+        last_selected = max(selected_indexes, default=0)
+        omitted_between = max(0, tail_line[0] - last_selected - 1)
+        marker = f"# ... {omitted_between} lines omitted by source budget ...\n"
+        candidate_lines = [*selected_lines, marker, tail_line[1]]
+        candidate_indexes = [*selected_indexes, 0, tail_line[0]]
         while selected_lines and not _source_text_within_budget(
             "".join(candidate_lines),
             max_tokens=max_tokens,
@@ -6235,8 +6324,11 @@ def _truncate_source_text_to_budget(
         ):
             selected_lines.pop()
             selected_indexes.pop()
-            candidate_lines = [*selected_lines, tail_line[1]]
-            candidate_indexes = [*selected_indexes, tail_line[0]]
+            last_selected = max(selected_indexes, default=0)
+            omitted_between = max(0, tail_line[0] - last_selected - 1)
+            marker = f"# ... {omitted_between} lines omitted by source budget ...\n"
+            candidate_lines = [*selected_lines, marker, tail_line[1]]
+            candidate_indexes = [*selected_indexes, 0, tail_line[0]]
         if _source_text_within_budget(
             "".join(candidate_lines),
             max_tokens=max_tokens,
@@ -7059,7 +7151,6 @@ def _detect_validation_runners_from_root(
                 "tox.ini",
             )
         )
-        or (root / "tests").is_dir()
     )
     if has_python_project_marker or has_python_tests:
         python_detection = "detected"
@@ -7068,7 +7159,7 @@ def _detect_validation_runners_from_root(
     else:
         python_detection = "generic"
     has_rust = (root / "Cargo.toml").is_file() or any(
-        current.suffix in _RUST_SUFFIXES for current in all_files
+        current.name == "Cargo.toml" for current in all_files
     )
     has_javascript = any(current.suffix.lower() in _JS_TS_SUFFIXES for current in all_files)
 
@@ -7588,6 +7679,72 @@ def _has_python_validation_fallback_evidence(
     if candidate_files is None:
         candidate_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     return any(current.suffix == ".py" and _is_test_file(current) for current in candidate_files)
+
+
+def _suggested_validation_command_candidates(source_path: Path) -> list[Path]:
+    """Pure-filename test-neighbor CANDIDATES for one source file — no execution, no repo
+    scan, no manifest lookup. Distinct from `_has_python_validation_fallback_evidence` (the
+    strict runner-evidence gate); this only feeds the additive, unverified suggestion field."""
+    suffix = source_path.suffix.lower()
+    stem = source_path.stem
+    parent = source_path.parent
+    if suffix == ".py":
+        return [
+            parent / "tests" / f"test_{stem}.py",
+            parent / f"{stem}_test.py",
+            parent / f"test_{stem}.py",
+        ]
+    if suffix in _JS_TS_SUFFIXES:
+        return [
+            parent / "__tests__" / f"{stem}{suffix}",
+            parent / "__tests__" / f"{stem}.test{suffix}",
+            parent / f"{stem}.test{suffix}",
+            parent / f"{stem}.spec{suffix}",
+        ]
+    return []
+
+
+def _suggested_validation_command_for_primary_file(
+    primary_file: str | Path | None,
+    repo_root: str | Path,
+) -> dict[str, Any] | None:
+    """Build the ADDITIVE `suggested_validation_commands` entry (verified: false) from a pure
+    filename probe of the primary target's directory. NEVER feeds the strict, evidence-gated
+    `validation_commands` list — no subprocess, no manifest read, no repo-wide scan."""
+    if not primary_file:
+        return None
+    try:
+        source_path = Path(primary_file).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not source_path.is_file():
+        return None
+    candidates = _suggested_validation_command_candidates(source_path)
+    if not candidates:
+        return None
+    test_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if test_path is None:
+        return None
+
+    try:
+        root = _validation_repo_root(repo_root)
+    except (OSError, RuntimeError):
+        root = source_path.parent
+    relative_test = _relative_validation_path(test_path, root)
+    suffix = source_path.suffix.lower()
+    if suffix == ".py":
+        command = f"pytest {relative_test}"
+    elif suffix in _TS_SUFFIXES:
+        command = f"vitest run {relative_test}"
+    else:
+        command = f"jest {relative_test}"
+
+    return {
+        "command": command,
+        "target_test": relative_test,
+        "basis": "test-neighbor-heuristic",
+        "verified": False,
+    }
 
 
 def _without_heuristic_repo_cargo_fallback(
@@ -8625,6 +8782,11 @@ def _navigation_pack(
         "validation_commands": [
             str(current) for current in seed.get("validation_commands", []) if str(current)
         ],
+        "suggested_validation_commands": [
+            dict(current)
+            for current in seed.get("suggested_validation_commands", []) or []
+            if isinstance(current, dict)
+        ],
         "validation_alignment": dict(seed.get("validation_alignment", {}))
         if isinstance(seed.get("validation_alignment"), dict)
         else {},
@@ -9497,6 +9659,20 @@ def _build_edit_plan_seed(
         precomputed_file_paths=validation_file_paths,
     )
     validation_commands = [str(step["command"]) for step in validation_plan]
+    # Additive, unverified suggestion (test-neighbor filename probe) — NEVER merged into the
+    # strict, evidence-gated `validation_commands`/`validation_plan` above. See
+    # `_suggested_validation_command_for_primary_file`.
+    suggested_validation_command = (
+        _suggested_validation_command_for_primary_file(
+            primary_file,
+            validation_root if validation_root is not None else payload.get("path", "."),
+        )
+        if primary_file is not None
+        else None
+    )
+    suggested_validation_commands = (
+        [suggested_validation_command] if suggested_validation_command is not None else []
+    )
     confidence = {
         "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
         "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
@@ -9516,6 +9692,7 @@ def _build_edit_plan_seed(
         "validation_commands": validation_commands,
         "validation_plan": validation_plan,
         "validation_alignment": validation_alignment,
+        "suggested_validation_commands": suggested_validation_commands,
         "reasons": list(primary_file_match.get("reasons", [])),
         "confidence": confidence,
         "related_spans": related_spans,
@@ -9572,6 +9749,11 @@ def _attach_edit_plan_headline_aliases(payload: dict[str, Any]) -> None:
         else edit_plan_seed.get("primary_span"),
         "edit_order": list(payload.get("edit_order", [])),
         "validation_commands": list(edit_plan_seed.get("validation_commands", [])),
+        "suggested_validation_commands": [
+            dict(current)
+            for current in edit_plan_seed.get("suggested_validation_commands", []) or []
+            if isinstance(current, dict)
+        ],
         "rollback_risk": edit_plan_seed.get("rollback_risk"),
         "ranking_quality": str(payload.get("ranking_quality", "")),
     }
@@ -9792,6 +9974,11 @@ def _attach_lightweight_navigation_metadata(
             ),
         ),
     )
+    lightweight_suggested_validation_command = (
+        _suggested_validation_command_for_primary_file(primary_file, payload.get("path", "."))
+        if primary_file
+        else None
+    )
     lightweight_seed = {
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
@@ -9801,6 +9988,11 @@ def _attach_lightweight_navigation_metadata(
         "validation_commands": [str(step["command"]) for step in validation_plan],
         "validation_plan": validation_plan,
         "validation_alignment": validation_alignment,
+        "suggested_validation_commands": (
+            [lightweight_suggested_validation_command]
+            if lightweight_suggested_validation_command is not None
+            else []
+        ),
         "reasons": list(primary_file_match.get("reasons", [])),
         "confidence": {
             "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
@@ -9965,6 +10157,7 @@ def build_context_edit_plan_from_map(
         _profiling_collector=collector,
     )
     payload["validation_commands"] = _top_level_validation_commands(payload)
+    payload["suggested_validation_commands"] = _top_level_suggested_validation_commands(payload)
     return _attach_profiling(payload, collector)
 
 
@@ -10256,6 +10449,25 @@ def _top_level_validation_commands(payload: dict[str, Any]) -> list[str]:
     return _list_of_strings(navigation_commands or seed_commands)
 
 
+def _top_level_suggested_validation_commands(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Additive counterpart to `_top_level_validation_commands` — surfaces the unverified
+    test-neighbor-heuristic suggestion. NEVER read by trust/confidence/tie logic."""
+    navigation_pack = payload.get("navigation_pack")
+    navigation_suggested = (
+        navigation_pack.get("suggested_validation_commands", [])
+        if isinstance(navigation_pack, dict)
+        else []
+    )
+    edit_plan_seed = payload.get("edit_plan_seed")
+    seed_suggested = (
+        edit_plan_seed.get("suggested_validation_commands", [])
+        if isinstance(edit_plan_seed, dict)
+        else []
+    )
+    source = navigation_suggested or seed_suggested
+    return [dict(current) for current in source if isinstance(current, dict)]
+
+
 def _compact_context_render_payload(
     payload: dict[str, Any],
     *,
@@ -10298,6 +10510,7 @@ def _compact_context_render_payload(
             max_files=max_files,
         )
     compact["validation_commands"] = _top_level_validation_commands(compact)
+    compact["suggested_validation_commands"] = _top_level_suggested_validation_commands(compact)
     compact["context_payload_profile"] = f"{render_profile}-compact"
     compact["payload_compaction"] = {
         "omitted_keys": omitted_keys,
@@ -10318,15 +10531,209 @@ def _downgrade_ranking_quality(value: str) -> str:
     return "weak"
 
 
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _span_bounds(span: object) -> tuple[int, int] | None:
+    if not isinstance(span, dict):
+        return None
+    start = _int_or_none(span.get("start_line") or span.get("line"))
+    end = _int_or_none(span.get("end_line") or start)
+    if start is None:
+        return None
+    if end is None:
+        end = start
+    return start, max(start, end)
+
+
+def _line_map_overlaps_span(line_map: object, span: object) -> bool:
+    bounds = _span_bounds(span)
+    if bounds is None:
+        return False
+    span_start, span_end = bounds
+    for row in _list_of_dicts(line_map):
+        row_start = _int_or_none(
+            row.get("original_start_line")
+            or row.get("original_line")
+            or row.get("line")
+            or row.get("start_line")
+        )
+        if row_start is None:
+            continue
+        row_end = _int_or_none(row.get("original_end_line") or row.get("end_line")) or row_start
+        row_end = max(row_start, row_end)
+        if row_start <= span_end and row_end >= span_start:
+            return True
+    return False
+
+
+def _line_map_covers_span(line_map: object, span: object) -> bool:
+    bounds = _span_bounds(span)
+    if bounds is None:
+        return False
+    span_start, span_end = bounds
+    next_required = span_start
+    rows: list[tuple[int, int]] = []
+    for row in _list_of_dicts(line_map):
+        row_start = _int_or_none(
+            row.get("original_start_line")
+            or row.get("original_line")
+            or row.get("line")
+            or row.get("start_line")
+        )
+        if row_start is None:
+            continue
+        row_end = _int_or_none(row.get("original_end_line") or row.get("end_line")) or row_start
+        rows.append((row_start, max(row_start, row_end)))
+    for row_start, row_end in sorted(rows):
+        if row_end < next_required:
+            continue
+        if row_start > next_required:
+            return False
+        if row_end >= span_end:
+            return True
+        next_required = row_end + 1
+    return False
+
+
+def _source_includes_primary_symbol(
+    source: dict[str, Any],
+    *,
+    primary_file: str,
+    primary_symbol_name: str,
+    primary_span: object,
+) -> bool:
+    if str(source.get("file", "") or "") != primary_file:
+        return False
+    source_symbol = str(source.get("name") or source.get("symbol") or "")
+    if primary_symbol_name and source_symbol == primary_symbol_name:
+        return True
+    return _line_map_overlaps_span(source.get("line_map"), primary_span)
+
+
+def _source_truncates_primary_symbol(
+    source: dict[str, Any],
+    *,
+    primary_file: str,
+    primary_symbol_name: str,
+    primary_span: object,
+) -> bool:
+    if str(source.get("file", "") or "") != primary_file:
+        return False
+    source_budget = source.get("source_budget")
+    if not isinstance(source_budget, dict) or not bool(source_budget.get("truncated")):
+        return False
+    source_symbol = str(source.get("name") or source.get("symbol") or "")
+    overlaps_primary_span = _line_map_overlaps_span(source.get("line_map"), primary_span)
+    if primary_symbol_name and source_symbol != primary_symbol_name and not overlaps_primary_span:
+        return False
+    if _span_bounds(primary_span) is None:
+        return True
+    return not _line_map_covers_span(source.get("line_map"), primary_span)
+
+
+def _section_includes_primary_symbol(
+    section: dict[str, Any],
+    *,
+    primary_file: str,
+    primary_symbol_name: str,
+    primary_span: object,
+) -> bool:
+    if str(section.get("kind", "")) != "source":
+        return False
+    if str(section.get("path", "") or "") != primary_file:
+        return False
+    section_symbol = str(section.get("symbol") or "")
+    if primary_symbol_name and section_symbol == primary_symbol_name:
+        return True
+    bounds = _span_bounds(primary_span)
+    section_start = _int_or_none(section.get("original_start_line") or section.get("start_line"))
+    section_end = _int_or_none(section.get("original_end_line") or section.get("end_line"))
+    if bounds is None or section_start is None:
+        return False
+    if section_end is None:
+        section_end = section_start
+    span_start, span_end = bounds
+    return section_start <= span_end and max(section_start, section_end) >= span_start
+
+
+def _ensure_primary_source_in_sources(
+    repo_map: dict[str, Any],
+    payload: dict[str, Any],
+    sources: list[dict[str, Any]],
+    *,
+    max_sources: int,
+    render_profile: str,
+    optimize_context: bool,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> list[dict[str, Any]]:
+    edit_plan_seed = payload.get("edit_plan_seed")
+    if not isinstance(edit_plan_seed, dict):
+        return sources
+    primary_file = str(edit_plan_seed.get("primary_file") or "")
+    primary_symbol = edit_plan_seed.get("primary_symbol")
+    primary_symbol_name = (
+        str(primary_symbol.get("name") or "") if isinstance(primary_symbol, dict) else ""
+    )
+    if not primary_file or not primary_symbol_name:
+        return sources
+    primary_span = edit_plan_seed.get("primary_span") or primary_symbol
+    if any(
+        _source_includes_primary_symbol(
+            source,
+            primary_file=primary_file,
+            primary_symbol_name=primary_symbol_name,
+            primary_span=primary_span,
+        )
+        for source in sources
+    ):
+        return sources
+
+    primary_source: dict[str, Any] | None = None
+    primary_source_payload = build_symbol_source_from_map(
+        repo_map,
+        primary_symbol_name,
+        _profiling_collector=_profiling_collector,
+    )
+    for source in _list_of_dicts(primary_source_payload.get("sources")):
+        if str(source.get("file", "") or "") != primary_file:
+            continue
+        primary_source = _render_source_block(
+            source,
+            render_profile=render_profile,
+            optimize_context=optimize_context,
+            _profiling_collector=_profiling_collector,
+        )
+        break
+    if primary_source is None:
+        return sources
+
+    filtered_sources = [
+        source for source in sources if str(source.get("file", "") or "") != primary_file
+    ]
+    return [primary_source, *filtered_sources][:max_sources]
+
+
 def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, Any]:
     edit_plan_seed = payload.get("edit_plan_seed")
     navigation_pack = payload.get("navigation_pack")
     primary_file = (
         str(edit_plan_seed.get("primary_file") or "") if isinstance(edit_plan_seed, dict) else ""
     )
-    primary_target = (
-        dict(navigation_pack.get("primary_target", {})) if isinstance(navigation_pack, dict) else {}
+    raw_primary_symbol = (
+        edit_plan_seed.get("primary_symbol") if isinstance(edit_plan_seed, dict) else None
     )
+    primary_symbol = dict(raw_primary_symbol) if isinstance(raw_primary_symbol, dict) else {}
+    primary_symbol_name = str(primary_symbol.get("name") or "")
+    primary_span = edit_plan_seed.get("primary_span") if isinstance(edit_plan_seed, dict) else {}
+    raw_primary_target = (
+        navigation_pack.get("primary_target") if isinstance(navigation_pack, dict) else None
+    )
+    primary_target = dict(raw_primary_target) if isinstance(raw_primary_target, dict) else {}
     navigation_primary_file = str(primary_target.get("file", "") or "")
     files = {str(current) for current in payload.get("files", []) if str(current)}
     source_files = {
@@ -10346,6 +10753,45 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
         for section in _list_of_dicts(payload.get("sections"))
         if str(section.get("kind", "")) in {"summary", "source"} and str(section.get("path", ""))
     }
+    primary_symbol_included = bool(
+        not primary_file
+        or not primary_symbol_name
+        or any(
+            _source_includes_primary_symbol(
+                source,
+                primary_file=primary_file,
+                primary_symbol_name=primary_symbol_name,
+                primary_span=primary_span,
+            )
+            for source in _list_of_dicts(payload.get("sources"))
+        )
+    )
+    rendered_includes_primary_symbol = bool(
+        not primary_file
+        or not primary_symbol_name
+        or any(
+            _section_includes_primary_symbol(
+                section,
+                primary_file=primary_file,
+                primary_symbol_name=primary_symbol_name,
+                primary_span=primary_span,
+            )
+            for section in _list_of_dicts(payload.get("sections"))
+        )
+    )
+    primary_symbol_truncated = bool(
+        primary_file
+        and primary_symbol_name
+        and any(
+            _source_truncates_primary_symbol(
+                source,
+                primary_file=primary_file,
+                primary_symbol_name=primary_symbol_name,
+                primary_span=primary_span,
+            )
+            for source in _list_of_dicts(payload.get("sources"))
+        )
+    )
 
     included = bool(primary_file and primary_file in (files | source_files | follow_up_files))
     render_matches_primary_target = bool(
@@ -10359,14 +10805,23 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
         omitted_reason = (
             "primary file metadata was selected but omitted from rendered_context budget"
         )
+    elif primary_file and primary_symbol_truncated:
+        omitted_reason = "primary_symbol_truncated_by_source_budget"
+    elif primary_file and not rendered_includes_primary_symbol:
+        omitted_reason = "primary_symbol_omitted_from_rendered_context"
 
     confidence_downgraded = False
-    if primary_file and (not render_matches_primary_target or not rendered_includes_primary):
+    if primary_file and (
+        not render_matches_primary_target
+        or not rendered_includes_primary
+        or not rendered_includes_primary_symbol
+        or primary_symbol_truncated
+    ):
         ranking_quality = str(payload.get("ranking_quality", "weak"))
         downgraded_quality = _downgrade_ranking_quality(ranking_quality)
         if downgraded_quality != ranking_quality:
             payload["ranking_quality"] = downgraded_quality
-            confidence_downgraded = True
+        confidence_downgraded = True
         if isinstance(edit_plan_seed, dict):
             confidence = dict(edit_plan_seed.get("confidence", {}))
             for key, value in list(confidence.items()):
@@ -10396,8 +10851,12 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
         "validation_alignment": validation_alignment,
         "validation_filtered_count": validation_filtered_count,
         "primary_file_included": included,
+        "primary_symbol": primary_symbol_name or None,
+        "primary_symbol_included": primary_symbol_included,
+        "primary_symbol_truncated": primary_symbol_truncated,
         "render_matches_primary_target": render_matches_primary_target,
         "rendered_context_includes_primary": rendered_includes_primary,
+        "rendered_context_includes_primary_symbol": rendered_includes_primary_symbol,
         "confidence_downgraded": confidence_downgraded,
         "omitted_primary_reason": omitted_reason,
     }
@@ -10503,13 +10962,8 @@ def build_context_render_from_map(
                 break
 
     normalized_max_tokens = max_tokens if max_tokens is not None and max_tokens > 0 else None
-    sources, source_budget, source_omitted_sections = _apply_source_output_budget(
-        sources,
-        max_tokens=normalized_max_tokens,
-        max_render_chars=max_render_chars,
-        _profiling_collector=collector,
-    )
-
+    source_budget: dict[str, Any] | None = None
+    source_omitted_sections: list[dict[str, Any]] = []
     payload = dict(context_payload)
     payload["routing_reason"] = "context-render"
     payload["files"] = list(payload.get("files", []))[:max_files]
@@ -10550,8 +11004,6 @@ def build_context_render_from_map(
     payload["optimize_context"] = optimize_context
     payload["render_profile"] = normalized_profile
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
-    if source_budget is not None:
-        payload["source_budget"] = source_budget
     if include_edit_plan_seed:
         payload = _attach_edit_plan_metadata(
             repo_map,
@@ -10572,6 +11024,25 @@ def build_context_render_from_map(
             max_symbols=max_sources,
         )
     payload["validation_commands"] = _top_level_validation_commands(payload)
+    payload["suggested_validation_commands"] = _top_level_suggested_validation_commands(payload)
+    sources = _ensure_primary_source_in_sources(
+        repo_map,
+        payload,
+        sources,
+        max_sources=max_sources,
+        render_profile=normalized_profile,
+        optimize_context=optimize_context,
+        _profiling_collector=collector,
+    )
+    sources, source_budget, source_omitted_sections = _apply_source_output_budget(
+        sources,
+        max_tokens=normalized_max_tokens,
+        max_render_chars=max_render_chars,
+        _profiling_collector=collector,
+    )
+    payload["sources"] = sources
+    if source_budget is not None:
+        payload["source_budget"] = source_budget
     (
         rendered_context,
         sections,
@@ -12294,6 +12765,9 @@ def build_symbol_callers_from_map(
         payload = dict(defs_payload)
         payload["routing_reason"] = "symbol-callers"
         payload["callers"] = []
+        payload["import_graph_consumers"] = []
+        payload["import_graph_consumer_files"] = []
+        payload["import_graph_consumer_count"] = 0
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
         return _attach_profiling(payload, _profiling_collector)
@@ -12542,6 +13016,16 @@ def build_symbol_callers_from_map(
         if _is_lsp_proof_row(call):
             call["lsp_proof"] = True
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
+    import_graph_consumers = _build_import_graph_consumers_from_map(
+        repo_map,
+        symbol,
+        definition_files,
+        bounded_files=bounded_files,
+        _profiling_collector=_profiling_collector,
+    )
+    import_graph_consumer_files = sorted(
+        dict.fromkeys(str(current["file"]) for current in import_graph_consumers)
+    )
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -12557,7 +13041,12 @@ def build_symbol_callers_from_map(
     )
 
     related_paths: list[str] = []
-    for related_path in [*definition_files, *caller_files, *related_tests]:
+    for related_path in [
+        *definition_files,
+        *caller_files,
+        *import_graph_consumer_files,
+        *related_tests,
+    ]:
         if related_path not in related_paths:
             related_paths.append(related_path)
 
@@ -12566,6 +13055,9 @@ def build_symbol_callers_from_map(
     payload["symbol"] = symbol
     payload["definitions"] = definitions
     payload["callers"] = calls
+    payload["import_graph_consumers"] = import_graph_consumers
+    payload["import_graph_consumer_files"] = import_graph_consumer_files
+    payload["import_graph_consumer_count"] = len(import_graph_consumers)
     payload["files"] = caller_files
     payload["tests"] = related_tests
     payload["imports"] = context_payload["imports"]
@@ -12717,6 +13209,7 @@ def _apply_blast_radius_output_limits(
     limited = dict(payload)
     original_callers = _list_of_dicts(payload.get("callers"))
     original_files = _list_of_strings(payload.get("files"))
+    original_import_consumers = _list_of_dicts(payload.get("import_graph_consumers"))
 
     if normalized_max_callers is not None:
         limited["callers"] = original_callers[:normalized_max_callers]
@@ -12767,6 +13260,15 @@ def _apply_blast_radius_output_limits(
             for current in _list_of_dicts(payload.get("imports"))
             if str(current.get("file")) in selected_file_set
         ]
+        limited["import_graph_consumers"] = [
+            current
+            for current in original_import_consumers
+            if str(current.get("file")) in selected_file_set
+        ]
+        limited["import_graph_consumer_files"] = sorted(
+            dict.fromkeys(str(current["file"]) for current in limited["import_graph_consumers"])
+        )
+        limited["import_graph_consumer_count"] = len(limited["import_graph_consumers"])
         limited_caller_tree: list[dict[str, Any]] = []
         for current in _list_of_dicts(limited.get("caller_tree", payload.get("caller_tree"))):
             depth_files = [
@@ -12786,6 +13288,9 @@ def _apply_blast_radius_output_limits(
     elif "files" in limited:
         limited["affected_files"] = _list_of_strings(limited.get("files"))
 
+    returned_import_consumers = _list_of_dicts(
+        limited.get("import_graph_consumers", original_import_consumers)
+    )
     limited["output_limit"] = {
         "max_callers": normalized_max_callers,
         "max_files": normalized_max_files,
@@ -12795,6 +13300,10 @@ def _apply_blast_radius_output_limits(
         "files_truncated": (
             normalized_max_files is not None and len(original_files) > normalized_max_files
         ),
+        "import_consumers_truncated": (
+            normalized_max_files is not None
+            and len(returned_import_consumers) < len(original_import_consumers)
+        ),
         "total_callers": len(original_callers),
         "returned_callers": len(_list_of_dicts(limited.get("callers"))),
         "omitted_callers": max(
@@ -12803,6 +13312,11 @@ def _apply_blast_radius_output_limits(
         "total_files": len(original_files),
         "returned_files": len(_list_of_strings(limited.get("files"))),
         "omitted_files": max(0, len(original_files) - len(_list_of_strings(limited.get("files")))),
+        "total_import_consumers": len(original_import_consumers),
+        "returned_import_consumers": len(returned_import_consumers),
+        "omitted_import_consumers": max(
+            0, len(original_import_consumers) - len(returned_import_consumers)
+        ),
     }
     return limited
 
@@ -12829,6 +13343,9 @@ def build_symbol_blast_radius_from_map(
         payload["routing_reason"] = "symbol-blast-radius"
         payload["max_depth"] = max(0, int(max_depth))
         payload["callers"] = []
+        payload["import_graph_consumers"] = []
+        payload["import_graph_consumer_files"] = []
+        payload["import_graph_consumer_count"] = 0
         payload["affected_files"] = []
         payload["blast_radius_score"] = 0.0
         payload["file_matches"] = []
@@ -12926,6 +13443,13 @@ def build_symbol_blast_radius_from_map(
 
     direct_callers = [dict(current) for current in callers_payload.get("callers", [])]
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in direct_callers))
+    import_graph_consumers = [
+        dict(current) for current in _list_of_dicts(callers_payload.get("import_graph_consumers"))
+    ]
+    import_graph_consumer_files = sorted(
+        dict.fromkeys(str(current["file"]) for current in import_graph_consumers)
+    )
+    import_graph_consumer_file_set = set(import_graph_consumer_files)
 
     file_matches_by_path: dict[str, dict[str, Any]] = {}
     file_depths: dict[str, int] = {}
@@ -13004,6 +13528,8 @@ def build_symbol_blast_radius_from_map(
         reasons = ["graph-depth"]
         if current in caller_files and "caller" not in reasons:
             reasons.append("caller")
+        if current in import_graph_consumer_file_set:
+            reasons.append("import-consumer")
         if current in definition_files and "definition" not in reasons:
             reasons.append("definition")
         graph_score = reverse_graph_scores.get(current, 0.0)
@@ -13124,6 +13650,9 @@ def build_symbol_blast_radius_from_map(
     payload["max_depth"] = normalized_depth
     payload["definitions"] = definitions
     payload["callers"] = direct_callers
+    payload["import_graph_consumers"] = import_graph_consumers
+    payload["import_graph_consumer_files"] = import_graph_consumer_files
+    payload["import_graph_consumer_count"] = len(import_graph_consumers)
     payload["files"] = radius_files
     payload["affected_files"] = list(radius_files)
     evidence_score = sum(min(10, max(0, int(item.get("score", 0)))) for item in ranked_files)
