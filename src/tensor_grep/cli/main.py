@@ -7574,6 +7574,16 @@ def orient(
             "otherwise rank as 'central' on a harness repo. Repeatable."
         ),
     ),
+    no_auto_deweight: bool = typer.Option(
+        False,
+        "--no-auto-deweight",
+        help=(
+            "Disable auto de-weighting of detected vendor/skill/generated CODE subtrees (nested "
+            "package manifest + import-island or name prior). De-weighting is ON by default and "
+            "only LOWERS a subtree's centrality score -- it never excludes files; use --ignore for "
+            "a hard exclude."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
@@ -7587,11 +7597,16 @@ def orient(
                     max_tokens=max_tokens,
                     max_central_files=max_central_files,
                     ignore=tuple(ignore),
+                    auto_deweight=not no_auto_deweight,
                 )
             )
             return
         payload = build_orient_capsule(
-            path, max_tokens=max_tokens, max_central_files=max_central_files, ignore=tuple(ignore)
+            path,
+            max_tokens=max_tokens,
+            max_central_files=max_central_files,
+            ignore=tuple(ignore),
+            auto_deweight=not no_auto_deweight,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -7601,6 +7616,10 @@ def orient(
     typer.echo(f"central files ({len(payload['central_files'])}):")
     for cf in payload["central_files"]:
         typer.echo(f"  {cf['file']}  (in-degree={cf['graph_score']})")
+    if payload["deweighted_trees"]:
+        typer.echo(f"deweighted_trees ({len(payload['deweighted_trees'])}):")
+        for tree in payload["deweighted_trees"]:
+            typer.echo(f"  {tree['path']}  ({', '.join(tree['reasons'])})")
     typer.echo(
         f"entry_points={len(payload['entry_points'])} "
         f"snippets={len(payload['snippets'])} ~{payload['token_estimate']} tokens"

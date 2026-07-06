@@ -7238,6 +7238,7 @@ def _build_context_pack_from_map(
     payload: dict[str, Any],
     query: str,
     *,
+    auto_deweight: bool = True,
     _test_source_limit: int | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
@@ -7459,6 +7460,31 @@ def _build_context_pack_from_map(
                     )
                     _append_reason(file_reasons, current_path, "validation-direct-definition")
 
+        # Auto de-weight (never hard-exclude) auto-detected vendor/skill/generated CODE subtrees
+        # (#55 PR6) -- same import-island heuristic `tg orient` applies, reused here so `tg agent`'s
+        # primary-target ranking benefits too. Local import avoids a module-level circular import
+        # (orient_capsule imports this module), mirroring the existing `_apply_ignore_globs` reuse
+        # a few lines up in `build_context_render`.
+        deweighted_trees: dict[str, dict[str, Any]] = {}
+        if auto_deweight:
+            from tensor_grep.cli.orient_capsule import _DEWEIGHT_FACTOR, _detect_vendored_subtrees
+
+            deweighted_trees = _detect_vendored_subtrees(payload)
+            if deweighted_trees:
+                tree_roots = list(deweighted_trees.keys())
+                for current_path, score in list(file_scores.items()):
+                    if score <= 0:
+                        continue
+                    candidate = Path(current_path)
+                    for tree_root in tree_roots:
+                        try:
+                            candidate.relative_to(tree_root)
+                        except ValueError:
+                            continue
+                        file_scores[current_path] = max(0, round(score * _DEWEIGHT_FACTOR))
+                        _append_reason(file_reasons, current_path, "vendored-subtree-deweighted")
+                        break
+
         scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
         scored_files.sort(key=lambda item: (-item[0], item[1]))
         ranked_files = [path for _, path in scored_files]
@@ -7511,6 +7537,10 @@ def _build_context_pack_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(file_matches, test_matches)
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["deweighted_trees"] = [
+        {"path": tree_path, "reasons": list(info["reasons"])}
+        for tree_path, info in sorted(deweighted_trees.items())
+    ]
     return payload
 
 
@@ -12776,6 +12806,7 @@ def build_context_pack_from_map(
     repo_map: dict[str, Any],
     query: str,
     *,
+    auto_deweight: bool = True,
     _test_source_limit: int | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
@@ -12791,6 +12822,7 @@ def build_context_pack_from_map(
     payload = _build_context_pack_from_map(
         payload,
         query,
+        auto_deweight=auto_deweight,
         _test_source_limit=_test_source_limit,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=deadline_hit,
