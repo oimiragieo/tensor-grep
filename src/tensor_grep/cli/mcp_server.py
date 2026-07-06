@@ -2144,6 +2144,7 @@ def tg_symbol_blast_radius_plan(
     max_files: int = 3,
     max_symbols: int = 5,
     provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
 ) -> str:
     """
     Return a machine-readable blast-radius planning bundle without rendered source text.
@@ -2154,6 +2155,7 @@ def tg_symbol_blast_radius_plan(
         max_depth: Maximum reverse-import depth to include.
         max_files: Maximum files to include in the plan.
         max_symbols: Maximum ranked symbols to retain.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     from tensor_grep.cli.repo_map import build_symbol_blast_radius_plan
 
@@ -2166,6 +2168,7 @@ def tg_symbol_blast_radius_plan(
                 max_files=max_files,
                 max_symbols=max_symbols,
                 semantic_provider=provider,
+                max_repo_files=max_repo_files,
             ),
             indent=2,
         )
@@ -2339,17 +2342,28 @@ def tg_session_blast_radius_plan(
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_defs(symbol: str, path: str = ".", provider: str = "native") -> str:
+def tg_symbol_defs(
+    symbol: str,
+    path: str = ".",
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+) -> str:
     """
     Return exact definition locations for a symbol.
 
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
         return _inject_mcp_contract_fields(
-            json.dumps(build_symbol_defs(symbol, path, semantic_provider=provider), indent=2)
+            json.dumps(
+                build_symbol_defs(
+                    symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2473,17 +2487,28 @@ def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> 
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_refs(symbol: str, path: str = ".", provider: str = "native") -> str:
+def tg_symbol_refs(
+    symbol: str,
+    path: str = ".",
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+) -> str:
     """
     Return Python-first symbol references across the inventory root.
 
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
         return _inject_mcp_contract_fields(
-            json.dumps(build_symbol_refs(symbol, path, semantic_provider=provider), indent=2)
+            json.dumps(
+                build_symbol_refs(
+                    symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2515,17 +2540,28 @@ def tg_symbol_refs(symbol: str, path: str = ".", provider: str = "native") -> st
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_callers(symbol: str, path: str = ".", provider: str = "native") -> str:
+def tg_symbol_callers(
+    symbol: str,
+    path: str = ".",
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+) -> str:
     """
     Return Python-first symbol call sites and likely impacted tests.
 
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
         return _inject_mcp_contract_fields(
-            json.dumps(build_symbol_callers(symbol, path, semantic_provider=provider), indent=2)
+            json.dumps(
+                build_symbol_callers(
+                    symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2562,6 +2598,7 @@ def tg_symbol_blast_radius(
     path: str = ".",
     max_depth: int = 3,
     provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
 ) -> str:
     """
     Return exact callers plus a transitive file/test blast radius for a symbol.
@@ -2570,12 +2607,17 @@ def tg_symbol_blast_radius(
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
         max_depth: Maximum reverse-import depth to include.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
                 build_symbol_blast_radius(
-                    symbol, path, max_depth=max_depth, semantic_provider=provider
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
                 ),
                 indent=2,
             )
@@ -2609,6 +2651,7 @@ def tg_symbol_blast_radius_render(
     render_profile: str = "full",
     profile: bool = False,
     provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
 ) -> str:
     """
     Return a prompt-ready blast-radius bundle for a symbol.
@@ -2623,6 +2666,7 @@ def tg_symbol_blast_radius_render(
         max_render_chars: Maximum characters to emit in rendered_context.
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
         render_profile: Render profile to use: full, compact, or llm.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
         return _inject_mcp_contract_fields(
@@ -2639,6 +2683,7 @@ def tg_symbol_blast_radius_render(
                     render_profile=render_profile,
                     profile=profile,
                     semantic_provider=provider,
+                    max_repo_files=max_repo_files,
                 ),
                 indent=2,
             )
@@ -2878,7 +2923,13 @@ def tg_search(
 
 
 @mcp.tool()  # type: ignore
-def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: bool = True) -> str:
+def tg_ast_search(
+    pattern: str,
+    lang: str,
+    path: str = ".",
+    structured_json: bool = True,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+) -> str:
     """
     Search source code structurally using the ast-grep/tree-sitter backend.
     Ignores whitespace and formatting, matching the true AST structure.
@@ -2889,7 +2940,10 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
         path: Directory or file to search.
         structured_json: Return bounded structured JSON (default true). Set to false for
             plain-text output.
+        max_repo_files: Maximum files the directory walk parses before the scan is
+            capped (protects against an unscoped full-monorepo AST parse).
     """
+    normalized_max_repo_files = max(1, int(max_repo_files))
     config = SearchConfig(ast=True, lang=lang, no_messages=True)
     pipeline = Pipeline(config=config)
     backend = pipeline.get_backend()
@@ -2925,8 +2979,14 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
     )
     all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
     try:
+        files_scanned = 0
+        scan_capped = False
         for current_file in scanner.walk(path):
+            if files_scanned >= normalized_max_repo_files:
+                scan_capped = True
+                break
             result = backend.search(current_file, pattern, config=config)
+            files_scanned += 1
             all_results.matches.extend(result.matches)
             all_results.matched_file_paths.extend(result.matched_file_paths)
             _merge_count_metadata(all_results, result)
@@ -2934,6 +2994,11 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
             _merge_runtime_routing(all_results, result)
+        scan_limit_payload = {
+            "max_repo_files": normalized_max_repo_files,
+            "scanned_files": files_scanned,
+            "possibly_truncated": scan_capped,
+        }
 
         _apply_selected_gpu_defaults(
             all_results=all_results,
@@ -2956,14 +3021,23 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
                         "rendered_match_count": 0,
                         "rendered_file_count": 0,
                         "matches": [],
-                        "truncated": False,
+                        "truncated": scan_capped,
                         "omitted_matches": 0,
                         "omitted_files": 0,
+                        "scan_limit": scan_limit_payload,
                         "routing": _routing_payload(all_results),
                     },
                     indent=2,
                 )
-            return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
+            capped_note = (
+                f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                if scan_capped
+                else ""
+            )
+            return (
+                f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
+                f"{capped_note}"
+            )
 
         # Group by file
         by_file: dict[str, list[Any]] = {}
@@ -3008,9 +3082,10 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
                     "rendered_match_count": len(payload_matches),
                     "rendered_file_count": rendered_file_count,
                     "matches": payload_matches,
-                    "truncated": omitted_matches > 0 or omitted_files > 0,
+                    "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
                     "omitted_matches": omitted_matches,
                     "omitted_files": omitted_files,
+                    "scan_limit": scan_limit_payload,
                     "routing": _routing_payload(all_results),
                 },
                 indent=2,
@@ -3020,6 +3095,10 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".", structured_json: boo
             f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
             _routing_summary(all_results),
         ]
+        if scan_capped:
+            output.append(
+                f"Scan capped at {normalized_max_repo_files} files; results may be incomplete."
+            )
 
         if by_file:
             for filepath, matches in list(by_file.items())[:15]:
