@@ -72,3 +72,87 @@ def test_deadline_rejects_sub_floor_value(tmp_path: Path) -> None:
     # min=0.1: a sub-floor deadline is a usage error (exit 2), not a silent 0-budget run.
     result = CliRunner().invoke(app, ["callers", "foo", str(tmp_path), "--deadline", "0.001"])
     assert result.exit_code == 2
+
+
+def _exit_code_for_payload(tmp_path, monkeypatch, payload_extra: dict) -> int:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _spy(symbol, path=".", **_kwargs):
+        p = _stub_payload(symbol, str(path))
+        p.update(payload_extra)
+        return p
+
+    monkeypatch.setattr(repo_map, "build_symbol_callers", _spy)
+    return CliRunner().invoke(app, ["callers", "foo", str(tmp_path), "--json"]).exit_code
+
+
+def test_deadline_partial_empty_exits_2_not_1(tmp_path: Path, monkeypatch) -> None:
+    # Exit-code contract (dogfood 1.40.0): a --deadline-truncated result (partial:true) that found
+    # nothing is INCOMPLETE (exit 2 = "retry with more budget"), NOT a genuine not-found (exit 1).
+    assert _exit_code_for_payload(tmp_path, monkeypatch, {"callers": [], "partial": True}) == 2
+
+
+def test_result_incomplete_empty_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # A max-repo-files-truncated empty result is likewise incomplete -> exit 2 (mirrors tg search).
+    assert (
+        _exit_code_for_payload(tmp_path, monkeypatch, {"callers": [], "result_incomplete": True})
+        == 2
+    )
+
+
+def test_genuine_not_found_still_exits_1(tmp_path: Path, monkeypatch) -> None:
+    # A COMPLETE scan that found nothing is a real not-found -> exit 1 (unchanged, rg convention).
+    assert _exit_code_for_payload(tmp_path, monkeypatch, {"callers": []}) == 1
+
+
+def test_complete_found_exits_0(tmp_path: Path, monkeypatch) -> None:
+    assert (
+        _exit_code_for_payload(tmp_path, monkeypatch, {"callers": [{"file": "m.py", "line": 1}]})
+        == 0
+    )
+
+
+def test_blast_radius_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # cursor review 1.40.0: blast-radius bypassed _emit_symbol_command_result and exited 0 even on a
+    # --deadline partial. It must exit 2 (incomplete) like callers.
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _spy(symbol, path=".", **_kwargs):
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "definitions": [{"file": "m.py", "line": 1}],
+            "callers": [],
+            "files": [],
+            "tests": [],
+            "partial": True,
+            "deadline_limit": {"deadline_exceeded": True},
+        }
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
+    result = CliRunner().invoke(app, ["blast-radius", "foo", str(tmp_path), "--json"])
+    assert result.exit_code == 2, result.output
+
+
+def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # cursor review 1.40.0: impact's second caller-scan pass can be deadline-truncated; impact must
+    # carry that partial signal so it exits 2 like `tg callers`.
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _impact(symbol, path=".", **_kwargs):
+        return {
+            "symbol": symbol,
+            "path": str(path),
+            "files": ["m.py"],
+            "tests": [],
+            "callers": [],
+            "no_match": False,
+        }
+
+    def _callers(symbol, path=".", **_kwargs):
+        return {"callers": [], "partial": True, "deadline_limit": {"deadline_exceeded": True}}
+
+    monkeypatch.setattr(repo_map, "build_symbol_impact", _impact)
+    monkeypatch.setattr(repo_map, "build_symbol_callers", _callers)
+    result = CliRunner().invoke(app, ["impact", "foo", str(tmp_path), "--json"])
+    assert result.exit_code == 2, result.output
