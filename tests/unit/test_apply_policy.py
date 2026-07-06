@@ -646,6 +646,155 @@ def test_evaluate_apply_policy_marks_timed_out_command_as_failure(tmp_path: Path
     assert payload["policy_result"]["checks"][0]["timed_out"] is True
 
 
+def test_evaluate_apply_policy_expands_file_placeholders_per_unique_edit(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
+
+    project = tmp_path / "project"
+    project.mkdir()
+    first = project / "src" / "one.py"
+    second = project / "src" / "file with spaces.py"
+    first.parent.mkdir()
+    first.write_text("print('one')\n", encoding="utf-8")
+    second.write_text("print('two')\n", encoding="utf-8")
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": "lint --file {file}",
+            "test_cmd": "test $file",
+            "ruleset_scan": None,
+            "on_failure": "warn",
+            "timeout": 7,
+        },
+    )
+    policy = load_apply_policy(str(policy_path))
+    rewrite_payload = {
+        **_base_rewrite_payload(),
+        "edits": [
+            {"file": str(first.resolve())},
+            {"file": str(second.resolve())},
+            {"file": str(first.resolve())},
+        ],
+    }
+    calls: list[tuple[str, str, Path, int]] = []
+
+    def fake_run(name: str, command: str, cwd: Path, timeout: int) -> dict[str, object]:
+        calls.append((name, command, cwd, timeout))
+        return {"passed": True, "detail": f"{name} ok", "exit_code": 0}
+
+    payload, exit_code = evaluate_apply_policy(
+        rewrite_payload,
+        policy,
+        path=str(project),
+        run_command_fn=fake_run,
+    )
+
+    assert exit_code == 0
+    assert [(name, cwd, timeout) for name, _command, cwd, timeout in calls] == [
+        ("lint", project.resolve(), 7),
+        ("lint", project.resolve(), 7),
+        ("test", project.resolve(), 7),
+        ("test", project.resolve(), 7),
+    ]
+    assert calls[0][1] == _policy_command("lint", "--file", "src/one.py")
+    assert calls[1][1] == _policy_command("lint", "--file", "src/file with spaces.py")
+    assert calls[2][1] == _policy_command("test", "src/one.py")
+    assert calls[3][1] == _policy_command("test", "src/file with spaces.py")
+    assert payload["lint_result"]["file_count"] == 2
+    assert payload["test_result"]["file_count"] == 2
+    assert payload["policy_result"]["checks"] == [
+        {
+            "name": "lint",
+            "passed": True,
+            "detail": "lint command succeeded for 2 file(s).",
+        },
+        {
+            "name": "test",
+            "passed": True,
+            "detail": "test command succeeded for 2 file(s).",
+        },
+    ]
+
+
+def test_evaluate_apply_policy_file_placeholder_without_edited_file_fails(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
+
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": "lint {file}",
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "fail",
+        },
+    )
+    policy = load_apply_policy(str(policy_path))
+
+    payload, exit_code = evaluate_apply_policy(
+        _base_rewrite_payload(),
+        policy,
+        path=str(tmp_path),
+    )
+
+    assert exit_code == 1
+    assert payload["lint_result"]["passed"] is False
+    assert "requires at least one edited file" in str(payload["lint_result"]["detail"])
+    assert payload["policy_result"]["action_taken"] == "fail"
+
+
+def test_evaluate_apply_policy_placeholder_stops_at_first_failure_for_fail_policy(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
+
+    project = tmp_path / "project"
+    project.mkdir()
+    files = [project / "a.py", project / "b.py", project / "c.py"]
+    for current in files:
+        current.write_text("print('x')\n", encoding="utf-8")
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": "lint {file}",
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "fail",
+        },
+    )
+    policy = load_apply_policy(str(policy_path))
+    rewrite_payload = {
+        **_base_rewrite_payload(),
+        "edits": [{"file": str(current.resolve())} for current in files],
+    }
+    calls: list[str] = []
+
+    def fake_run(_name: str, command: str, _cwd: Path, _timeout: int) -> dict[str, object]:
+        calls.append(command)
+        if command.endswith("b.py"):
+            return {"passed": False, "detail": "lint failed", "exit_code": 9}
+        return {"passed": True, "detail": "lint ok", "exit_code": 0}
+
+    payload, exit_code = evaluate_apply_policy(
+        rewrite_payload,
+        policy,
+        path=str(project),
+        run_command_fn=fake_run,
+    )
+
+    assert exit_code == 1
+    assert calls == ["lint a.py", "lint b.py"]
+    assert payload["lint_result"]["passed"] is False
+    assert payload["lint_result"]["failed_count"] == 1
+    assert payload["lint_result"]["results"][-1]["file"] == "b.py"
+    assert payload["policy_result"]["action_taken"] == "fail"
+
+
 def test_run_policy_command_does_not_interpret_shell_metacharacters(tmp_path: Path) -> None:
     from tensor_grep.cli.apply_policy import _run_policy_command
 

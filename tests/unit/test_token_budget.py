@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tensor_grep.cli import repo_map, session_store
+from tensor_grep.cli import agent_capsule, repo_map, session_store
 from tensor_grep.cli.main import app
 
 
@@ -208,6 +208,76 @@ def test_estimate_tokens_is_deterministic() -> None:
     assert repo_map._estimate_tokens(text) == repo_map._estimate_tokens(text)
 
 
+def test_source_budget_truncation_marks_noncontiguous_tail_graft() -> None:
+    text = (
+        "def build_payload():\n"
+        "    payload = {\n"
+        + "".join(f"        'field_{index}': {index},\n" for index in range(40))
+        + "    }\n"
+        "    raise RuntimeError('boom')\n"
+    )
+
+    truncated, selected_lines, was_truncated = repo_map._truncate_source_text_to_budget(
+        text,
+        max_tokens=24,
+        max_chars=None,
+    )
+
+    assert was_truncated is True
+    assert selected_lines[-2] == 0
+    assert selected_lines[-1] == len(text.splitlines())
+    assert "lines omitted by source budget" in truncated
+    assert "raise RuntimeError" in truncated
+
+
+def test_source_budget_tail_graft_preserves_tail_line_map() -> None:
+    text = (
+        "def build_payload():\n"
+        "    payload = {\n"
+        + "".join(f"        'field_{index}': {index},\n" for index in range(40))
+        + "    }\n"
+        "    raise RuntimeError('boom')\n"
+    )
+    line_count = len(text.splitlines())
+    sources = [
+        {
+            "file": "payments.py",
+            "name": "build_payload",
+            "rendered_source": text,
+            "line_map": [
+                {
+                    "rendered_start_line": 1,
+                    "rendered_end_line": line_count,
+                    "original_start_line": 1,
+                    "original_end_line": line_count,
+                }
+            ],
+        }
+    ]
+
+    budgeted_sources, _, _ = repo_map._apply_source_output_budget(
+        sources,
+        max_tokens=24,
+        max_render_chars=None,
+    )
+
+    budgeted = budgeted_sources[0]
+    rendered_source = str(budgeted["rendered_source"])
+    rendered_lines = rendered_source.splitlines()
+    expanded = agent_capsule._expanded_line_map(budgeted, rendered_source)
+    marker_index = next(
+        index
+        for index, line in enumerate(rendered_lines)
+        if "lines omitted by source budget" in line
+    )
+    tail_index = next(
+        index for index, line in enumerate(rendered_lines) if "raise RuntimeError" in line
+    )
+
+    assert expanded[marker_index]["line"] is None
+    assert expanded[tail_index]["line"] == line_count
+
+
 def test_render_sections_include_token_estimates_and_total(tmp_path: Path) -> None:
     rendered, sections, truncated, token_estimate, omitted_sections = (
         repo_map._render_context_string_and_sections(_build_scored_payload(tmp_path))
@@ -355,6 +425,40 @@ def test_context_render_caps_source_payload_when_max_tokens_is_set(
         and section.get("file") == str(module_path.resolve())
         for section in payload["omitted_sections"]
     )
+
+
+def test_context_consistency_downgrades_when_primary_symbol_source_is_truncated(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    module_path = project / "src" / "payments.py"
+    filler = "\n".join(f"    debug_line_{index:03d} = {index}" for index in range(160))
+    _write(
+        module_path,
+        "def create_invoice(subtotal):\n"
+        "    tax = subtotal * 0.1\n"
+        f"{filler}\n"
+        "    total = subtotal + tax\n"
+        "    return total\n",
+    )
+
+    payload = repo_map.build_context_render(
+        "create invoice",
+        project,
+        max_files=1,
+        max_sources=1,
+        max_tokens=48,
+        optimize_context=True,
+        render_profile="llm",
+    )
+
+    consistency = payload["context_consistency"]
+    assert consistency["primary_symbol"] == "create_invoice"
+    assert consistency["primary_symbol_included"] is True
+    assert consistency["rendered_context_includes_primary_symbol"] is True
+    assert consistency["primary_symbol_truncated"] is True
+    assert consistency["confidence_downgraded"] is True
+    assert consistency["omitted_primary_reason"] == "primary_symbol_truncated_by_source_budget"
 
 
 @pytest.mark.parametrize("render_profile", ["full", "compact", "llm"])

@@ -2851,6 +2851,61 @@ def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch):
     assert "!**/context/**" in seen["glob"]
 
 
+def test_cli_rg_aggregate_json_timeout_emits_incomplete_envelope_exit2(monkeypatch):
+    """Fable review of #400, finding H2: when `tg search PATTERN --json` routes to the
+    ripgrep AGGREGATE backend and the rg subprocess times out, the old code let
+    ``subprocess.TimeoutExpired`` fall into RipgrepBackend.search()'s broad `except
+    Exception`, wrap it as a RuntimeError, and re-raise -- main.py's search command had no
+    handler for that either, so it became an UNCAUGHT traceback: exit 1, no JSON envelope,
+    all partial results lost. This drives the REAL RipgrepBackend (not a fake) through the
+    full CLI so the fix in ripgrep_backend.py is exercised end-to-end: a timed-out
+    aggregate search must instead emit a valid JSON envelope with
+    ``result_incomplete: true`` and exit 2 -- the same signal already used for the native
+    walk-deadline timeout (#400) and rg's own soft exit-2 partial failure.
+    """
+    import subprocess as _subprocess
+
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend as RealRipgrepBackend
+
+    global _FAKE_WALK
+    _FAKE_WALK = {".": ["a.log"]}
+
+    real_backend = RealRipgrepBackend()
+    monkeypatch.setattr(RealRipgrepBackend, "_get_binary_name", lambda self: "rg")
+
+    def _raise_timeout(*_args, **_kwargs):
+        raise _subprocess.TimeoutExpired(cmd=["rg"], timeout=5, output="")
+
+    monkeypatch.setattr("tensor_grep.backends.ripgrep_backend.run_subprocess", _raise_timeout)
+
+    class _RipgrepPipeline:
+        def __init__(self, force_cpu=False, config=None):
+            self.backend = real_backend
+            self.selected_backend_name = "RipgrepBackend"
+            self.selected_backend_reason = "rg_json"
+            self.selected_gpu_device_ids = []
+            self.selected_gpu_chunk_plan_mb = []
+
+        def get_backend(self):
+            return self.backend
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _RipgrepPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    result = CliRunner().invoke(app, ["search", "ERROR", ".", "--json"])
+
+    # Click's CliRunner always reports a clean sys.exit(N) as a SystemExit(N)
+    # `result.exception` -- that is NOT a crash. Only fail here if something else
+    # (RuntimeError, AttributeError, ...) propagated uncaught.
+    if result.exception is not None and not isinstance(result.exception, SystemExit):
+        raise AssertionError(f"uncaught exception: {result.exception!r}")
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is True
+    assert "timeout" in payload.get("incomplete_reason", "").lower()
+
+
 def test_cli_wrapped_rg_regex_parse_error_reports_diagnostic(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}
@@ -4328,12 +4383,16 @@ def test_blast_radius_output_limit_reports_omitted_counts():
         "max_files": 3,
         "callers_truncated": True,
         "files_truncated": True,
+        "import_consumers_truncated": False,
         "total_callers": 4,
         "returned_callers": 2,
         "omitted_callers": 2,
         "total_files": 5,
         "returned_files": 3,
         "omitted_files": 2,
+        "total_import_consumers": 0,
+        "returned_import_consumers": 0,
+        "omitted_import_consumers": 0,
     }
 
 
@@ -4492,6 +4551,103 @@ def test_agent_context_commands_reject_positional_and_flag_query(tmp_path):
     assert "Use either positional QUERY or --query" in result.output
 
 
+def test_route_test_json_compares_context_render_and_edit_plan_targets(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["route-test", str(project), "create invoice tax"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "route-test"
+    assert payload["query"] == "create invoice tax"
+    assert payload["agreement"] is True
+    assert payload["agreement_details"] == {"file": True, "symbol": True, "line": True}
+    assert payload["warnings"] == []
+    assert payload["context_render"]["routing_reason"] == "context-render"
+    assert payload["edit_plan"]["routing_reason"] == "context-edit-plan"
+
+    for command_key in ("context_render", "edit_plan"):
+        target = payload[command_key]["primary_target"]
+        assert target["file"] == str(module_path.resolve())
+        assert target["symbol"] == "create_invoice"
+        assert target["line"] == 1
+        assert target["confidence_score"] >= 0.75
+        assert payload[command_key]["validation_command_count"] == 3
+
+    assert payload["validation_command_counts"] == {
+        "context_render": 3,
+        "edit_plan": 3,
+    }
+
+
+def test_route_test_json_warns_on_disagreement_and_low_confidence(monkeypatch, tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    context_file = project / "context.py"
+    edit_file = project / "edit.py"
+    context_file.write_text("def context_target():\n    return 1\n", encoding="utf-8")
+    edit_file.write_text("def edit_target():\n    return 2\n", encoding="utf-8")
+
+    def fake_context_render(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-render",
+            "navigation_pack": {
+                "primary_target": {
+                    "file": str(context_file.resolve()),
+                    "symbol": "context_target",
+                    "line": 1,
+                    "confidence": {"file": 0.7, "symbol": 0.9},
+                },
+                "validation_commands": [],
+            },
+        }
+
+    def fake_edit_plan(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": {
+                "file": str(edit_file.resolve()),
+                "symbol": "edit_target",
+                "line": 1,
+                "confidence": {"file": 0.9, "symbol": 0.9},
+            },
+            "validation_commands": ["pytest"],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    result = runner.invoke(app, ["route-test", str(project), "ambiguous target"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["agreement"] is False
+    assert payload["agreement_details"] == {"file": False, "symbol": False, "line": True}
+    assert any("primary targets disagree" in warning for warning in payload["warnings"])
+    assert any(
+        "context-render primary target confidence 0.700" in warning
+        for warning in payload["warnings"]
+    )
+
+
 def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
@@ -4606,6 +4762,58 @@ def test_agent_capsule_collects_bounded_call_site_evidence_for_explicit_symbol(t
         row["reason"] == "direct caller of primary target" for row in payload["related_call_sites"]
     )
     assert any(item["strategy"] == "blast-radius-call-sites" for item in payload["route_rationale"])
+
+
+def test_agent_capsule_reports_no_call_sites_without_heuristic_proof(
+    monkeypatch,
+    tmp_path,
+):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    def _empty_blast_radius(*_args, **kwargs):
+        return {
+            "routing_reason": "symbol-blast-radius",
+            "callers": [],
+            "output_limit": {"omitted_callers": 0},
+            "graph_trust_summary": {"trust": "strong"},
+            "max_callers": kwargs.get("max_callers"),
+        }
+
+    monkeypatch.setattr(agent_capsule.repo_map, "build_symbol_blast_radius", _empty_blast_radius)
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "change create_invoice tax calculation",
+            "--max-files",
+            "2",
+            "--max-tokens",
+            "500",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["call_site_evidence"]["status"] == "collected_no_call_sites"
+    assert payload["call_site_evidence"]["returned_call_sites"] == 0
+    assert payload["call_site_evidence"]["provenance"] == []
+    assert not any(
+        item["strategy"] == "blast-radius-call-sites" for item in payload["route_rationale"]
+    )
 
 
 def test_agent_capsule_skips_call_site_collection_when_symbol_not_explicit(
@@ -5338,6 +5546,117 @@ def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tm
     assert ambiguity["tied_alternative_targets"][0]["file"] == str(paths["typescript"].resolve())
 
 
+def test_agent_capsule_lsp_resolved_tie_reports_resolution_evidence(
+    monkeypatch,
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    primary_path = src_dir / "payments.py"
+    primary_path.write_text(
+        "def create_invoice(subtotal):\n    return {'subtotal': subtotal, 'tax': subtotal * 0.1}\n",
+        encoding="utf-8",
+    )
+    alternative_path = src_dir / "payments.ts"
+    alternative_path.write_text(
+        "export function createInvoice(subtotal: number): number {\n  return subtotal * 1.1;\n}\n",
+        encoding="utf-8",
+    )
+
+    def _fake_context_render(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-render",
+            "navigation_pack": {
+                "primary_target": {
+                    "file": str(primary_path.resolve()),
+                    "symbol": "create_invoice",
+                    "kind": "function",
+                    "line": 1,
+                    "semantic_provider": "lsp",
+                    "provenance": ["lsp-provider"],
+                    "lsp_provider_response": True,
+                    "lsp_proof": True,
+                    "lsp_operation": "definition",
+                    "lsp_resolution_basis": "textDocument/definition",
+                },
+                "validation_commands": [],
+            },
+            "edit_plan_seed": {
+                "primary_file": str(primary_path.resolve()),
+                "primary_symbol": {"name": "create_invoice", "kind": "function"},
+                "primary_span": {"start_line": 1, "end_line": 2},
+                "confidence": {"overall": 0.95},
+            },
+            "candidate_edit_targets": {
+                "symbols": [
+                    {
+                        "file": str(alternative_path.resolve()),
+                        "name": "createInvoice",
+                        "kind": "function",
+                        "line": 1,
+                        "score": 12,
+                    }
+                ]
+            },
+            "file_matches": [
+                {
+                    "path": str(alternative_path.resolve()),
+                    "score": 12,
+                    "reasons": ["definition"],
+                    "provenance": ["parser-backed"],
+                }
+            ],
+            "sources": [
+                {
+                    "file": str(primary_path.resolve()),
+                    "symbol": "create_invoice",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "source": primary_path.read_text(encoding="utf-8"),
+                }
+            ],
+            "rendered_context": primary_path.read_text(encoding="utf-8"),
+            "context_consistency": {
+                "primary_file_included": True,
+                "rendered_context_includes_primary": True,
+            },
+            "validation_plan": [],
+            "validation_commands": [],
+        }
+
+    monkeypatch.setenv("TG_CAPSULE_LSP_CONFIDENCE_BOOST", "1")
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        "change invoice tax calculation",
+        project,
+        include_blast_radius=False,
+        max_tokens=400,
+    )
+
+    ambiguity = payload["ambiguity"]
+    assert ambiguity["status"] == "tie_resolved"
+    assert ambiguity["resolved_by"] == "lsp"
+    assert ambiguity["requires_confirmation"] is False
+    assert ambiguity["resolution_evidence"]
+    evidence = ambiguity["resolution_evidence"][0]
+    assert evidence["kind"] == "lsp-primary-target-proof"
+    assert evidence["file"] == str(primary_path.resolve())
+    assert evidence["symbol"] == "create_invoice"
+    assert evidence["semantic_provider"] == "lsp"
+    assert evidence["lsp_proof"] is True
+    assert evidence["lsp_provider_response"] is True
+    assert evidence["lsp_operation"] == "definition"
+    assert evidence["lsp_resolution_basis"] == "textDocument/definition"
+    assert evidence["tied_alternative_count"] == 1
+    assert evidence["tied_alternative_files"] == [str(alternative_path.resolve())]
+    consistency = payload["context_consistency"]
+    assert consistency["alternative_confidence_tie_resolved_by"] == "lsp"
+    assert consistency["alternative_confidence_tie_resolution_evidence"] == [evidence]
+    assert consistency["alternative_confidence_tie"] is False
+
+
 def test_agent_capsule_ambiguous_invoice_tax_query_surfaces_cross_language_alternatives(tmp_path):
     paths = _write_mixed_invoice_fixture(tmp_path)
 
@@ -5936,10 +6255,9 @@ def test_agent_capsule_json_emits_argv_safe_recovery_commands_for_spaced_paths(t
     assert raw_ref["argv"] == [
         "tg",
         "context-render",
-        "--query",
+        str(project.resolve()),
         'change invoice "tax" calculation',
         "--json",
-        str(project.resolve()),
         "--max-files",
         "3",
         "--max-sources",
@@ -5950,13 +6268,20 @@ def test_agent_capsule_json_emits_argv_safe_recovery_commands_for_spaced_paths(t
         "512",
     ]
     assert f'"{project.resolve()}"' in raw_ref["command"]
+    assert "--query" not in raw_ref["argv"]
     rollback = payload["rollback"]
     assert rollback["argv"] == ["tg", "checkpoint", "create", str(project.resolve())]
     assert f'"{project.resolve()}"' in rollback["command"]
     follow_up_reads = payload["omissions"]["follow_up_reads"]
     assert follow_up_reads
-    assert any(read["argv"][-1] == str(project.resolve()) for read in follow_up_reads)
-    assert any(f'"{project.resolve()}"' in read["command"] for read in follow_up_reads)
+    source_reads = [read for read in follow_up_reads if read["argv"][:2] == ["tg", "source"]]
+    assert source_reads
+    assert any(
+        read["argv"] == ["tg", "source", str(module_path.resolve()), "create_invoice", "--json"]
+        for read in source_reads
+    )
+    assert all("--symbol" not in read["argv"] for read in source_reads)
+    assert any(f'"{module_path.resolve()}"' in read["command"] for read in source_reads)
 
 
 def test_agent_capsule_json_requires_user_confirmation_without_validation_commands(tmp_path):
@@ -5984,6 +6309,35 @@ def test_agent_capsule_json_requires_user_confirmation_without_validation_comman
     assert payload["validation_plan"] == []
     assert payload["ask_user_before_editing"]["required"] is True
     assert "no validation command evidence" in payload["ask_user_before_editing"]["reasons"]
+
+
+def test_agent_capsule_does_not_emit_pytest_for_bare_tests_dir_and_doc_primary(tmp_path):
+    project = tmp_path / "project"
+    tests_dir = project / "tests"
+    tests_dir.mkdir(parents=True)
+    readme_path = project / "README.md"
+    readme_path.write_text("Validate documentation updates here.\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "--query",
+            "validate docs",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["primary_target"]["file"] == str(readme_path.resolve())
+    assert payload["validation_commands"] == []
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert any(
+        reason.startswith("no validation command evidence")
+        for reason in payload["ask_user_before_editing"]["reasons"]
+    )
 
 
 def test_agent_capsule_json_reports_primary_consistency_and_downgrades_when_primary_is_omitted(
@@ -6071,6 +6425,9 @@ def test_agent_capsule_text_summary_names_primary_target_and_validation(tmp_path
     assert "primary=" in result.stdout
     assert "validation=" in result.stdout
     assert "confidence=" in result.stdout
+    assert "ask_required=" in result.stdout
+    assert "ambiguity=" in result.stdout
+    assert "alternatives=" in result.stdout
 
 
 def test_build_context_render_can_skip_edit_plan_seed_for_bounded_roots(monkeypatch, tmp_path):
@@ -6519,6 +6876,7 @@ def test_blast_radius_json_supports_output_limits(tmp_path):
     assert len(payload["callers"]) <= 2
     assert len(payload["files"]) <= 2
     assert len(payload["file_matches"]) <= 2
+    assert len(payload["import_graph_consumers"]) <= 2
     assert all(len(level.get("files", [])) <= 2 for level in payload["caller_tree"])
     assert all(
         path in payload["files"]
@@ -6532,12 +6890,16 @@ def test_blast_radius_json_supports_output_limits(tmp_path):
         "max_files": 2,
         "callers_truncated": True,
         "files_truncated": True,
+        "import_consumers_truncated": True,
         "total_callers": 6,
         "returned_callers": 2,
         "omitted_callers": 4,
         "total_files": 7,
         "returned_files": 2,
         "omitted_files": 5,
+        "total_import_consumers": 6,
+        "returned_import_consumers": 1,
+        "omitted_import_consumers": 5,
     }
 
 

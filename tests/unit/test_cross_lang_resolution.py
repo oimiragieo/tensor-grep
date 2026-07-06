@@ -23,6 +23,89 @@ def test_build_symbol_callers_resolves_typescript_import_aliases(tmp_path: Path)
     assert any(caller["file"] == str(consumer_path.resolve()) for caller in payload["callers"])
 
 
+def test_build_symbol_callers_surfaces_typescript_import_only_consumers(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    util_path = src_dir / "util.ts"
+    import_only_path = src_dir / "imports_only.ts"
+    caller_path = src_dir / "caller.ts"
+    util_path.write_text(
+        "export function foo() {\n  return 1;\n}\n",
+        encoding="utf-8",
+    )
+    import_only_path.write_text(
+        'import { foo } from "./util";\nexport const label = "no call";\n',
+        encoding="utf-8",
+    )
+    caller_path.write_text(
+        'import { foo } from "./util";\nexport function callFoo() {\n  return foo();\n}\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_callers("foo", project)
+
+    caller_files = {caller["file"] for caller in payload["callers"]}
+    assert str(caller_path.resolve()) in caller_files
+    assert str(import_only_path.resolve()) not in caller_files
+
+    consumer_files = set(payload["import_graph_consumer_files"])
+    assert consumer_files == {str(caller_path.resolve()), str(import_only_path.resolve())}
+    import_only = next(
+        consumer
+        for consumer in payload["import_graph_consumers"]
+        if consumer["file"] == str(import_only_path.resolve())
+    )
+    assert import_only["line"] == 1
+    assert import_only["end_line"] == 1
+    assert import_only["text"] == 'import { foo } from "./util";'
+    assert import_only["kind"] == "import-consumer"
+    assert import_only["edge_kind"] == "reverse-import"
+    assert import_only["definition_file"] == str(util_path.resolve())
+    assert import_only["module"] == "./util"
+    assert import_only["provenance"] in {"parser-backed", "heuristic"}
+
+
+def test_build_symbol_blast_radius_preserves_callers_and_import_consumers(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    util_path = src_dir / "util.ts"
+    import_only_path = src_dir / "imports_only.ts"
+    caller_path = src_dir / "caller.ts"
+    util_path.write_text(
+        "export function foo() {\n  return 1;\n}\n",
+        encoding="utf-8",
+    )
+    import_only_path.write_text(
+        'import { foo } from "./util";\nexport const label = "no call";\n',
+        encoding="utf-8",
+    )
+    caller_path.write_text(
+        'import { foo } from "./util";\nexport function callFoo() {\n  return foo();\n}\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_blast_radius("foo", project)
+
+    caller_files = {caller["file"] for caller in payload["callers"]}
+    assert str(caller_path.resolve()) in caller_files
+    assert str(import_only_path.resolve()) not in caller_files
+    assert set(payload["import_graph_consumer_files"]) == {
+        str(caller_path.resolve()),
+        str(import_only_path.resolve()),
+    }
+    assert payload["import_graph_consumer_count"] == 2
+    assert any(
+        match["path"] == str(import_only_path.resolve()) and "import-consumer" in match["reasons"]
+        for match in payload["file_matches"]
+    )
+
+
 def test_build_symbol_refs_resolves_javascript_import_aliases(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"

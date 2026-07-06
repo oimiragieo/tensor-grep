@@ -8,6 +8,7 @@ only a genuine total failure (exit>2, or exit 2 with nothing parsed) stays fail-
 from __future__ import annotations
 
 import json as _json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -60,6 +61,50 @@ def test_search_exit01_unchanged(monkeypatch) -> None:
     result = RipgrepBackend().search("a.log", "ERROR", SearchConfig())
     assert result.total_matches == 1
     assert result.result_incomplete is False
+
+
+def test_search_timeout_returns_incomplete_envelope_not_crash(monkeypatch) -> None:
+    """Fable review of #400, finding H2: the aggregate JSON path had NO handler for a
+    timed-out rg subprocess, so ``subprocess.TimeoutExpired`` fell into the broad
+    ``except Exception``, got wrapped as a ``RuntimeError``, and propagated as an
+    uncaught traceback (exit 1, no JSON envelope, all partial results lost). Fix: catch
+    it before the broad except and return a well-formed ``result_incomplete`` envelope,
+    matching the rg-exit-2 partial-result contract above.
+    """
+
+    def _raise_timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["rg"], timeout=5, output="")
+
+    monkeypatch.setattr(rb, "run_subprocess", _raise_timeout)
+    monkeypatch.setattr(RipgrepBackend, "_get_binary_name", lambda self: "rg")
+
+    # Must not raise -- this is the crash the fix eliminates.
+    result = RipgrepBackend().search("a.log", "ERROR", SearchConfig())
+
+    assert result.result_incomplete is True
+    assert "timeout" in (result.incomplete_reason or "").lower()
+    assert result.total_matches == 0
+    assert result.matches == []
+
+
+def test_search_timeout_recovers_partial_matches_from_flushed_stdout(monkeypatch) -> None:
+    """subprocess.run(capture_output=True) attaches whatever stdout the child had already
+    flushed to TimeoutExpired.stdout -- the aggregate timeout handler should re-use the
+    same NDJSON parser to recover any complete match records instead of discarding them.
+    """
+    flushed_stdout = _match(path="a.log", text="ERROR seen before timeout") + "\n"
+
+    def _raise_timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["rg"], timeout=5, output=flushed_stdout)
+
+    monkeypatch.setattr(rb, "run_subprocess", _raise_timeout)
+    monkeypatch.setattr(RipgrepBackend, "_get_binary_name", lambda self: "rg")
+
+    result = RipgrepBackend().search("a.log", "ERROR", SearchConfig())
+
+    assert result.result_incomplete is True
+    assert result.total_matches == 1
+    assert result.matches[0].text == "ERROR seen before timeout"
 
 
 def test_files_with_matches_exit2_keeps_partial(monkeypatch) -> None:

@@ -1,6 +1,71 @@
 # CHANGELOG
 
 
+## v1.41.0 (2026-07-06)
+
+### Features
+
+- Agent-contract fixes batch (codex-implemented, audited) — validation-evidence, truncation-trust,
+  MCP parity, import-consumer attribution
+  ([#404](https://github.com/oimiragieo/tensor-grep/pull/404),
+  [`d8dc298`](https://github.com/oimiragieo/tensor-grep/commit/d8dc2987d5c4d96c0e8942eb5d16f112149e436e))
+
+* feat: agent-contract fixes batch (codex, audited) — validation-evidence, truncation-trust, MCP
+  parity, recovery-argv
+
+Codex-implemented batch (done offline), preserved + audited: 1. Bare tests/ dir no longer counts as
+  Python validation evidence (prevents false `uv run pytest` suggestions on doc/unknown targets) —
+  repo_map.py. 2. Truncated primary-symbol source now reports primary_symbol_truncated +
+  confidence_downgraded + omitted_primary_reason — repo_map.py. 3. Source-budget tail-graft line
+  maps: omission-marker rows emit line:null (no invented line numbers); tail graft preserves true
+  original line — repo_map.py, agent_capsule.py. 4. LSP equal-confidence tie now carries explicit
+  resolution_evidence — agent_capsule.py. 5. Capsule recovery argv uses positional form (tg source
+  PATH SYMBOL --json), not deprecated hidden flags — agent_capsule.py. 6. MCP tg_context_render +
+  tg_session_edit_plan accept + forward max_repo_files — mcp_server.py. 7. Version metadata
+  reconciled to v1.40.4 + winget checksum. Tests added across test_validation_commands /
+  test_token_budget / test_cli_modes / test_profiling_cli_mcp / test_repo_map_targets.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test: related-span now correctly attributed caller+import-consumer (service.py both calls AND
+  imports the target) — update stale expectation
+
+* fix(#404 CI): ruff-format the 4 codex-batch files + hide the incompletely-registered route-test
+  command (contract parity)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
+## v1.40.5 (2026-07-06)
+
+### Bug Fixes
+
+- Rg-aggregate --json timeout emits result_incomplete envelope + exit 2, not a traceback (#56 H2)
+  ([#403](https://github.com/oimiragieo/tensor-grep/pull/403),
+  [`117c32c`](https://github.com/oimiragieo/tensor-grep/commit/117c32cc843b0b5edd51060d7be82b38f421fddf))
+
+Adversarial review of PR #400 (finding H2) found that when `tg search --json` routes to the ripgrep
+  AGGREGATE backend and the rg subprocess hits its timeout, subprocess.TimeoutExpired fell into
+  RipgrepBackend.search()'s broad `except Exception`, got wrapped as a RuntimeError, and propagated
+  as an uncaught traceback through main.py's search command (exit 1, no JSON envelope, all partial
+  results lost) -- a 3rd, worse "timed out" signal alongside the rg-passthrough path's exit 124 and
+  the native walk-deadline's exit 2 + result_incomplete (#400).
+
+Catch subprocess.TimeoutExpired before the broad except in the aggregate .search() path and return a
+  well-formed SearchResult with result_incomplete=True + incomplete_reason, best-effort recovering
+  any match records rg had already flushed to stdout before being killed
+  (subprocess.run(capture_output=True) attaches it to TimeoutExpired.stdout) via the same NDJSON
+  parser used on the success path (extracted into RipgrepBackend._parse_ndjson_matches, now shared
+  by both). main.py's existing `sys.exit(2 if all_results.result_incomplete else ...)` then exits 2
+  for this path too, with no main.py changes needed. The rg-passthrough path's exit 124 is left
+  unchanged (coreutils `timeout` convention, load-bearing for streaming/interactive rg-parity) --
+  documented in a code comment at the fix site.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.40.4 (2026-07-06)
 
 ### Bug Fixes

@@ -7383,11 +7383,22 @@ def agent(
     validation_commands = payload.get("validation_commands", [])
     confidence = payload.get("confidence", {}).get("overall", 0)
     gpu_acceleration = payload.get("gpu_acceleration", {})
+    ambiguity = payload.get("ambiguity", {})
+    ask_user_before_editing = payload.get("ask_user_before_editing", {})
+    context_consistency = payload.get("context_consistency", {})
+    alternatives = payload.get("alternative_targets", [])
     typer.echo(f"Agent capsule for {payload['path']}")
     typer.echo(f"query={payload['query']}")
     typer.echo(f"primary={primary_file}#L{primary_line} {primary_symbol}")
     typer.echo(f"validation={len(validation_commands)} commands")
     typer.echo(f"confidence={confidence}")
+    typer.echo(f"ask_required={bool(ask_user_before_editing.get('required'))}")
+    typer.echo(f"ambiguity={ambiguity.get('status', 'unknown')}")
+    typer.echo(
+        "alternatives="
+        f"{len(alternatives)}"
+        f" omitted={context_consistency.get('alternative_targets_omitted_count', 0)}"
+    )
     if gpu_device_ids:
         typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
 
@@ -7504,6 +7515,314 @@ def edit_plan(
     typer.echo(
         f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
     )
+
+
+_ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD = 0.75
+
+
+def _route_test_int(value: object) -> int | None:
+    try:
+        number = int(str(value))
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _route_test_confidence_score(confidence: object) -> float | None:
+    if isinstance(confidence, dict):
+        for key in ("overall", "primary", "target"):
+            try:
+                return float(cast(Any, confidence[key]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        primary_scores: list[float] = []
+        for key in ("file", "symbol"):
+            try:
+                primary_scores.append(float(cast(Any, confidence[key])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if primary_scores:
+            return min(primary_scores)
+        return None
+    try:
+        return float(cast(Any, confidence))
+    except (TypeError, ValueError):
+        return None
+
+
+def _route_test_primary_target(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_primary_target = payload.get("primary_target")
+    if not isinstance(raw_primary_target, dict):
+        navigation_pack = payload.get("navigation_pack")
+        if isinstance(navigation_pack, dict):
+            raw_primary_target = navigation_pack.get("primary_target")
+    primary_target = dict(raw_primary_target) if isinstance(raw_primary_target, dict) else {}
+
+    edit_plan_seed = payload.get("edit_plan_seed")
+    seed = dict(edit_plan_seed) if isinstance(edit_plan_seed, dict) else {}
+    primary_symbol = seed.get("primary_symbol")
+    primary_symbol_payload = dict(primary_symbol) if isinstance(primary_symbol, dict) else {}
+    primary_span = seed.get("primary_span")
+    primary_span_payload = dict(primary_span) if isinstance(primary_span, dict) else {}
+
+    file_path = str(
+        primary_target.get("file")
+        or seed.get("primary_file")
+        or primary_symbol_payload.get("file")
+        or ""
+    )
+    symbol = str(
+        primary_target.get("symbol")
+        or primary_symbol_payload.get("name")
+        or primary_symbol_payload.get("symbol")
+        or ""
+    )
+    line = (
+        _route_test_int(primary_target.get("line"))
+        or _route_test_int(primary_target.get("start_line"))
+        or _route_test_int(primary_span_payload.get("start_line"))
+        or _route_test_int(primary_symbol_payload.get("line"))
+        or _route_test_int(primary_symbol_payload.get("start_line"))
+    )
+    end_line = (
+        _route_test_int(primary_target.get("end_line"))
+        or _route_test_int(primary_span_payload.get("end_line"))
+        or _route_test_int(primary_symbol_payload.get("end_line"))
+        or line
+    )
+    confidence = primary_target.get("confidence")
+    if confidence is None:
+        confidence = seed.get("confidence")
+    confidence_score = _route_test_confidence_score(confidence)
+
+    return {
+        "file": file_path or None,
+        "symbol": symbol or None,
+        "line": line,
+        "end_line": end_line,
+        "confidence": confidence if confidence is not None else None,
+        "confidence_score": confidence_score,
+    }
+
+
+def _route_test_normalized_file(value: object) -> str:
+    if not value:
+        return ""
+    try:
+        return os.path.normcase(str(Path(str(value)).expanduser().resolve(strict=False)))
+    except OSError:
+        return os.path.normcase(str(value))
+
+
+def _route_test_validation_command_count(payload: dict[str, Any]) -> int | None:
+    validation_commands = payload.get("validation_commands")
+    if isinstance(validation_commands, list):
+        return len(validation_commands)
+    navigation_pack = payload.get("navigation_pack")
+    if isinstance(navigation_pack, dict) and isinstance(
+        navigation_pack.get("validation_commands"), list
+    ):
+        return len(navigation_pack["validation_commands"])
+    edit_plan_seed = payload.get("edit_plan_seed")
+    if isinstance(edit_plan_seed, dict) and isinstance(
+        edit_plan_seed.get("validation_commands"), list
+    ):
+        return len(edit_plan_seed["validation_commands"])
+    return None
+
+
+def _build_route_test_payload(
+    *,
+    path: str,
+    query: str,
+    max_files: int,
+    max_repo_files: int,
+    max_sources: int,
+    max_symbols_per_file: int,
+    max_symbols: int,
+    provider: str,
+    profile: bool,
+) -> dict[str, Any]:
+    from tensor_grep.cli.repo_map import build_context_edit_plan, build_context_render
+
+    context_payload = build_context_render(
+        query,
+        path,
+        max_files=max_files,
+        max_repo_files=max_repo_files,
+        max_sources=max_sources,
+        max_symbols_per_file=max_symbols_per_file,
+        render_profile="llm",
+        optimize_context=True,
+        semantic_provider=provider,
+        profile=profile,
+    )
+    edit_payload = build_context_edit_plan(
+        query,
+        path,
+        max_files=max_files,
+        max_repo_files=max_repo_files,
+        max_sources=max_sources,
+        max_symbols=max_symbols,
+        semantic_provider=provider,
+        profile=profile,
+    )
+
+    context_target = _route_test_primary_target(context_payload)
+    edit_target = _route_test_primary_target(edit_payload)
+    file_agrees = _route_test_normalized_file(
+        context_target["file"]
+    ) == _route_test_normalized_file(edit_target["file"])
+    symbol_agrees = context_target["symbol"] == edit_target["symbol"]
+    line_agrees = context_target["line"] == edit_target["line"]
+    agreement = bool(
+        context_target["file"]
+        and edit_target["file"]
+        and file_agrees
+        and symbol_agrees
+        and line_agrees
+    )
+
+    warnings: list[str] = []
+    if not agreement:
+        warnings.append("primary targets disagree between context-render and edit-plan")
+    for label, target in (
+        ("context-render", context_target),
+        ("edit-plan", edit_target),
+    ):
+        confidence_score = target.get("confidence_score")
+        if (
+            isinstance(confidence_score, int | float)
+            and confidence_score < _ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD
+        ):
+            warnings.append(
+                f"{label} primary target confidence {confidence_score:.3f} is below "
+                f"{_ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD:.2f}"
+            )
+
+    context_validation_count = _route_test_validation_command_count(context_payload)
+    edit_validation_count = _route_test_validation_command_count(edit_payload)
+    return {
+        "version": 1,
+        "routing_reason": "route-test",
+        "path": str(Path(path).expanduser().resolve(strict=False)),
+        "query": query,
+        "agreement": agreement,
+        "agreement_details": {
+            "file": file_agrees,
+            "symbol": symbol_agrees,
+            "line": line_agrees,
+        },
+        "warnings": warnings,
+        "context_render": {
+            "routing_reason": context_payload.get("routing_reason"),
+            "primary_target": context_target,
+            "validation_command_count": context_validation_count,
+        },
+        "edit_plan": {
+            "routing_reason": edit_payload.get("routing_reason"),
+            "primary_target": edit_target,
+            "validation_command_count": edit_validation_count,
+        },
+        "validation_command_counts": {
+            "context_render": context_validation_count,
+            "edit_plan": edit_validation_count,
+        },
+    }
+
+
+# Hidden/experimental: `route-test` (compare context-render vs edit-plan routing) works but is not yet in
+# the public --help surface -- promoting it needs native-binary registration + PUBLIC_TOP_LEVEL_COMMANDS
+# parity (the 4-registration-sites contract). Ships hidden here; a follow-up PR promotes it to visible.
+@app.command(name="route-test", hidden=True)
+def route_test(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query_arg: str | None = typer.Argument(
+        None, help="Query text to compare through context-render and edit-plan."
+    ),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in each route."
+    ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repository files to scan before ranking targets.",
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum source/span records to retain per route."
+    ),
+    max_symbols_per_file: int = typer.Option(
+        6,
+        "--max-symbols-per-file",
+        min=1,
+        help="Maximum context-render summary symbols to include per file.",
+    ),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum edit-plan ranked symbols to retain."
+    ),
+    provider: str = typer.Option(
+        "native",
+        "--provider",
+        help="Semantic provider for primary target proof: native, lsp, or hybrid.",
+    ),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-route profiling in the compared builders."
+    ),
+    json_output: bool = typer.Option(
+        True, "--json/--text", help="Emit machine-readable JSON output (default)."
+    ),
+) -> None:
+    """Compare context-render and edit-plan target routing for the same query."""
+    try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+            command_name="route-test",
+        )
+        payload = _build_route_test_payload(
+            path=resolved_path,
+            query=resolved_query,
+            max_files=max_files,
+            max_repo_files=max_repo_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_symbols=max_symbols,
+            provider=provider,
+            profile=profile,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    context_target = payload["context_render"]["primary_target"]
+    edit_target = payload["edit_plan"]["primary_target"]
+    typer.echo(f"Route test for {payload['path']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(
+        "context-render="
+        f"{context_target.get('file')}#L{context_target.get('line')} "
+        f"{context_target.get('symbol')}"
+    )
+    typer.echo(
+        "edit-plan="
+        f"{edit_target.get('file')}#L{edit_target.get('line')} "
+        f"{edit_target.get('symbol')}"
+    )
+    typer.echo(f"agreement={payload['agreement']}")
+    for warning in payload["warnings"]:
+        typer.echo(f"warning={warning}")
 
 
 def _positive_int(value: Any) -> int | None:
@@ -8182,7 +8501,10 @@ def callers(
 
     def _emit_text(current: dict[str, Any]) -> None:
         typer.echo(f"Callers for {current['symbol']} in {current['path']}")
-        typer.echo(f"callers={len(current['callers'])} files={len(current['files'])}")
+        typer.echo(
+            f"callers={len(current['callers'])} files={len(current['files'])} "
+            f"import_consumers={len(current.get('import_graph_consumers', []))}"
+        )
         _echo_symbol_location_rows(current["callers"])
 
     _emit_symbol_command_result(
@@ -8359,7 +8681,8 @@ def blast_radius(
         typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
         typer.echo(
             f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
-            f"files={len(payload['files'])} tests={len(payload['tests'])}"
+            f"files={len(payload['files'])} tests={len(payload['tests'])} "
+            f"import_consumers={len(payload.get('import_graph_consumers', []))}"
         )
         if caveat is not None:
             typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
@@ -9312,6 +9635,12 @@ def session_blast_radius_plan_cmd(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum cached repo files to score before building the warm blast-radius plan.",
+    ),
     refresh_on_stale: bool = typer.Option(
         False,
         "--refresh-on-stale",
@@ -9346,6 +9675,7 @@ def session_blast_radius_plan_cmd(
                     "max_depth": max_depth,
                     "max_files": max_files,
                     "max_symbols": max_symbols,
+                    "max_repo_files": max_repo_files,
                     "refresh_on_stale": refresh_on_stale,
                 },
             )
@@ -9357,6 +9687,7 @@ def session_blast_radius_plan_cmd(
                 max_depth=max_depth,
                 max_files=max_files,
                 max_symbols=max_symbols,
+                max_repo_files=max_repo_files,
                 refresh_on_stale=refresh_on_stale,
             )
     except Exception as exc:

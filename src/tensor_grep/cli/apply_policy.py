@@ -368,6 +368,97 @@ def _parse_policy_command(command: str) -> list[str]:
     return shlex.split(stripped, posix=True)
 
 
+def _policy_quote_arg(value: str) -> str:
+    if os.name == "nt":
+        return subprocess.list2cmdline([value])
+    return shlex.quote(value)
+
+
+def _file_placeholder_present(command: str) -> bool:
+    return "$file" in command or "{file}" in command
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _policy_file_arg(path_value: object, *, working_root: Path) -> str | None:
+    if not isinstance(path_value, (str, os.PathLike)):
+        return None
+    raw_path = Path(path_value).expanduser()
+    try:
+        resolved = raw_path.resolve()
+    except (OSError, RuntimeError):
+        return None
+    try:
+        return resolved.relative_to(working_root.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def _edited_file_args(
+    rewrite_payload: dict[str, object],
+    *,
+    target_path: Path,
+    working_root: Path,
+) -> list[str]:
+    candidates: list[object] = []
+    edits = rewrite_payload.get("edits")
+    if isinstance(edits, list):
+        for edit in edits:
+            if not isinstance(edit, dict):
+                continue
+            candidates.append(edit.get("file") or edit.get("path"))
+    if not candidates and target_path.is_file() and _path_is_under(target_path, working_root):
+        candidates.append(target_path)
+
+    file_args: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        file_arg = _policy_file_arg(candidate, working_root=working_root)
+        if file_arg is None or file_arg in seen:
+            continue
+        seen.add(file_arg)
+        file_args.append(file_arg)
+    return file_args
+
+
+def _policy_command_instances(
+    name: str,
+    command: str,
+    *,
+    rewrite_payload: dict[str, object],
+    target_path: Path,
+    working_root: Path,
+) -> tuple[list[tuple[str | None, str]], dict[str, object] | None]:
+    if not _file_placeholder_present(command):
+        return [(None, command)], None
+
+    edited_files = _edited_file_args(
+        rewrite_payload,
+        target_path=target_path,
+        working_root=working_root,
+    )
+    if not edited_files:
+        return [], _command_result(
+            passed=False,
+            detail=f"{name} command uses a file placeholder but requires at least one edited file.",
+        )
+
+    instances: list[tuple[str | None, str]] = []
+    for file_arg in edited_files:
+        quoted_file = _policy_quote_arg(file_arg)
+        instances.append((
+            file_arg,
+            command.replace("$file", quoted_file).replace("{file}", quoted_file),
+        ))
+    return instances, None
+
+
 def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dict[str, object]:
     try:
         argv = _parse_policy_command(command)
@@ -565,18 +656,65 @@ def evaluate_apply_policy(
         failures = failures or failed
         return failed
 
+    def run_command_group(name: str, command: str, *, top_level_key: str) -> bool:
+        instances, expansion_error = _policy_command_instances(
+            name,
+            command,
+            rewrite_payload=payload,
+            target_path=target_path,
+            working_root=working_root,
+        )
+        if expansion_error is not None:
+            return run_and_record(name, expansion_error, top_level_key=top_level_key)
+        if len(instances) == 1 and instances[0][0] is None:
+            return run_and_record(
+                name,
+                run_command(name, instances[0][1], working_root, policy.timeout),
+                top_level_key=top_level_key,
+            )
+
+        per_file_results: list[dict[str, object]] = []
+        for file_arg, expanded_command in instances:
+            result = dict(run_command(name, expanded_command, working_root, policy.timeout))
+            result["file"] = file_arg
+            result["command"] = expanded_command
+            per_file_results.append(result)
+            if not bool(result.get("passed")) and policy.on_failure in {"rollback", "fail"}:
+                break
+
+        failed_results = [result for result in per_file_results if not bool(result.get("passed"))]
+        aggregate: dict[str, object] = {
+            "passed": not failed_results,
+            "detail": (
+                f"{name} command succeeded for {len(per_file_results)} file(s)."
+                if not failed_results
+                else f"{len(failed_results)} of {len(per_file_results)} {name} command(s) failed."
+            ),
+            "file_count": len(instances),
+            "attempted_count": len(per_file_results),
+            "failed_count": len(failed_results),
+            "results": per_file_results,
+        }
+        for result in failed_results:
+            if "exit_code" in result:
+                aggregate["exit_code"] = result["exit_code"]
+                break
+        if any(result.get("timed_out") for result in per_file_results):
+            aggregate["timed_out"] = True
+        return run_and_record(name, aggregate, top_level_key=top_level_key)
+
     if policy.lint_cmd is not None:
-        if run_and_record(
+        if run_command_group(
             "lint",
-            run_command("lint", policy.lint_cmd, working_root, policy.timeout),
+            policy.lint_cmd,
             top_level_key="lint_result",
         ) and policy.on_failure in {"rollback", "fail"}:
             pass
         else:
             if policy.test_cmd is not None:
-                if run_and_record(
+                if run_command_group(
                     "test",
-                    run_command("test", policy.test_cmd, working_root, policy.timeout),
+                    policy.test_cmd,
                     top_level_key="test_result",
                 ) and policy.on_failure in {"rollback", "fail"}:
                     pass
@@ -595,9 +733,9 @@ def evaluate_apply_policy(
                 )
     else:
         if policy.test_cmd is not None:
-            if run_and_record(
+            if run_command_group(
                 "test",
-                run_command("test", policy.test_cmd, working_root, policy.timeout),
+                policy.test_cmd,
                 top_level_key="test_result",
             ) and policy.on_failure in {"rollback", "fail"}:
                 pass

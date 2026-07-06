@@ -33,6 +33,7 @@ KNOWN_COMMANDS = {
     "blast-radius-plan",
     "edit-plan",
     "context-render",
+    "route-test",
     "rulesets",
     "audit-history",
     "audit-diff",
