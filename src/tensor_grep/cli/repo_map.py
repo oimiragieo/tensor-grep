@@ -164,6 +164,20 @@ DEFAULT_AGENT_REPO_MAP_LIMIT = 2000
 # file count, the payload is marked result_incomplete (see _CALLER_SCAN_CEILING_REMEDIATION)
 # so the exit-2 truncation-honesty contract still fires.
 CALLER_SCAN_FILE_CEILING = 512
+# F1-review HIGH fix (task#52 shape, 2026-07-06): _order_caller_scan_candidates probes
+# _file_may_contain_literal_symbol (a stat + cached read_bytes) across the caller-scan file
+# UNIVERSE to decide ordering, BEFORE _cap_caller_scan_files slices to CALLER_SCAN_FILE_CEILING.
+# Left unbounded, that probe pays O(map-size) I/O regardless of the 512 ceiling or --deadline --
+# exactly the pathology CALLER_SCAN_FILE_CEILING exists to prevent, just one step earlier in the
+# pipeline. This ceiling bounds the PROBE itself (belt); the deadline check threaded into the
+# same loop is the suspenders. 4x the scan ceiling so a normal (<=2000-file) map's ordering pass
+# is never truncated in practice -- it only bites when --max-repo-files is raised well past the
+# default, which is exactly the case this fix targets.
+CALLER_SCAN_ORDER_PROBE_CEILING = 4 * CALLER_SCAN_FILE_CEILING
+# How often (in probed files) the ordering pass re-checks the deadline. Checking every file would
+# add a time.monotonic() call per file; checking too rarely risks overrunning a tight --deadline
+# by a wide margin. 64 is a compromise consistent with other bounded-scan loops in this module.
+_CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE = 64
 _DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
@@ -1284,6 +1298,7 @@ def _order_caller_scan_candidates(
     test_files: list[Path],
     *,
     symbol: str | None,
+    deadline_monotonic: float | None = None,
 ) -> list[Path]:
     """F1 fix (dogfood v1.42.0, 24->14 refs regression): ORDER the caller-scan candidate
     universe before ``_cap_caller_scan_files`` applies its ``CALLER_SCAN_FILE_CEILING`` slice.
@@ -1293,14 +1308,25 @@ def _order_caller_scan_candidates(
     consumes the ENTIRE ceiling budget on source files and stone-cold strands every test file
     past the window. This function only changes what the CEILING SLICE sees: literal
     symbol-hit files (probed via the already-cached ``_file_may_contain_literal_symbol``, which
-    warms the same cache the per-file caller/ref scan reads right after) sort first, then any
-    remaining source and test files are interleaved proportionally to their share of what's
-    left, so the ceiling window always carries some of both instead of 0% tests.
+    warms the same cache the per-file caller/ref scan reads right after) sort first WITHIN their
+    own category (source/test), then ``_interleave_proportionally`` merges the two categories so
+    EVERY prefix of the result -- including the eventual ceiling slice -- carries a proportional
+    share of test files. Interleaving globally (rather than only after a literal-hits block) is
+    the F1-review LOW-MED fix: a source-heavy run of literal hits can no longer consume the
+    entire ceiling budget and strand 100% of the test files, hit or not, past the window.
 
     TRAP (do not regress): literal-contains is an ORDERING signal only, never a FILTER. A
     caller/ref can resolve with NO literal symbol byte match in the referencing file itself --
     e.g. an aliased re-export resolved via ``_js_ts_provider_alias_calls`` -- so every file
     stays eligible for the ceiling slice; only its position changes.
+
+    F1-review HIGH fix (task#52 shape): the literal-hit probe itself must not scale with the
+    full file universe -- bounded both by count (``CALLER_SCAN_ORDER_PROBE_CEILING``) and, when
+    a deadline is in play, by wall-clock (checked every
+    ``_CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE`` files). Files past whichever bound is hit first
+    are simply never probed (treated as non-hits for ordering purposes) -- they are NEVER
+    dropped from the candidate list, only left unprobed, so they still land in the
+    source/test-first remainder that ``_interleave_proportionally`` merges below.
     """
     normalized_symbol = (symbol or "").strip()
     if not normalized_symbol:
@@ -1311,16 +1337,27 @@ def _order_caller_scan_candidates(
             path, normalized_symbol
         )
 
+    universe = [*source_files, *test_files]
     literal_hit_ids: set[str] = set()
-    literal_hits: list[Path] = []
-    for current in [*source_files, *test_files]:
+    for index, current in enumerate(universe):
+        if index >= CALLER_SCAN_ORDER_PROBE_CEILING:
+            break
+        if (
+            deadline_monotonic is not None
+            and index % _CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE == 0
+            and time.monotonic() >= deadline_monotonic
+        ):
+            break
         if _is_literal_hit(current):
             literal_hit_ids.add(str(current))
-            literal_hits.append(current)
 
-    remaining_sources = [current for current in source_files if str(current) not in literal_hit_ids]
-    remaining_tests = [current for current in test_files if str(current) not in literal_hit_ids]
-    return [*literal_hits, *_interleave_proportionally(remaining_sources, remaining_tests)]
+    ordered_sources = [current for current in source_files if str(current) in literal_hit_ids] + [
+        current for current in source_files if str(current) not in literal_hit_ids
+    ]
+    ordered_tests = [current for current in test_files if str(current) in literal_hit_ids] + [
+        current for current in test_files if str(current) not in literal_hit_ids
+    ]
+    return _interleave_proportionally(ordered_sources, ordered_tests)
 
 
 def _cap_caller_scan_files(
@@ -1328,6 +1365,7 @@ def _cap_caller_scan_files(
     *,
     symbol: str | None = None,
     test_files: list[Path] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> tuple[list[Path], bool]:
     """backlog #1 chokepoint: bound the caller-scan file universe to
     CALLER_SCAN_FILE_CEILING regardless of how large the passed-in repo_map is (the map default
@@ -1343,13 +1381,20 @@ def _cap_caller_scan_files(
     purpose -- raising it reintroduces task #52's ~100s TS-regex hang, the reason
     CALLER_SCAN_FILE_CEILING shipped (see the module note above ``CALLER_SCAN_FILE_CEILING``).
     When no ``test_files`` are passed (or none exist), behavior is unchanged: a plain prefix
-    slice of ``files`` in whatever order the caller already supplied."""
+    slice of ``files`` in whatever order the caller already supplied.
+
+    F1-review HIGH fix: ``deadline_monotonic`` is threaded through to
+    ``_order_caller_scan_candidates`` so the ordering PROBE (not just the later per-file scan
+    loop) honors --deadline on a repo raised via --max-repo-files -- see that function's
+    docstring."""
     if len(files) <= CALLER_SCAN_FILE_CEILING:
         return files, False
     if test_files:
         test_id_set = {str(current) for current in test_files}
         source_only = [current for current in files if str(current) not in test_id_set]
-        ordered = _order_caller_scan_candidates(source_only, test_files, symbol=symbol)
+        ordered = _order_caller_scan_candidates(
+            source_only, test_files, symbol=symbol, deadline_monotonic=deadline_monotonic
+        )
     else:
         ordered = files
     return ordered[:CALLER_SCAN_FILE_CEILING], True
@@ -12701,6 +12746,7 @@ def build_symbol_refs_from_map(
         [*refs_universe_files, *refs_universe_tests],
         symbol=symbol,
         test_files=refs_universe_tests,
+        deadline_monotonic=deadline_monotonic,
     )
     bounded_file_set = {str(current) for current in bounded_files}
     references: list[dict[str, Any]] = []
@@ -12968,6 +13014,7 @@ def build_symbol_callers_from_map(
         [*callers_universe_files, *callers_universe_tests],
         symbol=symbol,
         test_files=callers_universe_tests,
+        deadline_monotonic=deadline_monotonic,
     )
     bounded_file_set = {str(current) for current in bounded_files}
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
