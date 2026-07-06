@@ -3722,6 +3722,59 @@ def _should_refuse_unbounded_workspace_root_scan(
     return bool(project_dirs), project_dirs
 
 
+# Critical unscoped-search-hang fix C: heavy vendored/index directories that can sit at the
+# TOP LEVEL of a single project root -- a root `_workspace_project_child_names` never flags
+# because the guard above SKIPS any root that is itself a project (has its own marker like
+# pyproject.toml/.git) and only fires when it finds >= 3 sibling project dirs. A single huge
+# vendored repo (its own project, one giant `node_modules`/`external_repos`/etc. at the top)
+# always slips past that guard.
+#
+# Deliberately EXCLUDES tg's own index/reference dirs (`.tensor-grep`, `_tg_refs`,
+# `.tg_semantic_index`): those are already (a) skipped by repo_map's walk (Fix A), (b)
+# normally `.gitignore`d so DirectoryScanner's default walk never descends into them, and
+# (c) bounded by Fix B's wall-clock deadline if they ever are walked. Including them here
+# was verified (real dogfood run) to make this guard refuse EVERY unscoped default-path
+# search from tensor-grep's own repo root -- a `.tensor-grep/` cache dir is a completely
+# normal thing for any tg-managed repo to have, not a "genuinely pathological root".
+_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = frozenset({
+    "node_modules",
+    "vendor",
+    "external_repos",
+    "third_party",
+})
+
+
+def _root_top_level_vendored_dir_names(paths: list[str]) -> list[str]:
+    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep."""
+    found: set[str] = set()
+    vendored_names = {name.lower() for name in _UNBOUNDED_VENDORED_ROOT_DIR_NAMES}
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir():
+                continue
+            for child in path.iterdir():
+                if child.is_dir() and child.name.lower() in vendored_names:
+                    found.add(child.name)
+        except OSError:
+            continue
+    return sorted(found, key=lambda item: item.lower())
+
+
+def _should_refuse_unbounded_vendored_root_scan(
+    paths: list[str],
+    config: "SearchConfig",
+    *,
+    allow_broad_generated_scan: bool,
+) -> tuple[bool, list[str]]:
+    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+        return False, []
+    vendored_dirs = _root_top_level_vendored_dir_names(paths)
+    return bool(vendored_dirs), vendored_dirs
+
+
 def _should_refuse_unbounded_generated_scan(
     paths: list[str],
     config: "SearchConfig",
@@ -3771,6 +3824,23 @@ def _format_broad_workspace_scan_error(project_dirs: list[str]) -> str:
         "For bounded output:\n"
         'tg search <pattern> <workspace> --glob "*.py"\n'
         "tg search <pattern> <workspace> --max-depth <N>\n"
+        "For intentional broad scans:\n"
+        "--allow-broad-generated-scan"
+    )
+
+
+def _format_unbounded_vendored_root_scan_error(vendored_dirs: list[str]) -> str:
+    visible_dirs = ", ".join(vendored_dirs[:8])
+    if len(vendored_dirs) > 8:
+        visible_dirs = f"{visible_dirs}, ..."
+    return (
+        "Error: broad root scan refused as a safety guard, not a zero-match result: "
+        "path contains a heavy vendored/index "
+        f"directory at its top level ({visible_dirs}). Scope the path, add --glob, --type, "
+        "or --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
+        "For bounded output:\n"
+        'tg search <pattern> <root> --glob "*.py"\n'
+        "tg search <pattern> <root> --max-depth <N>\n"
         "For intentional broad scans:\n"
         "--allow-broad-generated-scan"
     )
@@ -6150,6 +6220,14 @@ def search_command(
     if refuse_workspace_scan:
         typer.echo(_format_broad_workspace_scan_error(workspace_project_dirs), err=True)
         raise typer.Exit(2)
+    refuse_vendored_scan, vendored_root_dirs = _should_refuse_unbounded_vendored_root_scan(
+        paths_to_search,
+        config,
+        allow_broad_generated_scan=allow_broad_generated_scan,
+    )
+    if refuse_vendored_scan:
+        typer.echo(_format_unbounded_vendored_root_scan_error(vendored_root_dirs), err=True)
+        raise typer.Exit(2)
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
     # C3: plain `--json` emits one aggregate object and cannot render ripgrep's
@@ -6366,7 +6444,38 @@ def search_command(
                 _record_matched_file(match.file)
             _merge_runtime_routing(result)
     else:
+        # Critical unscoped-search-hang fix (B): the native (CPU/Torch) engine has no
+        # internal per-file timeout -- unlike the RipgrepBackend branch above, which is
+        # bounded by the rg subprocess's own `configured_ripgrep_timeout_seconds()` timeout.
+        # A search that can't route through rg (native `--json` aggregate, `--rank`,
+        # tensor-only flags, or rg absent from PATH) would otherwise walk
+        # `candidate_files_ordered` with NO limit at all and could hang until manually
+        # killed on a large/unscoped tree. Check the SAME wall-clock budget once per FILE
+        # (never per match -- that would be too fine-grained to bound a pathological single
+        # file) and, on expiry, stop and return whatever was found so far as an explicitly
+        # incomplete (never silently empty, never a raw crash) result.
+        from tensor_grep.backends.cpu_backend import (
+            compute_native_walk_deadline,
+            native_walk_deadline_exceeded,
+        )
+        from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
+
+        native_walk_deadline = compute_native_walk_deadline()
         for current_file in candidate_files_ordered:
+            if native_walk_deadline_exceeded(native_walk_deadline):
+                timeout_seconds = configured_ripgrep_timeout_seconds()
+                all_results.result_incomplete = True
+                all_results.incomplete_reason = (
+                    f"native search exceeded the {timeout_seconds:g}s timeout and was "
+                    "stopped; returning partial results. Scope the search to a smaller "
+                    "path, or raise TG_RG_TIMEOUT_SECONDS."
+                )
+                sys.stderr.write(
+                    "tg: native search exceeded the "
+                    f"{timeout_seconds:g}s timeout, keeping partial results: "
+                    f"{all_results.incomplete_reason}\n"
+                )
+                break
             span_ctx = (
                 tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
             )

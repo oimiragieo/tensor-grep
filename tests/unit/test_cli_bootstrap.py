@@ -179,6 +179,67 @@ def test_main_entry_should_not_passthrough_unbounded_workspace_root_search(
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_not_passthrough_single_project_root_with_top_level_vendored_dir(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Critical unscoped-search-hang fix C, bootstrap front-door half: a root that is
+    itself a single project (so `_search_paths_include_workspace_root` never flags it) but
+    has a heavy vendored dir (e.g. `node_modules`) at its own top level must not be
+    fast-pathed straight into the native binary or rg passthrough -- both bypass
+    cli/main.py's Python guards and backends/cpu_backend.py's wall-clock deadline
+    entirely. It must fall through to the full CLI, which owns the actual refusal."""
+    called = {"full_cli": False}
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "package.json").write_text("{}", encoding="utf-8")
+    (root / "node_modules").mkdir()
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "foo", str(root), "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native passthrough should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_still_uses_native_fast_path_for_normal_small_repo_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("", encoding="utf-8")
+    (root / "src").mkdir()
+    (root / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", str(root), "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, argv: seen.update({"argv": list(argv)}) or 0,
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen["argv"] == ["needle", str(root), "--json"]
+
+
 def test_main_entry_should_passthrough_raw_rg_style_invocation(monkeypatch):
     seen: dict[str, object] = {}
 

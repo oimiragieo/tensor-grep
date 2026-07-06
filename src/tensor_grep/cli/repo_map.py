@@ -144,6 +144,12 @@ _DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
     ".tensor-grep",
+    # tg-owned index/reference trees — never product source, and can be large enough to
+    # hang an unscoped walk (critical unscoped-search-hang audit). Kept in sync with
+    # docs_coverage.py's _EXCLUDED_DIR_PARTS, which already excludes these.
+    "_tg_refs",
+    ".tg_semantic_index",
+    "external_repos",
     ".git",
     ".hg",
     ".svn",

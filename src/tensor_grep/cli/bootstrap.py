@@ -545,6 +545,48 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
     return False
 
 
+# Critical unscoped-search-hang fix C: heavy vendored dirs that can sit at the TOP LEVEL of
+# a single project root -- `_search_paths_include_workspace_root` above SKIPS any root that
+# is itself a project (has its own marker like package.json/.git) and only fires when it
+# finds >= 3 sibling project dirs, so a single huge vendored repo (its own project, one
+# giant `node_modules`/`external_repos`/etc. at the top) always slipped past it. This check
+# MUST live here (not just in cli/main.py's equivalent guard) because `main_entry` below
+# decides whether to delegate straight to the native `tg` binary or to `rg` passthrough --
+# both of which bypass cli/main.py's Python guards entirely. Without this, an unscoped
+# `tg search PATTERN --json` from a workspace root with a top-level vendored dir gets
+# fast-pathed straight into an unbounded native/rg walk before cli/main.py's guard (or
+# backends/cpu_backend.py's wall-clock deadline) ever gets a chance to run.
+#
+# Deliberately excludes tg's own index dirs (`.tensor-grep`, `_tg_refs`,
+# `.tg_semantic_index`) for the same reason cli/main.py's guard does: those are normally
+# gitignored, already skipped by repo_map's walk, and bounded by the native/cpu wall-clock
+# deadline if ever walked -- including them here made this guard refuse a plain unscoped
+# search from tensor-grep's own repo root (verified via real dogfood run).
+_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = {
+    "node_modules",
+    "vendor",
+    "external_repos",
+    "third_party",
+}
+
+
+def _search_paths_include_vendored_root(paths: list[str]) -> bool:
+    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep."""
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir():
+                continue
+            for child in path.iterdir():
+                if child.is_dir() and child.name.lower() in _UNBOUNDED_VENDORED_ROOT_DIR_NAMES:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
     if "--allow-broad-generated-scan" in search_args:
         return False
@@ -552,6 +594,8 @@ def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
         return False
     paths = _search_path_args(search_args)
     if _search_paths_include_workspace_root(paths):
+        return True
+    if _search_paths_include_vendored_root(paths):
         return True
     return _search_args_request_unrestricted_generated_scan(
         search_args

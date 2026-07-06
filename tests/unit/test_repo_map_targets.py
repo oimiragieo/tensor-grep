@@ -243,3 +243,22 @@ def test_repo_walk_honors_gitignore(tmp_path: Path) -> None:
     assert "keep.py" in walked
     assert "scratch.tmp" not in walked
     assert "vendored.py" not in walked
+
+
+def test_repo_walk_skips_tg_owned_index_and_reference_trees(tmp_path: Path) -> None:
+    """Critical unscoped-search-hang fix A: repo_map must never descend into tg's own
+    index/reference/vendor-benchmark trees -- these can be arbitrarily large and are never
+    product source. Kept in sync with docs_coverage.py's _EXCLUDED_DIR_PARTS."""
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+
+    for skipped_dir_name in ("_tg_refs", ".tg_semantic_index", "external_repos"):
+        skipped_dir = tmp_path / skipped_dir_name
+        skipped_dir.mkdir()
+        (skipped_dir / "big.py").write_text("y = 2\n", encoding="utf-8")
+
+    repo_map._load_gitignore_matcher.cache_clear()
+    walked = {p.name for p in repo_map._iter_repo_files(tmp_path)}
+    assert "keep.py" in walked
+    assert "big.py" not in walked
+    for skipped_dir_name in ("_tg_refs", ".tg_semantic_index", "external_repos"):
+        assert repo_map._should_skip_repo_dir(tmp_path / skipped_dir_name)
