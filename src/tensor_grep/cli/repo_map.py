@@ -139,7 +139,31 @@ def _mtime_aware_cache(
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
-DEFAULT_AGENT_REPO_MAP_LIMIT = 512
+# backlog #1 (Fable+thinktank plan, 2026-07-06): raised 512 -> 2000 so ROUTING commands
+# (edit-plan/agent/context-render/defs/orient/session-open/MCP fallbacks) stop misrouting on
+# repos >512 files -- a file past the old cap never entered the map at all, so the right file
+# could not be found (dogfood-proven: edit-plan "API retry" -> wrong file at 512, correct at
+# 2000). Measured cold repo-map-build cost: 512=1.48s, 2000=3.51s (OK), 4000=10.35s
+# (superlinear -- do NOT raise past 2000 without re-measuring). This constant is ALSO the
+# default for `main.py`'s shared `_DEFAULT_AGENT_REPO_SCAN_LIMIT` CLI option default (kept as a
+# separate literal there deliberately -- see the comment at its definition) which feeds BOTH
+# routing commands AND the caller-scan commands (callers/refs/blast-radius/impact); raising it
+# is safe for caller-scan latency ONLY because CALLER_SCAN_FILE_CEILING below bounds their
+# actual per-file work independently of how large the map is.
+DEFAULT_AGENT_REPO_MAP_LIMIT = 2000
+# backlog #1 chokepoint (the thinktank's winning insight over "repoint every option default",
+# which leaks -- e.g. session_store.py's stored-session blast-radius calls
+# build_symbol_blast_radius_from_map directly on a full session repo_map with NO max_repo_files
+# passthrough, so a per-command option default cannot reach it). The caller-scan functions
+# (build_symbol_callers_from_map, build_symbol_blast_radius_from_map via its callers-scan,
+# build_symbol_refs_from_map) do a slow per-file prefilter + re-parse whose wall-clock scales
+# with the file universe size (task #52: ~100s on a 1941-file repo at the old 512 cap already;
+# a naive raise to 2000 would make it worse). This ceiling bounds that ONE hot loop at a single
+# internal chokepoint, so it stays fast regardless of DEFAULT_AGENT_REPO_MAP_LIMIT / an explicit
+# --max-repo-files / a stored session map's size. When the scan is capped below the map's true
+# file count, the payload is marked result_incomplete (see _CALLER_SCAN_CEILING_REMEDIATION)
+# so the exit-2 truncation-honesty contract still fires.
+CALLER_SCAN_FILE_CEILING = 512
 _DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
@@ -500,13 +524,34 @@ _SCAN_LIMIT_TRUNCATED_REMEDIATION = (
     "`tg session daemon start`."
 )
 
+# backlog #1 chokepoint: distinct from _SCAN_LIMIT_TRUNCATED_REMEDIATION above (which fires when
+# the repo-MAP itself was truncated before this symbol resolved). This fires when the map was
+# complete but the caller-scan's OWN internal ceiling (CALLER_SCAN_FILE_CEILING) bounded how many
+# of the map's files were actually walked for callers/references -- a resolved symbol may still
+# be missing callers that live past the ceiling.
+_CALLER_SCAN_CEILING_REMEDIATION = (
+    f"The caller-scan was bounded to the first {CALLER_SCAN_FILE_CEILING} repo-map files for "
+    "latency, even though the map covers more; callers/references in files past that window "
+    "may be missing. Narrow PATH to a subdirectory containing the symbol for full coverage."
+)
+
 
 def _mark_result_incomplete(payload: dict[str, Any], *, remediation: str) -> None:
     """Payload-level honesty signal (round-6 council): set result_incomplete + remediation at ASSEMBLY
     time so non-CLI consumers (MCP tools, *_json) get the same truncation signal the CLI emitter adds.
-    Additive; callers gate it on possibly_truncated so complete results never grow the key."""
+    Additive; callers gate it on possibly_truncated so complete results never grow the key.
+
+    backlog #1 fix: a plain ``setdefault`` was a no-op whenever the payload already carried a
+    ``scan_remediation`` key with value ``None`` (every repo_map/defs payload does -- build_repo_map
+    always stamps ``scan_remediation`` to either a message or ``None``, never omits the key). That
+    silently swallowed the CALLER_SCAN_FILE_CEILING remediation on a repo_map that was itself
+    complete (dogfood-caught: `tg callers` on a real >512-file repo set result_incomplete:true but
+    scan_remediation:null). Only skip when an existing message is genuinely present (truthy), so a
+    MORE SPECIFIC remediation set earlier is still preserved (test:
+    test_mark_result_incomplete_helper_does_not_clobber_existing_remediation)."""
     payload["result_incomplete"] = True
-    payload.setdefault("scan_remediation", remediation)
+    if not payload.get("scan_remediation"):
+        payload["scan_remediation"] = remediation
 
 
 def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
@@ -1177,6 +1222,17 @@ def _repo_map_file_universe(repo_map: dict[str, Any]) -> list[Path]:
             seen.add(normalized)
             files.append(Path(normalized))
     return files
+
+
+def _cap_caller_scan_files(files: list[Path]) -> tuple[list[Path], bool]:
+    """backlog #1 chokepoint: bound the caller-scan file universe to
+    CALLER_SCAN_FILE_CEILING regardless of how large the passed-in repo_map is (the map default
+    was raised for routing accuracy; caller-scan latency must not scale with it). Returns
+    (capped_files, ceiling_exceeded) so the caller can mark the payload result_incomplete only
+    when the ceiling actually dropped files."""
+    if len(files) > CALLER_SCAN_FILE_CEILING:
+        return files[:CALLER_SCAN_FILE_CEILING], True
+    return files, False
 
 
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
@@ -12520,7 +12576,7 @@ def build_symbol_refs_from_map(
         return payload
     context_payload = build_context_pack_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
-    bounded_files = _repo_map_file_universe(repo_map)
+    bounded_files, refs_ceiling_hit = _cap_caller_scan_files(_repo_map_file_universe(repo_map))
     bounded_file_set = {str(current) for current in bounded_files}
     references: list[dict[str, Any]] = []
     refs_scan_deadline_hit = False
@@ -12702,6 +12758,10 @@ def build_symbol_refs_from_map(
             "reference_files_scanned": refs_files_scanned,
             "reference_files_total": len(bounded_files),
         }
+    if refs_ceiling_hit:
+        # backlog #1 chokepoint: the caller-scan ceiling dropped files the map otherwise covers
+        # -> the reference set is not exhaustive, so mark it honestly incomplete (exit-2 contract).
+        _mark_result_incomplete(payload, remediation=_CALLER_SCAN_CEILING_REMEDIATION)
     return payload
 
 
@@ -12770,7 +12830,7 @@ def build_symbol_callers_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         return _attach_profiling(payload, _profiling_collector)
     repo_root = Path(str(repo_map["path"])).resolve()
-    bounded_files = _repo_map_file_universe(repo_map)
+    bounded_files, callers_ceiling_hit = _cap_caller_scan_files(_repo_map_file_universe(repo_map))
     bounded_file_set = {str(current) for current in bounded_files}
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
@@ -13103,6 +13163,10 @@ def build_symbol_callers_from_map(
     )
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
+    if callers_ceiling_hit:
+        # backlog #1 chokepoint: the caller-scan ceiling dropped files the map otherwise covers
+        # -> the caller set is not exhaustive, so mark it honestly incomplete (exit-2 contract).
+        _mark_result_incomplete(payload, remediation=_CALLER_SCAN_CEILING_REMEDIATION)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -13688,6 +13752,21 @@ def build_symbol_blast_radius_from_map(
         caller_deadline_limit = callers_payload.get("deadline_limit")
         if isinstance(caller_deadline_limit, dict):
             payload["deadline_limit"] = dict(caller_deadline_limit)
+    if callers_payload.get("result_incomplete"):
+        # backlog #1 chokepoint: the direct-caller scan's internal ceiling (CALLER_SCAN_FILE_CEILING)
+        # dropped files the map covers -> the blast radius built on top of it is not exhaustive
+        # either (session_blast_radius calls this function directly on a full, unbounded session
+        # repo_map -- this is the leak fix, since a per-command option default can't reach that path).
+        # `caller_scan_truncated` is a DISTINCT scan-incompleteness signal so the blast-radius CLI gate
+        # can exit 2 on it WITHOUT catching a mere --max-callers/--max-files OUTPUT cap (which also sets
+        # result_incomplete but is a complete analysis capped only for display -> stays exit 0).
+        payload["caller_scan_truncated"] = True
+        _mark_result_incomplete(
+            payload,
+            remediation=str(
+                callers_payload.get("scan_remediation", _CALLER_SCAN_CEILING_REMEDIATION)
+            ),
+        )
     return _attach_profiling(payload, _profiling_collector)
 
 

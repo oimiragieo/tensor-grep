@@ -80,6 +80,10 @@ extend-exclude = [
     "benchmarks/bench_ast_data",
     "benchmarks/gpu_bench_data",
     "benchmarks/external_repos",
+    # Skill docs are prose, not code. `ruff format --preview` reformats python fenced code blocks
+    # inside their markdown, which false-alarms the CI format gate on skill examples (and the
+    # harness re-touches these files with CRLF). Exclude them from lint+format entirely.
+    ".claude/skills",
 ]
 
 [tool.ruff.format]
@@ -385,9 +389,10 @@ version_variables = [
 
 
 
+
 [project]
 name = "tensor-grep"
-version = "1.41.0"
+version = "1.42.0"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"

@@ -6265,7 +6265,8 @@ def test_agent_capsule_json_emits_argv_safe_recovery_commands_for_spaced_paths(t
         "--max-tokens",
         "1",
         "--max-repo-files",
-        "512",
+        # backlog #1: --max-repo-files default raised 512 -> 2000 for routing accuracy.
+        "2000",
     ]
     assert f'"{project.resolve()}"' in raw_ref["command"]
     assert "--query" not in raw_ref["argv"]
@@ -7166,7 +7167,8 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["routing_reason"] == "context-edit-plan"
-    assert payload["scan_limit"]["max_repo_files"] == 512
+    # backlog #1: --max-repo-files default raised 512 -> 2000 for routing accuracy.
+    assert payload["scan_limit"]["max_repo_files"] == 2000
     assert "rendered_context" not in payload
     assert "sources" not in payload
     assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())

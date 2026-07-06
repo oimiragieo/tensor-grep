@@ -39,6 +39,7 @@ def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> N
         "benchmarks/bench_ast_data",
         "benchmarks/gpu_bench_data",
         "benchmarks/external_repos",
+        ".claude/skills",
     ]
 
 

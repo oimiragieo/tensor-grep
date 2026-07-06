@@ -1,6 +1,74 @@
 # CHANGELOG
 
 
+## v1.42.0 (2026-07-06)
+
+### Features
+
+- Fix the 512-cap misroute — raise routing map to 2000 + bound caller-scan via an internal ceiling
+  (backlog #1) ([#405](https://github.com/oimiragieo/tensor-grep/pull/405),
+  [`0b4fafa`](https://github.com/oimiragieo/tensor-grep/commit/0b4fafa0bd0dff29af9cf8e998faff479bbfded3))
+
+* feat: raise routing map default to 2000 + bound caller-scan via an internal file ceiling (backlog
+  #1, Fable+thinktank plan)
+
+Default --max-repo-files map cap (512) misroutes edit-plan/agent/context-render/defs on repos with
+  >512 files: a file past the cap never enters the map, so the right file can never be found
+  (dogfood-proven on a real 1938-file TS repo). Raising the cap naively also makes
+  callers/refs/blast-radius slow (their per-file re-parse loop scales with the cap).
+
+Two changes, designed together:
+
+1. repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT 512 -> 2000 (routing accuracy; measured cold repo-map-build
+  cost: 512=1.48s, 2000=3.51s OK, 4000=10.35s superlinear).
+
+Necessary correction over the plan's literal wording: main.py's `--max-repo-files` CLI-option
+  default for the routing commands (defs/edit-plan/agent/context-render/ source) is a SEPARATE
+  literal, `_DEFAULT_AGENT_REPO_SCAN_LIMIT` (main.py:56) -- not `DEFAULT_AGENT_REPO_MAP_LIMIT`.
+  Bumping only the repo_map.py constant would have left every one of those commands still defaulting
+  to 512 at the CLI layer. Raised both, kept in sync via comments; this constant is shared with the
+  caller-scan commands (callers/refs/blast-radius/impact) too, which is safe only because of change
+  2.
+
+2. NEW internal chokepoint: repo_map.CALLER_SCAN_FILE_CEILING (512) caps the file universe that
+  build_symbol_callers_from_map / build_symbol_blast_radius_from_map / build_symbol_refs_from_map
+  actually walk for their slow per-file prefilter + re-parse, regardless of how large the
+  map/session repo_map is. This is what keeps caller-scan commands fast despite the 4x larger map
+  default, and it is also what fixes the session-blast-radius leak:
+  session_store.session_blast_radius calls build_symbol_blast_radius_from_map directly on the full
+  stored session repo_map with no per-command cap to intercept it, so only an internal ceiling can
+  bound it. When the ceiling actually drops files the map covers, the payload is marked
+  result_incomplete (scan_remediation attached) so the exit-2 truncation-honesty contract still
+  fires.
+
+agent_capsule.py's call-site-evidence collection already routes through build_symbol_blast_radius ->
+  build_symbol_blast_radius_from_map, so it is covered by the ceiling automatically; no separate
+  clamp needed there (verified, not assumed).
+
+Caller-scan COMMAND option defaults are left untouched per the plan -- the ceiling is the real
+  bound, not a per-command repoint (which the thinktank showed leaks, e.g. the session leak above
+  that no per-command default can reach).
+
+Tests: tests/unit/test_cap_fix_chokepoint.py (new, TDD) covers (a) defs/edit-plan finding a symbol
+  past file position 512 at the new default, (b)/(c) callers/refs/blast-radius and
+  session-blast-radius bounding their scan to <=512 files with result_incomplete set when the
+  ceiling truncates, (d) a genuinely >2000-file tree still exits 2 on the existing scan-truncation
+  contract. Updated 4 pre-existing tests whose fixtures hardcoded the old 512 CLI default
+  (test_cli_modes.py, test_session_cli.py).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: _mark_result_incomplete no longer swallows the ceiling remediation when scan_remediation is
+  None (dogfood-caught)
+
+* fix(#405 Fable review): blast-radius exits 2 on caller-scan ceiling truncation via a distinct
+  caller_scan_truncated signal (not output-caps); strengthen the scan_remediation test assertion
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.41.0 (2026-07-06)
 
 ### Features
