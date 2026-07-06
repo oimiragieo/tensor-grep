@@ -1,6 +1,88 @@
 # CHANGELOG
 
 
+## v1.40.4 (2026-07-06)
+
+### Bug Fixes
+
+- Restore exit-2-on-truncation even when found (revert #399, council-verified B)
+  ([#401](https://github.com/oimiragieo/tensor-grep/pull/401),
+  [`129b5ed`](https://github.com/oimiragieo/tensor-grep/commit/129b5ed03033a2badc2dfb4a4bcd04bb1a3dfa2c))
+
+A unanimous design council overturned #399's "found-but-truncated -> exit 0" narrowing. Both lenses
+  (including the one arguing FOR found->0) concluded truncation must trump found: - `tg search`
+  already exits 2 on result_incomplete regardless of matches; #399 made the symbol commands diverge
+  -> two contradictory conventions, the exact failure the honesty campaign fights. - The exit code
+  is one control-flow bit; getting "is this the COMPLETE set" wrong (a blast-radius/refactor that
+  misses call-sites beyond the cap) is worse than a wasted retry. - The "every big-repo query exits
+  2" friction #399 chased is a DEFAULT-CAP miscalibration (512, entangled with the slow TS caller
+  re-parse), to fix separately -- not a reason to fork the contract.
+
+Restores _emit_symbol_command_result + the blast-radius block to `exit 2 on (partial or
+  result_incomplete)` regardless of found/empty; blast-radius still keeps its OUTPUT-cap-stays-0
+  rule (gate on scan-truncation, not the display cap). Tests updated to assert found+truncated -> 2.
+  CONTRACTS.md already documents B. Default-cap auto-scaling tracked as a follow-up (#56).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
+## v1.40.3 (2026-07-06)
+
+### Bug Fixes
+
+- Unscoped tg search can no longer hang forever (CRITICAL, dogfood + audit)
+  ([#400](https://github.com/oimiragieo/tensor-grep/pull/400),
+  [`e7f18b7`](https://github.com/oimiragieo/tensor-grep/commit/e7f18b7484d5e23cdd02f60248c505f31a19d060))
+
+* fix: unscoped tg search can no longer hang forever (CRITICAL, dogfood + audit)
+
+The reporter's #1: `tg search PATTERN` with no PATH could hang until manually killed. Root-caused by
+  the deep-dive (cursor audit + Fable review), fixed in 3 parts + one dogfood-found correction: -
+  (A) repo_map._SKIP_DIR_NAMES now excludes tg-owned trees
+  (_tg_refs/.tg_semantic_index/external_repos), matching docs_coverage; walks no longer ingest large
+  non-product trees. - (B) THE MAIN CULPRIT: the native per-file search walk (main.py search() loop,
+  ~6368) had NO wall-clock (rg routes were bounded, native wasn't). Added
+  compute_native_walk_deadline / native_walk_deadline_exceeded (cpu_backend.py, reusing
+  subprocess_policy.configured_ripgrep_timeout_seconds -- the same resolver rg uses) checked once
+  per file; on expiry -> result_incomplete + break with partial matches (flows through the existing
+  result_incomplete->exit-2 convention), never a silent empty (fail-closed). - (C)
+  _should_refuse_unbounded_vendored_root_scan: O(top-level-only) iterdir probe refusing a root with
+  node_modules/vendor/external_repos/third_party at top level (exit 2 + actionable message).
+  Deliberately EXCLUDES .tensor-grep/_tg_refs from the trigger (dogfood showed including them
+  refused every search from tg's own repo root + broke 49 tests). - Dogfood-found correction: the
+  front door is bootstrap.py::main_entry (its OWN guard copy, fast-paths to native/rg bypassing
+  main.py), so C's main.py guard alone didn't fire. Mirrored the top-level-vendored probe into
+  bootstrap so a broad vendored root falls through to the Python CLI where C fires.
+
+DOGFOOD: `search TODO --json` from C:/dev/projects (node_modules at top level) 0.51s exit 2 (was
+  >30s hang/exit 124); from tensor-grep root 0.59s exit 0 (21 matches, .tensor-grep correctly not
+  triggered). 3251 unit + 21 integration green; 1 pre-existing e2e rg-env failure (verified on
+  unmodified main); ruff/mypy clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: narrow vendored-root refusal to walker-descended dirs (PR #400 review H1)
+
+`_should_refuse_unbounded_vendored_root_scan` (cli/main.py) and its front-door mirror
+  `_search_paths_include_vendored_root` (cli/bootstrap.py) refused (exit 2) any root with
+  node_modules/vendor/third_party/external_repos at its top level. But DirectoryScanner already
+  hard-skips node_modules (_GENERATED_DIR_NAMES), and rg respects .gitignore + Fix B's per-file
+  deadline -- so node_modules was never actually unbounded, and the refusal needlessly exit-2'd
+  every ordinary Node/React repo's unscoped search.
+
+Narrow the trigger set to heavy dirs the walker would actually descend: subtract
+  _GENERATED_DIR_NAMES from the heavy-dir list in io/directory_scanner.py (single source of truth,
+  UNBOUNDED_VENDORED_ROOT_DIR_NAMES) and import it into both cli/main.py and cli/bootstrap.py so the
+  two guards can never drift out of sync (closes review finding L1).
+  vendor/third_party/external_repos still trigger the refusal; node_modules no longer does.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.40.2 (2026-07-06)
 
 ### Bug Fixes
