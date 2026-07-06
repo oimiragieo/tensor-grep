@@ -2851,6 +2851,61 @@ def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch):
     assert "!**/context/**" in seen["glob"]
 
 
+def test_cli_rg_aggregate_json_timeout_emits_incomplete_envelope_exit2(monkeypatch):
+    """Fable review of #400, finding H2: when `tg search PATTERN --json` routes to the
+    ripgrep AGGREGATE backend and the rg subprocess times out, the old code let
+    ``subprocess.TimeoutExpired`` fall into RipgrepBackend.search()'s broad `except
+    Exception`, wrap it as a RuntimeError, and re-raise -- main.py's search command had no
+    handler for that either, so it became an UNCAUGHT traceback: exit 1, no JSON envelope,
+    all partial results lost. This drives the REAL RipgrepBackend (not a fake) through the
+    full CLI so the fix in ripgrep_backend.py is exercised end-to-end: a timed-out
+    aggregate search must instead emit a valid JSON envelope with
+    ``result_incomplete: true`` and exit 2 -- the same signal already used for the native
+    walk-deadline timeout (#400) and rg's own soft exit-2 partial failure.
+    """
+    import subprocess as _subprocess
+
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend as RealRipgrepBackend
+
+    global _FAKE_WALK
+    _FAKE_WALK = {".": ["a.log"]}
+
+    real_backend = RealRipgrepBackend()
+    monkeypatch.setattr(RealRipgrepBackend, "_get_binary_name", lambda self: "rg")
+
+    def _raise_timeout(*_args, **_kwargs):
+        raise _subprocess.TimeoutExpired(cmd=["rg"], timeout=5, output="")
+
+    monkeypatch.setattr("tensor_grep.backends.ripgrep_backend.run_subprocess", _raise_timeout)
+
+    class _RipgrepPipeline:
+        def __init__(self, force_cpu=False, config=None):
+            self.backend = real_backend
+            self.selected_backend_name = "RipgrepBackend"
+            self.selected_backend_reason = "rg_json"
+            self.selected_gpu_device_ids = []
+            self.selected_gpu_chunk_plan_mb = []
+
+        def get_backend(self):
+            return self.backend
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _RipgrepPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    result = CliRunner().invoke(app, ["search", "ERROR", ".", "--json"])
+
+    # Click's CliRunner always reports a clean sys.exit(N) as a SystemExit(N)
+    # `result.exception` -- that is NOT a crash. Only fail here if something else
+    # (RuntimeError, AttributeError, ...) propagated uncaught.
+    if result.exception is not None and not isinstance(result.exception, SystemExit):
+        raise AssertionError(f"uncaught exception: {result.exception!r}")
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is True
+    assert "timeout" in payload.get("incomplete_reason", "").lower()
+
+
 def test_cli_wrapped_rg_regex_parse_error_reports_diagnostic(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}
