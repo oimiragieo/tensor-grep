@@ -15,6 +15,17 @@ _CAPSULE_LSP_CONFIDENCE_BOOST_ENV = "TG_CAPSULE_LSP_CONFIDENCE_BOOST"
 _CAPSULE_LSP_CONFIDENCE_CAP = 0.85
 _CAPSULE_LSP_CONFIDENCE_LANGUAGES = {"javascript", "php", "python", "rust", "typescript"}
 
+# F4: the exact `_build_snippets` omission reason for a source cut by the capsule's OWN token
+# budget (agent_capsule.py `_build_snippets`) -- distinct from the generic "not present in
+# capsule snippets" fallback `_capsule_context_consistency` uses when the primary file never
+# appeared among the rendered sources at all (a genuine ranking miss, not a budget cut).
+_CAPSULE_TOKEN_BUDGET_OMISSION_REASON = "token budget exhausted"
+# Uplift ceiling for a *corroborated* token-budget-only primary omission. Deliberately below the
+# uncapped 0.9 default and matched to the >=0.75 "no ask-user" threshold (agent_capsule.py
+# `ask_user_before_editing` construction) -- this is a bounded relief from the 0.55 safety floor,
+# not a return to full confidence.
+_CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP = 0.75
+
 
 def _as_dict(value: object) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
@@ -1225,6 +1236,140 @@ def _confidence(
     return {"overall": round(overall, 3), "downgrade_reasons": deduped_reasons}
 
 
+def _primary_target_matches_query(query: str, target: dict[str, Any]) -> bool:
+    """True when the primary target's symbol or file stem is actually named by the query.
+
+    Corroboration signal for `_apply_capsule_token_budget_confidence_uplift`: a token-budget
+    omission is only safe to uplift when the primary target itself is independently confirmed
+    by the query, not merely by ranking.
+    """
+    query_terms = set(repo_map._query_terms(query))
+    if not query_terms:
+        return False
+    symbol = str(target.get("symbol") or "")
+    if symbol and set(split_terms(symbol)) & query_terms:
+        return True
+    file_path = str(target.get("file") or "")
+    if file_path and set(split_terms(Path(file_path).stem)) & query_terms:
+        return True
+    return False
+
+
+def _capsule_primary_omission_is_token_budget_only(consistency: dict[str, Any]) -> bool:
+    """True when the ONLY primary-file downgrade signal is a corroborable token-budget cut.
+
+    This is the split at the heart of F4: `primary_file_included is False` /
+    `rendered_context_includes_primary is False` mean ranking never selected or rendered the
+    primary at all -- a genuine misroute, and this function must return False so the 0.55
+    degrade-to-ask safety floor (v1.17.13) keeps holding. `capsule_primary_file_omitted` with
+    the SPECIFIC `_CAPSULE_TOKEN_BUDGET_OMISSION_REASON` means the primary WAS selected/rendered
+    upstream and only the capsule's own snippet token budget cut it -- a much weaker signal.
+    The generic "primary file not present in capsule snippets" fallback text (used when the
+    primary never appeared among `_build_snippets`' omitted sources either) intentionally does
+    NOT match here, so it still falls through to the safety floor.
+    """
+    if consistency.get("primary_file_included") is False:
+        return False
+    if consistency.get("rendered_context_includes_primary") is False:
+        return False
+    if not consistency.get("capsule_primary_file_omitted"):
+        return False
+    return (
+        consistency.get("capsule_primary_file_omission_reason")
+        == _CAPSULE_TOKEN_BUDGET_OMISSION_REASON
+    )
+
+
+def _capsule_token_budget_uplift_eligible(
+    *,
+    query: str,
+    target: dict[str, Any],
+    snippets: list[dict[str, Any]],
+    consistency: dict[str, Any],
+    call_site_evidence: dict[str, Any],
+) -> bool:
+    if not snippets:
+        return False
+    if not _capsule_primary_omission_is_token_budget_only(consistency):
+        return False
+    # Require the token-budget cut to be the ONLY confidence-downgrading signal in play -- if a
+    # trust-level conflict (language mismatch, validation misalignment), an alternative-target
+    # tie, or a marker-helper demotion is ALSO present, leave the existing (conservative)
+    # behavior untouched rather than trying to partially unwind a multi-cause downgrade.
+    other_reasons = {
+        str(reason) for reason in (consistency.get("downgrade_reasons") or []) if reason
+    } - {"primary file omitted from capsule snippets by token budget"}
+    if other_reasons:
+        return False
+    if not _primary_target_matches_query(query, target):
+        return False
+    return call_site_evidence.get("status") == "collected"
+
+
+def _apply_capsule_token_budget_confidence_uplift(
+    *,
+    query: str,
+    target: dict[str, Any],
+    alternatives: list[dict[str, Any]],
+    snippets: list[dict[str, Any]],
+    consistency: dict[str, Any],
+    confidence: dict[str, Any],
+    confidence_cap: float,
+    call_site_evidence: dict[str, Any],
+    ask_reasons: list[str],
+) -> None:
+    """Uplift the 0.55 primary-omission clamp to <=0.75 for a CORROBORATED token-budget-only
+    omission -- never for a genuine misroute (see `_capsule_primary_omission_is_token_budget_only`).
+
+    STRUCTURAL note: this must run AFTER `_collect_capsule_call_site_evidence` (agent_capsule.py
+    call order), since verified caller evidence -- the corroboration this uplift depends on --
+    isn't available until that call returns. It mutates `confidence`, `target`, `alternatives`,
+    and `ask_reasons` in place so `build_agent_capsule`'s already-assembled payload reflects the
+    uplift without re-deriving `ask_user_before_editing` from scratch.
+    """
+    current_overall = float(confidence.get("overall", 0.0))
+    if current_overall > 0.55:
+        return
+    if not _capsule_token_budget_uplift_eligible(
+        query=query,
+        target=target,
+        snippets=snippets,
+        consistency=consistency,
+        call_site_evidence=call_site_evidence,
+    ):
+        return
+    uplifted = round(min(_CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP, confidence_cap), 3)
+    if uplifted <= current_overall:
+        return
+    confidence["overall"] = uplifted
+    remaining_reasons = [
+        reason
+        for reason in confidence.get("downgrade_reasons", [])
+        if reason != "primary file omitted from capsule snippets by token budget"
+    ]
+    remaining_reasons.append(
+        "primary file omitted by token budget only; uplifted to "
+        f"{uplifted} on corroborated call-site evidence"
+    )
+    confidence["downgrade_reasons"] = remaining_reasons
+    consistency["capsule_token_budget_confidence_uplifted"] = True
+    _cap_primary_target_confidence(target, uplifted)
+    _cap_alternative_target_confidences(alternatives, target)
+    # These three ask-reasons were added solely because of the primary-file-omission clamp we
+    # just uplifted (asserted by the "no other downgrade reason" eligibility check above) -- clear
+    # them so `ask_user_before_editing.required` deliberately flips to False for this case.
+    ask_reasons[:] = [
+        reason
+        for reason in ask_reasons
+        if reason
+        not in {
+            "confidence below 0.75",
+            "primary file omitted from capsule snippets",
+            "context consistency requires confirmation",
+        }
+    ]
+
+
 def build_agent_capsule(
     query: str,
     path: str | Path = ".",
@@ -1506,6 +1651,20 @@ def build_agent_capsule(
         include_blast_radius=include_blast_radius,
         max_files=max_files,
         max_repo_files=max_repo_files,
+    )
+    # F4: verified call-site evidence is only available NOW (after the collection above), so the
+    # token-budget-omission confidence uplift must happen here, post-hoc, rather than inside
+    # `_confidence` -- see `_apply_capsule_token_budget_confidence_uplift`'s docstring.
+    _apply_capsule_token_budget_confidence_uplift(
+        query=query,
+        target=target,
+        alternatives=alternatives,
+        snippets=snippets,
+        consistency=consistency,
+        confidence=confidence,
+        confidence_cap=confidence_cap,
+        call_site_evidence=call_site_evidence,
+        ask_reasons=ask_reasons,
     )
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
     route_rationale: list[dict[str, Any]] = [
