@@ -73,7 +73,12 @@ _WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
 _NATIVE_TG_REMEDIATION = (
     "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
 )
-_DEFAULT_MCP_REPO_SCAN_LIMIT = 512
+# Raised 512 -> 2000 (Fable completeness review) to match the post-cap-fix CLI default
+# (repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT) so MCP routing-family tools (defs/context/etc.)
+# get the same routing accuracy as the CLI. Safe: the caller-scan cost stays independently
+# bounded at 512 by CALLER_SCAN_FILE_CEILING (repo_map.py) regardless of this value -- see
+# the rationale comment at repo_map.py's CALLER_SCAN_FILE_CEILING definition.
+_DEFAULT_MCP_REPO_SCAN_LIMIT = 2000
 # Bound the context payload on the AGENT surface by default (round-6 rank-4). The #359 cap only
 # reached the CLI (typer default 16000); the MCP tools an agent actually calls defaulted to None
 # (unbounded), so a context pack/render could balloon to ~800KB straight into a model's prompt.
@@ -2395,17 +2400,28 @@ def tg_symbol_defs(
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_source(symbol: str, path: str = ".", provider: str = "native") -> str:
+def tg_symbol_source(
+    symbol: str,
+    path: str = ".",
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+) -> str:
     """
     Return exact source blocks for a symbol definition.
 
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
         return _inject_mcp_contract_fields(
-            json.dumps(build_symbol_source(symbol, path, semantic_provider=provider), indent=2)
+            json.dumps(
+                build_symbol_source(
+                    symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -2721,6 +2737,7 @@ def tg_search(
     type_filter: str | None = None,
     query: str | None = None,
     structured_json: bool = True,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
 ) -> str:
     """
     Search files for a regex pattern using tensor-grep's high-speed GPU or CPU engine.
@@ -2742,12 +2759,17 @@ def tg_search(
         type_filter: Only search files matching TYPE (e.g. 'py', 'js').
         structured_json: Return bounded structured JSON (default true). Set to false for
             plain-text output.
+        max_repo_files: Maximum files the directory walk searches when the backend is not
+            ripgrep (rg absent / GPU / hybrid / python-regex). Ignored when RipgrepBackend
+            handles the whole-path search natively. Protects against an unscoped full-repo
+            per-file search loop.
     """
     search_pattern = pattern or query
     if not search_pattern:
         return "Search failed: either pattern or query is required."
     rendered_file_limit = max(0, max_files if max_files is not None else 15)
     rendered_result_limit = max(0, max_results if max_results is not None else 150)
+    normalized_max_repo_files = max(1, int(max_repo_files))
     config = SearchConfig(
         case_sensitive=case_sensitive,
         ignore_case=ignore_case,
@@ -2776,6 +2798,7 @@ def tg_search(
         getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
     all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
+    scan_limit_payload: dict[str, Any] | None = None
     try:
         if isinstance(backend, RipgrepBackend):
             all_results = backend.search(path, search_pattern, config=config)
@@ -2783,8 +2806,14 @@ def tg_search(
             all_results.routing_reason = all_results.routing_reason or selected_backend_reason
         else:
             scanner = DirectoryScanner(config)
+            files_scanned = 0
+            scan_capped = False
             for current_file in scanner.walk(path):
+                if files_scanned >= normalized_max_repo_files:
+                    scan_capped = True
+                    break
                 result = backend.search(current_file, search_pattern, config=config)
+                files_scanned += 1
                 all_results.matches.extend(result.matches)
                 all_results.matched_file_paths.extend(result.matched_file_paths)
                 _merge_count_metadata(all_results, result)
@@ -2792,6 +2821,17 @@ def tg_search(
                 if result.total_files > 0 or result.total_matches > 0:
                     all_results.total_files += 1
                 _merge_runtime_routing(all_results, result)
+            # The 200k-entry DirectoryScanner traversal budget (Q14) is a separate,
+            # coarser defensive cap than max_repo_files -- it can trip first and
+            # truncate the walk below max_repo_files without ever hitting the
+            # per-file counter above, so OR it into possibly_truncated too. Coerce to a
+            # real bool: a mocked scanner in a test can auto-vivify a truthy non-bool.
+            scan_capped = scan_capped or bool(getattr(scanner, "scan_truncated", False))
+            scan_limit_payload = {
+                "max_repo_files": normalized_max_repo_files,
+                "scanned_files": files_scanned,
+                "possibly_truncated": scan_capped,
+            }
 
         _apply_selected_gpu_defaults(
             all_results=all_results,
@@ -2800,25 +2840,34 @@ def tg_search(
         )
         _finalize_aggregate_result(all_results)
 
+        empty_scan_capped = bool(scan_limit_payload and scan_limit_payload["possibly_truncated"])
         if all_results.is_empty:
             if structured_json:
-                return json.dumps(
-                    {
-                        "pattern": search_pattern,
-                        "path": path,
-                        "total_matches": 0,
-                        "total_files": all_results.total_files,
-                        "rendered_match_count": 0,
-                        "rendered_file_count": 0,
-                        "matches": [],
-                        "truncated": False,
-                        "omitted_matches": 0,
-                        "omitted_files": 0,
-                        "routing": _routing_payload(all_results),
-                    },
-                    indent=2,
-                )
-            return f"No matches found for '{search_pattern}' in {path}.\n{_routing_summary(all_results)}"
+                payload = {
+                    "pattern": search_pattern,
+                    "path": path,
+                    "total_matches": 0,
+                    "total_files": all_results.total_files,
+                    "rendered_match_count": 0,
+                    "rendered_file_count": 0,
+                    "matches": [],
+                    "truncated": empty_scan_capped,
+                    "omitted_matches": 0,
+                    "omitted_files": 0,
+                    "routing": _routing_payload(all_results),
+                }
+                if scan_limit_payload is not None:
+                    payload["scan_limit"] = scan_limit_payload
+                return json.dumps(payload, indent=2)
+            capped_note = (
+                f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                if empty_scan_capped
+                else ""
+            )
+            return (
+                f"No matches found for '{search_pattern}' in {path}.\n{_routing_summary(all_results)}"
+                f"{capped_note}"
+            )
 
         if count_matches:
             return (
@@ -2851,7 +2900,8 @@ def tg_search(
         rendered_file_count = len(rendered_by_file)
         omitted_matches = max(0, all_results.total_matches - rendered_match_count)
         omitted_files = max(0, all_results.total_files - rendered_file_count)
-        truncated = omitted_matches > 0 or omitted_files > 0
+        scan_capped = bool(scan_limit_payload and scan_limit_payload["possibly_truncated"])
+        truncated = omitted_matches > 0 or omitted_files > 0 or scan_capped
 
         if structured_json:
             payload_matches = [
@@ -2859,26 +2909,26 @@ def tg_search(
                 for filepath, matches in rendered_by_file.items()
                 for match in matches
             ]
-            return json.dumps(
-                {
-                    "pattern": search_pattern,
-                    "path": path,
-                    "total_matches": all_results.total_matches,
-                    "total_files": all_results.total_files,
-                    "rendered_match_count": len(payload_matches),
-                    "rendered_file_count": rendered_file_count,
-                    "matches": payload_matches,
-                    "truncated": truncated,
-                    "omitted_matches": omitted_matches,
-                    "omitted_files": omitted_files,
-                    # Partial results (rg exit 2 soft error) — top-level so an agent caller can't
-                    # read a truncated result as complete (suppression != absence).
-                    "result_incomplete": all_results.result_incomplete,
-                    "incomplete_reason": all_results.incomplete_reason,
-                    "routing": _routing_payload(all_results),
-                },
-                indent=2,
-            )
+            payload = {
+                "pattern": search_pattern,
+                "path": path,
+                "total_matches": all_results.total_matches,
+                "total_files": all_results.total_files,
+                "rendered_match_count": len(payload_matches),
+                "rendered_file_count": rendered_file_count,
+                "matches": payload_matches,
+                "truncated": truncated,
+                "omitted_matches": omitted_matches,
+                "omitted_files": omitted_files,
+                # Partial results (rg exit 2 soft error) — top-level so an agent caller can't
+                # read a truncated result as complete (suppression != absence).
+                "result_incomplete": all_results.result_incomplete,
+                "incomplete_reason": all_results.incomplete_reason,
+                "routing": _routing_payload(all_results),
+            }
+            if scan_limit_payload is not None:
+                payload["scan_limit"] = scan_limit_payload
+            return json.dumps(payload, indent=2)
 
         # Format the results into a readable string for the LLM
         output = [
@@ -2897,6 +2947,10 @@ def tg_search(
                     f"\n... output truncated to {rendered_match_count} results across "
                     f"{rendered_file_count} files; omitted {omitted_matches} matches "
                     f"across {omitted_files} files."
+                )
+            if scan_capped:
+                output.append(
+                    f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
                 )
         elif all_results.match_counts_by_file:
             rendered_counts = list(all_results.match_counts_by_file.items())[:rendered_file_limit]
