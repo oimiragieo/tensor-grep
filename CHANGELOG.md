@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.45.6 (2026-07-07)
+
+### Bug Fixes
+
+- **reliability H8/H9/M6/M8**: Apply_policy stops reporting phantom rollbacks; index_lock reclaims a
+  fresh dead holder (timeout>stale); session_store fsyncs atomic writes; retention prunes by
+  created_at ([#427](https://github.com/oimiragieo/tensor-grep/pull/427),
+  [`9309a30`](https://github.com/oimiragieo/tensor-grep/commit/9309a30fa2cc348fe46be4e805cd1adff381a9b7))
+
+
 ## v1.45.5 (2026-07-07)
 
 ### Bug Fixes
