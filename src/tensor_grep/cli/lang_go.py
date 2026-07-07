@@ -407,11 +407,17 @@ def _go_work_use_dirs(go_work_path: Path) -> list[str]:
         return []
     dirs: list[str] = []
     for line_match in _GO_WORK_USE_LINE_RE.finditer(text):
-        dirs.append(line_match.group(1).strip())
+        candidate = line_match.group(1).strip()
+        # F23: the single-line `use ...$` regex also matches the `use (` block-open header,
+        # capturing "(" (or a compact `use (./m)`). Never treat the block opener as a directory.
+        if candidate and not candidate.startswith("("):
+            dirs.append(candidate)
     for block_match in _GO_WORK_USE_BLOCK_RE.finditer(text):
         for raw_line in block_match.group(1).splitlines():
-            candidate = raw_line.strip()
-            if candidate and not candidate.startswith("//"):
+            # F23: strip a trailing `// comment` (e.g. `./m // legacy`), not just full-line
+            # comments -- otherwise the comment text becomes part of the resolved directory path.
+            candidate = raw_line.split("//", 1)[0].strip()
+            if candidate:
                 dirs.append(candidate)
     return dirs
 

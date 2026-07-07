@@ -75,8 +75,12 @@ def rerank_hybrid(
     Mirrors :func:`rerank_by_bm25`: SAME matches as the input, only the order changes. The BM25
     leg always runs; the dense leg is optional -- the caller owns dense-leg availability and the
     fail-closed BM25-only degrade (see ``core/retrieval_dense.py``), so ``dense_index=None`` here
-    simply means "fuse with the BM25 leg alone" (still routed through RRF, which is equivalent to
-    a stable BM25-only ordering when there is nothing to fuse it with).
+    simply means "fuse with the BM25 leg alone" (still routed through RRF).
+
+    NOTE (F15): a BM25-only RRF degrade is NOT byte-identical to :func:`rerank_by_bm25` on a BM25
+    SCORE TIE -- RRF breaks ties by ascending chunk index, whereas ``rerank_by_bm25``'s stable sort
+    preserves grep order. Both are valid orderings; when ``--semantic`` is requested the fused path
+    is authoritative, so this is a benign ordering divergence, not a correctness gap.
     """
     if not result.matches:
         return dataclasses.replace(result, matches=list(result.matches))
