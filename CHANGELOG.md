@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.44.1 (2026-07-07)
+
+### Bug Fixes
+
+- **F5**: Route-test demotes sub-threshold confidence to a note (not a warning) when both routes
+  AGREE; keeps the warning floor when both confidences are very low (correlated-error tell) (dogfood
+  v1.42.0) ([#417](https://github.com/oimiragieo/tensor-grep/pull/417),
+  [`dc22227`](https://github.com/oimiragieo/tensor-grep/commit/dc2222794e602c3c36585f83e6edfe825da51fa8))
+
+
 ## v1.44.0 (2026-07-07)
 
 ### Features
