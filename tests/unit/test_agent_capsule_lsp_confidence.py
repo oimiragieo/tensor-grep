@@ -300,10 +300,13 @@ def test_capsule_lsp_boost_keeps_confirmation_when_tied_alternative_is_lsp_backe
 def test_capsule_lsp_boost_requires_supported_target_language(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary_file = tmp_path / "payments.go"
-    alternative_file = tmp_path / "billing.go"
-    primary_file.write_text("func create_invoice() {}\n", encoding="utf-8")
-    alternative_file.write_text("func create_invoice() {}\n", encoding="utf-8")
+    # PATH A Stage 1: .go moved from "unsupported target language" to "supported" (it now has
+    # its own LanguageSpec + _target_language_for_path("go") mapping), so .rb (still genuinely
+    # unsupported) stands in here instead -- this test is about the None-target-language case.
+    primary_file = tmp_path / "payments.rb"
+    alternative_file = tmp_path / "billing.rb"
+    primary_file.write_text("def create_invoice\nend\n", encoding="utf-8")
+    alternative_file.write_text("def create_invoice\nend\n", encoding="utf-8")
     monkeypatch.setenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, "1")
     monkeypatch.setattr(
         repo_map,

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
-from tensor_grep.cli import lang_registry
+from tensor_grep.cli import lang_go, lang_registry
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -68,6 +68,7 @@ def _clear_all_source_caches() -> None:
     # after an edit. Clear them too so the sweep is actually complete (they rebuild on demand).
     _JS_TS_REPO_CONTEXTS.clear()
     _RUST_REPO_CONTEXTS.clear()
+    lang_go.clear_go_repo_context_cache()
 
 
 # Fix B: the JS/TS import-resolution path (_js_ts_module_candidates / _js_ts_candidate_files /
@@ -5065,6 +5066,38 @@ lang_registry.register_language(
     )
 )
 
+# PATH A Stage 1: first language expansion beyond the original four. Go's grammar/import model
+# is simpler than Rust's (package == directory, no mod-tree to walk), so its extractor lives in
+# its own module (lang_go.py) rather than inline here -- see that module's docstring for the
+# no-import-cycle rationale. provenance_when_missing="grammar-missing" (NOT "regex-heuristic")
+# is what makes a grammar-absent Go file a genuine `resolution_gaps` entry instead of a silent
+# empty result (Go has no regex fallback, unlike JS/TS/Rust).
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="go",
+        suffixes=frozenset({".go"}),
+        grammar_modules=("tree_sitter", "tree_sitter_go"),
+        parser_for_path=lambda path: lang_go._go_parser(),
+        provenance_when_parsed="tree-sitter",
+        provenance_when_missing="grammar-missing",
+        import_markers=(b"import ",),
+        def_node_kinds=(
+            "function_declaration",
+            "method_declaration",
+            "type_spec",
+            "const_spec",
+            "var_spec",
+        ),
+        extract_imports_and_symbols=None,
+        references_and_calls=lang_go.go_references_and_calls,
+        provider_alias_calls=None,
+        file_imports_symbol_from_definition=lang_go.go_file_imports_symbol_from_definition,
+        import_update_target=None,
+        prime_repo_context=lang_go.prime_go_repo_context,
+        classify_ref_kind=None,
+    )
+)
+
 
 def _prime_all_language_repo_contexts(context_root: Path) -> None:
     """Prime every registered language's per-repo-root context exactly once.
@@ -5114,6 +5147,11 @@ def _imports_and_symbols_for_path(
             current_symbols = _rust_parser_symbols(path)
             if not current_symbols:
                 _, current_symbols = _regex_imports_and_symbols(path)
+        elif spec is not None and spec.language_id == "go":
+            # Fail-closed (Stage 1 trap): NO regex fallback for Go. A grammar-missing Go file
+            # returns ([], []) here -- surfaced honestly via `resolution_gaps`, never silently
+            # degraded to a text heuristic the way JS/TS/Rust are.
+            current_imports, current_symbols = lang_go.go_imports_and_symbols(path)
         elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
@@ -5501,6 +5539,13 @@ def _target_language_for_path(path: str | Path | None) -> str | None:
         return "javascript"
     if suffix in _RUST_SUFFIXES:
         return "rust"
+    if suffix == ".go":
+        # MOST-FORGOTTEN seam (PATH A Stage 1 design note): without this, the capsule's
+        # query-language-vs-target-language 0.55 confidence cap (agent_capsule.py) never even
+        # sees "go" as a candidate target language, so it can silently misfire on Go targets --
+        # e.g. treating a Go primary file as having "no target language" instead of correctly
+        # reporting primary_target_language == "go".
+        return "go"
     return None
 
 
@@ -12763,6 +12808,8 @@ def build_symbol_source_from_map(
                 current_sources = _js_ts_parser_symbol_sources(current_path, symbol)
             if not current_sources and current_path.suffix in _RUST_SUFFIXES:
                 current_sources = _rust_parser_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix == ".go":
+                current_sources = lang_go.go_parser_symbol_sources(current_path, symbol)
             if not current_sources:
                 current_sources = _regex_symbol_sources(current_path, symbol)
             sources.extend(current_sources)
@@ -13222,6 +13269,34 @@ def build_symbol_refs_from_map(
                 for call in current_calls
             ]
             current_refs.extend(rust_call_refs)
+        elif current_spec is not None and current_spec.language_id == "go":
+            # Fail-closed (Stage 1 trap): no regex/provider-alias fallback for Go -- a
+            # grammar-missing file yields ([], []) here and is surfaced honestly via
+            # `resolution_gaps` further down, never a silently-degraded text match.
+            current_refs, current_calls = lang_go.go_references_and_calls(
+                current, symbol, repo_root
+            )
+            go_call_refs = [
+                {
+                    "name": str(call["name"]),
+                    "kind": "reference",
+                    "ref_kind": str(call.get("ref_kind", "call")),
+                    "file": str(call["file"]),
+                    "line": int(call["line"]),
+                    "text": str(call["text"]),
+                    "provenance": current_provenance,
+                    **(
+                        {
+                            "resolution_provenance": list(call.get("resolution_provenance", [])),
+                            "resolution_confidence": float(call.get("resolution_confidence", 0.95)),
+                        }
+                        if "resolution_provenance" in call
+                        else {}
+                    ),
+                }
+                for call in current_calls
+            ]
+            current_refs.extend(go_call_refs)
         else:
             current_refs, _ = _regex_references_and_calls(current, symbol)
         references.extend(
@@ -13491,6 +13566,11 @@ def build_symbol_callers_from_map(
                     current_calls = _rust_provider_alias_calls(current, symbol, repo_root)
                 if not current_calls:
                     _, current_calls = _regex_references_and_calls(current, symbol)
+            elif current_spec is not None and current_spec.language_id == "go":
+                # Fail-closed (Stage 1 trap): no provider-alias/regex fallback for Go -- a
+                # grammar-missing file simply contributes no calls (surfaced via
+                # `resolution_gaps` for the refs/blast-radius payloads that compute it).
+                _, current_calls = lang_go.go_references_and_calls(current, symbol, repo_root)
             else:
                 _, current_calls = _regex_references_and_calls(current, symbol)
             for current_call in current_calls:

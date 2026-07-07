@@ -27,6 +27,15 @@ def test_bench_extra_should_include_stringzilla_for_hot_query_benchmarks() -> No
     assert "stringzilla>=4.0" in deps
 
 
+def test_ast_dev_bench_extras_include_tree_sitter_go_for_path_a_stage1() -> None:
+    # PATH A Stage 1 (Go symbol graph, first language expansion beyond the original four):
+    # tree-sitter-go must ship in every extra that already carries the other tree-sitter
+    # grammar packages, or an --all-extras --locked export silently drops Go support.
+    deps = _optional_dependencies()
+    for extra_name in ("ast", "dev", "bench"):
+        assert "tree-sitter-go" in deps[extra_name], f"tree-sitter-go missing from [{extra_name}]"
+
+
 def test_semantic_extra_should_pin_model2vec_and_numpy_no_torch() -> None:
     deps = _optional_dependencies()["semantic"]
 
