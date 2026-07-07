@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.42.6 (2026-07-07)
+
+### Bug Fixes
+
+- **F3**: Populate validation_plan + suggested_validation_commands on scoped agent/edit-plan for
+  JS/TS primaries + root-tree test neighbors (dogfood v1.42.0)
+  ([#414](https://github.com/oimiragieo/tensor-grep/pull/414),
+  [`730f8a0`](https://github.com/oimiragieo/tensor-grep/commit/730f8a0ccf477b6c5d5a893400d63deaea3078b7))
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Testing
+
+- Widen the uncontended-checkpoint hot-path threshold 2.0s->4.0s (flaky on loaded windows-py3.12 CI,
+  2.25s spike blocked #407; matches sibling tests, still < the 5s lock timeout it guards)
+  ([#412](https://github.com/oimiragieo/tensor-grep/pull/412),
+  [`3b77a67`](https://github.com/oimiragieo/tensor-grep/commit/3b77a67513eaf81b2c61c9656c02c8f8c4ec10a6))
+
+
 ## v1.42.5 (2026-07-07)
 
 ### Bug Fixes
