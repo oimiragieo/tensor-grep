@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v1.45.2 (2026-07-07)
+
+### Bug Fixes
+
+- **audit**: Ref_kind classifier precision (rust macro args, JS/TS as/satisfies, turbofish) + Go
+  import-resolution edge cases (generics receiver, alias-shadow confidence, empty-import fallback,
+  grammar-missing honesty) (Fable audit MED/LOW)
+  ([#422](https://github.com/oimiragieo/tensor-grep/pull/422),
+  [`2c8ed06`](https://github.com/oimiragieo/tensor-grep/commit/2c8ed06e488f14005acbda3856e2efa68bf800bb))
+
+- Rust: macro arguments no longer classify "call" (F6); only the macro NAME position does. Turbofish
+  calls (`foo::<T>()`, `bar::Symbol::<T>()`) now classify "call" (F18) via the generic_function node
+  the call_expression wraps. - JS/TS: `as`/`satisfies` operands keep their own kind instead of being
+  forced to "type" (F7); only the positional type-side child is "type". `new Widget()` and JSX
+  construction (`<Widget/>`, `<Widget></Widget>`) now classify "call" (F17). - Both classifiers: a
+  classify() exception now defaults just that row to "value" instead of silently dropping every
+  reference in the file (F20). - `_reference_kind_counts` counts non-dict rows too, restoring the
+  sum-equals-len invariant (F21). - Go: generic receivers (`func (r *MyType[T]) M()`) associate with
+  the base type name instead of "MyType[T]" (F8). Package-qualified const/var reads classify "value"
+  instead of "field" (F9). Alias-selector calls only earn 0.95 "go-import-resolution" confidence
+  when the resolved package is confirmed to own the queried symbol (matched against known definition
+  dirs, or a package-level function scan as a standalone fallback) -- otherwise demoted to the 0.7
+  receiver-heuristic band, fixing both a shadowed-alias false-positive (F10) and a same-named
+  cross-package collision (F25). Import-path extraction falls back to quote-stripped literal text
+  when a grammar build omits `interpreted_string_literal_content` (F11). Coverage-gap remediation
+  text now honestly distinguishes "falls back to regex" (unregistered language) from "produces zero
+  rows" (fail-closed, e.g. Go) (F12). `tg defs` attaches the same resolution_gaps honesty floor
+  refs/callers already had instead of a bare no_match (F13). Import resolution stops at an
+  intervening go.mod boundary instead of greedily resolving into a nested, non-go.work module (F24).
+
+Zero ref/caller count change across the existing typed-ref-kind and Go oracles -- every fix relabels
+  an existing row or adjusts its resolution_confidence, never adds/drops a row.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.45.1 (2026-07-07)
 
 ### Bug Fixes
