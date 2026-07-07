@@ -610,6 +610,31 @@ def test_import_path_extraction_returns_none_for_missing_path_field() -> None:
 
 
 # ---------------------------------------------------------------------------
+# F23: go.work `use` parsing -- header not captured, trailing comments stripped.
+# ---------------------------------------------------------------------------
+
+
+def test_go_work_use_dirs_ignores_header_and_strips_comments(tmp_path: Path) -> None:
+    go_work = tmp_path / "go.work"
+    go_work.write_text(
+        "go 1.21\n\n"
+        "use ./single\n"
+        "use (\n"
+        "\t./blockmod\n"
+        "\t./commented // legacy module\n"
+        "\t// ./skipped-fullline-comment\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    dirs = lang_go._go_work_use_dirs(go_work)
+    # single-line + block entries resolve; the `use (` header ("(") is NOT a dir; the trailing
+    # `// legacy module` comment is stripped; the full-line comment line is skipped.
+    assert dirs == ["./single", "./blockmod", "./commented"]
+    assert "(" not in dirs
+    assert not any("//" in d or "legacy" in d for d in dirs)
+
+
+# ---------------------------------------------------------------------------
 # F24: an intervening (nested, non-go.work) go.mod stops import resolution.
 # ---------------------------------------------------------------------------
 
