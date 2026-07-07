@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.45.4 (2026-07-07)
+
+### Bug Fixes
+
+- **dogfood T2**: Agent confidence reflects graph-corroborated resolution not render token budget
+  ([#425](https://github.com/oimiragieo/tensor-grep/pull/425),
+  [`98ca351`](https://github.com/oimiragieo/tensor-grep/commit/98ca351dc596602a7d875b7fcc67ad01f68298f8))
+
+
 ## v1.45.3 (2026-07-07)
 
 ### Bug Fixes
