@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
+from tensor_grep.cli import lang_registry
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -1173,7 +1174,8 @@ def _file_may_contain_literal_symbol(path: Path, symbol: str) -> bool:
 
 
 def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) -> bool:
-    if path.suffix not in ({".py"} | _JS_TS_SUFFIXES | _RUST_SUFFIXES):
+    spec = lang_registry.spec_for_path(path)
+    if spec is None:
         return False
     try:
         stat = path.stat()
@@ -1188,16 +1190,9 @@ def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) 
     if b"\0" in data[:8192]:
         return False
     lowered = data.lower()
-    markers: tuple[bytes, ...]
-    if path.suffix == ".py":
-        markers = (b"import ", b"from ")
-    elif path.suffix in _JS_TS_SUFFIXES:
-        markers = (b"import ", b"from ", b"require(")
-    else:
-        markers = (b"use ",)
-    if not any(marker in lowered for marker in markers):
+    if not any(marker in lowered for marker in spec.import_markers):
         return False
-    if path.suffix in _JS_TS_SUFFIXES:
+    if spec.language_id in ("javascript", "typescript"):
         return True
     for definition_file in definition_files:
         for alias in _module_aliases_for_path(definition_file):
@@ -1491,22 +1486,16 @@ def _rust_parser() -> Any | None:
 
 
 def _symbol_navigation_provenance_for_path(path: str) -> str:
-    suffix = Path(path).suffix.lower()
-    if suffix == ".py":
-        return "python-ast"
-    if suffix in _JS_TS_SUFFIXES:
-        return (
-            "tree-sitter"
-            if (
-                _typescript_parser(tsx=suffix == ".tsx") is not None
-                if suffix in _TS_SUFFIXES
-                else _javascript_parser() is not None
-            )
-            else "regex-heuristic"
-        )
-    if suffix in _RUST_SUFFIXES:
-        return "tree-sitter" if _rust_parser() is not None else "regex-heuristic"
-    return "heuristic"
+    spec = lang_registry.spec_for_path(path)
+    if spec is None:
+        return "heuristic"
+    if spec.parser_for_path is None:
+        return spec.provenance_when_parsed
+    return (
+        spec.provenance_when_parsed
+        if spec.parser_for_path(Path(path)) is not None
+        else spec.provenance_when_missing
+    )
 
 
 _CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
@@ -2821,6 +2810,106 @@ def _rust_module_matches_definition(
 #
 # Guard 4: bound the cache's entry count -- this key includes symbol+definition_path+repo_root,
 # so it can grow faster than a plain per-file cache; keep it generous but finite.
+def _python_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(
+                _module_path_matches_definition(alias.name, definition_path) for alias in node.names
+            ):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if not node.module or not _module_path_matches_definition(node.module, definition_path):
+                continue
+            if any(alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names):
+                return True
+    return False
+
+
+def _js_ts_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    bindings = _js_ts_named_import_bindings(source)
+    default_bindings = _js_ts_default_import_bindings(source)
+    namespace_bindings = _js_ts_namespace_import_bindings(source)
+    return (
+        any(
+            _js_ts_import_match_details(
+                file_path,
+                module_name=str(binding["module"]),
+                imported_name=str(binding["imported"]),
+                symbol=symbol,
+                definition_path=definition_path,
+                repo_root=repo_root,
+            )
+            is not None
+            for binding in bindings
+            if str(binding.get("statement_kind", "import")) == "import"
+        )
+        or any(
+            _js_ts_import_match_details(
+                file_path,
+                module_name=str(binding["module"]),
+                imported_name="default",
+                symbol=symbol,
+                definition_path=definition_path,
+                repo_root=repo_root,
+                is_default=True,
+            )
+            is not None
+            for binding in default_bindings
+        )
+        or any(
+            _js_ts_module_matches_definition(
+                file_path,
+                binding["module"],
+                definition_path,
+                repo_root,
+            )
+            for binding in namespace_bindings
+        )
+    )
+
+
+def _rust_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    bindings = _rust_use_bindings(source)
+    if any(
+        _rust_use_binding_match_details(
+            file_path,
+            binding,
+            symbol,
+            definition_path,
+            repo_root,
+        )
+        is not None
+        for binding in bindings
+    ):
+        return True
+    if _is_test_file(file_path):
+        return _rust_file_references_symbol_from_definition(file_path, symbol, definition_path)
+    return False
+
+
 @_mtime_aware_cache(maxsize=2048)  # Fix A: mtime+size in key; replaces per-call read+parse
 def _file_imports_symbol_from_definition(
     path_str: str,
@@ -2833,92 +2922,12 @@ def _file_imports_symbol_from_definition(
         source = file_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
-
-    if file_path.suffix == ".py":
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            return False
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                if any(
-                    _module_path_matches_definition(alias.name, definition_path)
-                    for alias in node.names
-                ):
-                    return True
-            elif isinstance(node, ast.ImportFrom):
-                if not node.module or not _module_path_matches_definition(
-                    node.module, definition_path
-                ):
-                    continue
-                if any(
-                    alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names
-                ):
-                    return True
+    spec = lang_registry.spec_for_path(file_path)
+    if spec is None or spec.file_imports_symbol_from_definition is None:
         return False
-
-    if file_path.suffix in _JS_TS_SUFFIXES:
-        bindings = _js_ts_named_import_bindings(source)
-        default_bindings = _js_ts_default_import_bindings(source)
-        namespace_bindings = _js_ts_namespace_import_bindings(source)
-        return (
-            any(
-                _js_ts_import_match_details(
-                    file_path,
-                    module_name=str(binding["module"]),
-                    imported_name=str(binding["imported"]),
-                    symbol=symbol,
-                    definition_path=definition_path,
-                    repo_root=repo_root,
-                )
-                is not None
-                for binding in bindings
-                if str(binding.get("statement_kind", "import")) == "import"
-            )
-            or any(
-                _js_ts_import_match_details(
-                    file_path,
-                    module_name=str(binding["module"]),
-                    imported_name="default",
-                    symbol=symbol,
-                    definition_path=definition_path,
-                    repo_root=repo_root,
-                    is_default=True,
-                )
-                is not None
-                for binding in default_bindings
-            )
-            or any(
-                _js_ts_module_matches_definition(
-                    file_path,
-                    binding["module"],
-                    definition_path,
-                    repo_root,
-                )
-                for binding in namespace_bindings
-            )
-        )
-
-    if file_path.suffix in _RUST_SUFFIXES:
-        bindings = _rust_use_bindings(source)
-        if any(
-            _rust_use_binding_match_details(
-                file_path,
-                binding,
-                symbol,
-                definition_path,
-                repo_root,
-            )
-            is not None
-            for binding in bindings
-        ):
-            return True
-        if _is_test_file(file_path):
-            return _rust_file_references_symbol_from_definition(file_path, symbol, definition_path)
-        return False
-
-    return False
+    return spec.file_imports_symbol_from_definition(
+        file_path, source, symbol, definition_path, repo_root
+    )
 
 
 def _import_names_reference_symbol_definition(
@@ -3157,13 +3166,10 @@ def _import_update_target(
 ) -> dict[str, Any] | None:
     if str(file_path.resolve()) == str(Path(definition_path).resolve()):
         return None
-    if file_path.suffix == ".py":
-        return _python_import_update_target(file_path, symbol, definition_path)
-    if file_path.suffix in _JS_TS_SUFFIXES:
-        return _js_ts_import_update_target(file_path, symbol, definition_path, repo_root)
-    if file_path.suffix in _RUST_SUFFIXES:
-        return _rust_import_update_target(file_path, symbol, definition_path, repo_root)
-    return None
+    spec = lang_registry.spec_for_path(file_path)
+    if spec is None or spec.import_update_target is None:
+        return None
+    return spec.import_update_target(file_path, symbol, definition_path, repo_root)
 
 
 def _source_line_text(path: Path, line_number: int) -> str:
@@ -3204,7 +3210,7 @@ def _build_import_graph_consumers_from_map(
             current_file = str(current)
             if current_file in definition_file_set:
                 continue
-            if current.suffix not in ({".py"} | _JS_TS_SUFFIXES | _RUST_SUFFIXES):
+            if lang_registry.spec_for_path(current) is None:
                 continue
             if not _file_may_import_symbol_definition(current, definition_files):
                 continue
@@ -4947,6 +4953,139 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     return sources
 
 
+# ---------------------------------------------------------------------------
+# PATH A Stage 0: language-extractor registry registration.
+#
+# Registers the CURRENT four languages (python, javascript, typescript, rust) with
+# lang_registry by WRAPPING the functions defined above UNCHANGED. This is a pure-parity
+# refactor: every dispatch seam that used to test `path.suffix in _JS_TS_SUFFIXES` /
+# `_RUST_SUFFIXES` / `== ".py"` directly now asks `lang_registry.spec_for_path(path)` instead,
+# but the underlying per-language logic those specs point to is untouched.
+#
+# javascript and typescript are two separate LanguageSpec entries (distinct language_id,
+# distinct suffixes) but both wrap the SAME `_js_ts_*` functions -- those functions already
+# branch on the .ts/.tsx suffix internally (parser/tsx selection), so registering the pair
+# twice changes nothing observable; only which suffix routes to which spec entry differs,
+# mirroring how `_target_language_for_path`/`_provider_language_for_path` already distinguish
+# "javascript" from "typescript" today.
+# ---------------------------------------------------------------------------
+
+
+def _python_references_and_calls_for_registry(
+    path: Path, symbol: str, repo_root: Path | str | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _python_references_and_calls(path, symbol)
+
+
+def _python_provider_alias_calls_for_registry(
+    path: Path, symbol: str, repo_root: Path | str | None = None
+) -> list[dict[str, Any]]:
+    return _python_provider_alias_calls(path, symbol)
+
+
+def _python_import_update_target_for_registry(
+    file_path: Path,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any] | None:
+    return _python_import_update_target(file_path, symbol, definition_path)
+
+
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="python",
+        suffixes=frozenset({".py"}),
+        grammar_modules=(),
+        parser_for_path=None,
+        provenance_when_parsed="python-ast",
+        provenance_when_missing="python-ast",
+        import_markers=(b"import ", b"from "),
+        def_node_kinds=("ClassDef", "FunctionDef", "AsyncFunctionDef"),
+        extract_imports_and_symbols=_python_imports_and_symbols,
+        references_and_calls=_python_references_and_calls_for_registry,
+        provider_alias_calls=_python_provider_alias_calls_for_registry,
+        file_imports_symbol_from_definition=_python_file_imports_symbol_from_definition,
+        import_update_target=_python_import_update_target_for_registry,
+        prime_repo_context=None,
+        classify_ref_kind=_python_classify_ref_kind,
+    )
+)
+
+_JS_TS_REGISTRY_SHARED_KWARGS: dict[str, Any] = {
+    "grammar_modules": ("tree_sitter", "tree_sitter_javascript", "tree_sitter_typescript"),
+    "provenance_when_parsed": "tree-sitter",
+    "provenance_when_missing": "regex-heuristic",
+    "import_markers": (b"import ", b"from ", b"require("),
+    "def_node_kinds": ("function_declaration", "class_declaration", "method_definition"),
+    "extract_imports_and_symbols": None,
+    "references_and_calls": _js_ts_references_and_calls,
+    "provider_alias_calls": _js_ts_provider_alias_calls,
+    "file_imports_symbol_from_definition": _js_ts_file_imports_symbol_from_definition,
+    "import_update_target": _js_ts_import_update_target,
+    "prime_repo_context": _prime_js_ts_repo_context,
+    "classify_ref_kind": _js_ts_classify_ref_kind,
+}
+
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="javascript",
+        suffixes=frozenset({".js", ".jsx", ".mjs", ".cjs"}),
+        parser_for_path=lambda path: _javascript_parser(),
+        **_JS_TS_REGISTRY_SHARED_KWARGS,
+    )
+)
+
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="typescript",
+        suffixes=frozenset({".ts", ".tsx"}),
+        parser_for_path=lambda path: _typescript_parser(tsx=path.suffix == ".tsx"),
+        **_JS_TS_REGISTRY_SHARED_KWARGS,
+    )
+)
+
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="rust",
+        suffixes=frozenset({".rs"}),
+        grammar_modules=("tree_sitter", "tree_sitter_rust"),
+        parser_for_path=lambda path: _rust_parser(),
+        provenance_when_parsed="tree-sitter",
+        provenance_when_missing="regex-heuristic",
+        import_markers=(b"use ",),
+        def_node_kinds=("function_item", "struct_item", "enum_item", "trait_item"),
+        extract_imports_and_symbols=None,
+        references_and_calls=_rust_references_and_calls,
+        provider_alias_calls=_rust_provider_alias_calls,
+        file_imports_symbol_from_definition=_rust_file_imports_symbol_from_definition,
+        import_update_target=_rust_import_update_target,
+        prime_repo_context=_prime_rust_repo_context,
+        classify_ref_kind=_rust_classify_ref_kind,
+    )
+)
+
+
+def _prime_all_language_repo_contexts(context_root: Path) -> None:
+    """Prime every registered language's per-repo-root context exactly once.
+
+    Registry-driven replacement for the previous hardcoded
+    ``_prime_js_ts_repo_context(...); _prime_rust_repo_context(...)`` pair. javascript and
+    typescript are separate LanguageSpec entries that both point at the SAME
+    ``_prime_js_ts_repo_context`` callable -- dedupe by callable identity so a repo with both
+    suffixes present still primes the shared JS/TS context exactly once, matching prior
+    behavior (which called it a single time regardless of how many JS/TS suffixes appeared).
+    """
+    primed: set[int] = set()
+    for spec in lang_registry.LANGUAGE_REGISTRY.values():
+        if spec.prime_repo_context is None:
+            continue
+        if id(spec.prime_repo_context) in primed:
+            continue
+        primed.add(id(spec.prime_repo_context))
+        spec.prime_repo_context(context_root)
+
+
 def _imports_and_symbols_for_path(
     path: Path,
     *,
@@ -4963,13 +5102,14 @@ def _imports_and_symbols_for_path(
         return [], []
     with _profiling_phase(_profiling_collector, "file_parse"):
         current_imports, current_symbols = _python_imports_and_symbols(path)
-        if path.suffix in _JS_TS_SUFFIXES:
+        spec = lang_registry.spec_for_path(path)
+        if spec is not None and spec.language_id in ("javascript", "typescript"):
             current_imports, regex_symbols = _regex_imports_and_symbols(path)
             current_symbols = _dedupe_symbol_records([
                 *_js_ts_parser_symbols(path),
                 *regex_symbols,
             ])
-        elif path.suffix in _RUST_SUFFIXES:
+        elif spec is not None and spec.language_id == "rust":
             current_imports, _ = _regex_imports_and_symbols(path)
             current_symbols = _rust_parser_symbols(path)
             if not current_symbols:
@@ -5023,8 +5163,7 @@ def build_repo_map(
 
     with _profiling_phase(_profiling_collector, "repo_map_build"):
         context_root = root if root.is_dir() else root.parent
-        _prime_js_ts_repo_context(context_root)
-        _prime_rust_repo_context(context_root)
+        _prime_all_language_repo_contexts(context_root)
         payload = _envelope(root)
         if _profiling_collector is None:
             all_files = _iter_repo_files(root, max_files=normalized_max_repo_files)
@@ -5131,8 +5270,7 @@ def build_repo_map_incremental(
         raise FileNotFoundError(f"Path not found: {root}")
 
     context_root = root if root.is_dir() else root.parent
-    _prime_js_ts_repo_context(context_root)
-    _prime_rust_repo_context(context_root)
+    _prime_all_language_repo_contexts(context_root)
     normalized_changeset = _normalized_changeset_paths(root, changeset)
     changed_files = set(normalized_changeset["added"]) | set(normalized_changeset["modified"])
     # D2: normalized_changeset["removed"] is computed by _normalized_changeset_paths
@@ -5706,6 +5844,82 @@ def _graph_trust_summary(
             "by_ref_kind": by_ref_kind,
         },
     }
+
+
+def _language_coverage_gap_remediation(language: str) -> str:
+    return (
+        f"tg has no parser-backed extractor registered for '{language}' files yet -- refs/"
+        f"callers on a symbol whose definition or usage lives in a {language} file fall back to "
+        "plain literal-text/regex matching (no import-graph resolution, no AST-verified call "
+        "sites). Treat matches in these files as lower-confidence until native support ships."
+    )
+
+
+def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict[str, Any]]:
+    """PATH A Stage 0 honesty floor (additive): label files in the refs/callers scan universe
+    that have no registered ``LanguageSpec`` (or, for a registered language whose grammar is
+    fail-closed with no regex fallback, no usable parser) instead of silently degrading them.
+    Zero behavior change for python/javascript/typescript/rust today -- every file with one of
+    those suffixes always resolves a spec, so this only ever fires for a language tensor-grep's
+    symbol graph does not yet cover (e.g. .go, .java) that happens to sit in the scan universe.
+    """
+    gaps_by_language: dict[str, dict[str, Any]] = {}
+    for current in bounded_files:
+        spec = lang_registry.spec_for_path(current)
+        if spec is None:
+            language = _provider_language_for_path(current) or (
+                current.suffix.lstrip(".").lower() or "unknown"
+            )
+            reason = "no registered language extractor for this file suffix"
+        elif spec.parser_for_path is not None and spec.parser_for_path(current) is None:
+            # Only a genuine gap for a language that FAILS CLOSED with no fallback when its
+            # grammar is missing (Stage 1+ languages like Go). None of the 4 current languages
+            # set this: JS/TS/Rust always fall back to regex-heuristic extraction, so this
+            # branch is unreachable for them today and only matters for future registrations.
+            if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:
+                language = spec.language_id
+                reason = (
+                    "required parser/grammar is not installed for this language and it has no "
+                    "regex fallback (fail-closed)"
+                )
+            else:
+                continue
+        else:
+            continue
+        entry = gaps_by_language.setdefault(
+            language,
+            {
+                "language": language,
+                "reason": reason,
+                "files_affected": 0,
+                "remediation": _language_coverage_gap_remediation(language),
+            },
+        )
+        entry["files_affected"] += 1
+    return sorted(
+        gaps_by_language.values(),
+        key=lambda item: (-int(item["files_affected"]), str(item["language"])),
+    )
+
+
+def _downgrade_graph_trust_summary_for_coverage_gaps(
+    summary: dict[str, Any],
+    resolution_gaps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Additive downgrade: a non-empty ``resolution_gaps`` means part of the caller/reference
+    universe was scanned with no parser-backed extractor, so the blast-radius trust summary
+    should not read as more confident than that. Downgrades ``confidence`` by exactly one rung
+    and stamps ``resolution_gaps_present`` -- never touches anything when gaps are empty, so
+    the 4 currently-supported languages see byte-identical output."""
+    if not resolution_gaps:
+        return summary
+    confidence_order = {"weak": 1, "moderate": 2, "strong": 3}
+    rank_to_confidence = {value: key for key, value in confidence_order.items()}
+    current_rank = confidence_order.get(str(summary.get("confidence", "weak")), 1)
+    downgraded = dict(summary)
+    downgraded["confidence"] = rank_to_confidence[max(1, current_rank - 1)]
+    downgraded["resolution_gaps_present"] = True
+    return downgraded
 
 
 def _is_parser_backed_provenance(label: str) -> bool:
@@ -11536,12 +11750,20 @@ def _normalize_semantic_provider(provider: str) -> str:
 
 
 def _language_for_path(path: str | Path) -> str:
-    suffix = Path(path).suffix.lower()
-    if suffix in _JS_TS_SUFFIXES:
+    # PATH A Stage 0 honesty fix: this used to default unconditionally to "python" for ANY
+    # suffix it didn't recognize (e.g. an lsp-provenance fallback label for a .go/.rb/.txt
+    # file would be silently stamped "lsp-python") -- dishonest, and only reachable today via
+    # the `_provider_language_for_path(...) or _language_for_path(...)` fallback chain for
+    # suffixes _provider_language_for_path *also* doesn't recognize. Route through the
+    # registry and fall back to "unknown" instead. javascript/typescript are intentionally
+    # collapsed to the single "javascript" label here (unchanged from before) since callers of
+    # this function have never distinguished the two.
+    spec = lang_registry.spec_for_path(path)
+    if spec is None:
+        return "unknown"
+    if spec.language_id in ("javascript", "typescript"):
         return "javascript"
-    if suffix in _RUST_SUFFIXES:
-        return "rust"
-    return "python"
+    return spec.language_id
 
 
 def _provider_language_for_path(path: str | Path) -> str | None:
@@ -12919,6 +13141,7 @@ def build_symbol_refs_from_map(
         payload["string_refs"] = []
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
+        payload["resolution_gaps"] = []
         return payload
     context_payload = build_context_pack_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
@@ -12942,9 +13165,10 @@ def build_symbol_refs_from_map(
             break
         refs_files_scanned += 1
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
-        if current.suffix == ".py":
+        current_spec = lang_registry.spec_for_path(current)
+        if current_spec is not None and current_spec.language_id == "python":
             current_refs, _ = _python_references_and_calls(current, symbol)
-        elif current.suffix in _JS_TS_SUFFIXES:
+        elif current_spec is not None and current_spec.language_id in ("javascript", "typescript"):
             current_refs, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
             if not current_refs and not current_calls:
                 current_calls = _js_ts_provider_alias_calls(current, symbol, repo_root)
@@ -12971,7 +13195,7 @@ def build_symbol_refs_from_map(
                 for call in current_calls
             ]
             current_refs.extend(js_ts_call_refs)
-        elif current.suffix in _RUST_SUFFIXES:
+        elif current_spec is not None and current_spec.language_id == "rust":
             current_refs, current_calls = _rust_references_and_calls(current, symbol, repo_root)
             if not current_refs and not current_calls:
                 current_calls = _rust_provider_alias_calls(current, symbol, repo_root)
@@ -13086,6 +13310,7 @@ def build_symbol_refs_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(references)
     if normalized_provider != "native" and lsp_proof_count == 0 and references:
@@ -13194,6 +13419,7 @@ def build_symbol_callers_from_map(
         payload["import_graph_consumer_count"] = 0
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
+        payload["resolution_gaps"] = []
         return _attach_profiling(payload, _profiling_collector)
     repo_root = Path(str(repo_map["path"])).resolve()
     callers_universe_files, callers_universe_tests = _repo_map_file_and_test_universe(repo_map)
@@ -13218,7 +13444,7 @@ def build_symbol_callers_from_map(
     def _should_scan_for_symbol_callers(current: Path) -> bool:
         if _file_may_contain_literal_symbol(current, symbol):
             return True
-        if current.suffix not in ({".py"} | _JS_TS_SUFFIXES | _RUST_SUFFIXES):
+        if lang_registry.spec_for_path(current) is None:
             return False
         if not _file_may_import_symbol_definition(current, definition_files):
             return False
@@ -13246,16 +13472,20 @@ def build_symbol_callers_from_map(
             caller_files_scanned += 1
             if not _should_scan_for_symbol_callers(current):
                 continue
-            if current.suffix == ".py":
+            current_spec = lang_registry.spec_for_path(current)
+            if current_spec is not None and current_spec.language_id == "python":
                 python_files.add(str(current))
                 _, current_calls = _python_references_and_calls(current, symbol)
-            elif current.suffix in _JS_TS_SUFFIXES:
+            elif current_spec is not None and current_spec.language_id in (
+                "javascript",
+                "typescript",
+            ):
                 _, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
                 if not current_calls:
                     current_calls = _js_ts_provider_alias_calls(current, symbol, repo_root)
                 if not current_calls:
                     _, current_calls = _regex_references_and_calls(current, symbol)
-            elif current.suffix in _RUST_SUFFIXES:
+            elif current_spec is not None and current_spec.language_id == "rust":
                 _, current_calls = _rust_references_and_calls(current, symbol, repo_root)
                 if not current_calls:
                     current_calls = _rust_provider_alias_calls(current, symbol, repo_root)
@@ -13515,6 +13745,7 @@ def build_symbol_callers_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(calls)
     if normalized_provider != "native" and lsp_proof_count == 0 and calls:
@@ -13807,6 +14038,7 @@ def build_symbol_blast_radius_from_map(
             "edge_confidence": "none",
             "evidence_counts": {"parser_backed": 0, "heuristic": 0},
         }
+        payload["resolution_gaps"] = []
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["provider_agreement"] = dict(default_agreement)
@@ -14114,7 +14346,11 @@ def build_symbol_blast_radius_from_map(
     payload["test_matches"] = [test_match_lookup[str(current)] for current in related_tests]
     payload["caller_tree"] = caller_tree
     payload["rendered_caller_tree"] = "\n".join(rendered_lines)
-    payload["graph_trust_summary"] = _graph_trust_summary(caller_tree, calls=direct_callers)
+    payload["resolution_gaps"] = list(callers_payload.get("resolution_gaps", []))
+    payload["graph_trust_summary"] = _downgrade_graph_trust_summary_for_coverage_gaps(
+        _graph_trust_summary(caller_tree, calls=direct_callers),
+        payload["resolution_gaps"],
+    )
     payload["imports"] = impact_payload["imports"]
     payload["symbols"] = impact_payload["symbols"]
     payload["related_paths"] = related_paths
