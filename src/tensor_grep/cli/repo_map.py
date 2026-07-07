@@ -7259,6 +7259,19 @@ def _validation_repo_root(repo_root: str | Path) -> Path:
     return boundary_candidate or root
 
 
+def _read_package_json(root: Path) -> dict[str, Any]:
+    """O(1) fixed-path read of ``<root>/package.json`` -- no directory scan. Returns ``{}``
+    when the file is missing, unreadable, or not a JSON object."""
+    package_json_path = root / "package.json"
+    if not package_json_path.is_file():
+        return {}
+    try:
+        loaded = json.loads(package_json_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def _infer_js_package_manager(root: Path, package_json: dict[str, Any]) -> str:
     package_manager = package_json.get("packageManager")
     if isinstance(package_manager, str):
@@ -7875,6 +7888,22 @@ def _primary_language_fallback_validation_steps(
                 "confidence": 0.55,
                 "detection": "detected",
             })
+    elif primary_language in ("javascript", "typescript") and (root / "package.json").is_file():
+        # dogfood F3: a TS/JS primary target used to get NO fallback step at all here (this
+        # branch only had rust/python) -- on a repo where the raw per-test validation plan
+        # comes back empty (e.g. a scan-ceiling-capped root on a large monorepo), that meant an
+        # EMPTY validation_plan even though the repo obviously has a package.json test runner.
+        # Fixed-path `.is_file()` probe only -- no directory scan (see AGENTS.md no-repo-wide-
+        # scan rule).
+        package_json = _read_package_json(root)
+        command = _javascript_repo_fallback_command(_infer_js_package_manager(root, package_json))
+        steps.append({
+            "command": command,
+            "scope": "repo",
+            "runner": "javascript",
+            "confidence": 0.5,
+            "detection": "detected",
+        })
     return steps
 
 
@@ -7900,26 +7929,49 @@ def _has_python_validation_fallback_evidence(
     return any(current.suffix == ".py" and _is_test_file(current) for current in candidate_files)
 
 
-def _suggested_validation_command_candidates(source_path: Path) -> list[Path]:
+_ROOT_TEST_DIR_NAMES = ("test", "tests", "__tests__")
+
+
+def _suggested_validation_command_candidates(
+    source_path: Path,
+    *,
+    repo_root: Path | None = None,
+) -> list[Path]:
     """Pure-filename test-neighbor CANDIDATES for one source file — no execution, no repo
     scan, no manifest lookup. Distinct from `_has_python_validation_fallback_evidence` (the
-    strict runner-evidence gate); this only feeds the additive, unverified suggestion field."""
+    strict runner-evidence gate); this only feeds the additive, unverified suggestion field.
+
+    `repo_root`, when given and distinct from the primary file's own directory, ALSO probes a
+    fixed set of repo-root test-tree paths (`<root>/tests/test_<stem>.py`,
+    `<root>/test|tests|__tests__/<stem>.test<suffix>`) so a test living in a root-level test
+    tree (not next to the source file) is still discoverable. Every probe is a single
+    `is_file()` check on a fully-determined path — never a directory walk/glob (dogfood F3: a
+    root-tree GLOB scan here would violate the no-repo-wide-scan promise)."""
     suffix = source_path.suffix.lower()
     stem = source_path.stem
     parent = source_path.parent
+    root = repo_root if repo_root is not None and repo_root != parent else None
     if suffix == ".py":
-        return [
+        candidates = [
             parent / "tests" / f"test_{stem}.py",
             parent / f"{stem}_test.py",
             parent / f"test_{stem}.py",
         ]
+        if root is not None:
+            candidates.append(root / "tests" / f"test_{stem}.py")
+        return candidates
     if suffix in _JS_TS_SUFFIXES:
-        return [
+        candidates = [
             parent / "__tests__" / f"{stem}{suffix}",
             parent / "__tests__" / f"{stem}.test{suffix}",
             parent / f"{stem}.test{suffix}",
             parent / f"{stem}.spec{suffix}",
         ]
+        if root is not None:
+            candidates.extend(
+                root / dir_name / f"{stem}.test{suffix}" for dir_name in _ROOT_TEST_DIR_NAMES
+            )
+        return candidates
     return []
 
 
@@ -7938,17 +7990,16 @@ def _suggested_validation_command_for_primary_file(
         return None
     if not source_path.is_file():
         return None
-    candidates = _suggested_validation_command_candidates(source_path)
+    try:
+        root = _validation_repo_root(repo_root)
+    except (OSError, RuntimeError):
+        root = source_path.parent
+    candidates = _suggested_validation_command_candidates(source_path, repo_root=root)
     if not candidates:
         return None
     test_path = next((candidate for candidate in candidates if candidate.is_file()), None)
     if test_path is None:
         return None
-
-    try:
-        root = _validation_repo_root(repo_root)
-    except (OSError, RuntimeError):
-        root = source_path.parent
     relative_test = _relative_validation_path(test_path, root)
     suffix = source_path.suffix.lower()
     if suffix == ".py":

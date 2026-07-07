@@ -922,3 +922,209 @@ def test_rust_nested_integration_tests_use_targeted_commands(tmp_path: Path) -> 
         "cargo test --test testsuite",
         "cargo test",
     ]
+
+
+# --- F3: scoped runs used to yield an EMPTY validation_plan / suggested_validation_commands
+# even when the primary target resolved and a real test neighbor existed. Two seams:
+# (1) `_primary_language_fallback_validation_steps` had ONLY rust/python branches, so a TS/JS
+#     primary got no fallback step when the per-test validation plan came back empty (e.g. a
+#     scan-ceiling-capped root on a large repo).
+# (2) `_suggested_validation_command_candidates` only probed the primary file's OWN directory,
+#     so a test living in a repo-ROOT test tree (not next to the source file) was invisible.
+
+
+def test_primary_language_fallback_validation_steps_adds_javascript_branch(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src" / "utils"
+    src_dir.mkdir(parents=True)
+    _write_package_json(project, package_manager="pnpm@8.6.0")
+    primary = src_dir / "withRetry.ts"
+    primary.write_text("export function withRetry() {}\n", encoding="utf-8")
+
+    steps = repo_map._primary_language_fallback_validation_steps(
+        repo_root=str(src_dir),
+        primary_file=str(primary),
+    )
+
+    assert steps == [
+        {
+            "command": "pnpm test",
+            "scope": "repo",
+            "runner": "javascript",
+            "confidence": 0.5,
+            "detection": "detected",
+        }
+    ]
+
+
+def test_primary_language_fallback_validation_steps_javascript_suffix(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    _write_package_json(project)
+    primary = src_dir / "helpers.js"
+    primary.write_text("function helper() {}\nmodule.exports = { helper };\n", encoding="utf-8")
+
+    steps = repo_map._primary_language_fallback_validation_steps(
+        repo_root=str(src_dir),
+        primary_file=str(primary),
+    )
+
+    assert steps == [
+        {
+            "command": "npm test",
+            "scope": "repo",
+            "runner": "javascript",
+            "confidence": 0.5,
+            "detection": "detected",
+        }
+    ]
+
+
+def test_primary_language_fallback_validation_steps_no_javascript_step_without_manifest(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src" / "utils"
+    src_dir.mkdir(parents=True)
+    primary = src_dir / "withRetry.ts"
+    primary.write_text("export function withRetry() {}\n", encoding="utf-8")
+
+    steps = repo_map._primary_language_fallback_validation_steps(
+        repo_root=str(src_dir),
+        primary_file=str(primary),
+    )
+
+    assert steps == []
+
+
+def test_ensure_primary_language_validation_fallback_fills_empty_js_plan(tmp_path: Path) -> None:
+    """Regression for the dogfood symptom itself: the per-test validation plan came back
+    completely empty (e.g. from a scan-ceiling-capped root scan on a large repo) -- simulated
+    here by handing `_ensure_primary_language_validation_fallback` an empty plan directly. Before
+    the fix, a TS/JS primary_file stayed empty because the fallback helper had no JS branch."""
+    project = tmp_path / "project"
+    src_dir = project / "src" / "utils"
+    src_dir.mkdir(parents=True)
+    _write_package_json(project)
+    primary = src_dir / "withRetry.ts"
+    primary.write_text("export function withRetry() {}\n", encoding="utf-8")
+
+    augmented = repo_map._ensure_primary_language_validation_fallback(
+        [],
+        repo_root=str(src_dir),
+        primary_file=str(primary),
+    )
+
+    assert augmented
+    assert augmented[0]["runner"] == "javascript"
+    assert augmented[0]["scope"] == "repo"
+    assert augmented[0]["detection"] == "detected"
+    assert augmented[0]["command"] == "npm test"
+
+
+def test_suggested_validation_command_candidates_probes_root_test_tree(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src" / "utils"
+    src_dir.mkdir(parents=True)
+    primary = src_dir / "withRetry.ts"
+
+    candidates = repo_map._suggested_validation_command_candidates(primary, repo_root=project)
+
+    assert project / "test" / "withRetry.test.ts" in candidates
+    assert project / "tests" / "withRetry.test.ts" in candidates
+    assert project / "__tests__" / "withRetry.test.ts" in candidates
+
+
+def test_suggested_validation_command_candidates_probes_root_tests_dir_for_python(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src" / "foo"
+    src_dir.mkdir(parents=True)
+    primary = src_dir / "foo.py"
+
+    candidates = repo_map._suggested_validation_command_candidates(primary, repo_root=project)
+
+    assert project / "tests" / "test_foo.py" in candidates
+
+
+def test_suggested_validation_command_candidates_no_duplicate_probe_when_root_is_parent(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    primary = project / "foo.py"
+
+    candidates = repo_map._suggested_validation_command_candidates(primary, repo_root=project)
+
+    # repo_root == source_path.parent here -- the root-tree probe must not be a redundant
+    # duplicate of the parent-dir probe already in the list.
+    assert candidates.count(project / "tests" / "test_foo.py") == 1
+
+
+def test_agent_capsule_scoped_js_repo_yields_validation_plan_and_root_test_suggestion(
+    tmp_path: Path,
+) -> None:
+    """End-to-end dogfood repro: a scoped `build_agent_capsule` call (path=<repo>/src/utils)
+    on a TS primary with a root-level package.json and a ROOT `test/` tree neighbor must yield a
+    non-empty validation_plan (the repo-scope js step) AND surface the root-tree test neighbor
+    as an additive, unverified suggestion."""
+    from tensor_grep.cli.agent_capsule import build_agent_capsule
+
+    project = tmp_path / "project"
+    src_dir = project / "src" / "utils"
+    test_dir = project / "test"
+    src_dir.mkdir(parents=True)
+    test_dir.mkdir(parents=True)
+    _write_package_json(project)
+    (src_dir / "withRetry.ts").write_text(
+        "export async function withRetry<T>(fn: () => Promise<T>): Promise<T> {\n"
+        "  return fn();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (test_dir / "withRetry.test.ts").write_text(
+        'import { withRetry } from "../src/utils/withRetry";\n'
+        'test("withRetry retries", () => { withRetry(async () => 1); });\n',
+        encoding="utf-8",
+    )
+
+    payload = build_agent_capsule("retry helper", str(src_dir))
+
+    assert payload["primary_target"]["file"] == str((src_dir / "withRetry.ts").resolve())
+    assert payload["validation_plan"], "expected a non-empty repo-scope js validation step"
+    suggested = payload["suggested_validation_commands"]
+    assert suggested
+    assert suggested[0]["target_test"] == "test/withRetry.test.ts"
+    assert suggested[0]["verified"] is False
+    # additive contract: the unverified suggestion must never leak into the strict,
+    # evidence-gated validation_commands list.
+    assert suggested[0]["command"] not in payload["validation_commands"]
+
+
+def test_agent_capsule_scoped_python_repo_yields_root_test_suggestion(tmp_path: Path) -> None:
+    from tensor_grep.cli.agent_capsule import build_agent_capsule
+
+    project = tmp_path / "project"
+    src_dir = project / "src" / "foo"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'demo'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    (src_dir / "foo.py").write_text("def do_thing():\n    return 1\n", encoding="utf-8")
+    (tests_dir / "test_foo.py").write_text(
+        "def test_do_thing():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    payload = build_agent_capsule("do thing", str(src_dir))
+
+    assert payload["validation_plan"], "expected a non-empty repo-scope pytest step"
+    suggested = payload["suggested_validation_commands"]
+    assert suggested
+    assert suggested[0]["target_test"] == "tests/test_foo.py"
+    assert suggested[0]["verified"] is False
+    assert suggested[0]["command"] not in payload["validation_commands"]
