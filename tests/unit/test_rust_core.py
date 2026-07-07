@@ -143,15 +143,22 @@ def test_rust_backend_limit_passthrough_reports_found_via_exit_code(monkeypatch,
 def test_rust_limit_passthrough_forwards_previously_dropped_rg_flags(monkeypatch, tmp_path: Path):
     """The PyO3 execute_ripgrep bridge must FORWARD path_separator/vimgrep/sort_files/max_depth/null/
     null_data and the resolved no_line_number, not hardcode them — rg_passthrough.rs already supports
-    them. Audit #3 (the bug was the Python<->Rust bridge, not the rg command builder)."""
+    them. Audit #3 (the bug was the Python<->Rust bridge, not the rg command builder).
+
+    R1a: the bridge call now passes every argument by KEYWORD (matching the exact parameter names of
+    `execute_ripgrep` in rust_core/src/lib.rs), so this fake captures **kwargs and asserts by name
+    instead of by position — a stale/renamed key here would raise KeyError immediately rather than
+    silently reading the wrong positional slot.
+    """
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig
 
-    captured: dict[str, tuple] = {}
+    captured: dict[str, dict] = {}
 
     class FakeNativeRustBackend:
         def execute_ripgrep(self, *args, **kwargs):
-            captured["args"] = args
+            assert args == (), "execute_ripgrep must be called with keyword args only (R1a)"
+            captured["kwargs"] = kwargs
             return 0
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
@@ -172,16 +179,20 @@ def test_rust_limit_passthrough_forwards_previously_dropped_rg_flags(monkeypatch
     )
 
     backend.search(str(log_file), "ERROR", config=config)
-    args = captured["args"]
-    # The 7 previously-dropped fields are appended after the existing 36 positional bridge args, in
-    # order: no_line_number (= not line_number), path_separator, vimgrep, sort_files, max_depth, null,
-    # null_data. rg_passthrough.rs checks no_line_number before line_number, so a resolved "hide" must
-    # arrive as no_line_number=True.
-    assert args[-7:] == (True, "/", True, True, 5, True, True)
-    # globs (idx 16) and file_types (idx 29) must be [] not None: rg's PyO3 Vec<String> rejects None,
-    # which silently fell the whole passthrough back to a flag-dropping path (config.glob and
-    # config.file_type both default to None). This guard is what makes #2/#3 actually take effect.
-    assert args[16] == [] and args[29] == []
+    kwargs = captured["kwargs"]
+    # rg_passthrough.rs checks no_line_number before line_number, so a resolved "hide" must arrive as
+    # no_line_number=True.
+    assert kwargs["no_line_number"] is True
+    assert kwargs["path_separator"] == "/"
+    assert kwargs["vimgrep"] is True
+    assert kwargs["sort_files"] is True
+    assert kwargs["max_depth"] == 5
+    assert kwargs["null"] is True
+    assert kwargs["null_data"] is True
+    # globs/file_types must be [] not None: rg's PyO3 Vec<String> rejects None, which silently fell
+    # the whole passthrough back to a flag-dropping path (config.glob and config.file_type both
+    # default to None). This guard is what makes #2/#3 actually take effect.
+    assert kwargs["globs"] == [] and kwargs["file_types"] == []
 
 
 def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):

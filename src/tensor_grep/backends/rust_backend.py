@@ -196,53 +196,57 @@ class RustCoreBackend(ComputeBackend):
         bridge_fallback_reason: str | None = None
         if pcre2 or max_filesize or no_ignore_vcs:
             try:
+                # Every argument is passed by KEYWORD (matching the exact parameter names of
+                # `execute_ripgrep` in rust_core/src/lib.rs) so that any future Rust-side signature
+                # drift (an inserted/reordered/renamed parameter) raises a loud TypeError instead of
+                # silently shifting every trailing bool into the wrong flag (R1a).
                 exit_code = self.inner.execute_ripgrep(
-                    [pattern],
-                    str(file_path),
-                    ignore_case,
-                    fixed_strings,
-                    invert_match,
-                    count_only,
-                    False,  # count_matches
-                    config.line_number if config else True,
-                    config.column if config else False,
-                    config.only_matching if config else False,
-                    config.context if config else None,
-                    config.before_context if config else None,
-                    config.after_context if config else None,
-                    config.max_count if config else None,
-                    config.word_regexp if config else False,
-                    config.smart_case if config else False,
-                    (config.glob or []) if config else [],
-                    config.no_ignore if config else False,
-                    config.no_ignore_dot if config else False,
-                    config.no_ignore_exclude if config else False,
-                    config.no_ignore_files if config else False,
-                    config.no_ignore_global if config else False,
-                    config.no_ignore_parent if config else False,
-                    no_ignore_vcs,
-                    config.hidden if config else False,
-                    config.follow if config else False,
-                    config.text if config else False,
-                    False,  # files_with_matches
-                    False,  # files_without_match
-                    (config.file_type or []) if config else [],
-                    config.color if config else None,
-                    config.replace_str if config else None,
-                    config.passthru if config else False,
-                    config.no_config if config else False,
-                    pcre2,
-                    max_filesize,
+                    patterns=[pattern],
+                    path=str(file_path),
+                    ignore_case=ignore_case,
+                    fixed_strings=fixed_strings,
+                    invert_match=invert_match,
+                    count=count_only,
+                    count_matches=False,
+                    line_number=config.line_number if config else True,
+                    column=config.column if config else False,
+                    only_matching=config.only_matching if config else False,
+                    context=config.context if config else None,
+                    before_context=config.before_context if config else None,
+                    after_context=config.after_context if config else None,
+                    max_count=config.max_count if config else None,
+                    word_regexp=config.word_regexp if config else False,
+                    smart_case=config.smart_case if config else False,
+                    globs=(config.glob or []) if config else [],
+                    no_ignore=config.no_ignore if config else False,
+                    no_ignore_dot=config.no_ignore_dot if config else False,
+                    no_ignore_exclude=config.no_ignore_exclude if config else False,
+                    no_ignore_files=config.no_ignore_files if config else False,
+                    no_ignore_global=config.no_ignore_global if config else False,
+                    no_ignore_parent=config.no_ignore_parent if config else False,
+                    no_ignore_vcs=no_ignore_vcs,
+                    hidden=config.hidden if config else False,
+                    follow=config.follow if config else False,
+                    text=config.text if config else False,
+                    files_with_matches=False,
+                    files_without_match=False,
+                    file_types=(config.file_type or []) if config else [],
+                    color=config.color if config else None,
+                    replace=config.replace_str if config else None,
+                    passthru=config.passthru if config else False,
+                    no_config=config.no_config if config else False,
+                    pcre2=pcre2,
+                    max_filesize=max_filesize,
                     # Previously hardcoded in the PyO3 bridge (audit #3) — forward them so a
                     # passthrough search honors these flags. no_line_number carries the resolved
                     # "hide" decision (rg_passthrough checks no_line_number before line_number).
-                    not (config.line_number if config else True),
-                    config.path_separator if config else None,
-                    config.vimgrep if config else False,
-                    config.sort_files if config else False,
-                    config.max_depth if config else None,
-                    config.null if config else False,
-                    config.null_data if config else False,
+                    no_line_number=not (config.line_number if config else True),
+                    path_separator=config.path_separator if config else None,
+                    vimgrep=config.vimgrep if config else False,
+                    sort_files=config.sort_files if config else False,
+                    max_depth=config.max_depth if config else None,
+                    null=config.null if config else False,
+                    null_data=config.null_data if config else False,
                 )
                 # Results are emitted directly to stdout by the ripgrep binary, so the exact match
                 # count is unknowable here. Reflect FOUND-vs-NOT-FOUND via rg's exit code (0 = at
@@ -281,7 +285,10 @@ class RustCoreBackend(ComputeBackend):
             if count_only and not invert_match:
                 # Use highly-optimized Rayon parallel count fast-path
                 total_count = self.inner.count_matches(
-                    pattern, str(file_path), ignore_case, fixed_strings
+                    pattern=pattern,
+                    path=str(file_path),
+                    ignore_case=ignore_case,
+                    fixed_strings=fixed_strings,
                 )
                 return SearchResult(
                     matches=[],  # No lines needed for count
@@ -295,13 +302,18 @@ class RustCoreBackend(ComputeBackend):
                     fallback_reason=bridge_fallback_reason,
                 )
 
-            # Support older signature and new signature smoothly
-            try:
-                results = self.inner.search(
-                    pattern, str(file_path), ignore_case, fixed_strings, invert_match
-                )
-            except TypeError:
-                results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)
+            # Single signature, keyword args: the extension has supported `invert_match` since
+            # before this bridge shipped, so the old 4-arg fallback (R7a) targeted a checkpoint
+            # that no longer exists and — worse — swallowed a real TypeError raised *inside* the
+            # Rust function under the same exception type, which would silently drop
+            # invert_match and return wrong results instead of surfacing the failure.
+            results = self.inner.search(
+                pattern=pattern,
+                path=str(file_path),
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+                invert_match=invert_match,
+            )
         except Exception as exc:
             if _is_invalid_regex_error(exc):
                 raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
