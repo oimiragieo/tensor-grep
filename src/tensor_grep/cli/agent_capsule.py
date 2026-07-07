@@ -498,6 +498,9 @@ def _collect_capsule_call_site_evidence(
         "omitted_call_sites": int(output_limit.get("omitted_callers", 0) or 0),
         "provenance": provenance,
         "graph_trust_summary": _as_dict(radius_payload.get("graph_trust_summary")),
+        # PATH A Stage 0 (additive): surface the same resolution_gaps floor blast-radius now
+        # carries so an agent sees WHY graph_trust_summary was downgraded, not just that it was.
+        "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
     }
     return related_call_sites, evidence
 
