@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.45.9 (2026-07-07)
+
+### Bug Fixes
+
+- **audit LOW F15/F23**: Correct the BM25-tie ordering claim in rerank_hybrid docstring; go.work
+  parsing ignores the use-block header + strips trailing // comments
+  ([#431](https://github.com/oimiragieo/tensor-grep/pull/431),
+  [`8c68351`](https://github.com/oimiragieo/tensor-grep/commit/8c68351eba0390cae27780a97d9c54cbb41b1bb0))
+
+
 ## v1.45.8 (2026-07-07)
 
 ### Bug Fixes
