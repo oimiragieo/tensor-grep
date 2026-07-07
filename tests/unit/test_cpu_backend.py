@@ -648,3 +648,36 @@ class TestCPUBackend:
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
             result = CPUBackend().search(str(f), r"(a)\1", config=SearchConfig(pcre2=True))
         assert result.total_matches == 1  # user opted in; Python re ran the backref pattern
+
+
+def test_max_count_zero_returns_no_matches_on_pure_python_path(tmp_path):
+    """`--max-count 0` means ZERO matches (ripgrep's contract). The pure-Python loop checks the cap
+    AFTER appending and `config.max_count and ...` treats 0 as falsy, so before the guard `-m 0` on
+    the context-forced pure-Python path emitted every match. after_context forces that path."""
+    log = tmp_path / "app.log"
+    log.write_text(
+        "ERROR one\nplain a\nERROR two\nplain b\nERROR three\nplain c\n", encoding="utf-8"
+    )
+    backend = CPUBackend()
+
+    zero = backend.search(str(log), "ERROR", config=SearchConfig(max_count=0, after_context=1))
+    assert zero.total_matches == 0
+    assert zero.matches == []
+    assert zero.routing_reason == "cpu_max_count_zero"
+
+    # Regression: a positive cap still returns exactly that many pattern matches (the guard only
+    # short-circuits max_count == 0; max_count > 0 keeps flowing through the normal loop).
+    capped = backend.search(str(log), "ERROR", config=SearchConfig(max_count=2, after_context=1))
+    assert capped.total_matches == 2
+
+
+def test_max_count_zero_returns_no_matches_on_ltl_path(tmp_path):
+    """The LTL/sequence path (reached via search() -> _search_ltl) shares the same search()-entry
+    guard, so `-m 0` on an LTL query is also zero, not one-sequence."""
+    log = tmp_path / "seq.log"
+    log.write_text("alpha here\nbeta here\nalpha again\nbeta again\n", encoding="utf-8")
+    backend = CPUBackend()
+
+    zero = backend.search(str(log), "alpha ~> beta", config=SearchConfig(ltl=True, max_count=0))
+    assert zero.total_matches == 0
+    assert zero.routing_reason == "cpu_max_count_zero"
