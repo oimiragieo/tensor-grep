@@ -55,9 +55,14 @@ class _CapturingModel:
 
 
 class TestDenseAvailable:
+    @pytest.mark.skipif(
+        not dense_available()[0],
+        reason="model2vec optional [semantic] extra not installed (CI installs only [dev]); the "
+        "dense leg is exercised where the extra is present + by TestRealFetchedModel. Fail-closed "
+        "behaviour when the extra is ABSENT is covered by test_false_when_model2vec_missing.",
+    )
     def test_true_in_this_environment(self) -> None:
-        # Real environment check -- model2vec + numpy ARE installed here via the `semantic`
-        # extra (not mocked). If this flips False, the extra failed to install.
+        # When the `semantic` extra IS installed, dense_available() must report True cleanly.
         available, reason = dense_available()
         assert available is True
         assert reason is None
