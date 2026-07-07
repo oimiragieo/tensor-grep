@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.45.11 (2026-07-07)
+
+### Bug Fixes
+
+- **1D**: Tg agent honors the exit-2-on-scan-truncation contract (propagate scan_limit + gate the
+  command) + a truncated scan disqualifies the T2 confidence uplift and forces ask_user
+  (Fable-designed; the flagship command's only exit-2 hole)
+  ([#433](https://github.com/oimiragieo/tensor-grep/pull/433),
+  [`16448c2`](https://github.com/oimiragieo/tensor-grep/commit/16448c27262d76f0606d651eb9d4bf1a765e3756))
+
+
 ## v1.45.10 (2026-07-07)
 
 ### Performance Improvements
