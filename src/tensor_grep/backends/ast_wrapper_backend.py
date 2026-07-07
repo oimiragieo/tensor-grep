@@ -240,6 +240,26 @@ class AstGrepWrapperBackend(ComputeBackend):
             routing_worker_count=1,
         )
 
+    @staticmethod
+    def _cap_to_max_count(result: SearchResult, config: SearchConfig | None) -> SearchResult:
+        """H6: cap `result` to `config.max_count`, matching cpu_backend/rust's
+        per-file (per-call) cap semantics instead of returning every structural
+        match ast-grep found."""
+        max_count = config.max_count if config else None
+        if not max_count or len(result.matches) <= max_count:
+            return result
+        result.matches = result.matches[:max_count]
+        result.total_matches = len(result.matches)
+        matched_files_capped: list[str] = []
+        seen_files_capped: set[str] = set()
+        for match in result.matches:
+            if match.file and match.file not in seen_files_capped:
+                seen_files_capped.add(match.file)
+                matched_files_capped.append(match.file)
+        result.matched_file_paths = matched_files_capped
+        result.total_files = len(matched_files_capped)
+        return result
+
     def _parse_json_items(self, stdout: str) -> list[dict[str, Any]]:
         try:
             loaded = json.loads(stdout)
@@ -321,7 +341,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
                 self._raise_for_nonzero(result)
-                return self._parse_result(result.stdout)
+                return self._cap_to_max_count(self._parse_result(result.stdout), config)
         except BackendExecutionError:
             raise
         except Exception as e:
@@ -343,7 +363,9 @@ class AstGrepWrapperBackend(ComputeBackend):
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
                 self._raise_for_nonzero(result)
-                return self._parse_result(result.stdout, fallback_file=file_path)
+                return self._cap_to_max_count(
+                    self._parse_result(result.stdout, fallback_file=file_path), config
+                )
         except BackendExecutionError:
             raise
         except Exception as e:

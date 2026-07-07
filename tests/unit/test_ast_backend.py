@@ -207,6 +207,116 @@ class TestAstBackend:
         assert result.routing_backend == "AstBackend"
         assert result.routing_reason == "ast_structural_match"
 
+    def test_should_cap_matches_to_max_count_for_query_capture_path(self, tmp_path, mocker):
+        """H6: --ast ... --max-count N must cap the returned matches to N, matching
+        the per-file cap semantics of cpu_backend/rust, instead of returning every
+        structural match."""
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+
+        class FakeNode:
+            def __init__(self, line_number):
+                self.start_point = (line_number, 0)
+
+        class FakeQuery:
+            def captures(self, _root):
+                return [(FakeNode(line), "match") for line in range(4)]
+
+        class FakeLanguage:
+            def query(self, _pattern):
+                return FakeQuery()
+
+        class FakeTree:
+            class RootNode:
+                type = "module"
+                start_point = (0, 0)
+                children = ()
+
+            root_node = RootNode()
+
+        class FakeParser:
+            language = FakeLanguage()
+
+            def parse(self, _source):
+                return FakeTree()
+
+        mocker.patch.object(backend, "_get_parser", return_value=FakeParser())
+
+        file_path = tmp_path / "test.py"
+        file_path.write_text("a\nb\nc\nd\n", encoding="utf-8")
+
+        result = backend.search(
+            str(file_path),
+            "function_definition",
+            SearchConfig(ast=True, lang="python", max_count=2),
+        )
+
+        assert result.total_matches == 2
+        assert [m.line_number for m in result.matches] == [1, 2]
+
+    def test_max_count_cap_does_not_poison_the_persisted_cache(self, tmp_path, mocker, monkeypatch):
+        """The capped result must never be what's persisted -- otherwise a later
+        query with a higher/no max_count would silently replay the truncated
+        result from a previous capped query."""
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        cache_dir = tmp_path / "ast-cache"
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE_DIR", str(cache_dir))
+        AstBackend._clear_shared_caches()
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+
+        class FakeNode:
+            def __init__(self, line_number):
+                self.start_point = (line_number, 0)
+
+        class FakeQuery:
+            def captures(self, _root):
+                return [(FakeNode(line), "match") for line in range(4)]
+
+        class FakeLanguage:
+            def query(self, _pattern):
+                return FakeQuery()
+
+        class FakeTree:
+            class RootNode:
+                type = "module"
+                start_point = (0, 0)
+                children = ()
+
+            root_node = RootNode()
+
+        class FakeParser:
+            language = FakeLanguage()
+
+            def parse(self, _source):
+                return FakeTree()
+
+        mocker.patch.object(backend, "_get_parser", return_value=FakeParser())
+
+        file_path = tmp_path / "test.py"
+        file_path.write_text("a\nb\nc\nd\n", encoding="utf-8")
+
+        capped = backend.search(
+            str(file_path),
+            "function_definition",
+            SearchConfig(ast=True, lang="python", max_count=1),
+        )
+        assert capped.total_matches == 1
+
+        # A second, uncapped query for the same file/lang/pattern hits the
+        # persistent result cache -- it must return the FULL match set, proving
+        # the cache stored the uncapped result rather than the capped one.
+        uncapped = backend.search(
+            str(file_path),
+            "function_definition",
+            SearchConfig(ast=True, lang="python"),
+        )
+        assert uncapped.total_matches == 4
+
     def test_should_reuse_compiled_query_and_parsed_source_for_repeated_searches(
         self, tmp_path, mocker
     ):
@@ -565,6 +675,63 @@ class TestAstBackend:
         assert second.matches[0].line_number == 3
         assert parser_two.parse_calls == 0
         assert parser_two.language.query_calls == 0
+
+    def test_should_cap_matches_for_node_type_index_path(self, tmp_path, mocker, monkeypatch):
+        """H6: the simple-node-type-index fast path (a different code path from the
+        tree-sitter query-capture path) must also honor max_count."""
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        cache_dir = tmp_path / "ast-cache"
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE_DIR", str(cache_dir))
+        AstBackend._clear_shared_caches()
+
+        class FakeNode:
+            def __init__(self, node_type, line_number, children=()):
+                self.type = node_type
+                self.start_point = (line_number, 0)
+                self.children = children
+
+        class FakeQuery:
+            def captures(self, _root):
+                return []
+
+        class FakeLanguage:
+            def query(self, _pattern):
+                return FakeQuery()
+
+        class FakeTree:
+            def __init__(self):
+                self.root_node = FakeNode(
+                    "module",
+                    0,
+                    children=(
+                        FakeNode("function_definition", 0),
+                        FakeNode("function_definition", 1),
+                        FakeNode("function_definition", 2),
+                    ),
+                )
+
+        class FakeParser:
+            language = FakeLanguage()
+
+            def parse(self, _source):
+                return FakeTree()
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+        mocker.patch.object(backend, "_get_parser", return_value=FakeParser())
+
+        file_path = tmp_path / "test.py"
+        file_path.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = backend.search(
+            str(file_path),
+            "function_definition",
+            SearchConfig(ast=True, lang="python", max_count=2),
+        )
+
+        assert result.total_matches == 2
+        assert [m.line_number for m in result.matches] == [1, 2]
 
     def test_should_reuse_shared_in_memory_caches_across_backend_instances(
         self, tmp_path, mocker, monkeypatch
