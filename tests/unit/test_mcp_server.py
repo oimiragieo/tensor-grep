@@ -585,6 +585,42 @@ def test_tg_search_should_prefer_runtime_single_worker_gpu_metadata_over_selecte
 
 
 def test_tg_search_count_matches_should_respect_total_files_without_materialized_matches():
+    # M10: `structured_json` defaults True everywhere else on this tool; the plain-text count
+    # summary asserted here now requires explicitly opting OUT via `structured_json=False`.
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.side_effect = [
+        SearchResult(matches=[], total_files=1, total_matches=3),
+        SearchResult(matches=[], total_files=0, total_matches=0),
+    ]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "RustCoreBackend"
+        pipeline.selected_backend_reason = "rust_count"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log", "b.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", count_matches=True, structured_json=False)
+
+    assert out.startswith("Found a total of 3 matches across 1 files in ..")
+    assert "Routing: backend=RustCoreBackend reason=rust_count" in out
+    assert "gpu_device_ids=[]" in out
+    assert "gpu_chunk_plan_mb=[]" in out
+    assert "distributed=False" in out
+    assert "workers=0" in out
+
+
+def test_tg_search_count_matches_defaults_to_parseable_structured_json():
+    # M10 (Fable MCP-surface audit): `count_matches=True` used to ALWAYS return plain text
+    # regardless of `structured_json` (default True) -- a default caller's `json.loads()`
+    # would raise. It must now honor the flag like every other branch of this tool.
     from tensor_grep.cli import mcp_server
 
     fake_backend = MagicMock()
@@ -607,12 +643,11 @@ def test_tg_search_count_matches_should_respect_total_files_without_materialized
 
         out = mcp_server.tg_search("ERROR", ".", count_matches=True)
 
-    assert out.startswith("Found a total of 3 matches across 1 files in ..")
-    assert "Routing: backend=RustCoreBackend reason=rust_count" in out
-    assert "gpu_device_ids=[]" in out
-    assert "gpu_chunk_plan_mb=[]" in out
-    assert "distributed=False" in out
-    assert "workers=0" in out
+    payload = json.loads(out)  # must not raise
+    assert payload["total_matches"] == 3
+    assert payload["total_files"] == 1
+    assert payload["routing"]["backend"] == "RustCoreBackend"
+    assert payload["routing"]["reason"] == "rust_count"
 
 
 def test_tg_search_should_render_count_only_file_summary_without_materialized_matches():
@@ -693,6 +728,211 @@ def test_tg_ast_search_should_render_count_only_file_summary_without_materialize
     assert payload["omitted_files"] == 1
     assert payload["routing"]["backend"] == "AstGrepWrapperBackend"
     assert payload["routing"]["reason"] == "ast_grep_json"
+
+
+# --- H3: PR #400 walk-deadline/fallback/broad-root-refusal ported to the MCP walk loops ---
+
+
+def test_tg_search_backend_execution_error_falls_back_to_cpu_and_keeps_partial_results():
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.cli import mcp_server
+
+    fault = BackendExecutionError("native panic")
+    fake_backend = MagicMock()
+    fake_backend.search.side_effect = [
+        SearchResult(
+            matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+            matched_file_paths=["a.log"],
+            total_files=1,
+            total_matches=1,
+        ),
+        fault,
+    ]
+    cpu_fallback_result = SearchResult(
+        matches=[MatchLine(line_number=2, text="ERROR too", file="b.log")],
+        matched_file_paths=["b.log"],
+        total_files=1,
+        total_matches=1,
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch(
+            "tensor_grep.cli.mcp_server._search_with_cpu_fallback",
+            return_value=cpu_fallback_result,
+        ) as mock_fallback,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log", "b.log"]
+
+        out = mcp_server.tg_search("ERROR", ".")
+
+    mock_fallback.assert_called_once()
+    assert mock_fallback.call_args.args[0] == "b.log"
+    assert mock_fallback.call_args.args[3] is fault
+    payload = json.loads(out)
+    # Both the pre-fault match AND the CPU-fallback's match survive -- a mid-walk fault
+    # must never discard results already collected (the pre-fix behavior: the outer
+    # `except Exception` swallowed everything).
+    assert payload["total_matches"] == 2
+    assert {m["file"] for m in payload["matches"]} == {"a.log", "b.log"}
+
+
+def test_tg_search_walk_deadline_exceeded_preserves_partial_results_and_flags_incomplete():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        matched_file_paths=["a.log"],
+        total_files=1,
+        total_matches=1,
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch(
+            "tensor_grep.cli.mcp_server.native_walk_deadline_exceeded",
+            side_effect=[False, True],
+        ),
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log", "b.log", "c.log"]
+
+        out = mcp_server.tg_search("ERROR", ".")
+
+    # Only the first file was searched before the (mocked) deadline tripped.
+    assert fake_backend.search.call_count == 1
+    payload = json.loads(out)
+    assert payload["total_matches"] == 1
+    assert payload["result_incomplete"] is True
+    assert "deadline" in payload["incomplete_reason"]
+    assert payload["truncated"] is True
+
+
+def test_tg_search_refuses_vendored_root_scan_with_actionable_message(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "dep.py").write_text("x = 1\n", encoding="utf-8")
+
+    fake_backend = MagicMock()  # a generic non-RipgrepBackend double
+
+    with patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline:
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+
+        out = mcp_server.tg_search("ERROR", str(tmp_path))
+
+    fake_backend.search.assert_not_called()
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "broad_scan_refused"
+    assert "vendor" in payload["error"]["message"]
+    assert payload["result_incomplete"] is True
+    assert payload["truncated"] is True
+
+
+def test_tg_search_refuses_large_root_scan_for_non_ripgrep_backend():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    many_files = [f"file_{i}.log" for i in range(2000)]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = many_files
+
+        out = mcp_server.tg_search("ERROR", ".")
+
+    fake_backend.search.assert_not_called()
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "broad_scan_refused"
+    assert "1500" in payload["error"]["message"]
+
+
+def test_tg_ast_search_backend_execution_error_skips_file_and_keeps_partial_results():
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = type("AstGrepWrapperBackend", (), {"search": MagicMock()})()
+    fake_backend.search.side_effect = [
+        SearchResult(
+            matches=[MatchLine(line_number=1, text="def foo(): pass", file="a.py")],
+            matched_file_paths=["a.py"],
+            total_files=1,
+            total_matches=1,
+        ),
+        BackendExecutionError("ast-grep panic"),
+    ]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "AstGrepWrapperBackend"
+        pipeline.selected_backend_reason = "ast_grep_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.py", "b.py"]
+
+        out = mcp_server.tg_ast_search("def $A():", "python", ".")
+
+    payload = json.loads(out)
+    # The first file's match survives; the faulted file is skipped (never silently
+    # swapped to a regex-only CPU backend, which would misinterpret the AST pattern).
+    assert payload["total_matches"] == 1
+    assert payload["result_incomplete"] is True
+    assert "b.py" in payload["incomplete_reason"]
+
+
+def test_tg_ast_search_refuses_vendored_root_scan_with_actionable_message(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / "third_party").mkdir()
+
+    fake_backend = type("AstGrepWrapperBackend", (), {"search": MagicMock()})()
+
+    with patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline:
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "AstGrepWrapperBackend"
+        pipeline.selected_backend_reason = "ast_grep_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+
+        out = mcp_server.tg_ast_search("def $A():", "python", str(tmp_path))
+
+    fake_backend.search.assert_not_called()
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "broad_scan_refused"
+    assert payload["lang"] == "python"
+    assert "third_party" in payload["error"]["message"]
 
 
 def test_tg_devices_returns_no_gpu_message_when_empty():
@@ -862,6 +1102,55 @@ def test_tg_session_context_returns_uniform_error_detail(tmp_path: Path):
 
     assert payload["error"]["code"] == "invalid_input"
     assert "detail" in payload["error"]
+
+
+def test_tg_session_context_default_max_tokens_matches_sibling_context_tools(tmp_path: Path):
+    # H4: `tg_session_context` used to call `session_context` (-> `build_context_pack_from_map`)
+    # with NO token bound at all, unlike every sibling context tool. It must now default to the
+    # same `_DEFAULT_MCP_CONTEXT_MAX_TOKENS` and emit the `token_budget` field.
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "sample.py").write_text("def add(x):\n    return x\n", encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    payload = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
+
+    assert payload["token_budget"]["max_tokens"] == mcp_server._DEFAULT_MCP_CONTEXT_MAX_TOKENS
+    assert payload["token_budget"]["truncated"] is False
+
+
+def test_tg_session_context_bounds_pack_by_max_tokens(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for i in range(6):
+        (src_dir / f"mod_{i}.py").write_text(
+            f"def add_{i}(x):\n    return x + {i}\n" * 20,
+            encoding="utf-8",
+        )
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    unbounded = json.loads(
+        mcp_server.tg_session_context(session_id, "add", str(project), max_tokens=0)
+    )
+    bounded = json.loads(
+        mcp_server.tg_session_context(session_id, "add", str(project), max_tokens=50)
+    )
+
+    # 0 = explicit unbounded opt-out (matches every sibling context tool's contract).
+    assert "token_budget" not in unbounded
+    assert bounded["token_budget"]["max_tokens"] == 50
+    assert bounded["token_budget"]["truncated"] is True
+    assert len(bounded["files"]) < len(unbounded["files"])
 
 
 def test_tg_session_lifecycle_errors_return_uniform_error_detail(tmp_path: Path):
@@ -4237,6 +4526,104 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
     assert payload["graph_trust_summary"]["depth_count"] >= 1
     assert "graph-derived" in payload["graph_trust_summary"]["provenance"]
     assert "Depth 0:" in payload["rendered_caller_tree"]
+
+
+# --- M11: uniform exception sanitization -- a KeyError/AttributeError must return a
+# structured error, not propagate a raw traceback out of the MCP call. ---
+
+
+def test_tg_symbol_blast_radius_returns_structured_error_on_unexpected_exception(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    with patch(
+        "tensor_grep.cli.mcp_server.build_symbol_blast_radius",
+        side_effect=KeyError("boom"),
+    ):
+        out = mcp_server.tg_symbol_blast_radius("create_invoice", str(tmp_path))
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "internal_error"
+    assert payload["error"]["retryable"] is False
+    assert "boom" in payload["error"]["message"]
+
+
+def test_tg_symbol_blast_radius_render_returns_structured_error_on_unexpected_exception(
+    tmp_path,
+):
+    from tensor_grep.cli import mcp_server
+
+    with patch(
+        "tensor_grep.cli.mcp_server.build_symbol_blast_radius_render",
+        side_effect=AttributeError("boom"),
+    ):
+        out = mcp_server.tg_symbol_blast_radius_render("create_invoice", str(tmp_path))
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "internal_error"
+    assert payload["error"]["retryable"] is False
+
+
+def test_tg_repo_map_returns_structured_error_on_unexpected_exception(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    with patch(
+        "tensor_grep.cli.mcp_server.build_repo_map",
+        side_effect=KeyError("boom"),
+    ):
+        out = mcp_server.tg_repo_map(str(tmp_path))
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "internal_error"
+    assert payload["error"]["retryable"] is False
+
+
+def test_tg_context_pack_returns_structured_error_on_unexpected_exception(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    with patch(
+        "tensor_grep.cli.mcp_server.build_context_pack",
+        side_effect=KeyError("boom"),
+    ):
+        out = mcp_server.tg_context_pack("add", str(tmp_path))
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "internal_error"
+    assert payload["error"]["retryable"] is False
+
+
+def test_tg_agent_capsule_returns_structured_error_on_unexpected_exception(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    with patch(
+        "tensor_grep.cli.agent_capsule.build_agent_capsule",
+        side_effect=KeyError("boom"),
+    ):
+        out = mcp_server.tg_agent_capsule("add", str(tmp_path))
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "internal_error"
+
+
+def test_tg_session_edit_plan_returns_structured_error_on_unexpected_exception(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "sample.py").write_text("def add(x):\n    return x\n", encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    with patch(
+        "tensor_grep.cli.session_store.session_context_edit_plan",
+        side_effect=KeyError("boom"),
+    ):
+        out = mcp_server.tg_session_edit_plan(session_id, "add", str(project))
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "internal_error"
+    assert payload["session_id"] == session_id
 
 
 def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_path):
