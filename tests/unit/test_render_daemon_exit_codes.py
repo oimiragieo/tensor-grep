@@ -178,6 +178,20 @@ def test_context_render_text_complete_stays_exit_0(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
+def test_context_render_json_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
+    # F27 (Fable audit LOW): the cold output-cap-only case was pinned only for `map`, not
+    # `context-render` -- `--max-files` truncates the render bundle to fewer files than the scan
+    # actually found (a COMPLETE analysis capped only for display) and must stay exit 0.
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(
+        app, ["context-render", str(project), "helper", "--json", "--max-files", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert len(payload["files"]) == 1
+    assert payload["scan_limit"]["possibly_truncated"] is False
+
+
 # --------------------------------------------------------------------------------------------
 # context-render -- daemon fast-path (json + text)
 # --------------------------------------------------------------------------------------------
@@ -331,6 +345,16 @@ def test_edit_plan_text_complete_stays_exit_0(tmp_path: Path) -> None:
     project = _flat_repo(tmp_path, 8)
     result = runner.invoke(app, ["edit-plan", str(project), "helper"])
     assert result.exit_code == 0, result.output
+
+
+def test_edit_plan_json_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
+    # F27: the cold output-cap-only case was pinned only for `map`, not `edit-plan`.
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["edit-plan", str(project), "helper", "--json", "--max-files", "1"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert len(payload["files"]) == 1
+    assert payload["scan_limit"]["possibly_truncated"] is False
 
 
 # --------------------------------------------------------------------------------------------
@@ -506,4 +530,76 @@ def test_blast_radius_render_text_scan_truncated_exits_2_with_full_output(
 def test_blast_radius_render_text_complete_stays_exit_0(tmp_path: Path) -> None:
     project = _flat_repo(tmp_path, 8)
     result = runner.invoke(app, ["blast-radius-render", str(project), "helper_0"])
+    assert result.exit_code == 0, result.output
+
+
+def test_blast_radius_render_json_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
+    # F27: the cold output-cap-only case was pinned only for `map`, not `blast-radius-render`.
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(
+        app, ["blast-radius-render", str(project), "helper_0", "--json", "--max-files", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is False
+
+
+# --------------------------------------------------------------------------------------------
+# blast-radius-plan -- cold path only (json + text); no daemon fast-path exists for this command.
+# --------------------------------------------------------------------------------------------
+
+
+def test_blast_radius_plan_json_scan_truncated_exits_2_with_full_payload(tmp_path: Path) -> None:
+    # F14 (Fable audit MED): blast-radius-plan's payload is built from
+    # build_symbol_blast_radius_from_map and carries the exact scan_limit/caller_scan_truncated
+    # markers `_scan_incomplete` gates on, but the command was UNGATED -- a scan-truncated plan
+    # exited 0 while the sibling `blast-radius` command exits 2 on identical truncation.
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(
+        app,
+        [
+            "blast-radius-plan",
+            str(project),
+            "helper_0",
+            "--json",
+            "--max-repo-files",
+            "1",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    # full payload still printed, not swallowed by the exit
+    assert "files" in payload and "symbols" in payload
+
+
+def test_blast_radius_plan_json_complete_stays_exit_0(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["blast-radius-plan", str(project), "helper_0", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is False
+
+
+def test_blast_radius_plan_json_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(
+        app, ["blast-radius-plan", str(project), "helper_0", "--json", "--max-files", "1"]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_blast_radius_plan_text_scan_truncated_exits_2_with_full_output(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(
+        app,
+        ["blast-radius-plan", str(project), "helper_0", "--max-repo-files", "1"],
+    )
+    assert result.exit_code == 2, result.output
+    assert "Blast radius plan for" in result.output
+
+
+def test_blast_radius_plan_text_complete_stays_exit_0(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["blast-radius-plan", str(project), "helper_0"])
     assert result.exit_code == 0, result.output

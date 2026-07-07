@@ -135,6 +135,37 @@ class TestDenseIndexShapeValidation:
         with pytest.raises(DenseUnavailableError):
             DenseIndex(chunks, _FixedDimModel(dim=4, row_count_delta=1))
 
+    def test_encode_raw_runtime_error_becomes_backend_execution_error(self) -> None:
+        # F2 (Fable audit MED): a bare RuntimeError from model.encode (e.g. a broken/incompatible
+        # model2vec runtime) must never propagate raw -- it violates the module's fail-closed
+        # contract. It is unrecoverable (not the deliberate shape-mismatch degrade), so it must
+        # become BackendExecutionError, not crash the caller with an unhandled RuntimeError.
+        class _RaisingModel:
+            dim = 4
+
+            def encode(self, texts: list[str]) -> np.ndarray:
+                raise RuntimeError("model2vec runtime exploded")
+
+        chunks = [Chunk(file_path="a.py", start_line=1, end_line=1, text="hello")]
+        with pytest.raises(BackendExecutionError, match="model2vec runtime exploded"):
+            DenseIndex(chunks, _RaisingModel())
+
+    def test_encode_ragged_array_becomes_backend_execution_error(self) -> None:
+        # F2: model.encode returning a ragged nested sequence makes np.asarray(..., dtype=float32)
+        # raise a raw ValueError -- must also degrade to BackendExecutionError, not propagate raw.
+        class _RaggedModel:
+            dim = 4
+
+            def encode(self, texts: list[str]) -> list[list[float]]:
+                return [[1.0, 2.0], [1.0, 2.0, 3.0]]
+
+        chunks = [
+            Chunk(file_path="a.py", start_line=1, end_line=1, text="hello"),
+            Chunk(file_path="b.py", start_line=1, end_line=1, text="world"),
+        ]
+        with pytest.raises(BackendExecutionError):
+            DenseIndex(chunks, _RaggedModel())
+
     def test_query_dim_mismatch_degrades_not_indexerror(self) -> None:
         chunks = [Chunk(file_path="a.py", start_line=1, end_line=1, text="hello world")]
         index = DenseIndex(chunks, _FixedDimModel(dim=4))

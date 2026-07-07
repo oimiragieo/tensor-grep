@@ -107,11 +107,24 @@ def load_dense_model(model_dir: str | Path) -> Any:
 
 def _encode_matrix(model: Any, texts: list[str]) -> np.ndarray:
     """Encode ``texts`` raw (no BM25 tokenization -- static embeddings tokenize internally) and
-    shape-validate the result into a 2-D ``float32`` matrix."""
+    shape-validate the result into a 2-D ``float32`` matrix.
+
+    ``model.encode`` and ``np.asarray`` are third-party/numpy calls outside this module's control:
+    a broken or incompatible model can raise anything (a bare ``RuntimeError`` from model2vec, a
+    ``ValueError`` from numpy refusing to build an array out of a ragged nested sequence, etc). Per
+    the Backend Fail-Closed Contract (module docstring), that is a genuine unrecoverable backend
+    fault, not the deliberately-recoverable shape mismatch below -- so it is re-raised as
+    :class:`~tensor_grep.backends.base.BackendExecutionError`, never left to propagate raw.
+    """
     import numpy as np
 
-    raw = model.encode(texts)
-    matrix = np.asarray(raw, dtype=np.float32)
+    try:
+        raw = model.encode(texts)
+        matrix = np.asarray(raw, dtype=np.float32)
+    except Exception as exc:
+        raise BackendExecutionError(
+            f"dense model encode failed for {len(texts)} input(s): {exc}"
+        ) from exc
     if matrix.ndim == 1:
         # Some encoders collapse a single-text batch to a 1-D vector; treat it as one row.
         matrix = matrix.reshape(1, -1)
