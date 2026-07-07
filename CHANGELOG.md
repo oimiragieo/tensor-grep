@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.44.0 (2026-07-07)
+
+### Features
+
+- **#27**: Local hybrid semantic search — dense (model2vec/potion-code-16M) + RRF, default-OFF
+  --semantic, fail-closed to BM25 ([#415](https://github.com/oimiragieo/tensor-grep/pull/415),
+  [`30ba0e3`](https://github.com/oimiragieo/tensor-grep/commit/30ba0e34a56dd592d4414416d66b68121e3d1e86))
+
+* feat(PathB Stage1): local hybrid semantic search — dense leg (model2vec/potion-code-16M) + RRF
+  fusion behind default-OFF --semantic, fail-closed to BM25 visible (roadmap #27)
+
+* test(#415): skip dense-available assertion when model2vec absent (CI installs [dev] not
+  [semantic]); fail-closed path still covered by test_false_when_model2vec_missing
+
+* fix(#415): uv lock the [semantic] extra (model2vec/joblib were unlocked -> audit --locked export
+  failed) + skip numpy-missing test when model2vec absent
+
+
 ## v1.43.0 (2026-07-07)
 
 ### Features
