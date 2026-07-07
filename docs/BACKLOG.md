@@ -75,4 +75,4 @@ Plus in-flight: the 5 PRs above (H1/T2/backends/reliability/MCP).
 ## References
 - Fable fix-queue detail (findings + worktree branches): `scratchpad/fable_blitz_fixqueue_2026-07-07.md` (temp — non-durable).
 - Cross-session resume anchor (memory): `tensor-grep-fable-blitz-active-work-2026-07-07.md`.
-- Full process rules: [AGENTS.md](../AGENTS.md). Prose narrative log: [SESSION_HANDOFF.md](SESSION_HANDOFF.md).
+- Full process rules: [AGENTS.md](https://github.com/oimiragieo/tensor-grep/blob/main/AGENTS.md). Prose narrative log: [SESSION_HANDOFF.md](SESSION_HANDOFF.md).
