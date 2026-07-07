@@ -6,3 +6,18 @@ This product includes software developed for the tensor-grep project
 
 Licensed under the Apache License, Version 2.0.
 See the LICENSE file for the full license text.
+
+--------------------------------------------------------------------------------
+
+Optional dependency notices (only pulled in via opt-in extras, e.g. `pip install
+tensor-grep[semantic]` for `tg search --semantic`):
+
+model2vec
+Copyright (c) 2024 MinishLab
+Licensed under the MIT License.
+https://github.com/MinishLab/model2vec
+
+potion-code-16M
+Copyright (c) 2025 MinishLab
+Licensed under the MIT License.
+https://huggingface.co/minishlab/potion-code-16M

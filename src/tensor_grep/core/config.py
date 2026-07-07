@@ -181,3 +181,8 @@ class SearchConfig:
     # BM25 re-ranking of search results (`tg search --rank`). Default off; opt-in per the
     # design council's BM25-first plan. The dense embedding leg is a separate gated flag.
     rank_bm25: bool = False
+    # Local hybrid semantic search (`tg search --semantic`, roadmap #27, Path B Stage 1): fuses
+    # the BM25 leg with a CPU dense-embedding leg (model2vec/potion-code-16M) via Reciprocal Rank
+    # Fusion. Default off. Fails CLOSED to BM25-only (visible via rank_fallback_reason + stderr)
+    # when the `semantic` extra is absent or the model has not been fetched -- never silent.
+    semantic_rank: bool = False

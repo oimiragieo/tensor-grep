@@ -125,6 +125,17 @@ class TestRefusesOutputShapingFields:
     def test_sort_files_refuses_under_gpu_trigger(self) -> None:
         assert _gate(SearchConfig(sort_files=True, gpu_device_ids=[0])) is False
 
+    def test_semantic_rank_refuses_delegation(self) -> None:
+        # --semantic: same class as --rank -- native tg has no dense/RRF hybrid leg, so
+        # delegating a --semantic search would drop the hybrid rerank entirely.
+        assert _gate(SearchConfig(semantic_rank=True, force_cpu=True)) is False
+
+    def test_semantic_rank_refuses_under_json_trigger(self) -> None:
+        assert _gate(SearchConfig(semantic_rank=True, json_mode=True)) is False
+
+    def test_semantic_rank_refuses_under_ndjson_trigger(self) -> None:
+        assert _gate(SearchConfig(semantic_rank=True), ndjson=True) is False
+
 
 class TestDefaultFastPathPreserved:
     """The 2026-06-30 #1 receipt: a naive guard broke the default delegation path.
@@ -165,8 +176,10 @@ class TestFieldCoverageRatchet:
         required = set(tg_main._NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS)
         assert "rank_bm25" in required
         assert "sort_files" in required
+        assert "semantic_rank" in required
         assert "rank_bm25" not in _NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS
         assert "sort_files" not in _NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS
+        assert "semantic_rank" not in _NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS
 
     def test_known_gap_has_no_stale_entries(self) -> None:
         # Guard the ratchet from the other side: a KNOWN_GAP entry that later gets

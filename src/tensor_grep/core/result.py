@@ -45,6 +45,11 @@ class SearchResult:
     # machine-visible "suppression != absence" marker on the JSON/MCP envelopes.
     result_incomplete: bool = False
     incomplete_reason: str | None = None
+    # Set ONLY when `--semantic` was requested but the dense leg could not run (extra absent,
+    # model not fetched, or a shape/dim-mismatch degrade) -- distinct from `fallback_reason`
+    # (reserved for a full engine swap) and from `incomplete_reason` (partial results). Emitted
+    # to stderr + this field so a BM25-only result is never mislabeled "semantic" output.
+    rank_fallback_reason: str | None = None
 
     @property
     def is_empty(self) -> bool:

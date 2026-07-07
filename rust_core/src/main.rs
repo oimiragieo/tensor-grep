@@ -269,6 +269,9 @@ const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     // so the native front door does not clap-reject the unknown flag.
     "--rank",
     "--bm25",
+    // Local hybrid semantic search (RRF fusion of BM25 + dense embeddings) is also a Python-side
+    // post-process (roadmap #27, Path B Stage 1) -- same reasoning as --rank/--bm25 above.
+    "--semantic",
 ];
 
 #[derive(Parser, Debug)]
@@ -2662,6 +2665,26 @@ mod tests {
             search_format_python_passthrough_args(&raw_args),
             Some(vec![
                 "--rank".to_string(),
+                "invoice".to_string(),
+                "src".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_routes_semantic_flag_to_python() {
+        // `tg search --semantic` must delegate to the Python sidecar (which owns the dense/RRF
+        // hybrid re-rank) instead of being clap-rejected as an unknown flag by the native front
+        // door -- mirrors the --rank case above.
+        let raw_args = ["tg", "search", "--semantic", "invoice", "src"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            search_format_python_passthrough_args(&raw_args),
+            Some(vec![
+                "--semantic".to_string(),
                 "invoice".to_string(),
                 "src".to_string()
             ])
