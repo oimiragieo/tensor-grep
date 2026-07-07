@@ -758,8 +758,15 @@ def evaluate_apply_policy(
             action_taken = "warn"
             exit_code = 0
         elif policy.on_failure == "rollback":
-            payload["rollback"] = _rollback_summary(payload=payload, working_root=working_root)
-            action_taken = "rollback"
+            rollback_summary = _rollback_summary(payload=payload, working_root=working_root)
+            payload["rollback"] = rollback_summary
+            # H8: only report "rollback" when a checkpoint actually restored the working
+            # tree. _rollback_summary returns {"performed": False} when there's no usable
+            # checkpoint_id -- reporting "rollback" in that case would tell an agent the
+            # failed edit was reverted when it is still on disk (a phantom-rollback receipt).
+            action_taken = (
+                "rollback" if rollback_summary.get("performed") else "rollback_unavailable"
+            )
             exit_code = 1
         else:
             action_taken = "fail"

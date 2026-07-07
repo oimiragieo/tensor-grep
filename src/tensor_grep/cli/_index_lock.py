@@ -7,8 +7,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 _POLL_S = 0.02
-_TIMEOUT_S = 5.0  # RMW of a bounded JSON index is sub-ms; generous headroom, not the hot path
 _STALE_AFTER_S = 10.0  # RMW-scaled, NOT daemon-launch-scaled
+# H9: must exceed _STALE_AFTER_S. A holder killed mid-write can leave a lock younger than
+# _STALE_AFTER_S at the moment a waiter starts polling; if the waiter's own deadline could
+# expire first (the old 5.0s < 10.0s split), that fresh-but-dead lock would NEVER be
+# reclaimed within the wait window -- every waiter raises IndexLockTimeoutError instead of
+# self-healing. Keeping timeout > stale guarantees any lock already past (or about to pass)
+# the staleness threshold is reclaimed before a waiter gives up.
+_TIMEOUT_S = 12.0  # RMW of a bounded JSON index is sub-ms; generous headroom, not the hot path
 
 
 class IndexLockTimeoutError(RuntimeError):
