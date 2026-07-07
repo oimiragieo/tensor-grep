@@ -3735,6 +3735,114 @@ def _eligible_for_pcre2_inline_flag_fallback(config: "SearchConfig") -> bool:
     return str(getattr(config, "engine", "") or "").lower() in {"default", "auto", ""}
 
 
+def _read_pattern_file_lines(path: str) -> list[str]:
+    """Read one pattern per line from a ``-f``/``--file`` pattern file (rg ``-f`` contract).
+
+    Empirically verified against rg 15.1: one pattern per line; a terminal newline is not
+    itself a pattern (a trailing blank "line" produced by the final newline is dropped);
+    BLANK lines elsewhere are NOT skipped (an empty-string pattern matches every line, same
+    as an empty ``-e`` pattern would); there is no comment syntax (a leading ``#`` is a
+    literal character, never stripped). ``path == "-"`` reads patterns from stdin instead
+    of a file. Raises ``OSError`` (e.g. ``FileNotFoundError``) on a missing/unreadable file
+    -- the caller is responsible for turning that into a loud, structured CLI error (never
+    a silent empty-pattern flood).
+    """
+    if path == "-":
+        text = sys.stdin.read()
+    else:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    return [line.rstrip("\r") for line in lines]
+
+
+_LEADING_INLINE_FLAG_RE = re.compile(r"^\(\?([aiLmsux]+(?:-[imsx]+)?)\)")
+
+
+def _combined_search_pattern(patterns: list[str], *, fixed_strings: bool) -> str:
+    """Combine multiple ``-e``/``-f`` patterns into ONE OR-alternation (rg parity).
+
+    ripgrep compiles multiple ``-e``/``-f`` patterns into a single alternation, so a line
+    matching more than one pattern is still reported exactly ONCE -- this must do the same
+    (never N independent passes over the same file). Each branch is wrapped in a
+    non-capturing group so a caller-applied outer wrap (``^{pat}$`` for ``-x``, ``\\b{pat}\\b``
+    for ``-w``) scopes correctly across the whole alternation rather than binding to just the
+    first/last branch.
+
+    Python's ``re`` module rejects a global inline flag group (e.g. ``(?i)``) unless it is
+    the very first thing in the WHOLE compiled expression, so a pattern that leads with one
+    (legal, and common, as a single standalone ``-e`` pattern) would raise ``re.error`` once
+    it is no longer the first branch of the alternation. Rewrite a LEADING global flag group
+    to the equivalent SCOPED form (``(?i)rest`` -> ``(?i:rest)``) so it stays legal anywhere
+    in the combined expression.
+    """
+    branches: list[str] = []
+    for pat in patterns:
+        if fixed_strings:
+            branches.append(f"(?:{re.escape(pat)})")
+            continue
+        leading_flag = _LEADING_INLINE_FLAG_RE.match(pat)
+        if leading_flag:
+            rest = pat[leading_flag.end() :]
+            branches.append(f"(?:(?{leading_flag.group(1)}:{rest}))")
+        else:
+            branches.append(f"(?:{pat})")
+    return "(?:" + "|".join(branches) + ")"
+
+
+def _resolve_native_search_pattern(
+    regexp_patterns: list[str],
+    file: list[str] | None,
+    *,
+    fixed_strings: bool,
+    config: "SearchConfig",
+    json_mode: bool,
+) -> tuple[str, bool, "SearchConfig"]:
+    """Read every `-f` pattern file and combine it with any `-e` patterns into the FINAL
+    native-path search pattern -- called exactly once, only after the caller has
+    determined this search is NOT rg-routed (rg reads `-f` files itself and must never
+    have tg race ahead and touch them; see the call site's comment for why that read is
+    deliberately deferred this far).
+
+    Returns ``(pattern, pattern_combined, effective_config)``. Exits (via
+    ``_exit_search_error``/``_exit_invalid_regex``, never returns) on a missing/unreadable
+    pattern file or an invalid combined regex -- fail loud, never a silent empty-pattern
+    flood.
+    """
+    all_patterns = list(regexp_patterns)
+    for pattern_file in file or []:
+        try:
+            all_patterns.extend(_read_pattern_file_lines(pattern_file))
+        except OSError as exc:
+            _exit_search_error(
+                "pattern_file_error",
+                f"failed to read pattern file {pattern_file!r}: {exc}",
+                json_mode=json_mode,
+            )
+    if len(all_patterns) == 1:
+        pattern = all_patterns[0]
+        pattern_combined = False
+    else:
+        pattern = _combined_search_pattern(all_patterns, fixed_strings=fixed_strings)
+        pattern_combined = True
+    effective_config = (
+        dataclasses.replace(config, fixed_strings=False)
+        if pattern_combined and fixed_strings
+        else config
+    )
+    try:
+        for regex_pattern in all_patterns:
+            _validate_search_regex(regex_pattern, config)
+        if pattern_combined:
+            _validate_search_regex(pattern, effective_config)
+    except Exception as exc:
+        if _is_invalid_regex_error(exc):
+            _exit_invalid_regex(exc, json_mode=json_mode)
+        raise
+    return pattern, pattern_combined, effective_config
+
+
 def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
     if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return
@@ -6123,6 +6231,8 @@ def search_command(
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
     args = positionals or []
     pattern = ""
+    pattern_combined = False
+    all_patterns: list[str] = []
     regexp_patterns = regexp or []
     if generate is not None:
         typer.echo(_generate_shell_completion_script(generator=generate))
@@ -6143,18 +6253,39 @@ def search_command(
     if files:
         paths_to_search = args or ["."]
         paths_defaulted = not args
-    elif regexp_patterns:
-        pattern = regexp_patterns[0]
-        if pattern == "":
+    elif regexp_patterns or file:
+        # M-multi: gather EVERY `-e` pattern and (once we know we are NOT delegating to
+        # rg -- see `_resolve_native_search_pattern` below) every line of EVERY `-f`
+        # pattern file, then combine them into a single OR-alternation. The rg-routed
+        # path (native tg binary delegation and RipgrepBackend) never reads this
+        # `pattern` variable when -e/-f are in play -- it re-derives its argv straight
+        # from `config.regexp`/`config.file_patterns` (see
+        # `_build_native_tg_search_command` and `RipgrepBackend._build_cmd`) -- so this
+        # combine only matters for the native (non-rg) search path below.
+        if regexp_patterns and regexp_patterns[0] == "":
             _exit_search_error(
                 "empty_pattern",
                 "PATTERN must not be empty.",
                 json_mode=json,
             )
-        paths_to_search = args or ["."]
-        paths_defaulted = not args
-    elif file:
-        pattern = ""
+        if file:
+            # Do NOT read the `-f` file(s) here. When this search ends up rg-routed
+            # (passthrough or native-tg-binary delegation, the common case), rg/the
+            # native binary reads the file itself -- tg must never touch it eagerly:
+            # (a) it would be a wasted read on the fast, common path, and (b) a path
+            # only resolvable to the rg subprocess (permissions, a remote/WSL path rg
+            # can reach but this Python process cannot, ...) must not turn into a
+            # spurious tg-side error. The real read+combine is deferred to
+            # `_resolve_native_search_pattern`, called exactly once we KNOW this
+            # search is on the native (non-rg) path.
+            pattern = ""
+        else:
+            all_patterns = list(regexp_patterns)
+            if len(all_patterns) == 1:
+                pattern = all_patterns[0]
+            else:
+                pattern = _combined_search_pattern(all_patterns, fixed_strings=fixed_strings)
+                pattern_combined = True
         paths_to_search = args or ["."]
         paths_defaulted = not args
     else:
@@ -6367,11 +6498,38 @@ def search_command(
         query_pattern=pattern,
         gpu_device_ids=parsed_gpu_device_ids,
     )
+    # M-multi: the SIMD-friendly StringZilla fast path only understands a single fixed
+    # string, and the CPU backend's `-F` handling (`re.escape(pattern)`) would DOUBLE-escape
+    # an already-escaped+alternated combined pattern -- so once multiple -e/-f patterns are
+    # combined into one regex, `fixed_strings` must be cleared for every NATIVE (non-rg)
+    # call site. `effective_config` carries that cleared flag; `config` (uncleared) stays the
+    # one the rg-routed path (delegation gate, passthrough, rg_search_config) reads, since rg
+    # rebuilds its own `-e`/`--file`/`-F` argv straight from `config.regexp`/`file_patterns`/
+    # `fixed_strings` and never reads the combined `pattern` string at all.
+    # PERF(post-#438): multi-literal -F loses the StringZilla fast path (correctness-first);
+    # restoring it needs a native multi-literal protocol change, gated separately. `file`
+    # alone (before its content is known -- see `_resolve_native_search_pattern`) is treated
+    # PESSIMISTICALLY here: Pipeline's backend-routing decision must never route a `-F` + `-f`
+    # search to the single-literal StringZilla fast path just because the file *might* turn
+    # out to hold exactly one line -- that fast path cannot execute a combined alternation.
+    effective_config = (
+        dataclasses.replace(config, fixed_strings=False)
+        if (pattern_combined or bool(file)) and fixed_strings
+        else config
+    )
     if not files:
         try:
             patterns_to_validate = regexp_patterns if regexp_patterns else [pattern]
             for regex_pattern in patterns_to_validate:
                 _validate_search_regex(regex_pattern, config)
+            if pattern_combined:
+                # Validate the COMBINED product too (with fixed_strings cleared on
+                # effective_config so it is checked as the real regex it now is) -- a bug in
+                # `_combined_search_pattern`'s escaping/alternation must fail loud here, never
+                # silently reach the backend as a broken pattern. (The `-f` file-derived
+                # combine is validated later, in `_resolve_native_search_pattern`, once its
+                # content is actually read.)
+                _validate_search_regex(pattern, effective_config)
         except Exception as exc:
             if _is_invalid_regex_error(exc):
                 # M14b: a mid-pattern inline flag group (e.g. `start(?s).*end`) is rejected
@@ -6384,6 +6542,11 @@ def search_command(
                     and _pcre2_fallback_backend_available()
                 ):
                     config = dataclasses.replace(config, pcre2=True)
+                    effective_config = (
+                        dataclasses.replace(config, fixed_strings=False)
+                        if (pattern_combined or bool(file)) and fixed_strings
+                        else config
+                    )
                     typer.echo(
                         "note: retried with PCRE2 (-P) for inline-flag pattern",
                         err=True,
@@ -6519,12 +6682,25 @@ def search_command(
     from tensor_grep.core.pipeline import Pipeline
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
-    pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
+    pipeline = Pipeline(force_cpu=effective_force_cpu, config=effective_config)
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     selected_gpu_device_ids = list(getattr(pipeline, "selected_gpu_device_ids", []) or [])
     selected_gpu_chunk_plan_mb = list(getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or [])
+    if file:
+        # M-multi: we now KNOW this search is not rg-routed (both the native-tg-binary
+        # delegation gate and the rg-passthrough fast path above always exit before this
+        # point) -- safe to actually read the `-f` file(s) now. `effective_config` here
+        # SUPERSEDES the pessimistic placeholder computed above; nothing downstream reads
+        # the old value.
+        pattern, pattern_combined, effective_config = _resolve_native_search_pattern(
+            regexp_patterns,
+            file,
+            fixed_strings=fixed_strings,
+            config=config,
+            json_mode=json,
+        )
     if (
         can_passthrough_rg
         and stats
@@ -6697,12 +6873,12 @@ def search_command(
                     span.set_attribute("backend", backend.__class__.__name__)
                     span.set_attribute("path", current_file)
                 try:
-                    result = backend.search(current_file, pattern, config=config)
+                    result = backend.search(current_file, pattern, config=effective_config)
                 except BackendExecutionError as exc:
                     # A native backend failed at runtime; retry once on the always-
                     # available CPU backend so the search returns correct results instead
                     # of a false no-match or a crash (audit B2/I1).
-                    result = _search_with_cpu_fallback(current_file, pattern, config, exc)
+                    result = _search_with_cpu_fallback(current_file, pattern, effective_config, exc)
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
                         _exit_invalid_regex(exc, json_mode=json)
@@ -6722,10 +6898,10 @@ def search_command(
             _merge_runtime_routing(result)
 
     if config.replace_str is not None:
-        all_results.matches = _replace_lines(all_results.matches, pattern, config)
+        all_results.matches = _replace_lines(all_results.matches, pattern, effective_config)
 
     if only_matching:
-        all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
+        all_results.matches = _only_matching_lines(all_results.matches, pattern, effective_config)
         all_results.total_matches = len(all_results.matches)
         all_results.total_files = len({m.file for m in all_results.matches})
         matched_file_paths = {m.file for m in all_results.matches}

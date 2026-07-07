@@ -8317,6 +8317,160 @@ def test_search_json_reports_empty_pattern_error(tmp_path: Path):
     assert "PATTERN must not be empty" in payload["detail"]
 
 
+def test_search_missing_pattern_file_exits_2(tmp_path: Path):
+    """M-multi governance: a missing `-f` pattern file must fail loud (exit 2 + a
+    stderr message naming the file), never silently collapse to an empty pattern that
+    matches every line (the pre-fix flood bug). `--cpu` forces the NATIVE path so this
+    exercises tg's own `pattern_file_error` handling and CliRunner can see the message
+    (without `--cpu`, this reaches rg's passthrough fast path instead -- see
+    `test_search_missing_pattern_file_via_rg_passthrough_also_exits_2` below -- and rg's
+    subprocess writes directly to the real stderr fd, invisible to CliRunner's capture,
+    which only intercepts Python-level stdout/stderr writes)."""
+    target = tmp_path / "sample.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+    missing = tmp_path / "missing_patterns.txt"
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--cpu", "-f", str(missing), str(target)])
+
+    assert result.exit_code == 2
+    assert "missing_patterns.txt" in result.output
+
+
+def test_search_missing_pattern_file_without_cpu_delegates_to_rg_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without `--cpu`/`--json`, a `-f` file is rg-routed and tg must NOT read it itself
+    (rg reads it, and must -- see
+    `test_python_search_treats_file_option_as_pattern_file_not_regex`): confirmed here by
+    pointing `-f` at a file that genuinely does not exist and asserting tg still hands
+    off to (mocked) rg passthrough instead of raising its own `FileNotFoundError` --
+    real rg would then apply its own (already-covered-by-rg-itself) missing-file check."""
+    target = tmp_path / "sample.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+    missing = tmp_path / "missing_patterns.txt"
+    seen: dict[str, object] = {}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        seen["called"] = True
+        return 2  # simulate rg's own missing-`-f`-file exit code
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    result = CliRunner().invoke(app, ["search", "-f", str(missing), str(target)])
+
+    assert seen.get("called") is True
+    assert result.exit_code == 2
+
+
+def test_search_json_reports_pattern_file_error(tmp_path: Path):
+    target = tmp_path / "sample.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+    missing = tmp_path / "missing_patterns.txt"
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--json", "-f", str(missing), str(target)])
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "pattern_file_error"
+    assert "missing_patterns.txt" in payload["detail"]
+
+
+def test_combined_search_pattern_wraps_each_branch_in_its_own_group():
+    """Each `-e`/`-f` pattern must be its own non-capturing group in the alternation, so
+    a caller-applied outer wrap (`^...$` for -x, `\\b...\\b` for -w) scopes across the
+    WHOLE alternation, not just the first/last branch (a mis-scoped anchor would let
+    "ac"/"ab" slip through `^a|b|c$` via the bare, unanchored `b` alternative)."""
+    from tensor_grep.cli.main import _combined_search_pattern
+
+    combined = _combined_search_pattern(["a|b", "c"], fixed_strings=False)
+    assert combined == "(?:(?:a|b)|(?:c))"
+    regex = re.compile(f"^{combined}$")
+    assert regex.match("a")
+    assert regex.match("b")
+    assert regex.match("c")
+    assert not regex.match("ac")
+    assert not regex.match("ab")
+
+
+def test_combined_search_pattern_rewrites_leading_inline_flag_to_scoped():
+    """A leading global inline flag (e.g. `(?i)`) is legal as a standalone `-e` pattern
+    but Python's `re` rejects it once it is no longer the first thing in the WHOLE
+    compiled expression; it must be rewritten to the scoped `(?i:...)` form so it stays
+    legal *and* stays scoped to only its own branch."""
+    from tensor_grep.cli.main import _combined_search_pattern
+
+    combined = _combined_search_pattern(["(?i)foo", "bar"], fixed_strings=False)
+    assert combined == "(?:(?:(?i:foo))|(?:bar))"
+    regex = re.compile(combined)
+    assert regex.search("FOO")
+    assert regex.search("bar")
+    assert not regex.search("BAR")
+
+
+def test_combined_search_pattern_fixed_strings_escapes_each_branch():
+    from tensor_grep.cli.main import _combined_search_pattern
+
+    combined = _combined_search_pattern(["a.b", "zz"], fixed_strings=True)
+    regex = re.compile(combined)
+    assert regex.search("a.b literal")
+    assert regex.search("zz here")
+    assert not regex.search("axb should not match")
+
+
+def test_read_pattern_file_lines_drops_terminal_newline_only(tmp_path: Path):
+    from tensor_grep.cli.main import _read_pattern_file_lines
+
+    pattern_file = tmp_path / "patterns.txt"
+    pattern_file.write_text("foo\nbar\n", encoding="utf-8")
+    assert _read_pattern_file_lines(str(pattern_file)) == ["foo", "bar"]
+
+
+def test_read_pattern_file_lines_keeps_final_line_without_trailing_newline(
+    tmp_path: Path,
+):
+    from tensor_grep.cli.main import _read_pattern_file_lines
+
+    pattern_file = tmp_path / "patterns.txt"
+    pattern_file.write_text("foo\nbar", encoding="utf-8")
+    assert _read_pattern_file_lines(str(pattern_file)) == ["foo", "bar"]
+
+
+def test_read_pattern_file_lines_does_not_skip_blank_lines(tmp_path: Path):
+    """A blank line is a real (empty-string) pattern -- rg does not treat it as a
+    separator or a no-op, it matches every line (rg parity, deliberately pinned)."""
+    from tensor_grep.cli.main import _read_pattern_file_lines
+
+    pattern_file = tmp_path / "patterns.txt"
+    pattern_file.write_text("\n", encoding="utf-8")
+    assert _read_pattern_file_lines(str(pattern_file)) == [""]
+
+
+def test_read_pattern_file_lines_has_no_comment_syntax(tmp_path: Path):
+    """A leading `#` is a literal character, never stripped as a comment (rg parity)."""
+    from tensor_grep.cli.main import _read_pattern_file_lines
+
+    pattern_file = tmp_path / "patterns.txt"
+    pattern_file.write_text("# needle\n", encoding="utf-8")
+    assert _read_pattern_file_lines(str(pattern_file)) == ["# needle"]
+
+
+def test_read_pattern_file_lines_missing_file_raises_oserror(tmp_path: Path):
+    from tensor_grep.cli.main import _read_pattern_file_lines
+
+    with pytest.raises(OSError):
+        _read_pattern_file_lines(str(tmp_path / "does_not_exist.txt"))
+
+
 def test_search_reports_missing_input_paths(tmp_path: Path):
     missing = tmp_path / "missing.py"
 
