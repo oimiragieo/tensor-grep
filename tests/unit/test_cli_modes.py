@@ -6821,7 +6821,8 @@ def test_context_render_json_reports_bounded_repo_scan(tmp_path):
         ],
     )
 
-    assert result.exit_code == 0
+    # --max-repo-files 1 scan-truncates the context-render -> exit 2 (Cluster B exit-code contract).
+    assert result.exit_code == 2
     payload = json.loads(result.stdout)
     assert payload["scan_limit"] == {
         "max_repo_files": 1,
