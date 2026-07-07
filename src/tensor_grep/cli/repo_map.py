@@ -4066,9 +4066,21 @@ _JS_TS_TYPE_ANCESTOR_TYPES: set[str] = {
     "type_annotation",
     "extends_clause",
     "implements_clause",
-    "satisfies_expression",
-    "as_expression",
     "generic_type",
+}
+
+# F7 fix: `as_expression`/`satisfies_expression` are handled by dedicated positional logic below
+# (only the TYPE-side child is "type") -- they must NOT sit in the generic ancestor-walk set above,
+# which would (and used to) mislabel the runtime VALUE operand (`Widget as unknown` -> `Widget`)
+# as "type" merely for having one of these as an ancestor.
+_JS_TS_AS_SATISFIES_TYPES: set[str] = {"as_expression", "satisfies_expression"}
+
+# F17 fix: construction/render call sites -- `new Widget()` and JSX (`<Widget/>`,
+# `<Widget>...</Widget>`) -- are call-like uses of the symbol, not bare "value" mentions.
+_JS_TS_CONSTRUCTOR_CALL_ANCESTOR_TYPES: set[str] = {
+    "jsx_self_closing_element",
+    "jsx_opening_element",
+    "jsx_closing_element",
 }
 
 
@@ -4087,6 +4099,18 @@ def _js_ts_classify_ref_kind(node: Any) -> str:
         function_node = parent.child_by_field_name("function")
         if function_node is not None and function_node == node:
             return "call"
+    if node.type == "identifier" and parent is not None and parent.type == "new_expression":
+        constructor_node = parent.child_by_field_name("constructor")
+        if constructor_node is not None and constructor_node == node:
+            return "call"
+    if (
+        node.type == "identifier"
+        and parent is not None
+        and parent.type in _JS_TS_CONSTRUCTOR_CALL_ANCESTOR_TYPES
+    ):
+        name_node = parent.child_by_field_name("name")
+        if name_node is not None and name_node == node:
+            return "call"
     if (
         node.type == "property_identifier"
         and parent is not None
@@ -4098,6 +4122,16 @@ def _js_ts_classify_ref_kind(node: Any) -> str:
             if function_node is not None and function_node == parent:
                 return "call"
         return "field"
+    if parent is not None and parent.type in _JS_TS_AS_SATISFIES_TYPES:
+        # Neither `as_expression` nor `satisfies_expression` exposes named grammar fields for its
+        # two children, so the type side is identified positionally: it is always the LAST named
+        # child (`operand as/satisfies TYPE`). Only that child is "type"; the operand falls
+        # through to keep whatever kind it would have received anyway (call/field/value).
+        type_side = (
+            parent.named_child(parent.named_child_count - 1) if parent.named_child_count else None
+        )
+        if type_side is not None and type_side == node:
+            return "type"
     if _node_has_ancestor_type(node, _JS_TS_TYPE_ANCESTOR_TYPES):
         return "type"
     return "value"
@@ -4193,10 +4227,17 @@ def _js_ts_references_and_calls(
                 alias_reference_resolution = (
                     alias_resolution_by_name.get(node_text) if node_type == "identifier" else None
                 )
+                try:
+                    ref_kind = _js_ts_classify_ref_kind(node)
+                except Exception:
+                    # F20: a classifier bug must only default THIS row to "value", never drop
+                    # every reference in the file -- classify-only, so a failure here can never
+                    # be allowed to look like a fail-closed backend error.
+                    ref_kind = "value"
                 references.append({
                     "name": symbol,
                     "kind": "reference",
-                    "ref_kind": _js_ts_classify_ref_kind(node),
+                    "ref_kind": ref_kind,
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -4423,9 +4464,19 @@ def _rust_classify_ref_kind(node: Any) -> str:
     Only called for nodes the existing walker already emits a row for -- Rust's grammar splits
     type positions into ``type_identifier`` and field access into ``field_identifier`` (both
     distinct from plain ``identifier``), so those positions are never matched by the walker
-    today; widening to them is T2 (would add new rows, not just labels). ``macro_invocation``
-    is checked defensively (e.g. ``Symbol!(..)``) even though no dedicated macro-call branch
-    exists yet -- it only relabels a row the plain-identifier match already produces.
+    today; widening to them is T2 (would add new rows, not just labels).
+
+    F6 fix: only the macro NAME position (e.g. ``println`` in ``println!(...)``) is "call" --
+    ``macro_invocation``'s ``arguments`` token-tree can contain arbitrary identifiers
+    (``println!("{:?}", Symbol)``, ``vec![Symbol]``) that are plain data/argument mentions, not
+    calls, and must fall through to "value" like any other bare identifier. Checking ONLY the
+    immediate parent (rather than any ancestor) is what keeps macro *arguments* out of this branch.
+
+    F18 fix: a turbofish call (``foo::<T>()``) puts the function identifier under a
+    ``generic_function`` node (itself the ``call_expression``'s ``function`` field), one layer
+    deeper than a plain call -- both the direct-identifier and ``scoped_identifier`` (path-
+    qualified) forms are handled below so ``foo::<T>()`` and ``bar::baz::<T>()`` both classify
+    "call" instead of falling through to "value".
     """
     parent = getattr(node, "parent", None)
     # NOTE: see _js_ts_classify_ref_kind -- tree-sitter node accessors return fresh wrapper
@@ -4434,14 +4485,32 @@ def _rust_classify_ref_kind(node: Any) -> str:
         function_node = parent.child_by_field_name("function")
         if function_node is not None and function_node == node:
             return "call"
+    if parent is not None and parent.type == "generic_function":
+        grandparent = getattr(parent, "parent", None)
+        if grandparent is not None and grandparent.type == "call_expression":
+            call_function_node = grandparent.child_by_field_name("function")
+            if call_function_node is not None and call_function_node == parent:
+                generic_function_name = parent.child_by_field_name("function")
+                if generic_function_name is not None and generic_function_name == node:
+                    return "call"
     if parent is not None and parent.type == "scoped_identifier":
         grandparent = getattr(parent, "parent", None)
         if grandparent is not None and grandparent.type == "call_expression":
             function_node = grandparent.child_by_field_name("function")
             if function_node is not None and function_node == parent:
                 return "call"
-    if _node_has_ancestor_type(node, {"macro_invocation"}):
-        return "call"
+        if grandparent is not None and grandparent.type == "generic_function":
+            great_grandparent = getattr(grandparent, "parent", None)
+            if great_grandparent is not None and great_grandparent.type == "call_expression":
+                call_function_node = great_grandparent.child_by_field_name("function")
+                if call_function_node is not None and call_function_node == grandparent:
+                    generic_function_name = grandparent.child_by_field_name("function")
+                    if generic_function_name is not None and generic_function_name == parent:
+                        return "call"
+    if parent is not None and parent.type == "macro_invocation":
+        macro_name_node = parent.child_by_field_name("macro")
+        if macro_name_node is not None and macro_name_node == node:
+            return "call"
     return "value"
 
 
@@ -4502,10 +4571,16 @@ def _rust_references_and_calls(
                 and not _is_definition_identifier(node)
                 and not _node_has_ancestor_type(node, {"use_declaration"})
             ):
+                try:
+                    ref_kind = _rust_classify_ref_kind(node)
+                except Exception:
+                    # F20: a classifier bug must only default THIS row to "value", never drop
+                    # every reference in the file.
+                    ref_kind = "value"
                 references.append({
                     "name": symbol,
                     "kind": "reference",
-                    "ref_kind": _rust_classify_ref_kind(node),
+                    "ref_kind": ref_kind,
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -5753,11 +5828,16 @@ def _reference_kind_counts(references: list[Any]) -> dict[str, int]:
     """Additive T1 aggregate: counts every ``references`` row by its ``ref_kind`` label.
 
     Always sums to ``len(references)`` -- ref_kind is additive-only (moat P0-T1), so this must
-    never drift from a straight tally of what is already in the list.
+    never drift from a straight tally of what is already in the list. F21 fix: a non-dict row
+    (defensive-only today -- every real producer emits dicts) used to hit a bare ``continue`` and
+    silently vanish from the tally, breaking the sum-equals-``len`` invariant the docstring
+    promises; it is now counted too (under its label-less default, "value"), same as a dict row
+    missing the ``ref_kind`` key.
     """
     counts: dict[str, int] = {"call": 0, "import": 0, "type": 0, "field": 0, "value": 0}
     for item in references:
         if not isinstance(item, dict):
+            counts["value"] += 1
             continue
         ref_kind = str(item.get("ref_kind", "value"))
         counts[ref_kind] = counts.get(ref_kind, 0) + 1
@@ -5891,7 +5971,23 @@ def _graph_trust_summary(
     }
 
 
-def _language_coverage_gap_remediation(language: str) -> str:
+def _language_coverage_gap_remediation(language: str, *, fail_closed: bool = False) -> str:
+    """F12 fix: the remediation text must match what ACTUALLY happens for this gap.
+
+    An unregistered-language file (``fail_closed=False``, no ``LanguageSpec`` at all) really does
+    fall back to plain literal-text/regex matching -- see the generic ``else`` branch in the
+    refs/callers scan loops. A registered-but-grammar-missing language with no regex fallback
+    (``fail_closed=True``, e.g. Go when ``tree_sitter_go`` is not installed) produces ZERO rows
+    for its files instead -- claiming a regex fallback there was simply false.
+    """
+    if fail_closed:
+        return (
+            f"tg has a '{language}' extractor registered but its required parser/grammar is not "
+            f"installed -- refs/callers on a symbol whose definition or usage lives in a "
+            f"{language} file currently produce NO rows for those files ('{language}' has no "
+            "plain-text/regex fallback, unlike python/javascript/typescript/rust). Install the "
+            f"missing '{language}' tree-sitter grammar package to restore coverage."
+        )
     return (
         f"tg has no parser-backed extractor registered for '{language}' files yet -- refs/"
         f"callers on a symbol whose definition or usage lives in a {language} file fall back to "
@@ -5911,6 +6007,7 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
     gaps_by_language: dict[str, dict[str, Any]] = {}
     for current in bounded_files:
         spec = lang_registry.spec_for_path(current)
+        fail_closed = False
         if spec is None:
             language = _provider_language_for_path(current) or (
                 current.suffix.lstrip(".").lower() or "unknown"
@@ -5927,6 +6024,7 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
                     "required parser/grammar is not installed for this language and it has no "
                     "regex fallback (fail-closed)"
                 )
+                fail_closed = True
             else:
                 continue
         else:
@@ -5937,7 +6035,9 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
                 "language": language,
                 "reason": reason,
                 "files_affected": 0,
-                "remediation": _language_coverage_gap_remediation(language),
+                "remediation": _language_coverage_gap_remediation(
+                    language, fail_closed=fail_closed
+                ),
             },
         )
         entry["files_affected"] += 1
@@ -12732,6 +12832,20 @@ def build_symbol_defs_from_map(
                 "narrow PATH or raise --max-repo-files."
             )
             _mark_result_incomplete(payload, remediation=_SCAN_LIMIT_TRUNCATED_REMEDIATION)
+        # F13 fix: unlike refs/callers (which compute `resolution_gaps` over the files they
+        # actually scan), defs' own no_match path used to return bare -- indistinguishable from
+        # "the symbol genuinely does not exist" even when the real cause is a grammar-missing
+        # fail-closed language (e.g. a Go-only symbol with tree_sitter_go not installed). Attach
+        # the same honesty-floor gap here so a defs-only caller gets the hint too.
+        gap_files, gap_tests = _repo_map_file_and_test_universe(repo_map)
+        resolution_gaps = _language_coverage_gaps_for_universe([*gap_files, *gap_tests])
+        payload["resolution_gaps"] = resolution_gaps
+        if resolution_gaps:
+            gap_hint = "; ".join(
+                f"{int(gap['files_affected'])} {gap['language']} file(s): {gap['remediation']}"
+                for gap in resolution_gaps
+            )
+            payload["message"] += f" Coverage gap detected: {gap_hint}"
         payload["files"] = []
         payload["symbols"] = []
         payload["imports"] = []
@@ -13200,6 +13314,15 @@ def build_symbol_refs_from_map(
         deadline_monotonic=deadline_monotonic,
     )
     bounded_file_set = {str(current) for current in bounded_files}
+    # F25 fix (Go alias-resolution confidence): the symbol's own known definition directories,
+    # so a package-qualified Go call only earns high-confidence "go-import-resolution" when it
+    # resolves to a package that actually OWNS this symbol -- not merely to a package alias that
+    # happens to resolve to SOME directory (which used to give two unrelated same-named exports
+    # identical fabricated confidence). Computed once, outside the per-file loop.
+    go_definition_dirs = frozenset(
+        str(Path(str(current_definition["file"])).resolve().parent)
+        for current_definition in payload.get("definitions", [])
+    )
     references: list[dict[str, Any]] = []
     refs_scan_deadline_hit = False
     refs_files_scanned = 0
@@ -13274,7 +13397,7 @@ def build_symbol_refs_from_map(
             # grammar-missing file yields ([], []) here and is surfaced honestly via
             # `resolution_gaps` further down, never a silently-degraded text match.
             current_refs, current_calls = lang_go.go_references_and_calls(
-                current, symbol, repo_root
+                current, symbol, repo_root, definition_dirs=go_definition_dirs
             )
             go_call_refs = [
                 {
@@ -13513,6 +13636,12 @@ def build_symbol_callers_from_map(
         if str(current["file"]) in preferred_definition_file_set
     ] or [dict(current) for current in defs_payload["definitions"]]
     definition_files = [str(current["file"]) for current in definitions]
+    # F25 fix: see the matching comment in build_symbol_refs_from_map -- only trust a Go
+    # package-alias resolution as high-confidence when it resolves to a directory that actually
+    # owns this symbol.
+    go_definition_dirs = frozenset(
+        str(Path(current_file).resolve().parent) for current_file in definition_files
+    )
     calls: list[dict[str, Any]] = []
     python_files: set[str] = set()
 
@@ -13570,7 +13699,9 @@ def build_symbol_callers_from_map(
                 # Fail-closed (Stage 1 trap): no provider-alias/regex fallback for Go -- a
                 # grammar-missing file simply contributes no calls (surfaced via
                 # `resolution_gaps` for the refs/blast-radius payloads that compute it).
-                _, current_calls = lang_go.go_references_and_calls(current, symbol, repo_root)
+                _, current_calls = lang_go.go_references_and_calls(
+                    current, symbol, repo_root, definition_dirs=go_definition_dirs
+                )
             else:
                 _, current_calls = _regex_references_and_calls(current, symbol)
             for current_call in current_calls:
