@@ -4896,6 +4896,9 @@ def test_agent_capsule_collects_bounded_call_site_evidence_for_explicit_symbol(t
     assert all(
         row["reason"] == "direct caller of primary target" for row in payload["related_call_sites"]
     )
+    # PathA STAGE T1: ref_kind is additive on related_call_sites too -- every row here is a real
+    # `create_invoice(...)` call site, so ref_kind must be "call".
+    assert all(row.get("ref_kind") == "call" for row in payload["related_call_sites"])
     assert any(item["strategy"] == "blast-radius-call-sites" for item in payload["route_rationale"])
 
 

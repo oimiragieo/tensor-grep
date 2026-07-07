@@ -3764,6 +3764,24 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
     return symbols
 
 
+def _python_classify_ref_kind(node: ast.AST, parent: ast.AST | None, *, in_annotation: bool) -> str:
+    """Classify an already-matched Python Name/Attribute reference node (T1 additive).
+
+    Only called for nodes the existing matcher already emits a row for (moat P0-T1: classify
+    EXISTING rows, never widen the match set -- that would change row counts). Precedence: a
+    node that IS the callee of its parent ``ast.Call`` is "call" even inside an annotation
+    subtree (unlikely but keeps the check order simple); otherwise annotation subtrees are
+    "type"; a bare ``ast.Attribute`` is "field"; anything else is "value".
+    """
+    if isinstance(parent, ast.Call) and parent.func is node:
+        return "call"
+    if in_annotation:
+        return "type"
+    if isinstance(node, ast.Attribute):
+        return "field"
+    return "value"
+
+
 def _python_references_and_calls(
     path: Path, symbol: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -3780,30 +3798,29 @@ def _python_references_and_calls(
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
-    class Visitor(ast.NodeVisitor):
-        def visit_Name(self, node: ast.Name) -> None:
-            if node.id == symbol:
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.lineno,
-                    "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-                })
-            self.generic_visit(node)
-
-        def visit_Attribute(self, node: ast.Attribute) -> None:
-            if node.attr == symbol:
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.lineno,
-                    "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-                })
-            self.generic_visit(node)
-
-        def visit_Call(self, node: ast.Call) -> None:
+    # Manual recursive walk (equivalent to ast.NodeVisitor's generic_visit dispatch, which the
+    # prior Visitor class relied on) so we can thread `parent` + `in_annotation` context down to
+    # the match sites for ref_kind classification -- ast.NodeVisitor gives no parent access.
+    def _walk(node: ast.AST, parent: ast.AST | None, in_annotation: bool) -> None:
+        if isinstance(node, ast.Name) and node.id == symbol:
+            references.append({
+                "name": symbol,
+                "kind": "reference",
+                "ref_kind": _python_classify_ref_kind(node, parent, in_annotation=in_annotation),
+                "file": str(path),
+                "line": node.lineno,
+                "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+            })
+        elif isinstance(node, ast.Attribute) and node.attr == symbol:
+            references.append({
+                "name": symbol,
+                "kind": "reference",
+                "ref_kind": _python_classify_ref_kind(node, parent, in_annotation=in_annotation),
+                "file": str(path),
+                "line": node.lineno,
+                "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+            })
+        elif isinstance(node, ast.Call):
             matched = False
             if isinstance(node.func, ast.Name) and node.func.id == symbol:
                 matched = True
@@ -3813,13 +3830,22 @@ def _python_references_and_calls(
                 calls.append({
                     "name": symbol,
                     "kind": "call",
+                    "ref_kind": "call",
                     "file": str(path),
                     "line": node.lineno,
                     "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
                 })
-            self.generic_visit(node)
 
-    Visitor().visit(tree)
+        for field_name, value in ast.iter_fields(node):
+            child_in_annotation = in_annotation or field_name in ("annotation", "returns")
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        _walk(item, node, child_in_annotation)
+            elif isinstance(value, ast.AST):
+                _walk(value, node, child_in_annotation)
+
+    _walk(tree, None, False)
     references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
     calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
     return references, calls
@@ -4029,6 +4055,47 @@ def _regex_references_and_calls(
     return references, calls
 
 
+_JS_TS_TYPE_ANCESTOR_TYPES: set[str] = {
+    "type_annotation",
+    "extends_clause",
+    "implements_clause",
+    "satisfies_expression",
+    "as_expression",
+    "generic_type",
+}
+
+
+def _js_ts_classify_ref_kind(node: Any) -> str:
+    """Classify an already-matched JS/TS identifier/property_identifier reference (T1).
+
+    Only called for nodes the existing walker already emits a row for -- ``type_identifier``
+    (the node type TS uses for most type-position symbols, e.g. ``x: Symbol``) is never matched
+    by the walker today, so widening to it is T2 (would add new rows, not just labels).
+    """
+    parent = getattr(node, "parent", None)
+    # NOTE: tree-sitter's Python binding hands back a NEW wrapper object on every
+    # child_by_field_name()/`.parent` access, so `is` identity comparison silently never matches
+    # -- `==` (and `.id`) compare the underlying node and are what must be used here.
+    if node.type == "identifier" and parent is not None and parent.type == "call_expression":
+        function_node = parent.child_by_field_name("function")
+        if function_node is not None and function_node == node:
+            return "call"
+    if (
+        node.type == "property_identifier"
+        and parent is not None
+        and parent.type == "member_expression"
+    ):
+        grandparent = getattr(parent, "parent", None)
+        if grandparent is not None and grandparent.type == "call_expression":
+            function_node = grandparent.child_by_field_name("function")
+            if function_node is not None and function_node == parent:
+                return "call"
+        return "field"
+    if _node_has_ancestor_type(node, _JS_TS_TYPE_ANCESTOR_TYPES):
+        return "type"
+    return "value"
+
+
 def _js_ts_references_and_calls(
     path: Path,
     symbol: str,
@@ -4122,6 +4189,7 @@ def _js_ts_references_and_calls(
                 references.append({
                     "name": symbol,
                     "kind": "reference",
+                    "ref_kind": _js_ts_classify_ref_kind(node),
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -4159,6 +4227,7 @@ def _js_ts_references_and_calls(
                 calls.append({
                     "name": symbol,
                     "kind": "call",
+                    "ref_kind": "call",
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -4341,6 +4410,34 @@ def _js_ts_provider_alias_calls(
     return deduped
 
 
+def _rust_classify_ref_kind(node: Any) -> str:
+    """Classify an already-matched Rust ``identifier`` reference node (T1 additive).
+
+    Only called for nodes the existing walker already emits a row for -- Rust's grammar splits
+    type positions into ``type_identifier`` and field access into ``field_identifier`` (both
+    distinct from plain ``identifier``), so those positions are never matched by the walker
+    today; widening to them is T2 (would add new rows, not just labels). ``macro_invocation``
+    is checked defensively (e.g. ``Symbol!(..)``) even though no dedicated macro-call branch
+    exists yet -- it only relabels a row the plain-identifier match already produces.
+    """
+    parent = getattr(node, "parent", None)
+    # NOTE: see _js_ts_classify_ref_kind -- tree-sitter node accessors return fresh wrapper
+    # objects, so identity must be checked with `==`, not `is`.
+    if parent is not None and parent.type == "call_expression":
+        function_node = parent.child_by_field_name("function")
+        if function_node is not None and function_node == node:
+            return "call"
+    if parent is not None and parent.type == "scoped_identifier":
+        grandparent = getattr(parent, "parent", None)
+        if grandparent is not None and grandparent.type == "call_expression":
+            function_node = grandparent.child_by_field_name("function")
+            if function_node is not None and function_node == parent:
+                return "call"
+    if _node_has_ancestor_type(node, {"macro_invocation"}):
+        return "call"
+    return "value"
+
+
 def _rust_references_and_calls(
     path: Path,
     symbol: str,
@@ -4401,6 +4498,7 @@ def _rust_references_and_calls(
                 references.append({
                     "name": symbol,
                     "kind": "reference",
+                    "ref_kind": _rust_classify_ref_kind(node),
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -4434,6 +4532,7 @@ def _rust_references_and_calls(
                 references.append({
                     "name": symbol,
                     "kind": "reference",
+                    "ref_kind": "call",
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -4449,6 +4548,7 @@ def _rust_references_and_calls(
                 calls.append({
                     "name": symbol,
                     "kind": "call",
+                    "ref_kind": "call",
                     "file": str(path),
                     "line": node.start_point[0] + 1,
                     "text": _line_text(node),
@@ -5466,6 +5566,21 @@ def _ranking_quality(
     return "weak"
 
 
+def _reference_kind_counts(references: list[Any]) -> dict[str, int]:
+    """Additive T1 aggregate: counts every ``references`` row by its ``ref_kind`` label.
+
+    Always sums to ``len(references)`` -- ref_kind is additive-only (moat P0-T1), so this must
+    never drift from a straight tally of what is already in the list.
+    """
+    counts: dict[str, int] = {"call": 0, "import": 0, "type": 0, "field": 0, "value": 0}
+    for item in references:
+        if not isinstance(item, dict):
+            continue
+        ref_kind = str(item.get("ref_kind", "value"))
+        counts[ref_kind] = counts.get(ref_kind, 0) + 1
+    return counts
+
+
 def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
     coverage = dict(payload.get("coverage", {}))
     language_scope = str(coverage.get("language_scope", ""))
@@ -5543,10 +5658,15 @@ def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "graph_completeness": str(payload.get("graph_completeness", "moderate")),
         "evidence_counts": evidence_counts,
         "evidence_ratios": evidence_ratios,
+        "reference_kind_counts": _reference_kind_counts(payload.get("references", [])),
     }
 
 
-def _graph_trust_summary(caller_tree: list[dict[str, Any]]) -> dict[str, Any]:
+def _graph_trust_summary(
+    caller_tree: list[dict[str, Any]],
+    *,
+    calls: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     parser_backed = 0
     heuristic = 0
     provenance: list[str] = []
@@ -5566,6 +5686,15 @@ def _graph_trust_summary(caller_tree: list[dict[str, Any]]) -> dict[str, Any]:
         confidence = str(edge_summary.get("confidence", "weak"))
         max_confidence_rank = max(max_confidence_rank, confidence_order.get(confidence, 1))
     rank_to_confidence = {value: key for key, value in confidence_order.items()}
+    # Additive T1 moat closer: by_ref_kind lets a consumer see whether the blast-radius callers
+    # are parser-backed CALL sites (strong evidence) vs type/field/value-only mentions
+    # (moderate/weak) -- reuses the same ref_kind labels stamped on `calls` (payload["callers"]).
+    by_ref_kind: dict[str, int] = {}
+    for call in calls or []:
+        if not isinstance(call, dict):
+            continue
+        ref_kind = str(call.get("ref_kind", "call"))
+        by_ref_kind[ref_kind] = by_ref_kind.get(ref_kind, 0) + 1
     return {
         "edge_kind": "reverse-import",
         "confidence": rank_to_confidence.get(max_confidence_rank, "weak"),
@@ -5574,6 +5703,7 @@ def _graph_trust_summary(caller_tree: list[dict[str, Any]]) -> dict[str, Any]:
         "evidence_counts": {
             "parser_backed": parser_backed,
             "heuristic": heuristic,
+            "by_ref_kind": by_ref_kind,
         },
     }
 
@@ -12824,6 +12954,7 @@ def build_symbol_refs_from_map(
                 {
                     "name": str(call["name"]),
                     "kind": "reference",
+                    "ref_kind": str(call.get("ref_kind", "call")),
                     "file": str(call["file"]),
                     "line": int(call["line"]),
                     "text": str(call["text"]),
@@ -12850,6 +12981,7 @@ def build_symbol_refs_from_map(
                 {
                     "name": str(call["name"]),
                     "kind": "reference",
+                    "ref_kind": str(call.get("ref_kind", "call")),
                     "file": str(call["file"]),
                     "line": int(call["line"]),
                     "text": str(call["text"]),
@@ -12922,6 +13054,10 @@ def build_symbol_refs_from_map(
     for reference in references:
         if _is_lsp_proof_row(reference):
             reference["lsp_proof"] = True
+        # Additive T1 safety net: every code path above (native AST match, JS/TS-or-Rust call
+        # flatten, regex/alias fallback, external/LSP merge) must leave a ref_kind on the row;
+        # "value" is the least-specific label for paths (LSP/regex) that carry no AST context.
+        reference.setdefault("ref_kind", "value")
 
     # Collect string-literal occurrences (decorator args, ``routing_backend=``
     # assignments, ``__all__`` entries, f-strings). These are reported alongside
@@ -13132,6 +13268,7 @@ def build_symbol_callers_from_map(
                 call_payload["provenance"] = _symbol_navigation_provenance_for_path(
                     str(current_call["file"])
                 )
+                call_payload.setdefault("ref_kind", "call")
                 calls.append(call_payload)
 
     normalized_provider = _normalize_semantic_provider(semantic_provider)
@@ -13309,6 +13446,10 @@ def build_symbol_callers_from_map(
     for call in calls:
         if _is_lsp_proof_row(call):
             call["lsp_proof"] = True
+        # Additive T1 safety net (mirrors build_symbol_refs_from_map): every caller row is a
+        # call by construction, so default a missing ref_kind (external/LSP/alias/regex paths
+        # that predate this field) to "call" rather than leaving it absent.
+        call.setdefault("ref_kind", "call")
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
     import_graph_consumers = _build_import_graph_consumers_from_map(
         repo_map,
@@ -13973,7 +14114,7 @@ def build_symbol_blast_radius_from_map(
     payload["test_matches"] = [test_match_lookup[str(current)] for current in related_tests]
     payload["caller_tree"] = caller_tree
     payload["rendered_caller_tree"] = "\n".join(rendered_lines)
-    payload["graph_trust_summary"] = _graph_trust_summary(caller_tree)
+    payload["graph_trust_summary"] = _graph_trust_summary(caller_tree, calls=direct_callers)
     payload["imports"] = impact_payload["imports"]
     payload["symbols"] = impact_payload["symbols"]
     payload["related_paths"] = related_paths

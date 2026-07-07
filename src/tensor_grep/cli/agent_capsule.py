@@ -406,6 +406,7 @@ def _related_call_site_record(
         "line": max(1, line),
         "symbol": target_symbol,
         "kind": str(caller.get("kind") or "call"),
+        "ref_kind": str(caller.get("ref_kind") or "call"),
         "provenance": str(caller.get("provenance") or "heuristic"),
         "reason": "direct caller of primary target",
     }
