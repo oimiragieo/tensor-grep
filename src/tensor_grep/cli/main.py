@@ -7938,19 +7938,30 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
     count) that renders identically to a real one — the single most dangerous output for a
     refactor-safety tool, since it greenlights deleting live code. The payload already knows;
     this projects it into the default output so an incomplete result can never look complete.
-    Handles all three shapes production emits: the repo-scan cap
-    (``scan_limit.possibly_truncated`` — callers/refs/impact), the repo-map output cap
-    (``output_limit.possibly_truncated`` — map/context), and the blast-radius output cap
-    (``output_limit.callers_truncated`` / ``files_truncated``). Returns None when complete.
+    Handles all four shapes production emits: the repo-scan cap
+    (``scan_limit.possibly_truncated`` — callers/refs/impact), the caller-scan ceiling
+    (``caller_scan_limit.possibly_truncated`` — F1: a COMPLETE repo-map whose own internal
+    CALLER_SCAN_FILE_CEILING still bounded how many of its files were walked for callers/refs),
+    the repo-map output cap (``output_limit.possibly_truncated`` — map/context), and the
+    blast-radius output cap (``output_limit.callers_truncated`` / ``files_truncated``). Returns
+    None when complete.
     """
-    for key in ("scan_limit", "output_limit"):
+    for key in ("scan_limit", "caller_scan_limit", "output_limit"):
         limit = payload.get(key)
-        if isinstance(limit, dict) and limit.get("possibly_truncated"):
-            scanned = limit.get("scanned_files", limit.get("emitted_files", "?"))
-            cap = limit.get("max_repo_files", limit.get("max_files", "?"))
+        if not (isinstance(limit, dict) and limit.get("possibly_truncated")):
+            continue
+        if key == "caller_scan_limit":
+            ceiling = limit.get("ceiling", "?")
+            files_total = limit.get("files_total", "?")
             return _truncation_message(
-                f"the scan stopped at a {cap}-file cap (scanned {scanned}) and dropped project files"
+                f"caller-scan bounded to the first {ceiling} of {files_total} mapped files; "
+                "narrow the PATH or raise --max-repo-files for full coverage"
             )
+        scanned = limit.get("scanned_files", limit.get("emitted_files", "?"))
+        cap = limit.get("max_repo_files", limit.get("max_files", "?"))
+        return _truncation_message(
+            f"the scan stopped at a {cap}-file cap (scanned {scanned}) and dropped project files"
+        )
     output_limit = payload.get("output_limit")
     if isinstance(output_limit, dict) and (
         output_limit.get("callers_truncated") or output_limit.get("files_truncated")

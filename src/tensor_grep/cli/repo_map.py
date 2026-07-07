@@ -164,6 +164,20 @@ DEFAULT_AGENT_REPO_MAP_LIMIT = 2000
 # file count, the payload is marked result_incomplete (see _CALLER_SCAN_CEILING_REMEDIATION)
 # so the exit-2 truncation-honesty contract still fires.
 CALLER_SCAN_FILE_CEILING = 512
+# F1-review HIGH fix (task#52 shape, 2026-07-06): _order_caller_scan_candidates probes
+# _file_may_contain_literal_symbol (a stat + cached read_bytes) across the caller-scan file
+# UNIVERSE to decide ordering, BEFORE _cap_caller_scan_files slices to CALLER_SCAN_FILE_CEILING.
+# Left unbounded, that probe pays O(map-size) I/O regardless of the 512 ceiling or --deadline --
+# exactly the pathology CALLER_SCAN_FILE_CEILING exists to prevent, just one step earlier in the
+# pipeline. This ceiling bounds the PROBE itself (belt); the deadline check threaded into the
+# same loop is the suspenders. 4x the scan ceiling so a normal (<=2000-file) map's ordering pass
+# is never truncated in practice -- it only bites when --max-repo-files is raised well past the
+# default, which is exactly the case this fix targets.
+CALLER_SCAN_ORDER_PROBE_CEILING = 4 * CALLER_SCAN_FILE_CEILING
+# How often (in probed files) the ordering pass re-checks the deadline. Checking every file would
+# add a time.monotonic() call per file; checking too rarely risks overrunning a tight --deadline
+# by a wide margin. 64 is a compromise consistent with other bounded-scan loops in this module.
+_CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE = 64
 _DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
@@ -536,7 +550,12 @@ _CALLER_SCAN_CEILING_REMEDIATION = (
 )
 
 
-def _mark_result_incomplete(payload: dict[str, Any], *, remediation: str) -> None:
+def _mark_result_incomplete(
+    payload: dict[str, Any],
+    *,
+    remediation: str,
+    caller_scan_limit: dict[str, Any] | None = None,
+) -> None:
     """Payload-level honesty signal (round-6 council): set result_incomplete + remediation at ASSEMBLY
     time so non-CLI consumers (MCP tools, *_json) get the same truncation signal the CLI emitter adds.
     Additive; callers gate it on possibly_truncated so complete results never grow the key.
@@ -548,10 +567,20 @@ def _mark_result_incomplete(payload: dict[str, Any], *, remediation: str) -> Non
     complete (dogfood-caught: `tg callers` on a real >512-file repo set result_incomplete:true but
     scan_remediation:null). Only skip when an existing message is genuinely present (truthy), so a
     MORE SPECIFIC remediation set earlier is still preserved (test:
-    test_mark_result_incomplete_helper_does_not_clobber_existing_remediation)."""
+    test_mark_result_incomplete_helper_does_not_clobber_existing_remediation).
+
+    F1 fix: ``caller_scan_limit`` is the structured sibling of the CALLER_SCAN_CEILING
+    remediation string above -- a machine-checkable ``{"possibly_truncated": True, "ceiling":
+    ..., "files_total": ...}`` dict (mirroring the existing ``scan_limit`` shape) so a JSON
+    consumer doesn't have to regex the prose remediation to learn the ceiling/total. Only
+    callers that actually hit the caller-scan ceiling pass this; every other
+    ``_mark_result_incomplete`` call site (the generic repo-map scan truncation) omits it, so a
+    complete-map/ceiling-truncated result never grows the key."""
     payload["result_incomplete"] = True
     if not payload.get("scan_remediation"):
         payload["scan_remediation"] = remediation
+    if caller_scan_limit is not None:
+        payload["caller_scan_limit"] = caller_scan_limit
 
 
 def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
@@ -1206,12 +1235,19 @@ def _literal_symbol_seed_files(
     return seed_files
 
 
-def _repo_map_file_universe(repo_map: dict[str, Any]) -> list[Path]:
+def _repo_map_file_and_test_universe(repo_map: dict[str, Any]) -> tuple[list[Path], list[Path]]:
+    """Same normalization + cross-key dedupe as ``_repo_map_file_universe`` below, but returned
+    as SEPARATE (files, tests) lists so a caller can distinguish membership (F1 fix: the
+    caller-scan ceiling ordering needs to know which universe members are tests) without
+    re-deriving it. ``_repo_map_file_universe`` is a thin wrapper over this and its
+    source-first-then-tests concatenation order is UNCHANGED -- existing global-order
+    consumers (build_context_pack_from_map, edit-plan seeding) are untouched."""
     root = Path(str(repo_map["path"])).expanduser().resolve()
     base = root if root.is_dir() else root.parent
-    files: list[Path] = []
     seen: set[str] = set()
-    for key in ("files", "tests"):
+    files: list[Path] = []
+    tests: list[Path] = []
+    for key, bucket in (("files", files), ("tests", tests)):
         for raw_path in repo_map.get(key, []) or []:
             current = Path(str(raw_path)).expanduser()
             if not current.is_absolute():
@@ -1220,19 +1256,148 @@ def _repo_map_file_universe(repo_map: dict[str, Any]) -> list[Path]:
             if normalized in seen:
                 continue
             seen.add(normalized)
-            files.append(Path(normalized))
-    return files
+            bucket.append(Path(normalized))
+    return files, tests
 
 
-def _cap_caller_scan_files(files: list[Path]) -> tuple[list[Path], bool]:
+def _repo_map_file_universe(repo_map: dict[str, Any]) -> list[Path]:
+    files, tests = _repo_map_file_and_test_universe(repo_map)
+    return [*files, *tests]
+
+
+def _interleave_proportionally(sources: list[Path], tests: list[Path]) -> list[Path]:
+    """Merge two ordered lists so that ANY prefix of the result carries roughly its
+    proportional share of ``tests`` (a Bresenham-style proportional interleave). Used so a
+    ceiling slice taken from the FRONT of the merged list never strands 100% of the test
+    files behind a long run of source files, no matter how large ``sources`` is relative to
+    ``tests``."""
+    if not tests:
+        return list(sources)
+    if not sources:
+        return list(tests)
+    total = len(sources) + len(tests)
+    merged: list[Path] = []
+    source_idx = 0
+    test_idx = 0
+    for position in range(1, total + 1):
+        expected_tests_by_now = math.ceil(position * len(tests) / total)
+        if test_idx < expected_tests_by_now and test_idx < len(tests):
+            merged.append(tests[test_idx])
+            test_idx += 1
+        elif source_idx < len(sources):
+            merged.append(sources[source_idx])
+            source_idx += 1
+        else:
+            merged.append(tests[test_idx])
+            test_idx += 1
+    return merged
+
+
+def _order_caller_scan_candidates(
+    source_files: list[Path],
+    test_files: list[Path],
+    *,
+    symbol: str | None,
+    deadline_monotonic: float | None = None,
+) -> list[Path]:
+    """F1 fix (dogfood v1.42.0, 24->14 refs regression): ORDER the caller-scan candidate
+    universe before ``_cap_caller_scan_files`` applies its ``CALLER_SCAN_FILE_CEILING`` slice.
+
+    ``_repo_map_file_universe`` deliberately keeps a source-first-then-tests order (other
+    consumers depend on it -- do not change it globally); left as-is, a >CEILING-source repo
+    consumes the ENTIRE ceiling budget on source files and stone-cold strands every test file
+    past the window. This function only changes what the CEILING SLICE sees: literal
+    symbol-hit files (probed via the already-cached ``_file_may_contain_literal_symbol``, which
+    warms the same cache the per-file caller/ref scan reads right after) sort first WITHIN their
+    own category (source/test), then ``_interleave_proportionally`` merges the two categories so
+    EVERY prefix of the result -- including the eventual ceiling slice -- carries a proportional
+    share of test files. Interleaving globally (rather than only after a literal-hits block) is
+    the F1-review LOW-MED fix: a source-heavy run of literal hits can no longer consume the
+    entire ceiling budget and strand 100% of the test files, hit or not, past the window.
+
+    TRAP (do not regress): literal-contains is an ORDERING signal only, never a FILTER. A
+    caller/ref can resolve with NO literal symbol byte match in the referencing file itself --
+    e.g. an aliased re-export resolved via ``_js_ts_provider_alias_calls`` -- so every file
+    stays eligible for the ceiling slice; only its position changes.
+
+    F1-review HIGH fix (task#52 shape): the literal-hit probe itself must not scale with the
+    full file universe -- bounded both by count (``CALLER_SCAN_ORDER_PROBE_CEILING``) and, when
+    a deadline is in play, by wall-clock (checked every
+    ``_CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE`` files). Files past whichever bound is hit first
+    are simply never probed (treated as non-hits for ordering purposes) -- they are NEVER
+    dropped from the candidate list, only left unprobed, so they still land in the
+    source/test-first remainder that ``_interleave_proportionally`` merges below.
+    """
+    normalized_symbol = (symbol or "").strip()
+    if not normalized_symbol:
+        return [*source_files, *test_files]
+
+    def _is_literal_hit(path: Path) -> bool:
+        return _literal_symbol_candidate(path) and _file_may_contain_literal_symbol(
+            path, normalized_symbol
+        )
+
+    universe = [*source_files, *test_files]
+    literal_hit_ids: set[str] = set()
+    for index, current in enumerate(universe):
+        if index >= CALLER_SCAN_ORDER_PROBE_CEILING:
+            break
+        if (
+            deadline_monotonic is not None
+            and index % _CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE == 0
+            and time.monotonic() >= deadline_monotonic
+        ):
+            break
+        if _is_literal_hit(current):
+            literal_hit_ids.add(str(current))
+
+    ordered_sources = [current for current in source_files if str(current) in literal_hit_ids] + [
+        current for current in source_files if str(current) not in literal_hit_ids
+    ]
+    ordered_tests = [current for current in test_files if str(current) in literal_hit_ids] + [
+        current for current in test_files if str(current) not in literal_hit_ids
+    ]
+    return _interleave_proportionally(ordered_sources, ordered_tests)
+
+
+def _cap_caller_scan_files(
+    files: list[Path],
+    *,
+    symbol: str | None = None,
+    test_files: list[Path] | None = None,
+    deadline_monotonic: float | None = None,
+) -> tuple[list[Path], bool]:
     """backlog #1 chokepoint: bound the caller-scan file universe to
     CALLER_SCAN_FILE_CEILING regardless of how large the passed-in repo_map is (the map default
     was raised for routing accuracy; caller-scan latency must not scale with it). Returns
     (capped_files, ceiling_exceeded) so the caller can mark the payload result_incomplete only
-    when the ceiling actually dropped files."""
-    if len(files) > CALLER_SCAN_FILE_CEILING:
-        return files[:CALLER_SCAN_FILE_CEILING], True
-    return files, False
+    when the ceiling actually dropped files.
+
+    F1 fix: when a slice is actually needed AND the caller passes ``test_files`` (the subset of
+    ``files`` classified as tests), ORDER the candidates first via
+    ``_order_caller_scan_candidates`` so literal symbol-hit files and a proportional share of
+    tests survive the slice instead of being stranded behind a long source-file run (see that
+    function's docstring for the full rationale + trap). The ceiling itself is left at 512 on
+    purpose -- raising it reintroduces task #52's ~100s TS-regex hang, the reason
+    CALLER_SCAN_FILE_CEILING shipped (see the module note above ``CALLER_SCAN_FILE_CEILING``).
+    When no ``test_files`` are passed (or none exist), behavior is unchanged: a plain prefix
+    slice of ``files`` in whatever order the caller already supplied.
+
+    F1-review HIGH fix: ``deadline_monotonic`` is threaded through to
+    ``_order_caller_scan_candidates`` so the ordering PROBE (not just the later per-file scan
+    loop) honors --deadline on a repo raised via --max-repo-files -- see that function's
+    docstring."""
+    if len(files) <= CALLER_SCAN_FILE_CEILING:
+        return files, False
+    if test_files:
+        test_id_set = {str(current) for current in test_files}
+        source_only = [current for current in files if str(current) not in test_id_set]
+        ordered = _order_caller_scan_candidates(
+            source_only, test_files, symbol=symbol, deadline_monotonic=deadline_monotonic
+        )
+    else:
+        ordered = files
+    return ordered[:CALLER_SCAN_FILE_CEILING], True
 
 
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
@@ -12576,7 +12741,13 @@ def build_symbol_refs_from_map(
         return payload
     context_payload = build_context_pack_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
-    bounded_files, refs_ceiling_hit = _cap_caller_scan_files(_repo_map_file_universe(repo_map))
+    refs_universe_files, refs_universe_tests = _repo_map_file_and_test_universe(repo_map)
+    bounded_files, refs_ceiling_hit = _cap_caller_scan_files(
+        [*refs_universe_files, *refs_universe_tests],
+        symbol=symbol,
+        test_files=refs_universe_tests,
+        deadline_monotonic=deadline_monotonic,
+    )
     bounded_file_set = {str(current) for current in bounded_files}
     references: list[dict[str, Any]] = []
     refs_scan_deadline_hit = False
@@ -12761,7 +12932,15 @@ def build_symbol_refs_from_map(
     if refs_ceiling_hit:
         # backlog #1 chokepoint: the caller-scan ceiling dropped files the map otherwise covers
         # -> the reference set is not exhaustive, so mark it honestly incomplete (exit-2 contract).
-        _mark_result_incomplete(payload, remediation=_CALLER_SCAN_CEILING_REMEDIATION)
+        _mark_result_incomplete(
+            payload,
+            remediation=_CALLER_SCAN_CEILING_REMEDIATION,
+            caller_scan_limit={
+                "possibly_truncated": True,
+                "ceiling": CALLER_SCAN_FILE_CEILING,
+                "files_total": len(refs_universe_files) + len(refs_universe_tests),
+            },
+        )
     return payload
 
 
@@ -12830,7 +13009,13 @@ def build_symbol_callers_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         return _attach_profiling(payload, _profiling_collector)
     repo_root = Path(str(repo_map["path"])).resolve()
-    bounded_files, callers_ceiling_hit = _cap_caller_scan_files(_repo_map_file_universe(repo_map))
+    callers_universe_files, callers_universe_tests = _repo_map_file_and_test_universe(repo_map)
+    bounded_files, callers_ceiling_hit = _cap_caller_scan_files(
+        [*callers_universe_files, *callers_universe_tests],
+        symbol=symbol,
+        test_files=callers_universe_tests,
+        deadline_monotonic=deadline_monotonic,
+    )
     bounded_file_set = {str(current) for current in bounded_files}
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
@@ -13166,7 +13351,15 @@ def build_symbol_callers_from_map(
     if callers_ceiling_hit:
         # backlog #1 chokepoint: the caller-scan ceiling dropped files the map otherwise covers
         # -> the caller set is not exhaustive, so mark it honestly incomplete (exit-2 contract).
-        _mark_result_incomplete(payload, remediation=_CALLER_SCAN_CEILING_REMEDIATION)
+        _mark_result_incomplete(
+            payload,
+            remediation=_CALLER_SCAN_CEILING_REMEDIATION,
+            caller_scan_limit={
+                "possibly_truncated": True,
+                "ceiling": CALLER_SCAN_FILE_CEILING,
+                "files_total": len(callers_universe_files) + len(callers_universe_tests),
+            },
+        )
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -13761,10 +13954,16 @@ def build_symbol_blast_radius_from_map(
         # can exit 2 on it WITHOUT catching a mere --max-callers/--max-files OUTPUT cap (which also sets
         # result_incomplete but is a complete analysis capped only for display -> stays exit 0).
         payload["caller_scan_truncated"] = True
+        callers_caller_scan_limit = callers_payload.get("caller_scan_limit")
         _mark_result_incomplete(
             payload,
             remediation=str(
                 callers_payload.get("scan_remediation", _CALLER_SCAN_CEILING_REMEDIATION)
+            ),
+            caller_scan_limit=(
+                dict(callers_caller_scan_limit)
+                if isinstance(callers_caller_scan_limit, dict)
+                else None
             ),
         )
     return _attach_profiling(payload, _profiling_collector)
