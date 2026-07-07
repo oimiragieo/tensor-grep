@@ -1,8 +1,8 @@
 # Native GPU Crossover Benchmark
 
-## Current post-`v1.42.6` GPU dogfood Read
+## Current post-`v1.43.0` GPU dogfood Read
 
-The post-`v1.42.6` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus a single-invocation fair `rg -F -e ... -e ...` multi-pattern search for the declared workload class.
+The post-`v1.43.0` dogfood keeps public GPU not promotion-ready. Single-pattern cold grep is still not a promotion story, and public managed many-pattern search is also not credible versus a single-invocation fair `rg -F -e ... -e ...` multi-pattern search for the declared workload class.
 
 - Native CUDA release search passes 1GB and 5GB correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`).
 - There is still no crossover for single-pattern literal search: GPU remains slower than `rg` and `tg_cpu` after CUDA startup, file I/O, H2D transfer, and output materialization are counted.
@@ -47,7 +47,7 @@ A structured audit of the promotion-gate schema and `public-gpu-proof.yml` workf
 - `FAIR_RG_MULTI_PATTERN_BASELINE = "rg -F -e ... -e ..."` (single-invocation multi-pattern) already exists in `run_gpu_benchmarks.py` and is wired into `_promotion_evidence_contract` and `build_many_pattern_proof_gate`.  The fair-bench does not need to be rebuilt.
 - The `_promotion_evidence_contract` schema was extended with `requires_independent_oracle: True` (wave-2 addition).  The C1 agent will wire `oracle_status` into the `correctness_gate` output once the independent CPU oracle is implemented; this field makes the requirement machine-readable in the contract before that ships.
 
-**Current promotion status (as of 2026-06-29):** unchanged from the post-`v1.42.6` read above.  The public managed binary still routes GPU requests through `GpuSidecar` / `NativeCpuBackend`, not `NativeGpuBackend`.  Sidecar and CPU fallback are not GPU acceleration proof.  No public managed `public_gpu_proof = true` artifact exists.  GPU remains EXPERIMENTAL / explicit-opt-in only.
+**Current promotion status (as of 2026-06-29):** unchanged from the post-`v1.43.0` read above.  The public managed binary still routes GPU requests through `GpuSidecar` / `NativeCpuBackend`, not `NativeGpuBackend`.  Sidecar and CPU fallback are not GPU acceleration proof.  No public managed `public_gpu_proof = true` artifact exists.  GPU remains EXPERIMENTAL / explicit-opt-in only.
 
 ## 2026-05-11 Route And CPU-Staging Audit
 
@@ -146,4 +146,4 @@ Historical per-size data:
 | 500MB | 0.126s | 0.131s | timeout | n/a | FAIL |
 | 1GB | 0.144s | 0.150s | timeout | n/a | FAIL |
 
-The historical artifact remains useful optimization history, but the post-`v1.42.6` decision above is the current contract.
+The historical artifact remains useful optimization history, but the post-`v1.43.0` decision above is the current contract.

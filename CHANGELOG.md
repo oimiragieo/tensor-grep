@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v1.43.0 (2026-07-07)
+
+### Features
+
+- **PathA T1**: Additive ref_kind (call/import/type/field/value) on refs/callers/blast-radius,
+  classify-only zero count change (typed-reference-context, closes Gortex gap)
+  ([#416](https://github.com/oimiragieo/tensor-grep/pull/416),
+  [`3ce3a48`](https://github.com/oimiragieo/tensor-grep/commit/3ce3a4857b31e8231ab5c30b2eeba67ccc7ea3dc))
+
+Adds an additive `ref_kind` classification to every reference/caller row emitted by the
+  Python/JS-TS/Rust extractors, without changing any existing `kind` value or row count:
+
+- `_python_classify_ref_kind` / `_js_ts_classify_ref_kind` / `_rust_classify_ref_kind` label
+  already-matched rows using parent/ancestor tree-sitter-or-ast context (call, type, field, value).
+  Import-position rows stay skipped in all 3 languages (pre-existing gap, deferred to STAGE T2), as
+  do JS/TS `type_identifier` and Rust `type_identifier`/`field_identifier` positions -- widening
+  those match sets would add rows, which is out of scope for a classify-only stage. - The JS/TS and
+  Rust flatten sites in `build_symbol_refs_from_map` now carry `ref_kind` through instead of erasing
+  it (`call.get("ref_kind", "call")`). - `_coverage_summary` gains an additive
+  `reference_kind_counts` aggregate that always sums to `len(references)`; `_graph_trust_summary`
+  gains `evidence_counts.by_ref_kind` computed from the blast-radius direct callers. -
+  `agent_capsule._related_call_site_record` carries `ref_kind` onto `related_call_sites`, so the
+  `tg_agent_capsule` MCP payload surfaces it too. - Safety-net `setdefault("ref_kind", ...)` at the
+  end of the refs/callers builders covers the LSP/alias/regex fallback paths that don't yet compute
+  a ref_kind natively.
+
+New tests/unit/test_typed_ref_kinds.py exercises a symbol in all 5 syntactic positions per language
+  and asserts exact ref_kind, unchanged `kind`, and the count invariant; existing pinned `kind`
+  assertions and full ref/caller/blast-radius counts are unaffected (fixed a tree-sitter
+  Python-binding node-identity bug along the way -- child accessors return fresh wrapper objects, so
+  `==`/`.id` must be used instead of `is`).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.42.6 (2026-07-07)
 
 ### Bug Fixes
