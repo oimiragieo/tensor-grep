@@ -266,8 +266,11 @@ def test_create_checkpoint_uncontended_hot_path_unaffected(tmp_path: Path) -> No
     elapsed = time.monotonic() - start
 
     # A tiny fixture root; an uncontended lock must not push this anywhere near the 5s
-    # acquire timeout.
-    assert elapsed < 2.0
+    # acquire timeout. Threshold is 4.0s (matching the sibling checkpoint hot-path tests) to
+    # stay tolerant of a loaded/slow CI runner while still catching a genuinely-contended lock
+    # that would drift toward the 5s timeout (a marginal 2.25s spike on windows-py3.12 was the
+    # flake this widened).
+    assert elapsed < 4.0
     indexed = {rec.checkpoint_id for rec in checkpoint_store._load_index(root)}
     assert result.checkpoint_id in indexed
     assert checkpoint_store._snapshot_path(root, result.checkpoint_id).exists()
