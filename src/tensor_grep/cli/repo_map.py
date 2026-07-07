@@ -13715,6 +13715,10 @@ def build_symbol_callers_from_map(
     normalized_provider = _normalize_semantic_provider(semantic_provider)
     external_calls: list[dict[str, Any]] = []
     fallback_used = False
+    # Native call count captured BEFORE any lsp/hybrid merge -> the divergence signal for
+    # provider_agreement (a partial LSP result must surface as diverged, not a clean lsp-only
+    # proof). Mirrors build_symbol_refs_from_map's native_reference_count (H1 fix).
+    native_call_count = len(calls)
     if normalized_provider != "native":
         external_refs = [
             dict(current)
@@ -13849,28 +13853,40 @@ def build_symbol_callers_from_map(
                         **dict(alias_call),
                         "provenance": f"lsp-{_language_for_path(Path(rust_file))}-fallback",
                     })
-        if normalized_provider == "lsp":
-            calls = external_calls or calls
-        else:
-            merged_calls: dict[tuple[str, int, int], dict[str, Any]] = {}
-            for current_call_entry in [*external_calls, *calls]:
-                key = (
-                    str(current_call_entry["file"]),
-                    int(current_call_entry["line"]),
-                    int(current_call_entry.get("end_line", current_call_entry["line"])),
-                )
-                if key in merged_calls:
-                    merged_calls[key] = _merge_navigation_duplicate(
-                        merged_calls[key],
-                        dict(current_call_entry),
-                    )
-                else:
-                    merged_calls[key] = dict(current_call_entry)
-            calls = list(merged_calls.values())
-            calls.sort(
-                key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
+        # Merge (union) native + external calls for BOTH lsp and hybrid modes. A partial /
+        # under-indexed LSP result must NEVER discard the correct native answer: the old
+        # `calls = external_calls or calls` REPLACED the native call list with the (possibly
+        # partial) LSP list in lsp mode, then native_count was recomputed from the REPLACED list
+        # (=0) -> _merge_agreement_status always returned "lsp-only" + stamped lsp_proof: True,
+        # silently dropping native-found call sites beyond a partial LSP index (H1: native finds
+        # create_invoice() in a.py + b.py; a partial LSP index proves only a.py -> b.py is
+        # silently dropped and the result stamped authoritative). Union keeps the native truth;
+        # the provider_agreement + lsp_proof below are then stamped honestly (native>lsp ->
+        # diverged). Mirrors build_symbol_refs_from_map's ref merge exactly.
+        proof_calls = [current for current in external_calls if _is_lsp_proof_row(current)]
+        merged_calls: dict[tuple[str, int, int], dict[str, Any]] = {}
+        for current_call_entry in [*external_calls, *calls]:
+            key = (
+                str(current_call_entry["file"]),
+                int(current_call_entry["line"]),
+                int(current_call_entry.get("end_line", current_call_entry["line"])),
             )
-            calls = _dedupe_symbol_references(calls)
+            if key in merged_calls:
+                merged_calls[key] = _merge_navigation_duplicate(
+                    merged_calls[key],
+                    dict(current_call_entry),
+                )
+            else:
+                merged_calls[key] = dict(current_call_entry)
+        calls = list(merged_calls.values())
+        calls.sort(
+            key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
+        )
+        calls = _dedupe_symbol_references(calls)
+        if normalized_provider == "lsp" and len(proof_calls) < native_call_count:
+            # LSP proved fewer calls than the native scan -> its index is incomplete for this
+            # symbol; flag a fallback so the partial is not mis-reported as a clean lsp-only proof.
+            fallback_used = True
 
     definition_locations = {
         (
@@ -13963,7 +13979,7 @@ def build_symbol_callers_from_map(
         fallback_used = True
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
-        native_count=len([current for current in calls if not _is_lsp_proof_row(current)]),
+        native_count=native_call_count,
         lsp_count=lsp_proof_count,
         merged_count=len(calls),
         fallback_used=fallback_used,

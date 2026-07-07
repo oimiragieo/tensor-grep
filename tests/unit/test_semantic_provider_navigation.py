@@ -1008,6 +1008,132 @@ def test_cli_lsp_timeout_reports_explicit_native_fallback_json(
 
 
 def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
+    """H1 regression: native finds MORE callers than a partial LSP index proves (native
+    finds `create_invoice()` in both consumer.py and consumer2.py; the mocked LSP index is
+    PARTIAL and only proves the consumer.py call site, exactly mirroring a real under-indexed
+    LSP server). Before the H1 fix, `calls = external_calls or calls` REPLACED the native call
+    list with the partial LSP list, silently dropping the consumer2.py call and stamping the
+    (incomplete) result "lsp-only" / authoritative. The fix must UNION both call sites and
+    report the divergence honestly instead.
+    """
+    service_path = tmp_path / "service.py"
+    consumer_path = tmp_path / "consumer.py"
+    consumer2_path = tmp_path / "consumer2.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+    consumer_path.write_text(
+        "from service import create_invoice\n\nresult = create_invoice(3)\n",
+        encoding="utf-8",
+    )
+    consumer2_path.write_text(
+        "from service import create_invoice\n\nresult2 = create_invoice(5)\n",
+        encoding="utf-8",
+    )
+
+    _disable_external_definition_proof(monkeypatch)
+    monkeypatch.setattr(
+        repo_map,
+        "_external_references",
+        # PARTIAL LSP index: proves only the consumer.py call site, silently missing
+        # consumer2.py -- the exact H1 scenario (a partial index, not an empty one).
+        lambda root, symbol, definitions: [
+            {
+                "name": symbol,
+                "kind": "reference",
+                "file": str(consumer_path.resolve()),
+                "line": 3,
+                "end_line": 3,
+                "text": "result = create_invoice(3)",
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "textDocument/references",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_callers("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["semantic_provider"] == "lsp"
+    caller_files = {str(current["file"]) for current in payload["callers"]}
+    # Union: BOTH the lsp-proven call site AND the native-only call site must survive --
+    # neither is silently discarded.
+    assert str(consumer_path.resolve()) in caller_files
+    assert str(consumer2_path.resolve()) in caller_files
+    assert any(current["provenance"] == "lsp-python" for current in payload["callers"])
+    # native found 2 call sites, the LSP index only proved 1 -> honestly diverged, never a
+    # clean "lsp-only" authoritative stamp on an incomplete result.
+    assert payload["provider_agreement"]["agreement_status"] == "diverged"
+    assert payload["provider_agreement"]["native_count"] == 2
+    assert payload["provider_agreement"]["lsp_count"] == 1
+    assert payload["provider_agreement"]["fallback_used"] is True
+    # Only the row the LSP index actually proved is stamped lsp_proof -- the native-only row
+    # (consumer2.py) must not be falsely credited to the LSP provider.
+    consumer2_rows = [
+        current for current in payload["callers"] if current["file"] == str(consumer2_path.resolve())
+    ]
+    assert consumer2_rows and all(row.get("lsp_proof") is not True for row in consumer2_rows)
+
+
+def test_repo_map_callers_lsp_partial_index_unions_native_callers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Standalone H1 acceptance test, phrased exactly to the reported scenario: native finds
+    2 callers, a partial LSP index only proves 1 -> the merged result must contain BOTH (a
+    union), never silently drop the native-only call site nor stamp the incomplete result
+    authoritative ("lsp-only" / blanket lsp_proof).
+    """
+    a_path = tmp_path / "a.py"
+    b_path = tmp_path / "b.py"
+    service_path = tmp_path / "invoicing.py"
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
+    a_path.write_text(
+        "from invoicing import create_invoice\n\ndef handle_a():\n    return create_invoice(1)\n",
+        encoding="utf-8",
+    )
+    b_path.write_text(
+        "from invoicing import create_invoice\n\ndef handle_b():\n    return create_invoice(2)\n",
+        encoding="utf-8",
+    )
+
+    _disable_external_definition_proof(monkeypatch)
+    monkeypatch.setattr(
+        repo_map,
+        "_external_references",
+        # The partial LSP index proves only a.py, exactly like the H1 dogfood report.
+        lambda root, symbol, definitions: [
+            {
+                "name": symbol,
+                "kind": "reference",
+                "file": str(a_path.resolve()),
+                "line": 4,
+                "end_line": 4,
+                "text": "return create_invoice(1)",
+                "provenance": "lsp-python",
+                "lsp_provider_response": True,
+                "lsp_operation": "textDocument/references",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_callers("create_invoice", tmp_path, semantic_provider="lsp")
+
+    caller_files = {str(current["file"]) for current in payload["callers"]}
+    assert caller_files == {str(a_path.resolve()), str(b_path.resolve())}
+    assert payload["provider_agreement"]["agreement_status"] != "lsp-only"
+    assert payload["provider_agreement"]["agreement_status"] == "diverged"
+    assert payload["provider_agreement"]["fallback_used"] is True
+
+
+def test_repo_map_callers_lsp_agrees_with_native_reports_clean_lsp_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full-agreement regression guard: when native and the LSP index see the exact same
+    single call site, the H1 union fix must NOT turn honest agreement into a false
+    "diverged" signal -- it should still report a clean lsp-only proof.
+    """
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
     service_path.write_text(
@@ -1042,6 +1168,9 @@ def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> N
     assert payload["semantic_provider"] == "lsp"
     assert any(current["provenance"] == "lsp-python" for current in payload["callers"])
     assert payload["provider_agreement"]["agreement_status"] == "lsp-only"
+    assert payload["provider_agreement"]["native_count"] == 1
+    assert payload["provider_agreement"]["lsp_count"] == 1
+    assert payload["provider_agreement"]["fallback_used"] is False
 
 
 def test_repo_map_callers_hybrid_can_expand_python_alias_wrapper_calls(
