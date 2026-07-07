@@ -124,7 +124,15 @@ _GO_DEF_NODE_KINDS = (
 
 
 def _go_receiver_type_name(method_node: Any, source_bytes: bytes) -> str | None:
-    """Return the (possibly pointer) receiver type name for a ``method_declaration`` node."""
+    """Return the (possibly pointer, possibly generic) receiver type name for a
+    ``method_declaration`` node.
+
+    F8 fix: a GENERIC receiver (``func (r *MyType[T]) M()`` / ``func (r MyType[T]) N()``) parses
+    the receiver's type as a ``generic_type`` node whose own text is ``"MyType[T]"`` -- that never
+    matches the plain ``"MyType"`` name a ``type_spec`` declares, so method<->type association
+    silently broke for every generic Go receiver. Descending to ``generic_type``'s ``type`` field
+    (the base ``type_identifier``) restores the plain base name.
+    """
     receiver = method_node.child_by_field_name("receiver")
     if receiver is None:
         return None
@@ -144,7 +152,41 @@ def _go_receiver_type_name(method_node: Any, source_bytes: bytes) -> str | None:
         )
         if inner is not None:
             type_node = inner
+    if type_node.type == "generic_type":
+        base_type_node = type_node.child_by_field_name("type")
+        if base_type_node is not None:
+            type_node = base_type_node
     return _tree_sitter_node_text(source_bytes, type_node)
+
+
+def _go_import_spec_path_text(path_field: Any, source_bytes: bytes) -> str | None:
+    """Return an ``import_spec``'s string-literal import path (quotes stripped), or ``None``.
+
+    F11 fix: the primary route reads the ``interpreted_string_literal_content`` child that recent
+    ``tree_sitter_go`` grammar versions expose. An older/differently-built grammar package can
+    omit that child (there is no dedicated content node at all, or it is named differently) --
+    when that happens this used to silently return no path for EVERY import in the file, which
+    then silently degrades all cross-package import resolution with no error and no
+    ``resolution_gaps`` entry (the parser loaded fine, so nothing marks a gap). Falling back to
+    quote-stripping the string literal's own raw text keeps import extraction working even
+    against a grammar shape this module wasn't written against.
+    """
+    if path_field is None:
+        return None
+    content_node = next(
+        (
+            child
+            for child in path_field.children
+            if child.type == "interpreted_string_literal_content"
+        ),
+        None,
+    )
+    if content_node is not None:
+        return _tree_sitter_node_text(source_bytes, content_node)
+    raw_text = _tree_sitter_node_text(source_bytes, path_field).strip()
+    if len(raw_text) >= 2 and raw_text[0] in {'"', "`"} and raw_text[-1] == raw_text[0]:
+        return raw_text[1:-1]
+    return None
 
 
 def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
@@ -184,20 +226,9 @@ def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]
         node_type = node.type
         if node_type == "import_spec":
             path_field = node.child_by_field_name("path")
-            content_node = (
-                next(
-                    (
-                        child
-                        for child in path_field.children
-                        if child.type == "interpreted_string_literal_content"
-                    ),
-                    None,
-                )
-                if path_field is not None
-                else None
-            )
-            if content_node is not None:
-                imports.append(_node_text(content_node))
+            import_path_text = _go_import_spec_path_text(path_field, source_bytes)
+            if import_path_text is not None:
+                imports.append(import_path_text)
         elif node_type == "function_declaration":
             name_node = node.child_by_field_name("name")
             if name_node is not None:
@@ -437,7 +468,16 @@ def _go_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
 def _go_import_path_to_dir(import_path: str, context: dict[str, Any]) -> Path | None:
     """Resolve an import path (e.g. ``"example.com/mod/bar"``) to an absolute directory via the
     longest matching ``module_dirs`` prefix (longest-prefix-wins handles a workspace where one
-    module's path is itself a prefix of another's)."""
+    module's path is itself a prefix of another's).
+
+    F24 fix: stop at an intervening ``go.mod`` boundary. A nested module (its own ``go.mod`` that
+    is NOT listed as a ``go.work`` ``use`` entry -- e.g. simply forgotten) is a SEPARATE module
+    even when the enclosing module's path prefix happens to textually match its subdirectory --
+    walking past that boundary used to silently resolve a cross-package reference into the wrong
+    module's directory. Any ``go.mod`` strictly under the matched prefix's own root (which is
+    expected and ignored -- that root's ``go.mod`` is exactly what got this prefix primed) now
+    aborts resolution (returns ``None``) instead of fabricating a cross-module match.
+    """
     module_dirs = context.get("module_dirs", {})
     if not isinstance(module_dirs, dict):
         return None
@@ -448,9 +488,16 @@ def _go_import_path_to_dir(import_path: str, context: dict[str, Any]) -> Path | 
                 best_prefix = prefix
     if best_prefix is None:
         return None
-    base_dir = Path(str(module_dirs[best_prefix]))
+    base_dir = Path(str(module_dirs[best_prefix])).resolve()
     remainder = import_path[len(best_prefix) :].lstrip("/")
-    return (base_dir / remainder).resolve() if remainder else base_dir.resolve()
+    if not remainder:
+        return base_dir
+    current = base_dir
+    for part in remainder.split("/"):
+        current = current / part
+        if (current / "go.mod").is_file():
+            return None
+    return current
 
 
 def _go_import_bindings(source_bytes: bytes, tree: Any) -> list[dict[str, Any]]:
@@ -461,19 +508,8 @@ def _go_import_bindings(source_bytes: bytes, tree: Any) -> list[dict[str, Any]]:
         if node.type == "import_spec":
             path_field = node.child_by_field_name("path")
             name_field = node.child_by_field_name("name")
-            content_node = (
-                next(
-                    (
-                        child
-                        for child in path_field.children
-                        if child.type == "interpreted_string_literal_content"
-                    ),
-                    None,
-                )
-                if path_field is not None
-                else None
-            )
-            if content_node is not None:
+            import_path_text = _go_import_spec_path_text(path_field, source_bytes)
+            if import_path_text is not None:
                 alias: str | None = None
                 dot = False
                 blank = False
@@ -485,7 +521,7 @@ def _go_import_bindings(source_bytes: bytes, tree: Any) -> list[dict[str, Any]]:
                     elif name_field.type == "blank_identifier":
                         blank = True
                 bindings.append({
-                    "path": _tree_sitter_node_text(source_bytes, content_node),
+                    "path": import_path_text,
                     "alias": alias,
                     "dot": dot,
                     "blank": blank,
@@ -571,10 +607,38 @@ _GO_NAME_DEFINING_PARENT_TYPES = {
 }
 
 
+def _go_package_defines_function(target_dir: str, name: str) -> bool:
+    """F10 fallback confirmation: True iff *target_dir* (a resolved package directory) contains a
+    top-level ``function``/``method`` declaration named *name*.
+
+    Used only when ``go_references_and_calls`` is not given ``definition_dirs`` (the stronger,
+    definition-aware check used by repo_map.py's refs/callers scan -- see F25 in that function's
+    docstring). Deliberately un-cached: this module never caches anything that reads file content
+    without an mtime guard (see the module-level caches above, which are keyed on repo ROOT
+    priming, not file content), and a Go package directory is small enough that a plain per-call
+    scan is cheap.
+    """
+    directory = Path(target_dir)
+    if not directory.is_dir():
+        return False
+    try:
+        entries = sorted(directory.glob("*.go"))
+    except OSError:
+        return False
+    for entry in entries:
+        _, symbols = go_imports_and_symbols(entry)
+        for record in symbols:
+            if record.get("name") == name and record.get("kind") in {"function", "method"}:
+                return True
+    return False
+
+
 def go_references_and_calls(
     path: Path,
     symbol: str,
     repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Reference/call rows for *symbol* in *path*.
 
@@ -585,15 +649,30 @@ def go_references_and_calls(
     *field*/method-selector mention is ``field_identifier``.
 
     Package-qualified access (``pkg.Symbol``) resolves through this file's import bindings +
-    the primed repo context: if the qualifying identifier is a recognized import alias whose
-    resolved directory matches *definition_path*'s directory, the row carries
-    ``resolution_provenance=["go-import-resolution"]`` at ``resolution_confidence=0.95``. A
-    selector call whose left-hand operand is NOT a recognized package alias (e.g. ``w.Write(x)``
-    where ``w`` is an arbitrary receiver variable of unknown static type) is equifinal -- ANY
-    type with a same-named method would match textually -- so it is still emitted (never
-    silently dropped) but capped at ``resolution_confidence<=0.7`` with
-    ``resolution_provenance=["receiver-heuristic"]``, per the Stage 1 no-fabricated-precision
-    trap.
+    the primed repo context. Two shapes:
+
+    - **Non-call selector** (e.g. ``config.DefaultTimeout``): F9 fix -- classified ``ref_kind``
+      "value" (a package-qualified const/var read), not "field", whenever the operand resolves as
+      a recognized import alias; an unresolved operand (e.g. a genuine struct field access) still
+      classifies "field" as before.
+    - **Call** (e.g. ``pkg.Helper(...)`` / ``w.Write(...)``): a resolved package alias only earns
+      ``resolution_provenance=["go-import-resolution"]`` at ``resolution_confidence=0.95`` if the
+      resolved package is CONFIRMED to actually own *symbol* -- F25 fix: when *definition_dirs* is
+      supplied (repo_map.py always supplies it, built from the symbol's own known definitions),
+      confirmation means the resolved directory is one of those definition dirs, which also fixes
+      a same-named-export collision (two unrelated packages each exporting a symbol with the same
+      name used to both get 0.95 turn just because the alias itself resolved); when
+      *definition_dirs* is omitted (e.g. a standalone caller), F10 fallback confirmation checks
+      whether the resolved package directory itself defines a top-level function/method named
+      *symbol* -- this is what prevents a LOCAL VARIABLE that happens to share its name with an
+      unrelated import alias (``w := SomeStruct{}`` shadowing `import w "pkg/w"`) from fabricating
+      high confidence for ``w.Method()`` when ``pkg/w`` does not actually define ``Method``.
+      Either way, an unconfirmed resolution is never dropped -- it demotes to the same
+      ``resolution_confidence<=0.7`` / ``resolution_provenance=["receiver-heuristic"]`` band as a
+      selector call whose left-hand operand is not a recognized package alias at all (e.g.
+      ``w.Write(x)`` where ``w`` is an arbitrary receiver variable of unknown static type) --
+      equifinal in both cases (ANY type with a same-named method could match textually), per the
+      Stage 1 no-fabricated-precision trap.
     """
     if path.suffix != ".go":
         return [], []
@@ -642,6 +721,21 @@ def go_references_and_calls(
         if target_dir is None:
             return None
         return {"provenance": ["go-import-resolution"], "confidence": 0.95, "dir": target_dir}
+
+    def _confident_call_resolution(package_resolution: dict[str, Any] | None) -> dict[str, Any]:
+        """F10/F25 fix: only trust ``package_resolution`` (0.95) for a CALL when the resolved
+        package is confirmed to actually own *symbol* -- see the ``go_references_and_calls``
+        docstring for the two confirmation routes. Anything unconfirmed demotes to the same
+        equifinal receiver-heuristic band a non-package selector call already gets, never drops.
+        """
+        if package_resolution is not None:
+            target_dir = str(package_resolution.get("dir", ""))
+            if definition_dirs is not None:
+                if target_dir in definition_dirs:
+                    return package_resolution
+            elif _go_package_defines_function(target_dir, symbol):
+                return package_resolution
+        return {"provenance": ["receiver-heuristic"], "confidence": 0.7}
 
     def _emit(
         bucket: list[dict[str, Any]],
@@ -715,10 +809,7 @@ def go_references_and_calls(
                         and grandparent.child_by_field_name("function") == parent
                     )
                     if is_call:
-                        resolution = package_resolution or {
-                            "provenance": ["receiver-heuristic"],
-                            "confidence": 0.7,
-                        }
+                        resolution = _confident_call_resolution(package_resolution)
                         _emit(
                             references,
                             node,
@@ -728,11 +819,14 @@ def go_references_and_calls(
                         )
                         _emit(calls, node, kind="call", ref_kind="call", resolution=resolution)
                     else:
+                        # F9 fix: a package-qualified non-call selector (`config.DefaultTimeout`)
+                        # is a VALUE read (const/var), not a struct FIELD access -- only a
+                        # genuinely unresolved operand (a real struct field access) stays "field".
                         _emit(
                             references,
                             node,
                             kind="reference",
-                            ref_kind="field",
+                            ref_kind="value" if package_resolution is not None else "field",
                             resolution=package_resolution,
                         )
         for child in node.children:

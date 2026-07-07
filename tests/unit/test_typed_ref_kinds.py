@@ -206,3 +206,227 @@ def test_mcp_agent_capsule_related_call_sites_carry_ref_kind(tmp_path: Path) -> 
     assert payload["call_site_evidence"]["status"] == "collected"
     assert payload["related_call_sites"], "fixture must produce at least one related call site"
     assert all(row.get("ref_kind") == "call" for row in payload["related_call_sites"])
+
+
+# ---------------------------------------------------------------------------
+# F6 / F18: Rust macro-argument identifiers stay "value"; turbofish calls classify "call".
+# ---------------------------------------------------------------------------
+
+
+def test_rust_macro_argument_is_not_classified_as_call(tmp_path: Path) -> None:
+    """A macro's ARGUMENTS (inside its token-tree) are data, not a call site -- only the macro
+    NAME position (``println``/``vec``, not matched here since we're querying a different symbol)
+    is "call". Before the F6 fix, ANY identifier anywhere inside a macro invocation's token tree
+    classified "call", inflating the highest-signal ref_kind count."""
+    mod_path = tmp_path / "mod.rs"
+    mod_path.write_text("pub struct Symbol;\n", encoding="utf-8")
+    use_path = tmp_path / "use_it.rs"
+    use_path.write_text(
+        "use crate::mod_a::Symbol;\n"
+        "\n"
+        "fn use_symbol() {\n"
+        '    println!("{:?}", Symbol);\n'
+        "    let v = vec![Symbol];\n"
+        "    let _ = v;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    use_refs = {
+        row["line"]: row for row in payload["references"] if row["file"] == str(use_path.resolve())
+    }
+
+    assert use_refs[4]["ref_kind"] == "value"  # println!("{:?}", Symbol);
+    assert use_refs[5]["ref_kind"] == "value"  # let v = vec![Symbol];
+    assert not any(row["ref_kind"] == "call" for row in use_refs.values())
+
+
+def test_rust_turbofish_call_classified_as_call(tmp_path: Path) -> None:
+    """``foo::<T>()`` puts the function identifier under a ``generic_function`` node one layer
+    below ``call_expression`` -- both the bare and path-qualified (``bar::Symbol::<T>()``) forms
+    must classify "call", matching a plain ``Symbol()`` call."""
+    mod_path = tmp_path / "mod.rs"
+    mod_path.write_text("pub fn Symbol() {}\n", encoding="utf-8")
+    use_path = tmp_path / "use_it.rs"
+    use_path.write_text(
+        "use crate::mod_a::Symbol;\n"
+        "\n"
+        "fn use_symbol() {\n"
+        "    Symbol::<i32>(1);\n"
+        "    bar::Symbol::<i32>(1);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    use_refs = {
+        row["line"]: row for row in payload["references"] if row["file"] == str(use_path.resolve())
+    }
+
+    assert use_refs[4]["ref_kind"] == "call"  # Symbol::<i32>(1);
+    assert use_refs[5]["ref_kind"] == "call"  # bar::Symbol::<i32>(1);
+
+
+# ---------------------------------------------------------------------------
+# F7: JS/TS `as`/`satisfies` operand keeps its own kind, not "type".
+# ---------------------------------------------------------------------------
+
+
+def test_js_ts_as_and_satisfies_operand_keeps_own_kind(tmp_path: Path) -> None:
+    mod_path = tmp_path / "mod.ts"
+    mod_path.write_text("export class Symbol {}\n", encoding="utf-8")
+    use_path = tmp_path / "use.ts"
+    use_path.write_text(
+        'import { Symbol } from "./mod";\n'
+        "\n"
+        "function useSymbol() {\n"
+        "  const a = Symbol as unknown;\n"
+        "  const b = Symbol satisfies object;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    use_refs = {
+        row["line"]: row for row in payload["references"] if row["file"] == str(use_path.resolve())
+    }
+
+    # Before the F7 fix both of these mislabeled "type" purely because `as_expression` /
+    # `satisfies_expression` sat in the generic ancestor-walk type set -- the runtime VALUE
+    # operand must keep its own kind ("value" here, since it's a bare identifier reference).
+    assert use_refs[4]["ref_kind"] == "value"  # const a = Symbol as unknown;
+    assert use_refs[5]["ref_kind"] == "value"  # const b = Symbol satisfies object;
+
+
+# ---------------------------------------------------------------------------
+# F17: `new Widget()` / JSX construction classify "call".
+# ---------------------------------------------------------------------------
+
+
+def test_js_ts_new_expression_and_jsx_classified_as_call(tmp_path: Path) -> None:
+    mod_path = tmp_path / "mod.tsx"
+    mod_path.write_text("export class Symbol {}\n", encoding="utf-8")
+    use_path = tmp_path / "use.tsx"
+    use_path.write_text(
+        'import { Symbol } from "./mod";\n'
+        "\n"
+        "function useSymbol() {\n"
+        "  const a = new Symbol();\n"
+        "  const b = <Symbol/>;\n"
+        "  const c = <Symbol></Symbol>;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    use_refs = [row for row in payload["references"] if row["file"] == str(use_path.resolve())]
+
+    new_expr_refs = [row for row in use_refs if row["line"] == 4]
+    jsx_self_closing_refs = [row for row in use_refs if row["line"] == 5]
+    jsx_pair_refs = [row for row in use_refs if row["line"] == 6]
+
+    assert new_expr_refs and all(row["ref_kind"] == "call" for row in new_expr_refs)
+    assert jsx_self_closing_refs and all(row["ref_kind"] == "call" for row in jsx_self_closing_refs)
+    # <Symbol></Symbol> emits an opening- and closing-tag identifier at the AST level, but the
+    # pre-existing `_dedupe_symbol_references` step (identical file/line/text) collapses them to
+    # ONE row -- that dedupe is unrelated to F17 and must stay in force; what F17 fixes is the
+    # LABEL on the surviving row (was "value", now "call").
+    assert jsx_pair_refs and all(row["ref_kind"] == "call" for row in jsx_pair_refs)
+
+
+# ---------------------------------------------------------------------------
+# F20: a classifier exception must default THIS row to "value", never drop the file's rows.
+# ---------------------------------------------------------------------------
+
+
+def test_js_ts_classifier_exception_defaults_to_value_without_dropping_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    mod_path = tmp_path / "mod.ts"
+    mod_path.write_text("export class Symbol {}\n", encoding="utf-8")
+    use_path = tmp_path / "use.ts"
+    use_path.write_text(
+        'import { Symbol } from "./mod";\n'
+        "\n"
+        "function useSymbol(x: Symbol) {\n"
+        "  return x.Symbol;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    baseline = repo_map.build_symbol_refs("Symbol", tmp_path)
+    baseline_count = len([
+        row for row in baseline["references"] if row["file"] == str(use_path.resolve())
+    ])
+    assert baseline_count > 0
+
+    def _boom(node: object) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(repo_map, "_js_ts_classify_ref_kind", _boom)
+
+    payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    use_refs = [row for row in payload["references"] if row["file"] == str(use_path.resolve())]
+
+    assert len(use_refs) == baseline_count
+    assert all(row["ref_kind"] == "value" for row in use_refs)
+
+
+def test_rust_classifier_exception_defaults_to_value_without_dropping_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``_rust_classify_ref_kind`` is only invoked for the plain-``identifier`` walker branch
+    (e.g. ``let z = Symbol;``) -- the separate ``call_expression`` branch stamps ``ref_kind="call"``
+    directly without going through the classifier at all, so it is unaffected by this monkeypatch
+    and stays "call". F20 is about THAT classifier call never dropping the row it covers."""
+    mod_path = tmp_path / "mod.rs"
+    mod_path.write_text("pub struct Symbol;\n", encoding="utf-8")
+    use_path = tmp_path / "use_it.rs"
+    use_path.write_text(
+        "use crate::mod_a::Symbol;\n"
+        "\n"
+        "fn use_symbol() -> Symbol {\n"
+        "    let z = Symbol;\n"
+        "    Symbol()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    baseline = repo_map.build_symbol_refs("Symbol", tmp_path)
+    baseline_refs = {
+        row["line"]: row for row in baseline["references"] if row["file"] == str(use_path.resolve())
+    }
+    assert baseline_refs
+
+    def _boom(node: object) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(repo_map, "_rust_classify_ref_kind", _boom)
+
+    payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    use_refs = {
+        row["line"]: row for row in payload["references"] if row["file"] == str(use_path.resolve())
+    }
+
+    assert len(use_refs) == len(baseline_refs)
+    assert use_refs[4]["ref_kind"] == "value"  # let z = Symbol; -- classifier boomed -> default
+    assert use_refs[5]["ref_kind"] == "call"  # Symbol(); -- hardcoded by a different branch
+
+
+# ---------------------------------------------------------------------------
+# F21: `_reference_kind_counts` must count non-dict rows too (sum == len invariant).
+# ---------------------------------------------------------------------------
+
+
+def test_reference_kind_counts_counts_non_dict_rows_too() -> None:
+    references = [
+        {"ref_kind": "call"},
+        {"ref_kind": "value"},
+        "not-a-dict",
+        {},
+    ]
+
+    counts = repo_map._reference_kind_counts(references)
+
+    assert sum(counts.values()) == len(references)
