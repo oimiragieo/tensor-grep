@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.42.5 (2026-07-07)
+
+### Bug Fixes
+
+- **F6**: Unscoped tg search on a large single-project root refuses instantly via a bounded scandir
+  probe instead of burning the deadline (dogfood v1.42.0)
+  ([#413](https://github.com/oimiragieo/tensor-grep/pull/413),
+  [`a923f13`](https://github.com/oimiragieo/tensor-grep/commit/a923f1311323ceb7385246aeb3888f34b9720491))
+
+An unscoped `tg search` on a large SINGLE-project, non-vendored root matched neither
+  `_should_refuse_unbounded_workspace_root_scan` (needs >=3 sibling project dirs) nor
+  `_should_refuse_unbounded_vendored_root_scan` (needs a top-level vendored dir name), so it fell
+  through both guards and ran the slow per-file Python match loop to the #400 deadline instead of
+  failing fast.
+
+Add `_should_refuse_unbounded_large_root_scan`: it fires only when the Pipeline has selected
+  anything other than `RipgrepBackend` (the sole branch that hands ALL candidates to one native
+  call) AND the already-collected candidate file count exceeds 1500, gated identically to the
+  sibling guards on `allow_broad_generated_scan`/`_has_generated_scan_bound` (glob/type/depth
+  scope). Checking the real candidate count already collected -- rather than running a second
+  directory walk of its own -- keeps the guard itself from being the unbounded scan it exists to
+  prevent, and keeps it faithful to whichever DirectoryScanner (real or test-faked) actually
+  produced that count.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Chores
+
+- **F8**: Gitignore .claude/worktrees/ (stops agent-worktree source copies polluting tg scans)
+  ([#410](https://github.com/oimiragieo/tensor-grep/pull/410),
+  [`4141343`](https://github.com/oimiragieo/tensor-grep/commit/41413434e47117dd15d31d7356cb8dc7cc1e96dc))
+
+* chore(F8): gitignore .claude/worktrees/ so harness worktree source copies stop polluting the
+  repo-map/agent-capsule scan (repo_map honors gitignore)
+
+* fix(deps): bump crossbeam-epoch 0.9.19->0.9.20 (RUSTSEC-2026-0204 invalid-pointer-deref, published
+  2026-07-06; unblocks the Dependency & License Audit gate on all open PRs)
+
+
 ## v1.42.4 (2026-07-07)
 
 ### Bug Fixes

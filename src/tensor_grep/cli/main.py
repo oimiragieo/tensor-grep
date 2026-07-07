@@ -3859,6 +3859,47 @@ def _format_unbounded_vendored_root_scan_error(vendored_dirs: list[str]) -> str:
     )
 
 
+# F6: an unscoped `tg search` on a large SINGLE-project, non-vendored root matches NEITHER
+# the workspace guard above (needs >=3 sibling project dirs) NOR the vendored-root guard
+# (needs a top-level vendored dir name) -- it falls through both. When the Pipeline then
+# selects anything other than `RipgrepBackend` (the one branch that hands ALL candidates to
+# a single native call), the per-file Python loop a few lines below has no bound other than
+# the wall-clock deadline (Fix B, `cli/main.py`'s native-walk-deadline check) -- so a big
+# candidate set grinds through that full deadline instead of failing fast (dogfood v1.42.0).
+#
+# This guard is checked using the candidate count the real search ALREADY collected (never
+# a second scan of its own -- that would just be the unbounded work this guard exists to
+# avoid), and fires BEFORE the slow per-file loop starts.
+_LARGE_ROOT_SCAN_FILE_CEILING = 1500
+
+
+def _should_refuse_unbounded_large_root_scan(
+    candidate_file_count: int,
+    config: "SearchConfig",
+    *,
+    allow_broad_generated_scan: bool,
+) -> bool:
+    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+        return False
+    return candidate_file_count > _LARGE_ROOT_SCAN_FILE_CEILING
+
+
+def _format_unbounded_large_root_scan_error(file_count_floor: int) -> str:
+    return (
+        "Error: broad root scan refused as a safety guard, not a zero-match result: "
+        f"path is a large single-project root (over {file_count_floor} files) with no "
+        "--glob/--type/--max-depth scope and no fast native/rg engine available for this "
+        "query -- an unscoped scan here would burn the search deadline instead of failing "
+        "fast. Scope the path, add --glob, --type, or --max-depth, or pass "
+        "--allow-broad-generated-scan to opt in.\n"
+        "For bounded output:\n"
+        'tg search <pattern> <root> --glob "*.py"\n'
+        "tg search <pattern> <root> --max-depth <N>\n"
+        "For intentional broad scans:\n"
+        "--allow-broad-generated-scan"
+    )
+
+
 def _sum_total_bytes(paths: list[str]) -> int:
     total = 0
     for p in paths:
@@ -6359,6 +6400,26 @@ def search_command(
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
         sys.exit(exit_code)
+
+    # F6: at this point neither native delegation, the rg-passthrough fast path, nor the
+    # stats-passthrough branch just above is handling this query for real -- the ONLY
+    # remaining fast lane is Pipeline itself having routed to `RipgrepBackend` (the single
+    # branch below that hands ALL candidates to one native call). Anything else means the
+    # slow per-file Python loop is about to run with no bound but the wall-clock deadline
+    # (trap: refusing a working native/rg-routed search would turn an instant search into
+    # an error on every ordinary repo, so this checks the ACTUAL selected backend, not just
+    # binary availability).
+    if selected_backend_name != "RipgrepBackend" and _should_refuse_unbounded_large_root_scan(
+        len(candidate_files_ordered),
+        config,
+        allow_broad_generated_scan=allow_broad_generated_scan,
+    ):
+        typer.echo(
+            _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
+            err=True,
+        )
+        raise typer.Exit(2)
+
     if debug:
         typer.echo(
             f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"

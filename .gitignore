@@ -88,3 +88,7 @@ src/tensor_grep/core/profile_stats
 
 # Local agent validation artifacts
 .factory/validation/
+
+# Transient agent git worktrees (harness-created; contain duplicate source copies that must
+# not be committed OR walked by the repo-map/agent-capsule scan — see F8 scan-pollution).
+.claude/worktrees/
