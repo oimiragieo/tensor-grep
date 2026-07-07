@@ -120,6 +120,58 @@ def test_ast_wrapper_backend_should_emit_runtime_routing_metadata():
     assert result.routing_worker_count == 1
 
 
+def test_ast_wrapper_backend_should_honor_max_count_on_search():
+    """H6: --ast ... --max-count N must cap the returned matches, matching the
+    per-file cap semantics cpu_backend/rust already apply, instead of returning
+    every structural match ast-grep found."""
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = json.dumps([
+        {"text": "def a():", "range": {"start": {"line": 0}}},
+        {"text": "def b():", "range": {"start": {"line": 1}}},
+        {"text": "def c():", "range": {"start": {"line": 2}}},
+    ])
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search(
+            "example.py",
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python", max_count=2),
+        )
+
+    assert result.total_matches == 2
+    assert [m.line_number for m in result.matches] == [1, 2]
+
+
+def test_ast_wrapper_backend_should_honor_max_count_on_search_many():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = json.dumps([
+        {"text": "def hello():", "file": "a.py", "range": {"start": {"line": 0}}},
+        {"text": "class World:", "file": "b.py", "range": {"start": {"line": 4}}},
+        {"text": "def again():", "file": "a.py", "range": {"start": {"line": 8}}},
+    ])
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search_many(
+            ["a.py", "b.py"],
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python", max_count=1),
+        )
+
+    assert result.total_matches == 1
+
+
 def test_ast_wrapper_backend_should_batch_many_files():
     backend = AstGrepWrapperBackend()
 

@@ -471,6 +471,22 @@ class AstBackend(ComputeBackend):
         except OSError:
             logger.debug("Failed to write AST node index cache for %s", file_path, exc_info=True)
 
+    @staticmethod
+    def _cap_to_max_count(result: SearchResult, config: SearchConfig | None) -> SearchResult:
+        """H6: cap `result` to `config.max_count`, matching cpu_backend/rust's
+        per-file cap semantics (never return every match). Must only be applied
+        to the value returned to the caller, AFTER any persistent-cache write --
+        caching a pre-capped result would silently truncate a later query that
+        requests a higher (or no) max_count for the same file/lang/pattern.
+        """
+        max_count = config.max_count if config else None
+        if not max_count or len(result.matches) <= max_count:
+            return result
+        result.matches = result.matches[:max_count]
+        result.total_matches = len(result.matches)
+        result.total_files = 1 if result.matches else 0
+        return result
+
     def _build_matches_from_line_numbers(
         self, file_path: str, lines: list[str], line_numbers: list[int], routing_reason: str
     ) -> SearchResult:
@@ -661,7 +677,7 @@ class AstBackend(ComputeBackend):
 
         persistent_cached_result = self._load_persistent_cached_result(file_path, lang, pattern)
         if persistent_cached_result is not None:
-            return persistent_cached_result
+            return self._cap_to_max_count(persistent_cached_result, config)
 
         if self._is_simple_node_type_pattern(pattern):
             node_type_index = self._load_persistent_node_type_index(file_path, lang)
@@ -677,7 +693,7 @@ class AstBackend(ComputeBackend):
                 )
                 if result.total_matches > 0:
                     self._persist_result_cache(file_path, lang, pattern, result)
-                    return result
+                    return self._cap_to_max_count(result, config)
 
         parser = self._get_parser(lang)
         _source_bytes, lines, tree = self._get_parsed_source(parser, file_path, lang)
@@ -692,7 +708,7 @@ class AstBackend(ComputeBackend):
             )
             if result.total_matches > 0:
                 self._persist_result_cache(file_path, lang, pattern, result)
-                return result
+                return self._cap_to_max_count(result, config)
 
         try:
             query = self._get_query(parser, lang, pattern)
@@ -749,4 +765,4 @@ class AstBackend(ComputeBackend):
             routing_worker_count=1,
         )
         self._persist_result_cache(file_path, lang, pattern, result)
-        return result
+        return self._cap_to_max_count(result, config)

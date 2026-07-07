@@ -184,6 +184,96 @@ def test_stringzilla_cache_hit_search_uses_sorted_posting_intersection(tmp_path,
     assert calls["count"] == 1
 
 
+def test_stringzilla_honors_invert_match_indexed_path(backend, tmp_path):
+    """H5: -F --invert-match must return the COMPLEMENT (lines NOT containing the
+    pattern), not the matching lines. Pattern length >=3 hits the trigram-index
+    fast path by default; invert_match must fall through to a full scan there since
+    the index can only answer "which lines DO contain every trigram", not the
+    inverse."""
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("INFO ok\nERROR failure\nDEBUG trace\nERROR timeout\n", encoding="utf-8")
+
+    config = SearchConfig(fixed_strings=True, invert_match=True)
+    result = backend.search(str(log_file), "ERROR", config=config)
+
+    assert result.total_matches == 2
+    assert [m.line_number for m in result.matches] == [1, 3]
+    assert all("ERROR" not in m.text for m in result.matches)
+
+
+def test_stringzilla_honors_invert_match_matches_cpu_backend(tmp_path):
+    """H5 parity: stringzilla's inverted result must match CPUBackend's (the
+    already-correct reference implementation) for the same query."""
+    from tensor_grep.backends.cpu_backend import CPUBackend
+
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("INFO ok\nERROR failure\nDEBUG trace\nERROR timeout\n", encoding="utf-8")
+
+    config = SearchConfig(fixed_strings=True, invert_match=True)
+    sz_result = StringZillaBackend().search(str(log_file), "ERROR", config=config)
+    cpu_result = CPUBackend().search(str(log_file), "ERROR", config)
+
+    assert sz_result.total_matches == cpu_result.total_matches
+    assert [m.line_number for m in sz_result.matches] == [
+        m.line_number for m in cpu_result.matches
+    ]
+
+
+def test_stringzilla_honors_invert_match_non_indexed_path(backend, tmp_path, monkeypatch):
+    """H5 also applies on the short-pattern (<3 chars) path that bypasses the
+    trigram index entirely."""
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("hi\nno\nhi\n", encoding="utf-8")
+
+    config = SearchConfig(fixed_strings=True, invert_match=True)
+    result = backend.search(str(log_file), "hi", config=config)
+
+    assert result.total_matches == 1
+    assert result.matches[0].line_number == 2
+
+
+def test_stringzilla_honors_max_count_indexed_path(backend, tmp_path):
+    """H6: -F --max-count 2 must cap to exactly 2 matches, matching rg/cpu_backend's
+    per-file cap semantics, not return every match."""
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("ERROR one\nERROR two\nERROR three\nERROR four\n", encoding="utf-8")
+
+    config = SearchConfig(fixed_strings=True, max_count=2)
+    result = backend.search(str(log_file), "ERROR", config=config)
+
+    assert result.total_matches == 2
+    assert [m.line_number for m in result.matches] == [1, 2]
+
+
+def test_stringzilla_max_count_matches_cpu_backend(tmp_path):
+    from tensor_grep.backends.cpu_backend import CPUBackend
+
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("ERROR one\nERROR two\nERROR three\nERROR four\n", encoding="utf-8")
+
+    config = SearchConfig(fixed_strings=True, max_count=3)
+    sz_result = StringZillaBackend().search(str(log_file), "ERROR", config=config)
+    cpu_result = CPUBackend().search(str(log_file), "ERROR", config)
+
+    assert sz_result.total_matches == cpu_result.total_matches == 3
+    assert [m.line_number for m in sz_result.matches] == [
+        m.line_number for m in cpu_result.matches
+    ]
+
+
+def test_stringzilla_honors_max_count_non_indexed_path(backend, tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("hi\nhi\nhi\n", encoding="utf-8")
+
+    config = SearchConfig(fixed_strings=True, max_count=2)
+    result = backend.search(str(log_file), "hi", config=config)
+
+    assert result.total_matches == 2
+    assert [m.line_number for m in result.matches] == [1, 2]
+
+
 def test_stringzilla_in_memory_index_cache_obeys_entry_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES", "2")

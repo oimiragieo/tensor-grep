@@ -264,6 +264,14 @@ class StringZillaBackend(ComputeBackend):
         if len(pattern) < 3:
             return None
 
+        if config and config.invert_match:
+            # H5: the trigram index only answers "which lines contain every trigram
+            # of the pattern" -- there is no cheap index-based way to enumerate the
+            # lines that DON'T contain the pattern. Fall through to the full-scan
+            # path in search(), which honors invert_match directly, rather than
+            # silently returning the (wrong, non-inverted) indexed result.
+            return None
+
         treat_binary_as_text = self._should_search_binary_as_text(config)
         cached = self._load_cached_index(file_path, ignore_case, treat_binary_as_text)
         routing_reason = "stringzilla_fixed_strings_index_cache"
@@ -315,11 +323,16 @@ class StringZillaBackend(ComputeBackend):
 
         candidate_line_indexes = self._intersect_sorted_line_indexes(postings)
         matches = []
+        max_count = config.max_count if config else None
         for line_idx in candidate_line_indexes:
             line = source_lines[line_idx]
             haystack = line.lower() if ignore_case else line
             if normalized_pattern in haystack:
                 matches.append(MatchLine(line_number=line_idx + 1, text=line, file=file_path))
+                # H6: cap to config.max_count, matching cpu_backend's per-file cap
+                # semantics -- never return every match once the cap is reached.
+                if max_count and len(matches) >= max_count:
+                    break
 
         return SearchResult(
             matches=matches,
@@ -364,13 +377,23 @@ class StringZillaBackend(ComputeBackend):
         # Since StringZilla 4.x, we can split by lines extremely fast
         lines = sz_str.splitlines()
         matches = []
+        invert_match = bool(config and config.invert_match)
+        max_count = config.max_count if config else None
 
         # Evaluate using stringzilla's native find
         for i, line in enumerate(lines):
             haystack = str(line).lower() if ignore_case else line
             needle = pattern.lower() if ignore_case else pattern
-            if haystack.find(needle) != -1:
+            found = haystack.find(needle) != -1
+            # H5: honor invert_match -- a matching line under invert_match is one
+            # where the pattern is ABSENT, the complement of the normal result.
+            matched = (not found) if invert_match else found
+            if matched:
                 matches.append(MatchLine(line_number=i + 1, text=str(line), file=file_path))
+                # H6: cap to config.max_count, matching cpu_backend's per-file cap
+                # semantics -- never return every match once the cap is reached.
+                if max_count and len(matches) >= max_count:
+                    break
 
         return SearchResult(
             matches=matches,
