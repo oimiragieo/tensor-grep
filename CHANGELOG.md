@@ -1,6 +1,89 @@
 # CHANGELOG
 
 
+## v1.42.3 (2026-07-07)
+
+### Bug Fixes
+
+- **F1**: Tg refs/callers completeness regression — order the ceiling budget (literal-hits +
+  interleaved tests) + structured caller_scan_limit caveat
+  ([#408](https://github.com/oimiragieo/tensor-grep/pull/408),
+  [`8462529`](https://github.com/oimiragieo/tensor-grep/commit/84625294cc4c332f9a7412a173d6b61387e97a4e))
+
+* fix(F1): tg refs/callers ceiling budget orders literal-hits + interleaves tests, + structured
+  caller_scan_limit caveat (dogfood v1.42.0 regression 24->14 refs)
+
+The caller-scan file universe is source-first-then-tests ordered (_repo_map_file_universe), so a
+  blind files[:CALLER_SCAN_FILE_CEILING] slice on a >512-source repo consumed 100% of the 512-file
+  ceiling budget on source files and stranded every test file past the window -- dogfood-confirmed:
+  `tg refs QueryEngine` on a 1938-file repo dropped from 24 to 14 references, with zero explanation
+  (possibly_truncated:false + result_incomplete:true, no caveat).
+
+Two-part fix, per the verified spec:
+
+1. _cap_caller_scan_files now ORDERS candidates before the ceiling slice instead of just slicing --
+  literal symbol-hit files sort first (reusing the cached _file_may_contain_literal_symbol probe),
+  then remaining source + test files are interleaved proportionally (_interleave_proportionally) so
+  tests are never 100% stranded. The ceiling itself stays 512 (raising it reintroduces task #52's
+  ~100s TS-regex hang). Ordering is ONLY applied when the caller passes test_files AND a slice is
+  actually needed, so existing exact-call-count ceiling-spy tests (no-test-file repos) are
+  unaffected. Literal-contains is used for ORDERING only, never as a filter, so alias/re-export refs
+  resolved downstream (_js_ts_provider_alias_calls) are never dropped.
+
+2. _mark_result_incomplete gains an optional caller_scan_limit dict ({"possibly_truncated",
+  "ceiling", "files_total"}), stamped at the refs/callers/ blast-radius call sites that hit the
+  ceiling. main._scan_truncation_warning now recognizes "caller_scan_limit" in its key loop with a
+  ceiling-specific message, so both the CLI warning text and the JSON payload explain the truncation
+  instead of silently contradicting possibly_truncated:false.
+
+_repo_map_file_universe's global source-first order is unchanged (other consumers depend on it); a
+  new _repo_map_file_and_test_universe helper returns the same files/tests split as separate lists
+  for the ordering step to consume.
+
+New TDD tests in test_cap_fix_chokepoint.py cover: a 600-source + 5-test synthetic repo where
+  build_symbol_refs_from_map surfaces the test file's reference and stamps caller_scan_limit, and
+  that the ordering pass stays bounded (does not blow up the file-walk budget). Dogfooded against
+  the real shipped `tg refs`/`tg blast-radius` binary (not CliRunner) on the same fixture shape to
+  confirm end-to-end.
+
+Gate: tests/unit/test_cap_fix_chokepoint.py, test_cli_modes.py, test_repo_map_targets.py,
+  test_validation_commands.py (500 passed, no governance test shape changes needed); ruff check +
+  ruff format --preview; mypy.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(F1 review): bound the caller-scan ordering probe by count-ceiling + deadline (was O(map-size)
+  I/O, unbounded — task#52 shape); test the interleave directly
+
+HIGH: _order_caller_scan_candidates probed _file_may_contain_literal_symbol across the FULL
+  caller-scan file universe before _cap_caller_scan_files sliced to CALLER_SCAN_FILE_CEILING (512) —
+  unbounded by both the ceiling and --deadline on a repo raised via --max-repo-files. Added
+  CALLER_SCAN_ORDER_PROBE_CEILING (2048, 4x the scan ceiling) as a hard count cap, and threaded
+  deadline_monotonic through _cap_caller_scan_files -> _order_caller_scan_candidates (checked every
+  64 probed files) as a second, suspenders bound. Files beyond either bound are left unprobed
+  (treated as non-hits for ordering) but stay fully eligible for the scan — ordering-only, never
+  filtering.
+
+MEDIUM: the existing ceiling test's test_qe.py is a literal hit, so it landed in the literal-hits
+  block unconditionally and never exercised _interleave_proportionally. Added a direct unit test of
+  the interleave's proportional-prefix contract (1v3, 3v1, many-sources/few-tests) plus a test that
+  forces the ONLY path into the bounded window to be the interleave (crowding literal-hit sources,
+  zero literal-hit tests).
+
+LOW-MED: folded in for free by restructuring _order_caller_scan_candidates to build
+  ordered_sources/ordered_tests (literal hits first within each category) and interleave them ONCE
+  globally, instead of concatenating an uncapped literal_hits block ahead of a remainder-only
+  interleave — a source-heavy literal-hit run can no longer consume the entire ceiling budget and
+  strand every test file, hit or not.
+
+* fix(deps): bump crossbeam-epoch 0.9.19->0.9.20 (RUSTSEC-2026-0204 invalid-pointer-deref, published
+  2026-07-06; unblocks the Dependency & License Audit gate on all open PRs)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.42.2 (2026-07-07)
 
 ### Bug Fixes
