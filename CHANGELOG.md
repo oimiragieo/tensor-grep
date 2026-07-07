@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v1.42.2 (2026-07-07)
+
+### Bug Fixes
+
+- Mcp symbol/context/ast tools forward a scan cap instead of an unbounded None walk (Cluster A
+  audit) ([#407](https://github.com/oimiragieo/tensor-grep/pull/407),
+  [`95de592`](https://github.com/oimiragieo/tensor-grep/commit/95de592b137212b00d53023713bde3f01944ff24))
+
+* fix: MCP symbol/context/ast tools forward a scan cap instead of an unbounded None walk (Cluster A,
+  cursor+thinktank audit)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix: complete MCP scan-cap coverage — tg_symbol_source + tg_search python-backend + session
+  staleness walk + raise MCP default to 2000 (Fable completeness review)
+
+A Fable completeness review of the prior Cluster A MCP-scan-cap pass (cursor+thinktank audit, commit
+  3954032) found 3 more unbounded repo-walk surfaces plus a cap-value decision:
+
+- H1: tg_symbol_source called build_symbol_source with no max_repo_files, defaulting to an unbounded
+  build_repo_map. Same one-param fix as the other 7 symbol/AST tools. - M2: tg_search's non-ripgrep
+  fallback path (rg absent / GPU / hybrid / python-regex) looped scanner.walk(path) per-file with no
+  cap beyond DirectoryScanner's 200k-entry defensive budget. Bounded the walk to max_repo_files,
+  added a scan_limit payload, and folded scanner.scan_truncated into possibly_truncated (the 200k
+  budget can truncate below the cap without the per-file counter ever tripping). - M3: session
+  staleness re-walk (_stale_changeset's detect_added_files probe) called _iter_repo_files with no
+  max_files, defaulting to a full unbounded recursive enumeration. Reachable from MCP via
+  refresh_session / _load_session_payload on any tg_session_* call with refresh_on_stale=True.
+  Bounded it to the session's own recorded scan_limit.max_repo_files (via
+  _effective_session_max_repo_files), falling back to the shared default. - Cap-value decision:
+  raised _DEFAULT_MCP_REPO_SCAN_LIMIT 512 -> 2000 to match the post-cap-fix CLI default
+  (repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT), so MCP routing-family tools get the same routing accuracy
+  as the CLI. Safe because caller-scan cost stays independently bounded at 512 via
+  CALLER_SCAN_FILE_CEILING regardless of this value.
+
+* test(#407): monkeypatched build_symbol_defs doubles accept the forwarded max_repo_files kwarg
+  (Cluster A added the cap forward; test doubles must tolerate it)
+
+* test(#407): provider-navigation doubles accept forwarded max_repo_files (blast_radius/plan/render)
+  + impact asserts the 2000 default via the constant (Cluster A raised MCP cap 512->2000)
+
+* fix(deps): bump crossbeam-epoch 0.9.19->0.9.20 (RUSTSEC-2026-0204 invalid-pointer-deref, published
+  2026-07-06; unblocks the Dependency & License Audit gate on all open PRs)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.42.1 (2026-07-07)
 
 ### Bug Fixes
