@@ -6821,7 +6821,8 @@ def test_context_render_json_reports_bounded_repo_scan(tmp_path):
         ],
     )
 
-    assert result.exit_code == 0
+    # --max-repo-files 1 scan-truncates the context-render -> exit 2 (Cluster B exit-code contract).
+    assert result.exit_code == 2
     payload = json.loads(result.stdout)
     assert payload["scan_limit"] == {
         "max_repo_files": 1,
@@ -7417,10 +7418,13 @@ def test_edit_plan_json_accepts_agent_budget_flags(tmp_path):
         ],
     )
 
-    assert result.exit_code == 0
+    # --max-repo-files 2 scan-truncates this fixture -> exit 2 (Cluster B exit-code contract);
+    # the payload (with the accepted budget flags) is still emitted before the exit.
+    assert result.exit_code == 2
     payload = json.loads(result.stdout)
     assert payload["max_files"] == 2
     assert payload["scan_limit"]["max_repo_files"] == 2
+    assert payload["scan_limit"]["possibly_truncated"] is True
     assert payload["max_sources"] == 1
     assert payload["max_tokens"] == 64
     assert "rendered_context" not in payload

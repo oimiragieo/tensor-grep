@@ -6908,30 +6908,30 @@ def map(
         DEFAULT_AGENT_REPO_MAP_LIMIT,
         apply_repo_map_output_limits,
         build_repo_map,
-        build_repo_map_json,
     )
 
     try:
         effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
-        if json_output:
-            typer.echo(
-                build_repo_map_json(
-                    path,
-                    max_files=max_files,
-                    max_repo_files=effective_max_repo_files,
-                )
-            )
-            return
-
         payload = build_repo_map(path, max_repo_files=effective_max_repo_files)
         payload = apply_repo_map_output_limits(payload, max_files=max_files)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Repository map for {payload['path']}")
-    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
-    typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+    # Cold path (Cluster B, 2026-07-06): dump the SAME payload/limit order the old build_repo_map_json
+    # helper used (build_repo_map then apply_repo_map_output_limits, json.dumps(indent=2)) so JSON
+    # stays byte-identical, and gate on it so both json and text branches share the scan-truncation
+    # contract -- output the full payload FIRST, then exit 2 if the scan itself was capped (an
+    # output-only cap from --max-files stays exit 0).
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"Repository map for {payload['path']}")
+        typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+        typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 @app.command()
@@ -7326,7 +7326,7 @@ def context_render(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
-    from tensor_grep.cli.repo_map import build_context_render, build_context_render_json
+    from tensor_grep.cli.repo_map import build_context_render
 
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
@@ -7353,32 +7353,18 @@ def context_render(
             profile=profile,
         )
         if daemon_payload is not None:
+            # Output-before-exit (Cluster B, 2026-07-06): the warm-daemon path must honor the same
+            # exit-2-on-scan-truncation contract as the cold path below -- a truncated daemon payload
+            # still prints in full, then exits 2, instead of a silent exit 0 that reads as complete.
             if json_output:
                 if daemon_payload.get("render_profile") == "llm":
                     typer.echo(json.dumps(daemon_payload, separators=(",", ":")))
                 else:
                     typer.echo(json.dumps(daemon_payload, indent=2))
-                return
-            typer.echo(str(daemon_payload.get("rendered_context", "")))
-            return
-        if json_output:
-            typer.echo(
-                build_context_render_json(
-                    resolved_query,
-                    resolved_path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_sources=max_sources,
-                    max_symbols_per_file=max_symbols_per_file,
-                    max_render_chars=max_render_chars,
-                    max_tokens=max_tokens,
-                    model=model,
-                    optimize_context=resolved_optimize_context,
-                    render_profile=resolved_render_profile,
-                    semantic_provider=provider,
-                    profile=profile,
-                )
-            )
+            else:
+                typer.echo(str(daemon_payload.get("rendered_context", "")))
+            if _scan_incomplete(daemon_payload):
+                raise typer.Exit(2)
             return
 
         payload = build_context_render(
@@ -7400,7 +7386,20 @@ def context_render(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(payload["rendered_context"])
+    # Cold path (Cluster B, 2026-07-06): build the payload once and dump it here (byte-identical to
+    # the old build_context_render_json helper: separators=(",", ":") for an "llm" render profile,
+    # else indent=2) so both json and text branches share the same scan-truncation gate below --
+    # output the full payload FIRST, then exit 2 if the scan itself (not just the output) was capped.
+    if json_output:
+        if payload.get("render_profile") == "llm":
+            typer.echo(json.dumps(payload, separators=(",", ":")))
+        else:
+            typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(payload["rendered_context"])
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 @app.command(name="agent")
@@ -7579,7 +7578,7 @@ def edit_plan(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
-    from tensor_grep.cli.repo_map import build_context_edit_plan, build_context_edit_plan_json
+    from tensor_grep.cli.repo_map import build_context_edit_plan
 
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
@@ -7600,30 +7599,19 @@ def edit_plan(
             profile=profile,
         )
         if daemon_payload is not None:
+            # Output-before-exit (Cluster B, 2026-07-06): same exit-2-on-scan-truncation contract as
+            # the cold path below -- print the full daemon payload, then exit 2 if it was truncated.
             if json_output:
                 typer.echo(json.dumps(daemon_payload, indent=2))
-                return
-            payload = daemon_payload
-            typer.echo(f"Edit plan for {payload['path']}")
-            typer.echo(f"query={payload['query']}")
-            typer.echo(
-                f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
-            )
-            return
-        if json_output:
-            typer.echo(
-                build_context_edit_plan_json(
-                    resolved_query,
-                    resolved_path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_sources=max_sources,
-                    max_tokens=max_tokens,
-                    max_symbols=max_symbols,
-                    semantic_provider=provider,
-                    profile=profile,
+            else:
+                payload = daemon_payload
+                typer.echo(f"Edit plan for {payload['path']}")
+                typer.echo(f"query={payload['query']}")
+                typer.echo(
+                    f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
                 )
-            )
+            if _scan_incomplete(daemon_payload):
+                raise typer.Exit(2)
             return
 
         payload = build_context_edit_plan(
@@ -7641,11 +7629,21 @@ def edit_plan(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Edit plan for {payload['path']}")
-    typer.echo(f"query={payload['query']}")
-    typer.echo(
-        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
-    )
+    # Cold path (Cluster B, 2026-07-06): build the payload once and dump it here (byte-identical to
+    # the old build_context_edit_plan_json helper: json.dumps(payload, indent=2)) so both json and
+    # text branches share the same scan-truncation gate below -- output the full payload FIRST, then
+    # exit 2 if the scan itself (not just the output) was capped.
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"Edit plan for {payload['path']}")
+        typer.echo(f"query={payload['query']}")
+        typer.echo(
+            f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+        )
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 _ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD = 0.75
@@ -8130,6 +8128,26 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
             dropped.append(f"{omitted_files} file(s)")
         return _truncation_message(f"output was capped, omitting {' and '.join(dropped)}")
     return None
+
+
+def _scan_incomplete(payload: dict[str, Any]) -> bool:
+    """Whether a payload's SCAN (not output) was truncated.
+
+    The shared exit-2 gate for the daemon/render fast-paths (``map``, ``context-render``,
+    ``edit-plan``, ``blast-radius-render``, incl. their warm-daemon routes; Cluster B, 2026-07-06)
+    and the ``blast-radius`` command. An OUTPUT cap (``output_limit.*`` -- ``--max-callers``,
+    ``--max-files``) is a COMPLETE analysis capped only for display and must stay exit 0, so this
+    checks ONLY ``scan_limit`` / ``caller_scan_limit`` ``possibly_truncated``, ``partial`` (a
+    ``--deadline`` cutoff), and ``caller_scan_truncated`` (the ``CALLER_SCAN_FILE_CEILING``) --
+    NEVER ``result_incomplete``, which ``_annotate_result_completeness`` also sets on an output cap
+    (that would silently flip an output-cap-only invocation to exit 2 and break the
+    output-cap-stays-0 pins).
+    """
+    for key in ("scan_limit", "caller_scan_limit"):
+        limit = payload.get(key)
+        if isinstance(limit, dict) and limit.get("possibly_truncated"):
+            return True
+    return bool(payload.get("partial") or payload.get("caller_scan_truncated"))
 
 
 def _annotate_result_completeness(
@@ -8827,20 +8845,17 @@ def blast_radius(
     # Exit 2 ONLY for SCAN incompleteness (--deadline partial, or a --max-repo-files scan cap) -- the
     # analysis didn't finish. An OUTPUT cap (--max-callers/--max-files) is a COMPLETE analysis with a
     # capped display (callers_truncated/files_truncated) and stays exit 0: the agent raises the cap for
-    # more. So gate on partial/scan_limit, NOT result_incomplete (which _annotate also sets on output cap).
-    scan_limit = payload.get("scan_limit")
-    scan_truncated = isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+    # more. So gate on scan-truncation, NOT result_incomplete (which _annotate also sets on output cap).
     # A SCAN-truncated blast radius is INCOMPLETE regardless of whether callers were found -> exit 2
     # (council-verified B, 2026-07-05; found-but-truncated->0 was tried in #399 and overturned). A
     # truncated caller-set silently trusted as exhaustive is exactly the wrong-refactor risk this gate
-    # exists to prevent. An OUTPUT cap (--max-callers/--max-files) is a COMPLETE analysis, capped only for
-    # display -> stays exit 0 (so gate on scan-truncation/partial, never on the output cap).
-    # `caller_scan_truncated` = the backlog-#1 caller-scan ceiling (CALLER_SCAN_FILE_CEILING) dropped
-    # files the 2000-map covers -> a SCAN truncation (exit 2), distinct from an output cap. Without this
-    # the ceiling would silently exit 0 with a caller-set truncated at 512 (Fable final review of #405).
-    incomplete = bool(
-        payload.get("partial") or scan_truncated or payload.get("caller_scan_truncated")
-    )
+    # exists to prevent. `caller_scan_truncated` = the backlog-#1 caller-scan ceiling
+    # (CALLER_SCAN_FILE_CEILING) dropped files the 2000-map covers -> a SCAN truncation (exit 2),
+    # distinct from an output cap. Without this the ceiling would silently exit 0 with a caller-set
+    # truncated at 512 (Fable final review of #405). `_scan_incomplete` is the shared gate reused by
+    # every daemon/render fast-path (map, context-render, edit-plan, blast-radius-render; Cluster B,
+    # 2026-07-06) so the scan-vs-output-cap contract is defined exactly once.
+    incomplete = _scan_incomplete(payload)
 
     if mermaid_output:
         typer.echo(_render_blast_radius_mermaid(payload))
@@ -8918,10 +8933,7 @@ def blast_radius_render(
     (callers/caller_tree/affected_files/blast_radius_score), use
     `tg blast-radius SYMBOL --json` instead -- it is faster and agent-consumable.
     """
-    from tensor_grep.cli.repo_map import (
-        build_symbol_blast_radius_render,
-        build_symbol_blast_radius_render_json,
-    )
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius_render
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -8932,24 +8944,6 @@ def blast_radius_render(
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
-        if json_output:
-            typer.echo(
-                build_symbol_blast_radius_render_json(
-                    resolved_symbol,
-                    resolved_path,
-                    max_depth=max_depth,
-                    max_files=max_files,
-                    max_sources=max_sources,
-                    max_symbols_per_file=max_symbols_per_file,
-                    max_render_chars=max_render_chars,
-                    optimize_context=resolved_optimize_context,
-                    render_profile=resolved_render_profile,
-                    profile=profile,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
 
         payload = build_symbol_blast_radius_render(
             resolved_symbol,
@@ -8969,7 +8963,17 @@ def blast_radius_render(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(payload["rendered_context"])
+    # Cold path (Cluster B, 2026-07-06): build the payload once and dump it here (byte-identical to
+    # the old build_symbol_blast_radius_render_json helper: json.dumps(payload, indent=2)) so both
+    # json and text branches share the same scan-truncation gate below -- output the full payload
+    # FIRST, then exit 2 if the scan itself (not just the output) was capped.
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(payload["rendered_context"])
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 @app.command(name="blast-radius-plan")

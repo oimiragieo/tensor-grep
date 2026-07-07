@@ -2135,8 +2135,9 @@ def test_top_level_context_render_capped_implicit_session_populates_daemon_cache
     finally:
         session_daemon.stop_session_daemon(project_root)
 
-    assert first.exit_code == 0, first.output
-    assert second.exit_code == 0, second.output
+    # --max-repo-files 1 scan-truncates -> exit 2 per the extended exit-code contract (Cluster B); render still populates the daemon cache first.
+    assert first.exit_code == 2, first.output
+    assert second.exit_code == 2, second.output
     first_payload = json.loads(first.stdout)
     second_payload = json.loads(second.stdout)
     status_payload = json.loads(status.stdout)
@@ -2281,8 +2282,9 @@ def test_top_level_edit_plan_capped_implicit_session_populates_daemon_cache(
     finally:
         session_daemon.stop_session_daemon(project_root)
 
-    assert first.exit_code == 0, first.output
-    assert second.exit_code == 0, second.output
+    # --max-repo-files 1 scan-truncates -> exit 2 per the extended exit-code contract (Cluster B); render still populates the daemon cache first.
+    assert first.exit_code == 2, first.output
+    assert second.exit_code == 2, second.output
     first_payload = json.loads(first.stdout)
     second_payload = json.loads(second.stdout)
     status_payload = json.loads(status.stdout)
