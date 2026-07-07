@@ -14,6 +14,23 @@ This file explains how agents should work in `tensor-grep`.
 
 The repo should be treated as a benchmark-governed, contract-heavy codebase. Do not optimize by guesswork.
 
+## Backlog & working process
+
+The canonical prioritized work list lives in **[docs/BACKLOG.md](docs/BACKLOG.md)** — read it for what to
+work next and how. It is kept in sync with the CLI task store; GitHub (`gh pr list`) is the source of truth
+for PRs. **Subagents:** treat each backlog item's description + files + status as your brief. **CEO status** =
+summarize its SHIPPING + P0/P1 sections.
+
+The standing multi-model pipeline for any substantive item: deep-dive → **Fable audit** (find + fix-idea,
+cite `file:line`) → **Exa** recency + competitive research (you are trained on stale data — verify current
+facts) → plan (superpowers skills) → thinktank/Fable review the plan → **Sonnet build, TDD** → verify in the
+REAL venv (`uv run --no-sync`; a worktree "tests pass" is a hypothesis, re-run in the main venv) →
+`ruff check` + `ruff format --preview` + `mypy` → codex/Fable review the PR → **PR → drain**
+(one-merge-per-publish, the push-race rule) → repeat until no issues. Isolate code agents with
+`isolation:'worktree'`. Match model to task (haiku scan / sonnet build / opus+fable review). Run the
+common-sense gate before pending any question to the CEO. Keep docs (this file, `docs/BACKLOG.md`,
+`docs/SESSION_HANDOFF.md`, skills, CLAUDE.md) synchronized as work lands.
+
 ## Current Handoff
 
 release_docs_current_tag: v1.45.7
