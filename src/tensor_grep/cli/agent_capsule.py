@@ -20,11 +20,27 @@ _CAPSULE_LSP_CONFIDENCE_LANGUAGES = {"javascript", "php", "python", "rust", "typ
 # capsule snippets" fallback `_capsule_context_consistency` uses when the primary file never
 # appeared among the rendered sources at all (a genuine ranking miss, not a budget cut).
 _CAPSULE_TOKEN_BUDGET_OMISSION_REASON = "token budget exhausted"
-# Uplift ceiling for a *corroborated* token-budget-only primary omission. Deliberately below the
-# uncapped 0.9 default and matched to the >=0.75 "no ask-user" threshold (agent_capsule.py
+# Historical uplift ceiling for a *corroborated* token-budget-only primary omission. Deliberately
+# below the uncapped 0.9 default and matched to the >=0.75 "no ask-user" threshold (agent_capsule.py
 # `ask_user_before_editing` construction) -- this is a bounded relief from the 0.55 safety floor,
-# not a return to full confidence.
+# not a return to full confidence. Kept for documentation of the original F4 floor; the active
+# uplift ceiling used by `_apply_capsule_token_budget_confidence_uplift` is
+# `_CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP` below.
 _CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP = 0.75
+# T2: a render-token-budget-only cut (`payload["truncated"]` cut some OTHER, lower-ranked source --
+# the primary's OWN snippet still fits) is the SAME class of artifact as the capsule-own-budget
+# primary omission above: a render/token-budget signal, not a resolution-quality signal. Once
+# blast-radius call-site collection has graph-corroborated the primary, BOTH cases may rise to this
+# higher ceiling rather than sitting at the historical 0.75 floor.
+_CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP = 0.8
+# The exact downgrade-reason strings that mean "confidence was reduced ONLY by a token/render
+# budget artifact, not by a genuine resolution-ambiguity signal". Any OTHER downgrade reason
+# (language mismatch, validation misalignment, alternative-target tie, marker-helper demotion)
+# must disqualify the corroborated-resolution uplift below.
+_CAPSULE_BUDGET_ONLY_DOWNGRADE_REASONS = frozenset({
+    "primary file omitted from capsule snippets by token budget",
+    "context omitted by token or render budget",
+})
 
 
 def _as_dict(value: object) -> dict[str, Any]:
@@ -430,6 +446,7 @@ def _collect_capsule_call_site_evidence(
     include_blast_radius: bool,
     max_files: int,
     max_repo_files: int | None,
+    seed_confidence: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not include_blast_radius:
         return [], {
@@ -447,7 +464,12 @@ def _collect_capsule_call_site_evidence(
             "status": "skipped",
             "reason": "primary symbol was not explicitly requested by query",
         }
-    if _numeric_confidence(target.get("confidence"), 0.0) < 0.75:
+    # T2: gate on the caller-supplied PRE-cap seed confidence, not `target["confidence"]` -- by the
+    # time this runs, `target["confidence"]` may already have been mutated down by this module's
+    # OWN trust/tie/budget caps (`build_agent_capsule`). Gating on that post-cap value is circular:
+    # a target capped below 0.75 could never earn the very call-site evidence that would justify
+    # relief from that cap. See `_apply_capsule_token_budget_confidence_uplift`.
+    if seed_confidence < 0.75:
         return [], {
             "status": "skipped",
             "reason": "primary target confidence below call-site collection threshold",
@@ -1292,17 +1314,45 @@ def _capsule_token_budget_uplift_eligible(
     consistency: dict[str, Any],
     call_site_evidence: dict[str, Any],
 ) -> bool:
+    """T2: eligibility for the corroborated-resolution uplift, covering BOTH the original
+    capsule-own-budget primary omission (F4) and a render-truncated-only cut where the primary's
+    OWN snippet is fully present (`payload["truncated"]` cut some other, lower-ranked source).
+
+    Every genuine-ambiguity signal must disqualify this uplift: a primary the ranking never
+    selected/rendered at all, an unresolved alternative-target tie, an unrequested marker-helper
+    demotion, or any downgrade reason outside the render/token-budget family (language mismatch,
+    validation misalignment, ...). Only a target independently corroborated by the query AND by
+    verified call-site evidence is eligible.
+
+    NOTE: `other_reasons` deliberately scans only `consistency["downgrade_reasons"]`, not
+    `confidence["downgrade_reasons"]` -- the latter also carries a generic "context consistency
+    downgraded confidence" restatement whenever `consistency["confidence_downgraded"]` is set for
+    ANY reason (including the very budget-only omission this uplift targets), so scanning it would
+    make the check disqualify itself. Every genuine (non-budget) cause of that flag already leaves
+    its own specific, non-generic text in `consistency["downgrade_reasons"]` (trust mismatches) or
+    is checked explicitly above (ties, marker-helper demotion, never-ranked primary).
+    """
     if not snippets:
         return False
-    if not _capsule_primary_omission_is_token_budget_only(consistency):
+    if consistency.get("primary_file_included") is False:
         return False
-    # Require the token-budget cut to be the ONLY confidence-downgrading signal in play -- if a
-    # trust-level conflict (language mismatch, validation misalignment), an alternative-target
-    # tie, or a marker-helper demotion is ALSO present, leave the existing (conservative)
-    # behavior untouched rather than trying to partially unwind a multi-cause downgrade.
+    if consistency.get("rendered_context_includes_primary") is False:
+        return False
+    if consistency.get("capsule_primary_file_omitted") and not (
+        _capsule_primary_omission_is_token_budget_only(consistency)
+    ):
+        return False
+    if consistency.get("alternative_confidence_tie"):
+        return False
+    if _primary_target_is_unrequested_marker_helper(query, target):
+        return False
+    # Require the confidence hit to be ENTIRELY explained by the render/token-budget family -- if a
+    # trust-level conflict (language mismatch, validation misalignment) or any other genuine
+    # ambiguity signal is ALSO present, leave the existing (conservative) behavior untouched rather
+    # than trying to partially unwind a multi-cause downgrade.
     other_reasons = {
         str(reason) for reason in (consistency.get("downgrade_reasons") or []) if reason
-    } - {"primary file omitted from capsule snippets by token budget"}
+    } - _CAPSULE_BUDGET_ONLY_DOWNGRADE_REASONS
     if other_reasons:
         return False
     if not _primary_target_matches_query(query, target):
@@ -1322,17 +1372,24 @@ def _apply_capsule_token_budget_confidence_uplift(
     call_site_evidence: dict[str, Any],
     ask_reasons: list[str],
 ) -> None:
-    """Uplift the 0.55 primary-omission clamp to <=0.75 for a CORROBORATED token-budget-only
-    omission -- never for a genuine misroute (see `_capsule_primary_omission_is_token_budget_only`).
+    """Uplift a render/token-budget-only confidence clamp for a CORROBORATED resolution -- never
+    for a genuine misroute or a genuine ambiguity (see `_capsule_token_budget_uplift_eligible`).
+
+    T2 generalization: this originally only covered the 0.55 primary-omission clamp (the primary
+    file cut from the capsule's OWN snippet budget). It now ALSO covers the 0.72 render-truncated
+    tier (`payload["truncated"]` cut some OTHER, lower-ranked source, not the primary) -- both are
+    render/token-budget artifacts, not resolution-quality signals, so both are eligible for the
+    same corroborated-resolution relief up to `_CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP`.
 
     STRUCTURAL note: this must run AFTER `_collect_capsule_call_site_evidence` (agent_capsule.py
     call order), since verified caller evidence -- the corroboration this uplift depends on --
     isn't available until that call returns. It mutates `confidence`, `target`, `alternatives`,
-    and `ask_reasons` in place so `build_agent_capsule`'s already-assembled payload reflects the
-    uplift without re-deriving `ask_user_before_editing` from scratch.
+    `consistency`, and `ask_reasons` in place so `build_agent_capsule`'s already-assembled payload
+    reflects the uplift without re-deriving `ask_user_before_editing` from scratch.
     """
     current_overall = float(confidence.get("overall", 0.0))
-    if current_overall > 0.55:
+    uplift_cap = _CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP
+    if current_overall >= uplift_cap:
         return
     if not _capsule_token_budget_uplift_eligible(
         query=query,
@@ -1342,24 +1399,24 @@ def _apply_capsule_token_budget_confidence_uplift(
         call_site_evidence=call_site_evidence,
     ):
         return
-    uplifted = round(min(_CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP, confidence_cap), 3)
+    uplifted = round(min(uplift_cap, confidence_cap), 3)
     if uplifted <= current_overall:
         return
     confidence["overall"] = uplifted
     remaining_reasons = [
         reason
         for reason in confidence.get("downgrade_reasons", [])
-        if reason != "primary file omitted from capsule snippets by token budget"
+        if reason not in _CAPSULE_BUDGET_ONLY_DOWNGRADE_REASONS
     ]
     remaining_reasons.append(
-        "primary file omitted by token budget only; uplifted to "
-        f"{uplifted} on corroborated call-site evidence"
+        "token budget limited rendering only; confidence reflects graph-corroborated resolution"
     )
     confidence["downgrade_reasons"] = remaining_reasons
     consistency["capsule_token_budget_confidence_uplifted"] = True
+    consistency["confidence_basis"] = "resolution-quality"
     _cap_primary_target_confidence(target, uplifted)
     _cap_alternative_target_confidences(alternatives, target)
-    # These three ask-reasons were added solely because of the primary-file-omission clamp we
+    # These ask-reasons were added solely because of the render/token-budget confidence clamp we
     # just uplifted (asserted by the "no other downgrade reason" eligibility check above) -- clear
     # them so `ask_user_before_editing.required` deliberately flips to False for this case.
     ask_reasons[:] = [
@@ -1413,6 +1470,11 @@ def build_agent_capsule(
     all_alternatives = _alternative_targets(payload, target, limit=None)
     alternatives = all_alternatives[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
+    # T2: capture the RAW pre-cap seed confidence now, before any of this function's own trust/
+    # tie/budget caps mutate `target["confidence"]` in place -- `_collect_capsule_call_site_evidence`
+    # must gate on this seed value, not the post-cap one, or a capped target could never earn the
+    # call-site evidence that would justify relief from that cap.
+    primary_target_seed_confidence = _numeric_confidence(target.get("confidence"), 0.0)
     omitted_alternative_targets = max(0, len(all_alternatives) - len(alternatives))
     snippets, omitted_sources, _used_tokens = _build_snippets(
         payload,
@@ -1655,6 +1717,7 @@ def build_agent_capsule(
         include_blast_radius=include_blast_radius,
         max_files=max_files,
         max_repo_files=max_repo_files,
+        seed_confidence=primary_target_seed_confidence,
     )
     # F4: verified call-site evidence is only available NOW (after the collection above), so the
     # token-budget-omission confidence uplift must happen here, post-hoc, rather than inside

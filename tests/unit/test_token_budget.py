@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -653,6 +654,280 @@ def test_cli_context_render_accepts_max_tokens_and_model(tmp_path: Path) -> None
     assert payload["max_tokens"] == 48
     assert payload["model"] == "gpt-test"
     _assert_within_budget(payload, 48)
+
+
+# --- T2: agent confidence must reflect graph-corroborated resolution, not render token budget ---
+#
+# `tg agent` returns the correct primary target and blast-radius confirms real callers, yet
+# `confidence.overall` used to stay pinned at the `payload["truncated"]` ladder value (0.72) or the
+# capsule-own-budget primary-omission floor (0.55) purely because SOME lower-ranked source got cut
+# for render/token budget -- a render artifact, not a resolution-quality signal. These tests build a
+# REAL two-file project so blast-radius call-site collection (`_collect_capsule_call_site_evidence`)
+# runs for real, while `repo_map.build_context_render` is monkeypatched to deterministically control
+# `payload["truncated"]` and which sources the capsule's own snippet budget keeps (mirrors the
+# pattern in test_agent_capsule_token_budget_confidence.py / test_agent_capsule_lsp_confidence.py).
+
+_T2_PRIMARY_SYMBOL = "handle_widget_request"
+_T2_CALLER_SYMBOL = "process_incoming_request"
+_T2_PRIMARY_SOURCE = "def handle_widget_request(payload):\n    return payload\n"
+_T2_CALLER_SOURCE = (
+    "def process_incoming_request(payload):\n    return handle_widget_request(payload)\n"
+)
+
+
+def _write_t2_project(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "t2_workspace"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    handler_file = project / "handler.py"
+    handler_file.write_text(_T2_PRIMARY_SOURCE, encoding="utf-8")
+    caller_file = project / "caller.py"
+    caller_file.write_text(_T2_CALLER_SOURCE, encoding="utf-8")
+    return {"project": project, "handler": handler_file, "caller": caller_file}
+
+
+def _t2_context_payload(*, primary_file: Path, caller_file: Path) -> dict[str, Any]:
+    return {
+        "routing_backend": "RepoMap",
+        "routing_reason": "context-render",
+        "semantic_provider": "native",
+        # The render was cut for TOKEN BUDGET (some other, lower-ranked source) -- a pure render
+        # artifact. The primary's own snippet below is small and fits any reasonable budget.
+        "truncated": True,
+        "files": [str(primary_file), str(caller_file)],
+        "file_matches": [],
+        "sources": [
+            {
+                "file": str(primary_file),
+                "symbol": _T2_PRIMARY_SYMBOL,
+                "name": _T2_PRIMARY_SYMBOL,
+                "start_line": 1,
+                "end_line": 1,
+                "source": _T2_PRIMARY_SOURCE,
+            },
+            {
+                "file": str(caller_file),
+                "symbol": _T2_CALLER_SYMBOL,
+                "name": _T2_CALLER_SYMBOL,
+                "start_line": 1,
+                "end_line": 2,
+                "source": _T2_CALLER_SOURCE,
+            },
+        ],
+        "validation_commands": ["uv run pytest -q"],
+        "edit_plan_seed": {
+            "primary_file": str(primary_file),
+            "primary_symbol": {"name": _T2_PRIMARY_SYMBOL, "kind": "function"},
+            "primary_span": {"start_line": 1, "end_line": 1},
+            # Deliberately no "confidence.overall" -- matches real `repo_map` output, which never
+            # sets an "overall" key; `_primary_target` falls back to the raw 0.9 seed default.
+            "validation_plan": [
+                {
+                    "runner": "pytest",
+                    "scope": "repo",
+                    "target": "",
+                    "command": "uv run pytest -q",
+                    "confidence": 0.55,
+                    "detection": "detected",
+                }
+            ],
+            "validation_commands": ["uv run pytest -q"],
+            "validation_alignment": {"status": "aligned", "kept_count": 1, "filtered_count": 0},
+            "edit_ordering": [str(primary_file)],
+        },
+        "navigation_pack": {
+            "primary_target": {
+                "file": str(primary_file),
+                "symbol": _T2_PRIMARY_SYMBOL,
+                "kind": "function",
+                "start_line": 1,
+                "end_line": 1,
+            },
+            "follow_up_reads": [],
+        },
+        "candidate_edit_targets": {"files": [str(primary_file)], "symbols": [], "tests": []},
+        "context_consistency": {
+            "primary_file_included": True,
+            "rendered_context_includes_primary": True,
+        },
+    }
+
+
+def test_capsule_uplifts_render_truncated_confidence_for_corroborated_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(a) A render-token-budget-only cut (`payload["truncated"]`) with a graph-corroborated
+    primary must not be reported as resolution uncertainty: confidence rises to 0.8 and ask_user
+    is no longer required.
+    """
+    paths = _write_t2_project(tmp_path)
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render",
+        lambda *args, **kwargs: _t2_context_payload(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+        ),
+    )
+
+    payload = agent_capsule.build_agent_capsule(
+        _T2_PRIMARY_SYMBOL,
+        paths["project"],
+        max_tokens=8000,
+    )
+
+    # The primary's own snippet was NOT cut -- only some other, lower-ranked source was, which is
+    # exactly the render-truncated-but-primary-included case F4's original mechanism could not
+    # reach (it only covered the capsule's own snippet-budget omission of the primary itself).
+    assert payload["context_consistency"]["capsule_primary_file_omitted"] is False
+    assert payload["call_site_evidence"]["status"] == "collected"
+    assert payload["confidence"]["overall"] == 0.8
+    assert payload["primary_target"]["confidence"] == 0.8
+    assert payload["context_consistency"]["confidence_basis"] == "resolution-quality"
+    assert payload["ask_user_before_editing"]["required"] is False
+
+
+def test_capsule_render_truncated_genuine_tie_still_requires_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(b) Same fixture, but with a genuine equal-confidence alternative target: the render-budget
+    uplift must NOT override a real ambiguity signal -- confidence stays at/under the tie clamp and
+    ask_user is still required.
+    """
+    paths = _write_t2_project(tmp_path)
+    alternative_file = paths["project"] / "archive.py"
+    alternative_file.write_text(
+        "def archive_widget_request(payload):\n    return payload\n", encoding="utf-8"
+    )
+
+    def fake_context_render(*args: object, **kwargs: object) -> dict[str, Any]:
+        payload = _t2_context_payload(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+        )
+        payload["candidate_edit_targets"]["symbols"] = [
+            {
+                "file": str(alternative_file.resolve()),
+                "name": "archive_widget_request",
+                "kind": "function",
+                "line": 1,
+                "score": 95,
+            }
+        ]
+        payload["file_matches"] = [
+            {
+                "path": str(alternative_file.resolve()),
+                "score": 95,
+                "reasons": ["symbol"],
+                "provenance": ["heuristic"],
+            }
+        ]
+        return payload
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        _T2_PRIMARY_SYMBOL,
+        paths["project"],
+        max_tokens=8000,
+    )
+
+    assert payload["ambiguity"]["status"] == "tie_requires_confirmation"
+    assert payload["confidence"]["overall"] <= 0.74
+    assert payload["ask_user_before_editing"]["required"] is True
+
+
+def test_capsule_render_truncated_genuine_misroute_still_requires_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(c) A genuine misroute (the primary was never ranked/selected at all -- `primary_file_included`
+    is False) must stay at the 0.55 safety floor even when `payload["truncated"]` is True and a
+    caller exists -- corroboration must never override a "never ranked" signal.
+    """
+    paths = _write_t2_project(tmp_path)
+
+    def fake_context_render(*args: object, **kwargs: object) -> dict[str, Any]:
+        payload = _t2_context_payload(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+        )
+        payload["context_consistency"] = {
+            "primary_file_included": False,
+            "rendered_context_includes_primary": False,
+        }
+        return payload
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        _T2_PRIMARY_SYMBOL,
+        paths["project"],
+        max_tokens=8000,
+    )
+
+    assert payload["context_consistency"]["primary_file_included"] is False
+    assert payload["confidence"]["overall"] <= 0.55
+    assert payload["ask_user_before_editing"]["required"] is True
+
+
+def test_call_site_evidence_gates_on_caller_supplied_seed_confidence(
+    tmp_path: Path,
+) -> None:
+    """T2 circular-gate fix: `_collect_capsule_call_site_evidence` must gate on the caller-supplied
+    PRE-cap seed confidence, not `target["confidence"]` -- otherwise a target whose displayed
+    confidence was already capped below 0.75 by an upstream trust/tie/budget cap could never earn
+    the very call-site evidence that would justify relief from that cap.
+    """
+    paths = _write_t2_project(tmp_path)
+    capped_target = {
+        "file": str(paths["handler"].resolve()),
+        "symbol": _T2_PRIMARY_SYMBOL,
+        "kind": "function",
+        "confidence": 0.55,  # simulates an already-capped displayed confidence
+    }
+
+    related_call_sites, evidence = agent_capsule._collect_capsule_call_site_evidence(
+        _T2_PRIMARY_SYMBOL,
+        str(paths["project"]),
+        capped_target,
+        include_blast_radius=True,
+        max_files=3,
+        max_repo_files=None,
+        seed_confidence=0.9,
+    )
+
+    assert evidence["status"] == "collected"
+    assert related_call_sites
+
+
+def test_call_site_evidence_still_skips_on_low_seed_confidence(tmp_path: Path) -> None:
+    """Companion to the above: a genuinely low seed confidence must still skip collection even when
+    `target["confidence"]` itself looks high -- the seed value is authoritative for this gate.
+    """
+    paths = _write_t2_project(tmp_path)
+    displayed_high_target = {
+        "file": str(paths["handler"].resolve()),
+        "symbol": _T2_PRIMARY_SYMBOL,
+        "kind": "function",
+        "confidence": 0.9,
+    }
+
+    related_call_sites, evidence = agent_capsule._collect_capsule_call_site_evidence(
+        _T2_PRIMARY_SYMBOL,
+        str(paths["project"]),
+        displayed_high_target,
+        include_blast_radius=True,
+        max_files=3,
+        max_repo_files=None,
+        seed_confidence=0.5,
+    )
+
+    assert related_call_sites == []
+    assert evidence["status"] == "skipped"
+    assert evidence["reason"] == "primary target confidence below call-site collection threshold"
 
 
 def test_cli_session_context_render_accepts_max_tokens_and_model(tmp_path: Path) -> None:
