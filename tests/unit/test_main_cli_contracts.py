@@ -8,6 +8,8 @@ Covers:
   M14 - inline-flag regex errors must not suggest ``-F`` (a silent wrong answer).
   L1  - symbol commands must exit 1 and set ``not_found`` when zero results.
   L9  - ``tg run <path-but-no-pattern>`` must fail with a clear error.
+  1D  - ``tg agent`` must honor the exit-2-on-scan-truncation contract like every other
+        code-intelligence command (PR-1).
 
 These import only light helpers / the Typer app and never touch the compiled
 extension, so they run without a built ``.so``.
@@ -23,12 +25,14 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from tensor_grep.cli import agent_capsule
 from tensor_grep.cli.main import (
     _annotate_result_completeness,
     _emit_symbol_command_result,
     _invalid_regex_remediation,
     _plain_json_incompatible_render_flags,
     _regex_rule_targets_file,
+    _scan_incomplete,
     _symbol_payload_has_no_results,
     app,
 )
@@ -388,6 +392,94 @@ def test_complete_scan_sets_result_incomplete_false(
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["result_incomplete"] is False
     assert "caveat" not in emitted
+
+
+# ------------------------------------------------------------- 1D `tg agent` scan-truncation gate
+# `tg agent` was the ONLY command in the code-intelligence family that never gated on
+# `_scan_incomplete` and dropped `scan_limit`/`partial`/`result_incomplete` from its payload -- a
+# `tg agent . "query" --max-repo-files N` on a repo with >N files produced a CONFIDENT capsule at
+# exit 0 over a PARTIAL scan. PR-1 (1D) fixes this.
+def _write_agent_scan_cap_project(tmp_path: Path) -> Path:
+    project = tmp_path / "agent_scan_cap_project"
+    project.mkdir()
+    for index in range(8):
+        (project / f"module_{index}.py").write_text(
+            f"def helper_{index}(value):\n    return value + {index}\n",
+            encoding="utf-8",
+        )
+    return project
+
+
+def test_agent_cli_json_exits_two_on_scan_truncation(tmp_path: Path) -> None:
+    project = _write_agent_scan_cap_project(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["agent", str(project), "helper_0", "--max-repo-files", "1", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    assert payload["result_incomplete"] is True
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert any(
+        "scan was truncated" in reason for reason in payload["ask_user_before_editing"]["reasons"]
+    )
+
+
+def test_agent_cli_text_exits_two_on_scan_truncation(tmp_path: Path) -> None:
+    project = _write_agent_scan_cap_project(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["agent", str(project), "helper_0", "--max-repo-files", "1"],
+    )
+
+    assert result.exit_code == 2, result.output
+    # Output-before-exit: the full text summary must still print, never swallowed by the exit.
+    assert "Agent capsule for" in result.output
+    assert "ask_required=True" in result.output
+
+
+def test_agent_cli_output_cap_only_stays_exit_zero(tmp_path: Path) -> None:
+    project = _write_agent_scan_cap_project(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["agent", str(project), "helper_0", "--max-tokens", "1", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    # The repo scan itself was NOT capped (the 8-file project is far under the default
+    # `--max-repo-files`), so `scan_limit` may be present (every code-intelligence command that
+    # accepts `--max-repo-files` stamps it once a limit is configured) but must read complete --
+    # only a tight `--max-tokens` OUTPUT budget was hit, which must stay exit 0.
+    scan_limit = payload.get("scan_limit")
+    if scan_limit is not None:
+        assert scan_limit["possibly_truncated"] is False
+    assert "result_incomplete" not in payload
+
+
+def test_capsule_scan_incomplete_matches_main_scan_incomplete() -> None:
+    """PR-1 (1D): `agent_capsule._capsule_scan_incomplete` is a module-local twin of
+    `main._scan_incomplete` (not imported -- importing it back would be circular). Pin the two
+    functions to agree on every scan-side shape, while an output-only cap (`result_incomplete`
+    alone, no scan-side key) must stay False for BOTH -- that's the output-cap-stays-0 contract.
+    """
+    cases: list[dict[str, Any]] = [
+        {},
+        {"scan_limit": {"possibly_truncated": True}},
+        {"scan_limit": {"possibly_truncated": False}},
+        {"caller_scan_limit": {"possibly_truncated": True}},
+        {"partial": True},
+        {"caller_scan_truncated": True},
+        {"result_incomplete": True},  # output-only cap signal; must NOT count as scan-truncated
+        {"scan_limit": {"possibly_truncated": True}, "partial": True},
+    ]
+    for payload in cases:
+        assert _scan_incomplete(payload) == agent_capsule._capsule_scan_incomplete(payload), payload
 
 
 # --------------------------------------------------------------------------- H1
