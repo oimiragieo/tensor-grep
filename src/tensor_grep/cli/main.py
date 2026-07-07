@@ -7649,6 +7649,12 @@ def edit_plan(
 
 
 _ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD = 0.75
+# When both routes AGREE on the primary target, a sub-threshold confidence reflects ranking-score
+# calibration, not routing doubt -- it is demoted to an additive `note`, not a `warning`. But
+# agreement is not correctness (context-render + edit-plan share the upstream ranker, so they can
+# agree on the same WRONG file); if BOTH confidences fall below this floor, keep the warning as the
+# correlated-error tell.
+_ROUTE_TEST_CONFIDENCE_FLOOR = 0.4
 
 
 def _route_test_int(value: object) -> int | None:
@@ -7815,21 +7821,36 @@ def _build_route_test_payload(
     )
 
     warnings: list[str] = []
+    notes: list[str] = []
     if not agreement:
         warnings.append("primary targets disagree between context-render and edit-plan")
+    low_confidence_lines: list[str] = []
+    scored_confidences: list[float] = []
     for label, target in (
         ("context-render", context_target),
         ("edit-plan", edit_target),
     ):
         confidence_score = target.get("confidence_score")
-        if (
-            isinstance(confidence_score, int | float)
-            and confidence_score < _ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD
-        ):
-            warnings.append(
-                f"{label} primary target confidence {confidence_score:.3f} is below "
-                f"{_ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD:.2f}"
+        if isinstance(confidence_score, int | float):
+            scored_confidences.append(float(confidence_score))
+            if confidence_score < _ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD:
+                low_confidence_lines.append(
+                    f"{label} primary target confidence {confidence_score:.3f} is below "
+                    f"{_ROUTE_TEST_CONFIDENCE_WARNING_THRESHOLD:.2f}"
+                )
+    if low_confidence_lines:
+        both_very_low = len(scored_confidences) >= 2 and all(
+            c < _ROUTE_TEST_CONFIDENCE_FLOOR for c in scored_confidences
+        )
+        if agreement and not both_very_low:
+            # Routes agree -> low confidence is calibration, not routing doubt: demote to a note.
+            notes.append(
+                "context-render and edit-plan agree on the primary target; the sub-threshold "
+                "confidence reflects ranking-score calibration, not routing disagreement"
             )
+            notes.extend(low_confidence_lines)
+        else:
+            warnings.extend(low_confidence_lines)
 
     context_validation_count = _route_test_validation_command_count(context_payload)
     edit_validation_count = _route_test_validation_command_count(edit_payload)
@@ -7845,6 +7866,7 @@ def _build_route_test_payload(
             "line": line_agrees,
         },
         "warnings": warnings,
+        "notes": notes,
         "context_render": {
             "routing_reason": context_payload.get("routing_reason"),
             "primary_target": context_target,

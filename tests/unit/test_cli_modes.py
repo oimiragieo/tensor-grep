@@ -4783,6 +4783,48 @@ def test_route_test_json_warns_on_disagreement_and_low_confidence(monkeypatch, t
     )
 
 
+def test_route_test_json_demotes_low_confidence_to_note_when_routes_agree(monkeypatch, tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    target_file = project / "target.py"
+    target_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    def _agreeing_target():
+        return {
+            "file": str(target_file.resolve()),
+            "symbol": "create_invoice",
+            "line": 1,
+            "confidence": {"file": 0.65, "symbol": 0.9},
+        }
+
+    def fake_context_render(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-render",
+            "navigation_pack": {"primary_target": _agreeing_target(), "validation_commands": []},
+        }
+
+    def fake_edit_plan(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": _agreeing_target(),
+            "validation_commands": ["pytest"],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    result = runner.invoke(app, ["route-test", str(project), "add invoice"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["agreement"] is True
+    # Routes agree -> a sub-threshold confidence is ranking calibration, NOT a routing warning.
+    assert not any("is below" in warning for warning in payload["warnings"])
+    assert any("ranking-score calibration" in note for note in payload["notes"])
+    assert any("confidence 0.650 is below" in note for note in payload["notes"])
+
+
 def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
