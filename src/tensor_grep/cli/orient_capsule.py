@@ -235,6 +235,7 @@ def build_orient_capsule(
 
     snippets: list[dict[str, Any]] = []
     token_budget_used = 0
+    budget_truncated = False
     for cf in central_files[:max_snippet_files]:
         file_path = cf["file"]
         snippet_text = _ast_chunked_snippet(file_path, symbol_map.get(file_path, []))
@@ -242,6 +243,11 @@ def build_orient_capsule(
             continue
         snippet_tokens = _repo_map._estimate_tokens(snippet_text)
         if token_budget_used + snippet_tokens > max_tokens:
+            # Budget can't fit this snippet whole -> content is being cut or dropped either way
+            # (a partial snippet below, or an outright break). This is the accurate truncation
+            # signal; the old `token_budget_used >= max_tokens` proxy false-flagged a snippet that
+            # landed EXACTLY on the budget with nothing left to drop.
+            budget_truncated = True
             remaining_chars = int((max_tokens - token_budget_used) * _CHARS_PER_TOKEN)
             if remaining_chars < 80:
                 break
@@ -274,7 +280,7 @@ def build_orient_capsule(
             lines.append(f"```\n{snip['source'].rstrip()}\n```")
 
     total_token_estimate = _repo_map._estimate_tokens("\n".join(lines))
-    truncated = any(s.get("truncated") for s in snippets) or token_budget_used >= max_tokens
+    truncated = any(s.get("truncated") for s in snippets) or budget_truncated
 
     return {
         "path": rm["path"],
