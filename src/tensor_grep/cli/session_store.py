@@ -508,9 +508,14 @@ def _stale_changeset(
     current_paths: dict[str, Path] = {}
     if detect_added_files:
         context_root = root if root.is_dir() else root.parent
+        # M3 (Fable completeness review): bound the added-file probe walk to the session's
+        # own recorded scan cap (or the shared default) instead of an unbounded full
+        # recursive enumeration -- this is reachable from MCP on every tg_session_* call
+        # with refresh_on_stale=True (_load_session_payload / refresh_session).
+        probe_max_files = _effective_session_max_repo_files(None, payload)
         current_files = [
             current
-            for current in _iter_repo_files(root)
+            for current in _iter_repo_files(root, max_files=probe_max_files)
             if _is_repo_context_file(current, context_root)
         ]
         current_paths = {str(current): current for current in current_files}

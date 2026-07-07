@@ -3905,8 +3905,12 @@ def test_tg_symbol_impact_uses_bounded_repo_scan_by_default(monkeypatch, tmp_pat
 
     payload = json.loads(mcp_server.tg_symbol_impact("safeParseJSON", str(tmp_path)))
 
-    assert payload["scan_limit"]["max_repo_files"] == 512
-    assert seen["max_repo_files"] == 512
+    # Cluster A cap-value decision (Fable completeness review): the MCP default was raised
+    # 512 -> 2000 to match the CLI's routing-accuracy default; tg_symbol_impact's *behavior*
+    # (forwarding the shared default) is unchanged, so assert against the constant rather
+    # than a value that would silently go stale on the next cap-value change.
+    assert payload["scan_limit"]["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
+    assert seen["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
 
 
 def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_path):

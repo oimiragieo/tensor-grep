@@ -910,6 +910,72 @@ def test_session_refresh_on_stale_detects_added_files_when_requested(tmp_path: P
     assert any(symbol["name"] == "issue_refund" for symbol in payload["symbols"])
 
 
+def test_stale_changeset_bounds_the_added_file_probe_to_the_session_scan_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """M3 (Fable completeness review): `_stale_changeset(detect_added_files=True)` used to
+    call `_iter_repo_files(root)` with no `max_files`, defaulting to a full unbounded
+    recursive enumeration. Reachable from MCP via `refresh_session` / `_load_session_payload`
+    on any `tg_session_*` call with `refresh_on_stale=True`. It must now bound the probe to
+    the session's own recorded `scan_limit.max_repo_files` (or the shared default)."""
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sample.py").write_text("value = 1\n", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+    real_iter_repo_files = session_store._iter_repo_files
+
+    def spy_iter_repo_files(root, **kwargs):
+        captured["max_files"] = kwargs.get("max_files")
+        return real_iter_repo_files(root, **kwargs)
+
+    monkeypatch.setattr(session_store, "_iter_repo_files", spy_iter_repo_files)
+
+    # A non-empty snapshot is required -- `_stale_changeset` short-circuits to `None` on an
+    # empty snapshot before ever reaching the added-file probe.
+    payload = {
+        "root": str(project),
+        "snapshot": [{"path": str(project / "sample.py"), "size": 0, "mtime_ns": 0}],
+        "scan_limit": {"max_repo_files": 7},
+    }
+    session_store._stale_changeset(payload, detect_added_files=True)
+
+    assert captured["max_files"] == 7
+
+
+def test_stale_changeset_falls_back_to_shared_default_without_a_recorded_scan_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import repo_map, session_store
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sample.py").write_text("value = 1\n", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+    real_iter_repo_files = session_store._iter_repo_files
+
+    def spy_iter_repo_files(root, **kwargs):
+        captured["max_files"] = kwargs.get("max_files")
+        return real_iter_repo_files(root, **kwargs)
+
+    monkeypatch.setattr(session_store, "_iter_repo_files", spy_iter_repo_files)
+
+    payload = {
+        "root": str(project),
+        "snapshot": [{"path": str(project / "sample.py"), "size": 0, "mtime_ns": 0}],
+    }
+    session_store._stale_changeset(payload, detect_added_files=True)
+
+    # No recorded scan_limit on the session payload -- bounded to the shared default
+    # (never an unbounded max_files=None full recursive enumeration).
+    assert captured["max_files"] == repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
+
+
 def test_session_list_returns_newest_first(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

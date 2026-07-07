@@ -1653,7 +1653,7 @@ def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_defs",
-        lambda symbol, path, semantic_provider="native": {
+        lambda symbol, path, semantic_provider="native", **_: {
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
@@ -1688,14 +1688,14 @@ def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
     )
 
     assert payload["semantic_provider"] == "hybrid"
-    assert payload["max_repo_files"] == 512
+    assert payload["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
 
 
 def test_mcp_source_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_source",
-        lambda symbol, path, semantic_provider="native": {
+        lambda symbol, path, semantic_provider="native", **_: {
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
@@ -1716,7 +1716,7 @@ def test_mcp_blast_radius_accepts_provider_parameter(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_blast_radius",
-        lambda symbol, path, max_depth=3, semantic_provider="native": {
+        lambda symbol, path, max_depth=3, semantic_provider="native", **_: {
             "symbol": symbol,
             "path": str(path),
             "max_depth": max_depth,
@@ -1741,7 +1741,7 @@ def test_mcp_blast_radius_plan_accepts_provider_parameter(tmp_path: Path, monkey
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_plan",
-        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native": {
+        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native", **_: {
             "symbol": symbol,
             "path": str(path),
             "max_depth": max_depth,
@@ -1777,6 +1777,7 @@ def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monk
         render_profile="full",
         profile=False,
         semantic_provider="native",
+        **_,
     ):
         return {
             "symbol": symbol,
