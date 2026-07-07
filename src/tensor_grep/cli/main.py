@@ -44,6 +44,7 @@ from tensor_grep.cli.runtime_paths import (
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
+from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
 from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 
@@ -3503,18 +3504,47 @@ def _search_with_cpu_fallback(
     return CPUBackend().search(current_file, pattern, config=config)
 
 
+# F5 (Fable audit MED): retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per FILE).
+# A matched-file set of many small files can still blow past a sane CORPUS-wide total even though
+# no single file trips the per-file guard, so DenseIndex.__init__'s single-batch encode would face
+# unbounded memory. Cap the CORPUS total here too, sharing the same threshold as the per-file guard
+# (no separate magic number to keep in sync).
+_SEMANTIC_CORPUS_CHUNK_CAP = MAX_CHUNKS
+
+
+def _set_semantic_rank_fallback_reason(all_results: "SearchResult") -> None:
+    """Probe dense-leg availability and set ``rank_fallback_reason`` (F16, Fable audit LOW).
+
+    Used for the 0-match `--semantic` case: with no matches there is nothing to rerank, so the
+    full :func:`_apply_semantic_rerank` path (chunking, model load) is skipped entirely -- but the
+    availability probe must still run so the JSON envelope stays honest (a dense-unavailable
+    search must report that even when it happens to find zero matches, not silently omit
+    ``rank_fallback_reason``).
+    """
+    from tensor_grep.core.retrieval_dense import dense_available
+
+    available, unavailable_reason = dense_available()
+    if not available:
+        all_results.rank_fallback_reason = unavailable_reason
+        sys.stderr.write(f"tg: {unavailable_reason}\n")
+
+
 def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "SearchResult":
     """Apply the `--semantic` hybrid (BM25 + dense RRF) rerank, fail-closed to BM25-only.
 
     The dense leg is best-effort: when the `semantic` extra is absent, the model has not been
-    fetched, or the model produces a malformed/mismatched embedding, this degrades VISIBLY to a
-    BM25-only rerank (stderr warning + ``rank_fallback_reason`` set) -- it never silently returns
-    unranked output and never mislabels BM25-only output as "semantic". A genuine backend fault
-    (e.g. a corrupt model directory) raises ``BackendExecutionError`` instead of degrading, per
-    the Backend Fail-Closed Contract -- that is NOT caught here.
+    fetched, the model produces a malformed/mismatched embedding, or a query-time dense fault
+    occurs (F1: e.g. a dim mismatch raised from inside `rerank_hybrid`'s call to
+    `DenseIndex.query`), this degrades VISIBLY to a BM25-only rerank (stderr warning +
+    ``rank_fallback_reason`` set) -- it never silently returns unranked output and never mislabels
+    BM25-only output as "semantic". A genuine backend fault (e.g. a corrupt model directory)
+    raises ``BackendExecutionError`` instead of degrading, per the Backend Fail-Closed Contract --
+    that is NOT caught here; the caller (the `search` command) must catch it and exit cleanly
+    (F4).
     """
     from tensor_grep.core.reranker import rerank_hybrid
-    from tensor_grep.core.retrieval_chunker import chunk_file
+    from tensor_grep.core.retrieval_bm25 import Bm25Index
+    from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
     from tensor_grep.core.retrieval_dense import (
         DenseIndex,
         DenseUnavailableError,
@@ -3528,23 +3558,73 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
     if not available:
         all_results.rank_fallback_reason = unavailable_reason
         sys.stderr.write(f"tg: {unavailable_reason}\n")
-    else:
+
+    # F3 (Fable audit MED): build the chunk corpus ONCE and share it between the BM25 and dense
+    # legs. Previously the dense leg's corpus was built here while the BM25 leg rebuilt its own
+    # corpus from scratch inside `rerank_hybrid` (bm25_index=None) -- a second full file-I/O pass,
+    # and a silent RRF-misalignment risk if the two passes' chunk_size/overlap defaults ever
+    # diverge.
+    chunks: list[Chunk] = []
+    for path in all_results.matched_file_paths:
+        try:
+            file_chunks = chunk_file(path)
+        except RuntimeError as exc:
+            # F5: retrieval_chunker's own MAX_CHUNKS guard is PER FILE; a single pathological file
+            # can still trip it on its own even before the corpus-wide cap below is reached. Either
+            # way, degrade to BM25-only (using whatever we already have -- discard the corpus, let
+            # rerank_hybrid rebuild its own BM25-only chunks) rather than crash the whole search.
+            all_results.rank_fallback_reason = str(exc)
+            sys.stderr.write(f"tg: {exc}\n")
+            return rerank_hybrid(
+                all_results, pattern, all_results.matched_file_paths, dense_index=None
+            )
+        chunks.extend(file_chunks)
+        if len(chunks) > _SEMANTIC_CORPUS_CHUNK_CAP:
+            reason = (
+                "semantic ranking unavailable: corpus chunk cap "
+                f"({_SEMANTIC_CORPUS_CHUNK_CAP}) exceeded across the matched file set -- narrow "
+                "the search to fewer files for a semantic rerank"
+            )
+            all_results.rank_fallback_reason = reason
+            sys.stderr.write(f"tg: {reason}\n")
+            return rerank_hybrid(
+                all_results, pattern, all_results.matched_file_paths, dense_index=None
+            )
+
+    bm25_index = Bm25Index(chunks)
+
+    if available:
         try:
             model = load_dense_model(default_model_dir())
-            chunks = []
-            for path in all_results.matched_file_paths:
-                chunks.extend(chunk_file(path))
             dense_index = DenseIndex(chunks, model)
         except DenseUnavailableError as exc:
             all_results.rank_fallback_reason = str(exc)
             sys.stderr.write(f"tg: {exc}\n")
+        # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates: that is
+        # an unrecoverable fault the CLI boundary must catch and exit on (F4), not degrade here.
 
-    return rerank_hybrid(
-        all_results,
-        pattern,
-        all_results.matched_file_paths,
-        dense_index=dense_index,
-    )
+    try:
+        return rerank_hybrid(
+            all_results,
+            pattern,
+            all_results.matched_file_paths,
+            bm25_index=bm25_index,
+            dense_index=dense_index,
+        )
+    except DenseUnavailableError as exc:
+        # F1: a query-time dense fault (e.g. a dim mismatch) is raised from INSIDE rerank_hybrid's
+        # call to `DenseIndex.query`, outside the try/except above (which only guards index
+        # construction). Degrade to BM25-only here too -- reuse the SAME bm25_index (no second
+        # chunk pass) rather than let it traceback.
+        all_results.rank_fallback_reason = str(exc)
+        sys.stderr.write(f"tg: {exc}\n")
+        return rerank_hybrid(
+            all_results,
+            pattern,
+            all_results.matched_file_paths,
+            bm25_index=bm25_index,
+            dense_index=None,
+        )
 
 
 def _search_error_payload(error: str, detail: str) -> dict[str, object]:
@@ -6661,8 +6741,25 @@ def search_command(
             all_results.match_counts_by_file[match.file] = (
                 all_results.match_counts_by_file.get(match.file, 0) + 1
             )
-    if config.semantic_rank and all_results.matches:
-        all_results = _apply_semantic_rerank(all_results, pattern)
+    if config.semantic_rank:
+        if all_results.matches:
+            try:
+                all_results = _apply_semantic_rerank(all_results, pattern)
+            except BackendExecutionError as exc:
+                # F4 (Fable audit MED): a genuine dense-backend fault (e.g. a corrupt model
+                # directory) must exit cleanly with a `tg:` message, never a raw traceback --
+                # `_apply_semantic_rerank` deliberately does NOT catch this (see its docstring);
+                # this is the CLI boundary the Backend Fail-Closed Contract requires.
+                if json:
+                    _emit_search_error_json("semantic_backend_error", str(exc))
+                else:
+                    typer.echo(f"tg: {exc}", err=True)
+                sys.exit(2)
+        else:
+            # F16 (Fable audit LOW): probe dense-leg availability even on a 0-match search so
+            # `rank_fallback_reason` is set whenever the leg is unavailable, regardless of match
+            # count -- skipping the probe here silently made the JSON envelope dishonest.
+            _set_semantic_rank_fallback_reason(all_results)
     elif config.rank_bm25 and all_results.matches:
         from tensor_grep.core.reranker import rerank_by_bm25
 
@@ -9013,10 +9110,7 @@ def blast_radius_plan(
 
     Like `blast-radius --json` but shaped as an edit/action plan (no source snippets).
     """
-    from tensor_grep.cli.repo_map import (
-        build_symbol_blast_radius_plan,
-        build_symbol_blast_radius_plan_json,
-    )
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius_plan
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -9025,20 +9119,6 @@ def blast_radius_plan(
             symbol_option=symbol,
             command_name="blast-radius-plan",
         )
-        if json_output:
-            typer.echo(
-                build_symbol_blast_radius_plan_json(
-                    resolved_symbol,
-                    resolved_path,
-                    max_depth=max_depth,
-                    max_files=max_files,
-                    max_symbols=max_symbols,
-                    semantic_provider=provider,
-                    max_repo_files=max_repo_files,
-                )
-            )
-            return
-
         payload = build_symbol_blast_radius_plan(
             resolved_symbol,
             resolved_path,
@@ -9052,10 +9132,21 @@ def blast_radius_plan(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
-    typer.echo(
-        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
-    )
+    # F14 (Fable audit MED): output the payload FIRST, then gate on the shared _scan_incomplete
+    # contract -- mirrors blast-radius/map/context-render/edit-plan/blast-radius-render (Cluster B,
+    # 2026-07-06). This payload is built from build_symbol_blast_radius_from_map and carries the
+    # exact scan_limit/caller_scan_truncated markers the gate checks; without this, a scan-truncated
+    # plan exited 0 while the sibling `blast-radius` command exits 2 on identical truncation.
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
+        typer.echo(
+            f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+        )
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 @session_app.command("open")
