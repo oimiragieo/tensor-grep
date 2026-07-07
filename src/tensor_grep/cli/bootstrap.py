@@ -387,6 +387,20 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not supported_trigger:
         return False
 
+    # Multi-pattern (-e/--regexp) and pattern-file (-f/--file) requests must NOT delegate to the
+    # separately-compiled native `tg` binary via this outer fast-path: that binary never reads -f
+    # files (match-everything flood) and double-counts a line matching multiple -e patterns. Route
+    # them through the in-process path, which combines patterns into an rg-parity alternation
+    # (main.py). A single -e/-f is routed too (main.py handles it byte-identically), so this is a
+    # pure safety exclusion with no correctness regression. `-F` (fixed-strings, uppercase) is not
+    # matched by the `-f` prefix (case-sensitive), so single fixed-string search still delegates.
+    if any(
+        arg in {"-e", "--regexp", "-f", "--file"}
+        or arg.startswith(("--regexp=", "--file=", "-e", "-f"))
+        for arg in search_args
+    ):
+        return False
+
     unsupported_flags = {
         "--ast",
         "--bm25",

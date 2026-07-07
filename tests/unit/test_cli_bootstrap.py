@@ -889,8 +889,13 @@ def test_main_entry_should_fallback_to_full_cli_for_show_completion(monkeypatch)
     assert called["full_cli"] is True
 
 
-def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkeypatch):
-    seen: dict[str, object] = {}
+def test_main_entry_should_not_delegate_multi_pattern_search_to_native_tg(monkeypatch):
+    # Multi-pattern (-e/-e) must NOT delegate to the separately-compiled native tg binary: that
+    # binary double-counts a line matching more than one -e pattern (dogfood-confirmed: `--cpu -e
+    # foo -e bar` counted the both-match line twice). It routes through the full CLI, which combines
+    # the patterns into one rg-parity alternation before the backend runs. Contract flip: previously
+    # this delegated to native, which returned wrong counts through the real front door.
+    called = {"full_cli": False}
 
     monkeypatch.setattr(
         sys,
@@ -913,30 +918,13 @@ def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkey
     monkeypatch.setattr(
         bootstrap,
         "_run_native_tg_search",
-        lambda binary_name, search_args: (
-            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
-        ),
+        lambda *_a, **_k: pytest.fail("multi-pattern must not delegate to the native binary"),
     )
-    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
 
-    with pytest.raises(SystemExit) as excinfo:
-        bootstrap.main_entry()
+    bootstrap.main_entry()
 
-    assert excinfo.value.code == 0
-    assert seen == {
-        "binary_name": "tg.exe",
-        "search_args": [
-            "--gpu-device-ids",
-            "0",
-            "-e",
-            "error",
-            "-e",
-            "warn",
-            "-e",
-            "fatal",
-            "bench_data",
-        ],
-    }
+    assert called["full_cli"] is True
 
 
 def test_main_entry_should_fallback_to_full_cli_when_rg_is_unavailable(monkeypatch):

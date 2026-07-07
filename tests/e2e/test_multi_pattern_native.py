@@ -403,3 +403,21 @@ def test_pattern_file_without_cpu_matches_rg(corpus: Path, env_and_rg, tmp_path:
     tg_result = _tg(["-f", "../patterns2.txt", "--sort", "path", "."], cwd=corpus, env=env)
     assert tg_result.returncode == rg_result.returncode
     assert _normalize(tg_result.stdout, corpus) == _normalize(rg_result.stdout, corpus)
+
+
+def test_bootstrap_does_not_delegate_multipattern_to_native_binary():
+    """The outer argv fast-path must NOT delegate -e/-f searches to the separately-compiled native
+    tg binary (which floods on -f and double-counts multi -e). Route them through the in-process
+    combine fix instead. A plain search and a single -F fixed-string still delegate (no regression)."""
+    from tensor_grep.cli.bootstrap import _can_delegate_to_native_tg_search
+
+    assert _can_delegate_to_native_tg_search(["--cpu", "-e", "foo", "-e", "bar", "."]) is False
+    assert _can_delegate_to_native_tg_search(["--json", "-e", "foo", "."]) is False
+    assert _can_delegate_to_native_tg_search(["--cpu", "-f", "pats.txt", "."]) is False
+    assert _can_delegate_to_native_tg_search(["--cpu", "--file", "pats.txt", "."]) is False
+    assert _can_delegate_to_native_tg_search(["--cpu", "--regexp", "foo", "."]) is False
+    assert _can_delegate_to_native_tg_search(["--cpu", "-efoo", "."]) is False
+    assert _can_delegate_to_native_tg_search(["--cpu", "--regexp=foo", "."]) is False
+    # No -e/-f -> still delegates; -F (fixed-strings, uppercase) is not a -f prefix match.
+    assert _can_delegate_to_native_tg_search(["--cpu", "foo", "."]) is True
+    assert _can_delegate_to_native_tg_search(["--cpu", "-F", "foo", "."]) is True
