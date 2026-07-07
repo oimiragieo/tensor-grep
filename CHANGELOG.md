@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.45.7 (2026-07-07)
+
+### Bug Fixes
+
+- **MCP H3/H4**: Port #400 walk-deadline/refusal to tg_search/tg_ast_search + tg_session_context
+  token-budget + M10/M11 ([#428](https://github.com/oimiragieo/tensor-grep/pull/428),
+  [`15beb24`](https://github.com/oimiragieo/tensor-grep/commit/15beb24dab82dd5c8560ef6259f1a64bd7a6135f))
+
+
 ## v1.45.6 (2026-07-07)
 
 ### Bug Fixes
