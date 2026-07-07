@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.45.10 (2026-07-07)
+
+### Performance Improvements
+
+- **repo_map**: Parse-product cache — one tree-sitter parse per (file,mtime) shared across
+  symbol/ref/caller extractors + alias-aware symbol-in-source early-exit + sound import-binding
+  prefilter gate; golden-parity locked (Fable-designed increment 1)
+  ([#432](https://github.com/oimiragieo/tensor-grep/pull/432),
+  [`504c674`](https://github.com/oimiragieo/tensor-grep/commit/504c6743f8a9d04012dd712e721353429d7edd7e))
+
+
 ## v1.45.9 (2026-07-07)
 
 ### Bug Fixes
