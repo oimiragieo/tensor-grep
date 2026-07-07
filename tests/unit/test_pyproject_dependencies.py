@@ -27,6 +27,15 @@ def test_bench_extra_should_include_stringzilla_for_hot_query_benchmarks() -> No
     assert "stringzilla>=4.0" in deps
 
 
+def test_semantic_extra_should_pin_model2vec_and_numpy_no_torch() -> None:
+    deps = _optional_dependencies()["semantic"]
+
+    assert "model2vec>=0.5" in deps
+    assert "numpy>=1.26" in deps
+    # The whole point of model2vec (vs onnx-MiniLM/transformers) is NO torch/GPU dependency.
+    assert not any(dep.lower().startswith("torch") for dep in deps)
+
+
 def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> None:
     ruff_config = _pyproject_payload()["tool"]["ruff"]
 

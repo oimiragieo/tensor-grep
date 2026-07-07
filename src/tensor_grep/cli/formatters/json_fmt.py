@@ -114,6 +114,12 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
         envelope["staging_bytes"] = result.staging_bytes
     if result.fallback_reason is not None:
         envelope["fallback_reason"] = result.fallback_reason
+    # `--semantic` fail-closed degrade: emitted ONLY when `--semantic` was requested and the dense
+    # leg could not run (extra absent, model not fetched, or a shape/dim-mismatch degrade) -- a
+    # BM25-only result must never be silently mislabeled "semantic". Omitted entirely (not null)
+    # for every other search so the envelope shape stays byte-identical.
+    if result.rank_fallback_reason is not None:
+        envelope["rank_fallback_reason"] = result.rank_fallback_reason
     # Partial results (rg exit 2) — a machine-visible "suppression != absence" marker so --json/
     # --ndjson agents don't read a truncated result as complete. Emitted only when incomplete, so
     # the envelope shape is byte-identical for normal (complete) results.
@@ -179,6 +185,7 @@ class JsonFormatter(OutputFormatter):
             "transfer_time_ms",
             "staging_bytes",
             "fallback_reason",
+            "rank_fallback_reason",
             "result_incomplete",
             "incomplete_reason",
         ):

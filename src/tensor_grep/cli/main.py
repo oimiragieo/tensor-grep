@@ -1860,6 +1860,9 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     # sys.exit). See tests/unit/test_native_delegation_field_coverage.py (round-4 #25).
     "sort_files",
     "rank_bm25",
+    # semantic_rank: same class as rank_bm25 above -- native tg has no dense/RRF hybrid leg, so
+    # delegating a --semantic search would drop the hybrid rerank entirely.
+    "semantic_rank",
     "trim",
     "with_filename",
     "no_filename",
@@ -3500,6 +3503,50 @@ def _search_with_cpu_fallback(
     return CPUBackend().search(current_file, pattern, config=config)
 
 
+def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "SearchResult":
+    """Apply the `--semantic` hybrid (BM25 + dense RRF) rerank, fail-closed to BM25-only.
+
+    The dense leg is best-effort: when the `semantic` extra is absent, the model has not been
+    fetched, or the model produces a malformed/mismatched embedding, this degrades VISIBLY to a
+    BM25-only rerank (stderr warning + ``rank_fallback_reason`` set) -- it never silently returns
+    unranked output and never mislabels BM25-only output as "semantic". A genuine backend fault
+    (e.g. a corrupt model directory) raises ``BackendExecutionError`` instead of degrading, per
+    the Backend Fail-Closed Contract -- that is NOT caught here.
+    """
+    from tensor_grep.core.reranker import rerank_hybrid
+    from tensor_grep.core.retrieval_chunker import chunk_file
+    from tensor_grep.core.retrieval_dense import (
+        DenseIndex,
+        DenseUnavailableError,
+        default_model_dir,
+        dense_available,
+        load_dense_model,
+    )
+
+    dense_index = None
+    available, unavailable_reason = dense_available()
+    if not available:
+        all_results.rank_fallback_reason = unavailable_reason
+        sys.stderr.write(f"tg: {unavailable_reason}\n")
+    else:
+        try:
+            model = load_dense_model(default_model_dir())
+            chunks = []
+            for path in all_results.matched_file_paths:
+                chunks.extend(chunk_file(path))
+            dense_index = DenseIndex(chunks, model)
+        except DenseUnavailableError as exc:
+            all_results.rank_fallback_reason = str(exc)
+            sys.stderr.write(f"tg: {exc}\n")
+
+    return rerank_hybrid(
+        all_results,
+        pattern,
+        all_results.matched_file_paths,
+        dense_index=dense_index,
+    )
+
+
 def _search_error_payload(error: str, detail: str) -> dict[str, object]:
     from tensor_grep.cli.formatters.json_fmt import JSON_OUTPUT_VERSION
 
@@ -3931,6 +3978,7 @@ def _can_passthrough_rg(
         and not config.ltl
         and not config.force_cpu
         and not config.rank_bm25
+        and not config.semantic_rank
         # An explicit --gpu-device-ids request must reach Pipeline, which raises loudly when GPU
         # can't be honored (the "never silently downgrade to CPU" contract). rg-passthrough would
         # run plain CPU rg with exit 0 and no fallback_reason — a silent downgrade. (round-5 Q9)
@@ -5893,6 +5941,16 @@ def search_command(
             "(pure-CPU ranking; no API key, no model download)."
         ),
     ),
+    semantic: bool = typer.Option(
+        False,
+        "--semantic",
+        help=(
+            "Re-rank results by a hybrid of BM25 + local CPU dense-embedding relevance (RRF "
+            "fusion), instead of grep order. No API key, no GPU. Requires the `semantic` extra "
+            "and a fetched model; falls back to BM25-only (visibly, never silently) when "
+            "either is missing."
+        ),
+    ),
     no_json: bool = typer.Option(
         False, "--no-json", help="Disable ripgrep JSON Lines when overriding rg config."
     ),
@@ -6078,6 +6136,7 @@ def search_command(
 
     config = SearchConfig(
         rank_bm25=rank,
+        semantic_rank=semantic,
         regexp=regexp,
         file_patterns=file,
         pre=pre,
@@ -6602,7 +6661,9 @@ def search_command(
             all_results.match_counts_by_file[match.file] = (
                 all_results.match_counts_by_file.get(match.file, 0) + 1
             )
-    if config.rank_bm25 and all_results.matches:
+    if config.semantic_rank and all_results.matches:
+        all_results = _apply_semantic_rerank(all_results, pattern)
+    elif config.rank_bm25 and all_results.matches:
         from tensor_grep.core.reranker import rerank_by_bm25
 
         all_results = rerank_by_bm25(all_results, pattern, all_results.matched_file_paths)
