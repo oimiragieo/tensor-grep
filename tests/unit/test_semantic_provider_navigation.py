@@ -1070,7 +1070,9 @@ def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> N
     # Only the row the LSP index actually proved is stamped lsp_proof -- the native-only row
     # (consumer2.py) must not be falsely credited to the LSP provider.
     consumer2_rows = [
-        current for current in payload["callers"] if current["file"] == str(consumer2_path.resolve())
+        current
+        for current in payload["callers"]
+        if current["file"] == str(consumer2_path.resolve())
     ]
     assert consumer2_rows and all(row.get("lsp_proof") is not True for row in consumer2_rows)
 
