@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.42.4 (2026-07-07)
+
+### Bug Fixes
+
+- **F4**: Don't cap agent confidence at 0.55 for a token-budget primary omission when the primary is
+  corroborated ([#409](https://github.com/oimiragieo/tensor-grep/pull/409),
+  [`69b018b`](https://github.com/oimiragieo/tensor-grep/commit/69b018b35da05f65b386a1f042f1bdb63239a783))
+
+* fix(F4): don't cap agent confidence at 0.55 for a token-budget primary omission when primary
+  matches query + blast-radius confirms callers (dogfood v1.42.0)
+
+`_confidence` clamped `overall` to 0.55 whenever the primary file was missing from the capsule's
+  rendered snippets, conflating two very different signals: ranking never selecting/rendering the
+  primary at all (a genuine misroute -- keep the 0.55 degrade-to-ask floor) vs. the primary being
+  correctly selected but its snippet getting cut by the capsule's own token budget (a much weaker
+  signal).
+
+Add a bounded post-hoc uplift (`_apply_capsule_token_budget_confidence_uplift`) that runs after
+  `_collect_capsule_call_site_evidence` (verified caller evidence isn't available until then) and
+  raises confidence to <=0.75 -- flipping `ask_user_before_editing` off -- ONLY when: - the omission
+  is specifically the capsule token-budget reason (not the generic "not present in capsule snippets"
+  fallback used for a genuine ranking miss), - it is the ONLY confidence-downgrading signal in play
+  (no trust/tie/marker-helper confound), - the query names the primary symbol or file explicitly,
+  AND - blast-radius actually collected real caller evidence for it.
+
+Never exceeds `confidence_cap` from `_capsule_trust_checks`. Genuine misroutes
+  (`primary_file_included`/`rendered_context_includes_primary` False) are excluded from eligibility
+  and still floor at 0.55.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(deps): bump crossbeam-epoch 0.9.19->0.9.20 (RUSTSEC-2026-0204 invalid-pointer-deref, published
+  2026-07-06; unblocks the Dependency & License Audit gate on all open PRs)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.42.3 (2026-07-07)
 
 ### Bug Fixes
