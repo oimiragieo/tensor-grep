@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tensor_grep.cli import lang_registry, repo_map
+from tensor_grep.cli import lang_go, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
 # spec_for_path / graph_suffixes
@@ -43,6 +43,7 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
         "foo.ts": "typescript",
         "foo.tsx": "typescript",
         "foo.rs": "rust",
+        "foo.go": "go",
     }
     for name, expected_language in expectations.items():
         spec = lang_registry.spec_for_path(Path(name))
@@ -51,7 +52,11 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
 
 
 def test_spec_for_path_unknown_suffix_returns_none() -> None:
-    for name in ("foo.go", "foo.java", "foo.rb", "foo.txt", "foo", "foo.md"):
+    # PATH A Stage 1: .go is now a REGISTERED language (see
+    # test_spec_for_path_resolves_every_registered_suffix), so it moved out of this "still
+    # unsupported" list -- .rb stands in as the still-unsupported example for the resolution_gaps
+    # tests below instead.
+    for name in ("foo.java", "foo.rb", "foo.txt", "foo", "foo.md"):
         assert lang_registry.spec_for_path(Path(name)) is None
 
 
@@ -65,15 +70,17 @@ def test_graph_suffixes_matches_the_historical_hardcoded_union() -> None:
         ".ts",
         ".tsx",
         ".rs",
+        ".go",
     })
 
 
-def test_language_registry_has_exactly_the_four_stage0_languages() -> None:
+def test_language_registry_has_exactly_the_stage1_languages() -> None:
     assert set(lang_registry.LANGUAGE_REGISTRY.keys()) == {
         "python",
         "javascript",
         "typescript",
         "rust",
+        "go",
     }
 
 
@@ -94,6 +101,10 @@ def test_js_ts_and_rust_provenance_is_tree_sitter_when_grammar_present() -> None
     assert repo_map._symbol_navigation_provenance_for_path("foo.js") == "tree-sitter"
     assert repo_map._symbol_navigation_provenance_for_path("foo.ts") == "tree-sitter"
     assert repo_map._symbol_navigation_provenance_for_path("foo.rs") == "tree-sitter"
+
+
+def test_go_provenance_is_tree_sitter_when_grammar_present() -> None:
+    assert repo_map._symbol_navigation_provenance_for_path("foo.go") == "tree-sitter"
 
 
 def test_grammar_absent_monkeypatch_js_ts_provenance_flips_to_regex_heuristic(monkeypatch) -> None:
@@ -121,52 +132,70 @@ def test_grammar_absent_monkeypatch_rust_provenance_flips_to_regex_heuristic(mon
     assert provenance != ""
 
 
+def test_grammar_absent_monkeypatch_go_provenance_flips_to_grammar_missing(monkeypatch) -> None:
+    """Go has NO regex fallback (Stage 1 fail-closed trap): a grammar-absent .go file's
+    provenance label must flip to "grammar-missing" (not "regex-heuristic" -- Go never
+    silently degrades to a text heuristic the way JS/TS/Rust do)."""
+    monkeypatch.setattr(lang_go, "_go_parser", lambda: None)
+
+    provenance = repo_map._symbol_navigation_provenance_for_path("foo.go")
+
+    assert provenance == "grammar-missing"
+    assert provenance != ""
+
+
 # ---------------------------------------------------------------------------
 # resolution_gaps honesty floor
 # ---------------------------------------------------------------------------
 
 
-def _write_python_symbol_plus_go_file(tmp_path: Path) -> tuple[Path, Path]:
+def _write_python_symbol_plus_unsupported_language_file(tmp_path: Path) -> tuple[Path, Path]:
+    # PATH A Stage 1: .go moved from "unsupported" to "registered" (it has its own LanguageSpec
+    # now), so .java stands in here instead -- still genuinely unregistered, AND (like .go
+    # before it) already a member of _SOURCE_FIRST_SUFFIXES, so it actually enters the
+    # refs/callers scan universe (a suffix outside that set, e.g. .rb, would be invisible to
+    # the scan and never produce a gap at all). This fixture is about the resolution_gaps floor
+    # for a language tensor-grep does NOT yet cover.
     py_path = tmp_path / "target.py"
     py_path.write_text(
         "def Target():\n    return 1\n\n\ndef caller():\n    return Target()\n",
         encoding="utf-8",
     )
-    go_path = tmp_path / "helper.go"
-    go_path.write_text(
-        "package main\n\nfunc Helper() int {\n\treturn Target()\n}\n",
+    java_path = tmp_path / "Helper.java"
+    java_path.write_text(
+        "class Helper {\n  void helper() { Target(); }\n}\n",
         encoding="utf-8",
     )
-    return py_path, go_path
+    return py_path, java_path
 
 
 def test_refs_emits_resolution_gaps_for_unsupported_language_file(tmp_path: Path) -> None:
-    _write_python_symbol_plus_go_file(tmp_path)
+    _write_python_symbol_plus_unsupported_language_file(tmp_path)
 
     payload = repo_map.build_symbol_refs("Target", tmp_path)
 
     assert not payload.get("no_match")
     assert "resolution_gaps" in payload
     gaps = payload["resolution_gaps"]
-    assert any(gap["language"] == "go" for gap in gaps)
-    go_gap = next(gap for gap in gaps if gap["language"] == "go")
-    assert go_gap["files_affected"] >= 1
-    assert go_gap["reason"]
-    assert go_gap["remediation"]
+    assert any(gap["language"] == "java" for gap in gaps)
+    java_gap = next(gap for gap in gaps if gap["language"] == "java")
+    assert java_gap["files_affected"] >= 1
+    assert java_gap["reason"]
+    assert java_gap["remediation"]
     # Additive-only: existing fields must still be present and shaped as before.
     assert "coverage_summary" in payload
     assert "references" in payload
 
 
 def test_callers_emits_resolution_gaps_for_unsupported_language_file(tmp_path: Path) -> None:
-    _write_python_symbol_plus_go_file(tmp_path)
+    _write_python_symbol_plus_unsupported_language_file(tmp_path)
 
     payload = repo_map.build_symbol_callers("Target", tmp_path)
 
     assert not payload.get("no_match")
     assert "resolution_gaps" in payload
     gaps = payload["resolution_gaps"]
-    assert any(gap["language"] == "go" for gap in gaps)
+    assert any(gap["language"] == "java" for gap in gaps)
     assert "coverage_summary" in payload
     assert "callers" in payload
 
@@ -186,7 +215,7 @@ def test_resolution_gaps_empty_for_pure_python_repo(tmp_path: Path) -> None:
 
 
 def test_blast_radius_downgrades_graph_trust_summary_when_gaps_present(tmp_path: Path) -> None:
-    _write_python_symbol_plus_go_file(tmp_path)
+    _write_python_symbol_plus_unsupported_language_file(tmp_path)
 
     payload = repo_map.build_symbol_blast_radius("Target", tmp_path)
 
