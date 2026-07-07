@@ -28,6 +28,37 @@ def test_rust_backend_search(tmp_path: Path):
     assert result.routing_reason == "rust_regex"
 
 
+def test_rust_backend_real_extension_bidirectional_oracle(tmp_path: Path):
+    """R1: exercise the REAL pyo3 extension end-to-end through the keyword-argument bridge.
+
+    A bidirectional oracle -- a correct query MATCHES and a wrong query returns EMPTY, and an
+    invert_match query returns the complement -- so a dead or mis-forwarded bridge is caught here
+    (a ``*args, **kwargs`` mock would swallow a transposed/dropped flag silently). Passing every
+    argument by keyword also means a future Rust-side signature change fails loudly with a
+    ``TypeError`` instead of silently shifting flag meanings.
+    """
+    import importlib.util
+
+    if not importlib.util.find_spec("tensor_grep.rust_core"):
+        pytest.skip("native tensor_grep.rust_core extension not compiled")
+
+    from tensor_grep.backends.rust_backend import RustCoreBackend
+    from tensor_grep.core.config import SearchConfig
+
+    log_file = tmp_path / "bidir.txt"
+    log_file.write_text("alpha\nbeta\nalpha\n")
+    backend = RustCoreBackend()
+    assert backend.is_available()
+
+    # match direction: 'alpha' appears on two lines
+    assert backend.search(str(log_file), "alpha", SearchConfig()).total_matches == 2
+    # non-match direction (the half a one-sided test misses): a wrong query returns EMPTY
+    assert backend.search(str(log_file), "zzz", SearchConfig()).total_matches == 0
+    # invert_match kwarg forwards correctly: the complement is the single 'beta' line
+    inverted = backend.search(str(log_file), "alpha", SearchConfig(invert_match=True))
+    assert inverted.total_matches == 1
+
+
 def test_rust_backend_respects_invert_and_skips_count_fast_path(monkeypatch, tmp_path: Path):
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig
