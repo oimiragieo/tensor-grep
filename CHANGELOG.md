@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.45.8 (2026-07-07)
+
+### Bug Fixes
+
+- **FFI R1**: Pass Rust bridge args by keyword + real-extension bidirectional test (retires the
+  mock-green-but-dead bridge class) ([#430](https://github.com/oimiragieo/tensor-grep/pull/430),
+  [`16b74c8`](https://github.com/oimiragieo/tensor-grep/commit/16b74c81cd469714d30b024eda03d9c8ea6d79e3))
+
+* fix(FFI R1 partial): pass Rust bridge args by keyword (WIP: mock-test update incomplete)
+
+* test(FFI R1): add real-extension bidirectional oracle (match + non-match + invert_match kwarg
+  through the live pyo3 bridge) — finalizes R1
+
+### Documentation
+
+- Canonical backlog + PR tracker (docs/BACKLOG.md)
+  ([#429](https://github.com/oimiragieo/tensor-grep/pull/429),
+  [`5b206a0`](https://github.com/oimiragieo/tensor-grep/commit/5b206a0d0394b37ed8e113823d77362da01c1688))
+
+* docs: add BACKLOG.md — canonical prioritized backlog + PR tracker (subagent reference + CEO-status
+  source; synced with the CLI task store)
+
+* docs(AGENTS): point to docs/BACKLOG.md as the canonical tracker + codify the standing multi-model
+  pipeline
+
+* fix(docs): BACKLOG.md links AGENTS.md by absolute URL so mkdocs --strict resolves it
+  (release-readiness gate)
+
+
 ## v1.45.7 (2026-07-07)
 
 ### Bug Fixes
