@@ -63,24 +63,20 @@ def test_scan_incomplete_false_on_output_limit_only() -> None:
     # even though it sets result_incomplete=True via _annotate_result_completeness (never checked
     # here -- that is the whole point of the shared gate existing).
     assert (
-        _scan_incomplete(
-            {
-                "result_incomplete": True,
-                "output_limit": {"possibly_truncated": True, "callers_truncated": True},
-            }
-        )
+        _scan_incomplete({
+            "result_incomplete": True,
+            "output_limit": {"possibly_truncated": True, "callers_truncated": True},
+        })
         is False
     )
 
 
 def test_scan_incomplete_false_on_clean_payload() -> None:
     assert (
-        _scan_incomplete(
-            {
-                "scan_limit": {"possibly_truncated": False},
-                "files": ["a.py"],
-            }
-        )
+        _scan_incomplete({
+            "scan_limit": {"possibly_truncated": False},
+            "files": ["a.py"],
+        })
         is False
     )
 
@@ -194,9 +190,7 @@ def test_context_render_daemon_json_scan_truncated_exits_2_with_full_payload(
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -217,9 +211,7 @@ def test_context_render_daemon_json_scan_truncated_exits_2_with_full_payload(
     monkeypatch.setattr(session_daemon, "get_session_daemon_status", fake_status)
     monkeypatch.setattr(session_daemon, "request_running_session_daemon", fake_request)
 
-    result = CliRunner().invoke(
-        app, ["context-render", str(project), "create invoice", "--json"]
-    )
+    result = CliRunner().invoke(app, ["context-render", str(project), "create invoice", "--json"])
 
     assert result.exit_code == 2, result.output
     payload = json.loads(result.stdout)
@@ -233,9 +225,7 @@ def test_context_render_daemon_text_scan_truncated_exits_2_with_full_output(
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -262,9 +252,7 @@ def test_context_render_daemon_complete_stays_exit_0(tmp_path: Path, monkeypatch
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -279,9 +267,7 @@ def test_context_render_daemon_complete_stays_exit_0(tmp_path: Path, monkeypatch
     monkeypatch.setattr(session_daemon, "get_session_daemon_status", fake_status)
     monkeypatch.setattr(session_daemon, "request_running_session_daemon", fake_request)
 
-    result = CliRunner().invoke(
-        app, ["context-render", str(project), "create invoice", "--json"]
-    )
+    result = CliRunner().invoke(app, ["context-render", str(project), "create invoice", "--json"])
     assert result.exit_code == 0, result.output
 
 
@@ -290,9 +276,7 @@ def test_context_render_daemon_output_cap_only_stays_exit_0(tmp_path: Path, monk
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -309,9 +293,7 @@ def test_context_render_daemon_output_cap_only_stays_exit_0(tmp_path: Path, monk
     monkeypatch.setattr(session_daemon, "get_session_daemon_status", fake_status)
     monkeypatch.setattr(session_daemon, "request_running_session_daemon", fake_request)
 
-    result = CliRunner().invoke(
-        app, ["context-render", str(project), "create invoice", "--json"]
-    )
+    result = CliRunner().invoke(app, ["context-render", str(project), "create invoice", "--json"])
     assert result.exit_code == 0, result.output
 
 
@@ -340,9 +322,7 @@ def test_edit_plan_json_complete_stays_exit_0(tmp_path: Path) -> None:
 
 def test_edit_plan_text_scan_truncated_exits_2_with_full_output(tmp_path: Path) -> None:
     project = _flat_repo(tmp_path, 8)
-    result = runner.invoke(
-        app, ["edit-plan", str(project), "helper", "--max-repo-files", "1"]
-    )
+    result = runner.invoke(app, ["edit-plan", str(project), "helper", "--max-repo-files", "1"])
     assert result.exit_code == 2, result.output
     assert "Edit plan for" in result.output
 
@@ -365,9 +345,7 @@ def test_edit_plan_daemon_json_scan_truncated_exits_2_with_full_payload(
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -400,9 +378,7 @@ def test_edit_plan_daemon_text_scan_truncated_exits_2_with_full_output(
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -432,9 +408,7 @@ def test_edit_plan_daemon_complete_stays_exit_0(tmp_path: Path, monkeypatch) -> 
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
@@ -461,9 +435,7 @@ def test_edit_plan_daemon_output_cap_only_stays_exit_0(tmp_path: Path, monkeypat
 
     project = tmp_path / "project"
     project.mkdir()
-    (project / "payments.py").write_text(
-        "def create_invoice():\n    return 1\n", encoding="utf-8"
-    )
+    (project / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
 
     def fake_status(path: str) -> dict[str, object]:
         return {"running": True, "root": str(Path(path).resolve())}
