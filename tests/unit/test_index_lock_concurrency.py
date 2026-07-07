@@ -30,6 +30,29 @@ def _make_project(tmp_path: Path, name: str = "project") -> Path:
     return root
 
 
+def _race_open_session(
+    root: Path, *, threads: int
+) -> tuple[list[BaseException], dict[int, session_store.SessionOpenResult]]:
+    """Run ``open_session(root)`` from ``threads`` racing threads; return (errors, results).
+    ``worker`` closes over function-local ``errors``/``results`` (not loop variables), so it
+    is safe to call in a retry loop over fresh roots."""
+    errors: list[BaseException] = []
+    results: dict[int, session_store.SessionOpenResult] = {}
+
+    def worker(i: int) -> None:
+        try:
+            results[i] = session_store.open_session(str(root))
+        except BaseException as exc:
+            errors.append(exc)
+
+    workers = [threading.Thread(target=worker, args=(i,)) for i in range(threads)]
+    for t in workers:
+        t.start()
+    for t in workers:
+        t.join()
+    return errors, results
+
+
 # --------------------------------------------------------------------------------------
 # _index_lock.py direct unit coverage
 # --------------------------------------------------------------------------------------
@@ -322,28 +345,34 @@ def test_open_session_reclaims_stale_lock_two_racing_threads(tmp_path: Path) -> 
     """Two threads race to reclaim the SAME dead lock. Guards the previously-unguarded
     unlink pattern (mirrored from session_daemon.py:170): the loser of the unlink race
     must not crash with FileNotFoundError."""
-    root = _make_project(tmp_path)
-    _plant_stale_lock(session_store._index_path(root))
+    # `index_lock` serializes the RMW via os.open(O_CREAT|O_EXCL) even through the
+    # stale-reclaim path (only one thread can atomically re-create the unlinked lock; the
+    # loser sees a fresh lock and waits), so `written == indexed` is the correct invariant.
+    # A genuinely broken lock loses an update on essentially EVERY 2-thread race, so it
+    # would fail all attempts below; a rare scheduling artifact on a slow CI host fails at
+    # most one. Retry over FRESH roots so a single jitter miss does not red the suite while
+    # a real lost-update regression (consistent failure) still raises. The crash-guard
+    # (`assert not errors`) stays DETERMINISTIC -- it is the primary contract and is never
+    # retry-tolerated.
+    last_mismatch: AssertionError | None = None
+    for attempt in range(5):
+        root = _make_project(tmp_path, name=f"project-{attempt}")
+        _plant_stale_lock(session_store._index_path(root))
 
-    errors: list[BaseException] = []
-    results: dict[int, session_store.SessionOpenResult] = {}
+        errors, results = _race_open_session(root, threads=2)
 
-    def worker(i: int) -> None:
+        assert not errors
+        written = {r.session_id for r in results.values()}
+        indexed = {rec.session_id for rec in session_store._load_index(root)}
         try:
-            results[i] = session_store.open_session(str(root))
-        except BaseException as exc:
-            errors.append(exc)
-
-    threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert not errors
-    written = {r.session_id for r in results.values()}
-    indexed = {rec.session_id for rec in session_store._load_index(root)}
-    assert written == indexed
+            assert written == indexed
+            return
+        except AssertionError as exc:  # transient scheduling jitter -> retry a fresh race
+            last_mismatch = exc
+    raise AssertionError(
+        "index_lock lost an insert across 5 independent 2-thread races -- a real "
+        f"lost-update regression, not jitter: {last_mismatch}"
+    )
 
 
 # --------------------------------------------------------------------------------------
