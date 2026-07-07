@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.45.3 (2026-07-07)
+
+### Bug Fixes
+
+- **H1**: Tg callers --provider lsp unions native + LSP call sites instead of dropping native
+  ([#424](https://github.com/oimiragieo/tensor-grep/pull/424),
+  [`881e7f2`](https://github.com/oimiragieo/tensor-grep/commit/881e7f230286135cfd7df7fc0b1739a000f3dbb4))
+
+* fix(H1): tg callers --provider lsp unions native + LSP call sites (was dropping native callers)
+
+* style(H1): ruff format the callers-LSP test (CI format gate)
+
+### Testing
+
+- **flaky**: Harden test_open_session_reclaims_stale_lock_two_racing_threads against CI scheduling
+  jitter (retry over fresh roots; crash-guard stays deterministic; index_lock verified sound)
+  ([#423](https://github.com/oimiragieo/tensor-grep/pull/423),
+  [`2228cda`](https://github.com/oimiragieo/tensor-grep/commit/2228cda87eb7524983d99e56db995c6d28c928d2))
+
+
 ## v1.45.2 (2026-07-07)
 
 ### Bug Fixes

@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json
-# Winget Manifest for tensor-grep v1.45.2
+# Winget Manifest for tensor-grep v1.45.3
 # Submit this to the microsoft/winget-pkgs repository
 
 PackageIdentifier: oimiragieo.tensor-grep
-PackageVersion: 1.45.2
+PackageVersion: 1.45.3
 PackageLocale: en-US
 PackageName: tensor-grep
 Publisher: oimiragieo
@@ -14,7 +14,7 @@ Moniker: tg
 Installers:
   - Architecture: x64
     InstallerType: portable
-    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.45.2/tg-windows-amd64-cpu.exe
+    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.45.3/tg-windows-amd64-cpu.exe
     InstallerSha256: 2d9cd666a2140162cf640b385dcfc97a96defe93d1665c929229d185793c1589
     Commands:
       - tg
