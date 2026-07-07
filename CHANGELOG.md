@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.42.1 (2026-07-07)
+
+### Bug Fixes
+
+- **deps**: Bump crossbeam-epoch 0.9.19->0.9.20 (RUSTSEC-2026-0204 invalid-pointer-deref, published
+  2026-07-06; unblocks the Dependency & License Audit gate on all open PRs)
+  ([#411](https://github.com/oimiragieo/tensor-grep/pull/411),
+  [`04884df`](https://github.com/oimiragieo/tensor-grep/commit/04884dfdcd21cd37fc3fb1ebf4a46df016d33443))
+
+### Build System
+
+- **ruff**: Exclude .claude/skills from lint+format (fixes recurring skill-markdown format-gate
+  false-alarms) ([#406](https://github.com/oimiragieo/tensor-grep/pull/406),
+  [`45399ff`](https://github.com/oimiragieo/tensor-grep/commit/45399ffe06e05b1fbd469d7d37c53ce71eb68cc1))
+
+* build(ruff): exclude .claude/skills from lint+format (prose docs; --preview markdown-code-block
+  false-alarms + harness CRLF churn keep tripping the format gate)
+
+* test(#406): pin .claude/skills in the ruff extend-exclude governance test to match pyproject
+
+### Documentation
+
+- **skills**: Refresh operator/frontier skills to v1.40.2 + council-verdict-B exit codes
+  ([#402](https://github.com/oimiragieo/tensor-grep/pull/402),
+  [`001530e`](https://github.com/oimiragieo/tensor-grep/commit/001530e08ff9fe04549e60f1e78c44896b7d2887))
+
+* docs(skills): refresh run-and-operate + semantic-search-campaign to v1.40.2 + council-verified
+  exit-code B
+
+Recovered from an uncommitted working-tree change (this session's skill refresh, left uncommitted):
+  - tensor-grep-run-and-operate: re-ground-truthed v1.17.25 -> v1.40.2; adds docs-coverage/context,
+  the --deadline/--ignore/--max-tokens surfaces, and the symbol 0/1/2 exit-code contract. FIXED the
+  §11 exit-code section which documented the reverted #399 (found->0) -> now states the restored
+  council- verdict-B rule (any partial/result_incomplete -> exit 2, found OR empty). -
+  tensor-grep-semantic-search-campaign: version-stamp re-verify to v1.40.2.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* docs(skills): fold in release-and-positioning v1.40.2 refresh (same uncommitted batch)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.42.0 (2026-07-06)
 
 ### Features
