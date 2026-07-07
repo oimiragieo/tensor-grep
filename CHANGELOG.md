@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v1.45.1 (2026-07-07)
+
+### Bug Fixes
+
+- **audit**: Wire the semantic fail-closed contract at the CLI boundary (dense errors degrade to
+  BM25 visibly, not traceback) + corpus chunk cap + gate blast-radius-plan for exit-2 (Fable audit
+  MED F1-F5,F14) ([#421](https://github.com/oimiragieo/tensor-grep/pull/421),
+  [`22c3e9c`](https://github.com/oimiragieo/tensor-grep/commit/22c3e9c6d25517941bdb995b80a8d6264d7bd8ff))
+
+- F1: rerank_hybrid's DenseIndex.query() dim-mismatch is a query-time DenseUnavailableError raised
+  OUTSIDE the try that only guarded index construction; wrap the rerank_hybrid call in
+  _apply_semantic_rerank and retry BM25-only (same bm25_index) on that error. - F2:
+  retrieval_dense._encode_matrix wraps model.encode()/np.asarray() and re-raises any raw exception
+  (bare RuntimeError, ragged-array ValueError) as BackendExecutionError. - F3: build the chunk
+  corpus ONCE in _apply_semantic_rerank and pass bm25_index=Bm25Index(chunks) alongside dense_index
+  into rerank_hybrid, instead of rerank_hybrid rebuilding its own BM25 corpus from a second
+  chunk_file() pass (double file I/O + silent RRF-misalignment risk). - F4: catch
+  BackendExecutionError at the search command's semantic-rerank call site and exit 2 with a clean
+  `tg:`-prefixed message (or a JSON error payload), never a raw traceback. - F5: add a corpus-level
+  chunk cap (_SEMANTIC_CORPUS_CHUNK_CAP = MAX_CHUNKS) in _apply_semantic_rerank, degrading to
+  BM25-only + rank_fallback_reason when the matched-file set's total chunk count exceeds it; also
+  catch/convert the chunker's own per-file MAX_CHUNKS RuntimeError the same way. - F14: gate
+  `blast-radius-plan` on the shared _scan_incomplete(payload) check after both output branches
+  (mirroring blast-radius/map/context-render/edit-plan/blast-radius-render) so a scan-truncated plan
+  exits 2 instead of a silent 0. - F16: probe dense-leg availability on a 0-match --semantic search
+  too, so rank_fallback_reason is set whenever the leg is unavailable regardless of match count. -
+  F27: add cold output-cap-stays-exit-0 tests for context-render/edit-plan/blast-radius-render
+  (previously pinned only for `map`).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.45.0 (2026-07-07)
 
 ### Bug Fixes
