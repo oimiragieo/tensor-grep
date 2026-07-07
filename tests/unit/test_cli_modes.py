@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,7 @@ from tensor_grep.cli.main import (
     _safe_stdout_line,
     _select_ast_backend_for_pattern,
     _should_refuse_unbounded_generated_scan,
+    _should_refuse_unbounded_large_root_scan,
     _should_refuse_unbounded_vendored_root_scan,
     _should_refuse_unbounded_workspace_root_scan,
     _write_path_list,
@@ -866,6 +868,139 @@ def test_plain_search_does_not_refuse_repo_root_with_node_modules(tmp_path: Path
     # real `rg` subprocess passthrough writes to the OS-level fd, bypassing click's
     # in-process capture). The key regression this guards is "not wrongly refused".
     assert result.exit_code in (0, 1), result.output
+
+
+def _make_stub_file_repo(root: Path, file_count: int) -> None:
+    """A single-project, non-vendored root -- matches NEITHER the workspace guard (needs
+    >=3 sibling project dirs) NOR the vendored-root guard (needs a top-level vendored dir
+    name), the exact shape that slipped past both existing guards (F6, dogfood v1.42.0)."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("", encoding="utf-8")
+    src = root / "src"
+    src.mkdir()
+    for index in range(file_count):
+        (src / f"stub_{index}.py").write_text("TODO placeholder\n", encoding="utf-8")
+
+
+def test_large_root_guard_refuses_over_ceiling_candidate_count():
+    refused = _should_refuse_unbounded_large_root_scan(
+        2000,
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is True
+
+
+def test_large_root_guard_allows_scoped_glob_over_ceiling():
+    refused = _should_refuse_unbounded_large_root_scan(
+        2000,
+        SearchConfig(glob=["*.py"]),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+
+
+def test_large_root_guard_allows_explicit_opt_in():
+    refused = _should_refuse_unbounded_large_root_scan(
+        2000,
+        SearchConfig(),
+        allow_broad_generated_scan=True,
+    )
+
+    assert refused is False
+
+
+def test_large_root_guard_allows_count_under_ceiling():
+    refused = _should_refuse_unbounded_large_root_scan(
+        50,
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+    )
+
+    assert refused is False
+
+
+def test_plain_search_refuses_unbounded_large_single_project_root(monkeypatch, tmp_path: Path):
+    """F6 (dogfood v1.42.0): an unscoped `tg search` on a large SINGLE-project,
+    non-vendored root matches neither `_should_refuse_unbounded_workspace_root_scan` (needs
+    >=3 sibling project dirs) nor `_should_refuse_unbounded_vendored_root_scan` (needs a
+    top-level vendored dir name) -- it fell through both and ran to the #400 deadline when
+    no fast native/`rg` engine was available. Force native+rg off (the slow Python path is
+    the engine) and assert the guard refuses instantly instead of burning the deadline."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+    repo = tmp_path / "repo"
+    _make_stub_file_repo(repo, 2000)
+
+    start = time.perf_counter()
+    result = CliRunner().invoke(app, ["search", "TODO", str(repo)])
+    elapsed = time.perf_counter() - start
+
+    assert result.exit_code == 2, result.output
+    assert "broad root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert "--glob" in result.output
+    assert "--max-depth" in result.output
+    assert "--allow-broad-generated-scan" in result.output
+    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+
+
+def test_plain_search_scoped_glob_still_runs_on_large_root(monkeypatch, tmp_path: Path):
+    """Trap #3: a scoped search (`--glob`) on the same large root must still RUN, not be
+    refused -- otherwise this fix just recreates the #399/#405 'every big-repo query exits
+    2' friction under a new guard."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+    repo = tmp_path / "repo"
+    _make_stub_file_repo(repo, 2000)
+
+    result = CliRunner().invoke(app, ["search", "TODO", str(repo), "--glob", "*.py"])
+
+    assert result.exit_code == 0, result.output
+    assert "broad root scan refused" not in result.output
+
+
+def test_plain_search_unscoped_still_runs_on_small_repo(monkeypatch, tmp_path: Path):
+    """A small repo (below the file-count ceiling) unscoped must still run normally."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+    repo = tmp_path / "repo"
+    _make_stub_file_repo(repo, 50)
+
+    result = CliRunner().invoke(app, ["search", "TODO", str(repo)])
+
+    assert result.exit_code == 0, result.output
+    assert "broad root scan refused" not in result.output
+
+
+def test_plain_search_does_not_refuse_large_root_when_native_available(monkeypatch, tmp_path: Path):
+    """Trap #2: when the fast native `tg` binary would handle this exact query, the new
+    guard must NOT fire -- refusing there would convert a WORKING instant search into an
+    error on every ordinary large repo."""
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: native_tg)
+
+    captured: dict[str, object] = {}
+
+    def _fake_delegate(native_binary, *, pattern, paths, config, ndjson):
+        captured["native_binary"] = native_binary
+        return 0
+
+    monkeypatch.setattr(cli_main, "_delegate_to_native_tg_search", _fake_delegate)
+
+    repo = tmp_path / "repo"
+    _make_stub_file_repo(repo, 2000)
+
+    result = CliRunner().invoke(app, ["search", "TODO", str(repo), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert captured.get("native_binary") == native_tg
 
 
 def test_glob_case_insensitive_matches_case_folded_paths(
