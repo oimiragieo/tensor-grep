@@ -624,6 +624,26 @@ def _deadline_monotonic_from_seconds(deadline_seconds: float | None) -> float | 
     return time.monotonic() + deadline_seconds
 
 
+class _DeadlineBreakFlag:
+    """Task #61: mutable out-signal for whether a deadline-scoped sibling loop broke early.
+
+    ``_build_import_graph_consumers_from_map`` and ``_preferred_definition_files`` are also called
+    from non-deadline-aware seams (agent_capsule's edit-plan primary-file resolution,
+    ``build_symbol_impact_from_map``) that pass no ``deadline_monotonic`` and expect the existing
+    plain ``list[...]`` return value -- widening the return type to a tuple would ripple into every
+    call site. This tiny mutable object lets the deadline-aware callers/blast-radius seams read back
+    "did this loop break on --deadline" *after* the call, so the caller-scan's existing
+    partial/incomplete stamp (``caller_scan_deadline_hit`` in ``build_symbol_callers_from_map``) can
+    fold sibling-loop truncation into the same honesty gate instead of silently completing a
+    partially-scanned result.
+    """
+
+    __slots__ = ("hit",)
+
+    def __init__(self) -> None:
+        self.hit = False
+
+
 def _is_test_file(path: Path) -> bool:
     name = path.name
     return (
@@ -3320,6 +3340,8 @@ def _build_import_graph_consumers_from_map(
     definition_files: list[str],
     *,
     bounded_files: list[Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> list[dict[str, Any]]:
     if not definition_files:
@@ -3331,6 +3353,16 @@ def _build_import_graph_consumers_from_map(
     seen: set[tuple[str, int, int, str, str]] = set()
     with _profiling_phase(_profiling_collector, "import_graph_consumers"):
         for current in files:
+            # task #61: this loop re-walks the same up-to-CEILING file set the caller-scan main
+            # loop just bounded, but ran AFTER it with no deadline check of its own -- for a
+            # central symbol the main loop finished inside budget while THIS sibling loop pushed
+            # wall-clock well past --deadline (profiled: `callers ... --deadline 10` -> ~25s).
+            # Mirror the main loop's check (repo_map.py caller-scan, build_symbol_callers_from_map)
+            # exactly, using the SAME shared deadline value.
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                break
             current_file = str(current)
             if current_file in definition_file_set:
                 continue
@@ -3373,7 +3405,13 @@ def _build_import_graph_consumers_from_map(
     return consumers
 
 
-def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[str]:
+def _preferred_definition_files(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
+) -> list[str]:
     repo_root = Path(str(repo_map["path"])).resolve()
     definitions = [
         dict(current)
@@ -3386,6 +3424,13 @@ def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[s
 
     scores = dict.fromkeys(definition_files, 0)
     for current in _repo_map_file_universe(repo_map):
+        # task #61: this loop iterates the FULL repo-map universe (NOT the bounded caller-scan
+        # file set) with no deadline check -- unbounded even when the caller-scan main loop this
+        # function feeds into is correctly bounded. Mirror the same deadline check.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         current_path = str(current)
         if current_path in scores:
             continue
@@ -13748,7 +13793,16 @@ def build_symbol_callers_from_map(
         deadline_monotonic=deadline_monotonic,
     )
     bounded_file_set = {str(current) for current in bounded_files}
-    preferred_definition_files = _preferred_definition_files(repo_map, symbol)
+    # task #61: this sibling loop used to be unbounded even though it feeds the deadline-aware
+    # caller scan below -- share the SAME deadline_monotonic and fold its early-break signal into
+    # caller_scan_deadline_hit (set once the scan variable exists, below) for exit-2 honesty.
+    preferred_definition_deadline_hit = _DeadlineBreakFlag()
+    preferred_definition_files = _preferred_definition_files(
+        repo_map,
+        symbol,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=preferred_definition_deadline_hit,
+    )
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
         dict(current)
@@ -14028,11 +14082,17 @@ def build_symbol_callers_from_map(
         # that predate this field) to "call" rather than leaving it absent.
         call.setdefault("ref_kind", "call")
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
+    # task #61: this sibling loop used to be unbounded even though it re-walks the same
+    # bounded_files set the deadline-checked caller-scan main loop above just finished -- share the
+    # SAME deadline_monotonic and fold its early-break signal into caller_scan_deadline_hit below.
+    import_graph_consumers_deadline_hit = _DeadlineBreakFlag()
     import_graph_consumers = _build_import_graph_consumers_from_map(
         repo_map,
         symbol,
         definition_files,
         bounded_files=bounded_files,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=import_graph_consumers_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
     import_graph_consumer_files = sorted(
@@ -14076,7 +14136,15 @@ def build_symbol_callers_from_map(
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
-    if caller_scan_deadline_hit:
+    # task #61: fold BOTH sibling loops' early-break signal in alongside the main caller-scan loop's
+    # own flag -- a central symbol can finish the bounded main scan inside budget while either
+    # sibling loop (import-graph-consumers, preferred-definition-file scoring) pushes wall-clock
+    # well past --deadline. Any one of the three breaking early makes this result partial.
+    if (
+        caller_scan_deadline_hit
+        or import_graph_consumers_deadline_hit.hit
+        or preferred_definition_deadline_hit.hit
+    ):
         # moat P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
         # holds what was found before the budget). graph_completeness downgrades so an agent does not
         # trust a small/zero caller count on a deadline-truncated central-symbol scan.
@@ -14407,7 +14475,17 @@ def build_symbol_blast_radius_from_map(
         semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
-    preferred_definition_files = _preferred_definition_files(repo_map, symbol)
+    # task #61: this blast-radius-local call feeds the same sibling loop as the callers seam above
+    # -- share the SAME deadline_monotonic and fold its early-break signal into this payload's own
+    # partial marking below (build_symbol_callers_from_map already folds its OWN internal
+    # preferred-definition-files/import-graph-consumers calls into callers_payload["partial"]).
+    preferred_definition_deadline_hit_blast = _DeadlineBreakFlag()
+    preferred_definition_files = _preferred_definition_files(
+        repo_map,
+        symbol,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=preferred_definition_deadline_hit_blast,
+    )
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
         {
@@ -14714,12 +14792,17 @@ def build_symbol_blast_radius_from_map(
     # moat P0-6 step 6: the direct-caller scan may have been cut by --deadline for a CENTRAL symbol
     # -> carry its partial + deadline_limit onto the blast radius so a caller does not trust a
     # truncated caller_tree / blast_radius_score as complete.
-    if callers_payload.get("partial"):
+    # task #61: OR in this function's OWN preferred-definition-files call (a second, redundant call
+    # separate from the one build_symbol_callers_from_map already made internally) -- it can still
+    # push wall-clock past the shared deadline even when callers_payload came back complete.
+    if callers_payload.get("partial") or preferred_definition_deadline_hit_blast.hit:
         payload["partial"] = True
         payload["graph_completeness"] = "partial"
         caller_deadline_limit = callers_payload.get("deadline_limit")
         if isinstance(caller_deadline_limit, dict):
             payload["deadline_limit"] = dict(caller_deadline_limit)
+        elif preferred_definition_deadline_hit_blast.hit:
+            payload["deadline_limit"] = {"deadline_exceeded": True}
     if callers_payload.get("result_incomplete"):
         # backlog #1 chokepoint: the direct-caller scan's internal ceiling (CALLER_SCAN_FILE_CEILING)
         # dropped files the map covers -> the blast radius built on top of it is not exhaustive
