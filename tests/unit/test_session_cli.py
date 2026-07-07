@@ -3228,3 +3228,88 @@ def test_session_blast_radius_render_reuses_cached_repo_map(tmp_path: Path) -> N
     assert payload["sources"][0]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_session_open_fsyncs_payload_before_atomic_replace(tmp_path: Path, monkeypatch) -> None:
+    """M6: session_store's atomic writer must fsync the payload data before the atomic
+    rename, mirroring checkpoint_store's fix (audit I5) -- otherwise a power-loss between
+    the write and the page-cache flush can publish a truncated index.json/session payload."""
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sample.py").write_text("value = 1\n", encoding="utf-8")
+
+    call_order: list[str] = []
+    real_fsync = session_store.os.fsync
+    real_replace = session_store.replace_with_retry
+
+    def spy_fsync(fd):
+        call_order.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst, **kwargs):
+        call_order.append("replace")
+        return real_replace(src, dst, **kwargs)
+
+    monkeypatch.setattr(session_store.os, "fsync", spy_fsync)
+    monkeypatch.setattr(session_store, "replace_with_retry", spy_replace)
+
+    session_store.open_session(str(project))
+
+    assert "fsync" in call_order
+    assert "replace" in call_order
+    # The data must be durably flushed BEFORE the rename publishes it under the real name.
+    assert call_order.index("fsync") < call_order.index("replace")
+
+
+def test_prune_session_records_prunes_by_created_at_not_insert_position(
+    tmp_path: Path,
+) -> None:
+    """M8: created_at is stamped BEFORE the caller acquires index_lock, so concurrent
+    writers can insert out of created_at order. Retention pruning must sort by created_at
+    (newest first) before slicing, not trust list position -- otherwise it can drop a
+    genuinely NEWER session and keep an older one."""
+    from tensor_grep.cli import session_store
+
+    root = tmp_path / "project"
+    root.mkdir()
+
+    # Deliberately out-of-order: position 0 is the OLDEST record (as if its writer won the
+    # lock-acquisition race despite being stamped first), positions 1/2 are progressively
+    # newer -- mirroring a concurrent-insert race where lock-arrival order != created_at
+    # order.
+    records = [
+        session_store.SessionRecord(
+            version=1,
+            session_id="oldest",
+            root=str(root),
+            created_at="2026-01-01T00:00:00+00:00",
+            file_count=1,
+            symbol_count=1,
+        ),
+        session_store.SessionRecord(
+            version=1,
+            session_id="newest",
+            root=str(root),
+            created_at="2026-01-03T00:00:00+00:00",
+            file_count=1,
+            symbol_count=1,
+        ),
+        session_store.SessionRecord(
+            version=1,
+            session_id="middle",
+            root=str(root),
+            created_at="2026-01-02T00:00:00+00:00",
+            file_count=1,
+            symbol_count=1,
+        ),
+    ]
+
+    retained = session_store._prune_session_records(root, records, max_records=2)
+
+    retained_ids = {record.session_id for record in retained}
+    # Position-based (buggy) pruning would keep {"oldest", "newest"} (records[:2]).
+    # created_at-based (fixed) pruning must keep the two NEWEST: {"newest", "middle"}.
+    assert retained_ids == {"newest", "middle"}
+    assert "oldest" not in retained_ids

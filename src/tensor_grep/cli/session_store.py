@@ -406,6 +406,11 @@ def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> 
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(data)
+                handle.flush()
+                # M6: fsync the data before the rename so a crash can never publish a
+                # truncated session index/payload (mirrors checkpoint_store._write_json_atomic,
+                # audit I5).
+                os.fsync(handle.fileno())
         except BaseException:
             tmp_path.unlink(missing_ok=True)  # don't leave a partial temp behind
             raise
@@ -416,8 +421,25 @@ def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> 
         except OSError:
             pass
     else:
-        tmp_path.write_text(data, encoding="utf-8")
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(data)
+            handle.flush()
+            # M6: fsync the data before the rename so a crash can never publish a truncated
+            # session index/payload (mirrors checkpoint_store._write_json_atomic, audit I5).
+            os.fsync(handle.fileno())
     replace_with_retry(tmp_path, path)
+    # Best-effort durability of the rename itself; directory fsync is a no-op or unsupported
+    # on Windows, so failures here are non-fatal.
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
 
 
 def _write_index(root: Path, records: list[SessionRecord]) -> None:
@@ -432,15 +454,22 @@ def _prune_session_records(
 ) -> list[SessionRecord]:
     """Bound on-disk session retention (audit I2).
 
-    Keep at most ``max_records`` newest records (``records`` must already be ordered
-    newest-first). Each dropped record's payload file is unlinked before the trimmed list is
-    returned so disk usage stays bounded and the index never references a removed payload.
+    Keep at most ``max_records`` newest records. Each dropped record's payload file is
+    unlinked before the trimmed list is returned so disk usage stays bounded and the index
+    never references a removed payload.
+
+    M8: ``created_at`` is stamped BEFORE the caller acquires ``index_lock``, so under
+    concurrent writers the insert (lock-arrival) order does not reliably match creation
+    order -- trusting list position for the ``[:limit]`` cut can prune a genuinely newer
+    session and keep an older one. Re-sort by ``created_at`` (newest first) immediately
+    before slicing, mirroring ``list_sessions_with_discovery``.
     """
     limit = _configured_session_max() if max_records is None else max(1, int(max_records))
     if len(records) <= limit:
         return records
-    retained = records[:limit]
-    for dropped in records[limit:]:
+    ordered = sorted(records, key=lambda record: record.created_at, reverse=True)
+    retained = ordered[:limit]
+    for dropped in ordered[limit:]:
         try:
             _session_payload_path(root, dropped.session_id).unlink(missing_ok=True)
         except (OSError, ValueError):
