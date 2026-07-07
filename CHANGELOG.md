@@ -1,6 +1,104 @@
 # CHANGELOG
 
 
+## v1.45.0 (2026-07-07)
+
+### Bug Fixes
+
+- **Cluster B**: Daemon/render fast-paths honor the exit-2-on-scan-truncation contract
+  ([#419](https://github.com/oimiragieo/tensor-grep/pull/419),
+  [`f79e9d9`](https://github.com/oimiragieo/tensor-grep/commit/f79e9d949290e39e67437c3f18af4b4b107d1ffa))
+
+* fix(Cluster B): daemon/render fast-paths (map/context-render/edit-plan/blast-radius-render) honor
+  exit-2-on-scan-truncation via shared _scan_incomplete gate; output-caps stay exit 0 (unifies #54)
+
+* test(Cluster B): scan-truncated context-render/edit-plan (incl session daemon-cache + bounded-scan
+  tests) now assert exit 2 per the extended exit-code contract
+
+* style(Cluster B): ruff format the new test_render_daemon_exit_codes.py (CI format gate)
+
+* test(Cluster B): edit-plan budget-flags fixture scan-truncates at --max-repo-files 2, so assert
+  exit 2 + scan_limit.possibly_truncated per the extended exit-code contract
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Features
+
+- **PathA Stage1**: Go symbol graph via lang_registry (defs/refs/callers/blast-radius + typed
+  ref_kind, go.mod import resolution, fail-closed on missing grammar) — first language expansion
+  beyond the original 4 ([#420](https://github.com/oimiragieo/tensor-grep/pull/420),
+  [`3481742`](https://github.com/oimiragieo/tensor-grep/commit/3481742b0ac8e14173615951bb0d526e107407c6))
+
+- New src/tensor_grep/cli/lang_go.py: Go extractor plugging into the Stage 0
+  lang_registry.LanguageSpec seam with zero special-casing beyond the documented dispatch sites.
+  go_imports_and_symbols (function/method/struct/interface/const/var, one tree-sitter pass),
+  _prime_go_repo_context (go.mod module line + go.work use entries -> module-path-prefix -> dir
+  map), go_file_imports_symbol_from_definition (same-package OR resolved-import + exported),
+  go_references_and_calls (identifier/type_identifier/field_identifier walk; package-qualified
+  pkg.Symbol resolves via import context at confidence 0.95 provenance go-import-resolution; an
+  unresolved receiver-method selector call is emitted, never dropped, capped at confidence 0.7
+  provenance receiver-heuristic). Fail-closed: grammar absent -> empty results, zero regex fallback,
+  surfaced via the existing resolution_gaps floor (provenance_when_missing="grammar-missing"). -
+  repo_map.py: register the Go LanguageSpec; wire the 3 per-language dispatch sites
+  (_imports_and_symbols_for_path, build_symbol_refs_from_map, build_symbol_callers_from_map) +
+  build_symbol_source's source-extraction loop; teach _target_language_for_path("go") (the
+  most-forgotten seam -- feeds the agent capsule's query-language-vs-target-language confidence
+  cap); sweep lang_go's repo-context cache in the daemon-refresh path. - pyproject.toml + uv.lock:
+  tree-sitter-go added to the ast/dev/bench extras. - tests/unit/test_lang_go.py: Go fixture module
+  (go.mod + 2 packages + _test.go) covering defs/refs/callers/blast-radius, cross-package call
+  resolution, type-position ref_kind, unexported-symbol cross-package caller exclusion,
+  receiver-heuristic low-confidence calls, grammar-absent fail-closed + honest CLI exit code, and
+  the agent capsule's primary_target_language + related_call_sites. -
+  tests/unit/test_lang_registry.py + test_pyproject_dependencies.py +
+  test_agent_capsule_lsp_confidence.py: updated fixtures that used to stand in for "unsupported
+  language" via .go (now genuinely registered) to use .java/.rb instead; added tree-sitter-go
+  dependency assertions.
+
+Full tests/unit suite: 3393 passed, 12 skipped (2 pre-existing failures in test_retrieval_dense.py
+  are unrelated -- missing optional model2vec package, not installed in this venv sync). No
+  regression to the 4 existing languages.
+
+### Refactoring
+
+- **PathA Stage0**: Language-extractor registry (lang_registry.py) replaces scattered 4-lang suffix
+  dispatch + additive resolution_gaps fail-closed floor (zero behavior change; enables Stage 1
+  language expansion) ([#418](https://github.com/oimiragieo/tensor-grep/pull/418),
+  [`deadb64`](https://github.com/oimiragieo/tensor-grep/commit/deadb6400a540faf90921d4e9d418e38524e1221))
+
+New src/tensor_grep/cli/lang_registry.py: a frozen LanguageSpec dataclass + LANGUAGE_REGISTRY
+  registering python/javascript/typescript/rust by wrapping repo_map.py's EXISTING per-language
+  functions unchanged (one-directional import, no cycle -- lang_registry duplicates the two tiny
+  helpers it needs instead of importing repo_map). spec_for_path()/graph_suffixes() replace the
+  hardcoded `path.suffix in _JS_TS_SUFFIXES | _RUST_SUFFIXES | {".py"}` checks at every dispatch
+  seam: the import-marker prefilter + graph gate, the provenance labeler, S7
+  (_file_imports_symbol_from_definition, split into per-language implementations), S8
+  (_import_update_target + the import-graph-consumers suffix gate), _imports_and_symbols_for_path,
+  the refs/callers generic dispatch blocks, the caller-scan suffix gate, the repo-context priming
+  loop (now dedups by callable identity so JS/TS's shared context is still primed exactly once), and
+  _language_for_path (its unknown-suffix fallthrough now returns "unknown" instead of silently
+  defaulting to "python").
+
+Additive resolution_gaps floor: build_symbol_refs_from_map and build_symbol_callers_from_map now
+  attach a resolution_gaps list (language/reason/files_affected/remediation) whenever the
+  refs/callers scan universe contains a file with no registered LanguageSpec (e.g. a .go file
+  sitting alongside a resolved Python symbol) -- converting today's silent regex-only degrade into a
+  labeled gap. build_symbol_blast_radius_from_map forwards it and downgrades graph_trust_summary's
+  confidence by one rung when gaps are present. No exit-code change; all fields are additive per
+  CONTRACTS.md.
+
+Zero behavior change for the 4 current languages: full existing suite is the parity oracle and is
+  100% green (3336 -> 3348 passed, +12 new lang_registry tests, 0 regressions). New
+  tests/unit/test_lang_registry.py covers spec_for_path per suffix, unknown-suffix -> None,
+  grammar-absent monkeypatch -> provenance flips to regex-heuristic (never empty), and a .go-file
+  fixture proving resolution_gaps fires with language:"go".
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.44.1 (2026-07-07)
 
 ### Bug Fixes
