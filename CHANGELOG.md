@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.45.5 (2026-07-07)
+
+### Bug Fixes
+
+- **backends H5/H6**: Stringzilla honors --invert-match + StringZilla/AST honor --max-count
+  ([#426](https://github.com/oimiragieo/tensor-grep/pull/426),
+  [`f3f4d12`](https://github.com/oimiragieo/tensor-grep/commit/f3f4d1276b000f11dcd3c69769739a7b0bec4f00))
+
+* fix(backends H5/H6): StringZilla honors --invert-match + StringZilla/AST honor --max-count
+
+* fix(backends H5): correct StringZilla invert-match line-model (+1 over-count fix)
+
+
 ## v1.45.4 (2026-07-07)
 
 ### Bug Fixes
