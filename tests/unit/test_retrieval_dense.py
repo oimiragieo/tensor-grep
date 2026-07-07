@@ -75,6 +75,11 @@ class TestDenseAvailable:
         assert "model2vec not installed" in reason
         assert "tensor-grep[semantic]" in reason
 
+    @pytest.mark.skipif(
+        not dense_available()[0],
+        reason="model2vec optional [semantic] extra not installed; this test isolates the "
+        "numpy-missing branch, which is only reached once the model2vec import succeeds.",
+    )
     def test_false_when_numpy_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "numpy", None)
         available, reason = dense_available()
