@@ -214,9 +214,7 @@ def test_stringzilla_honors_invert_match_matches_cpu_backend(tmp_path):
     cpu_result = CPUBackend().search(str(log_file), "ERROR", config)
 
     assert sz_result.total_matches == cpu_result.total_matches
-    assert [m.line_number for m in sz_result.matches] == [
-        m.line_number for m in cpu_result.matches
-    ]
+    assert [m.line_number for m in sz_result.matches] == [m.line_number for m in cpu_result.matches]
 
 
 def test_stringzilla_honors_invert_match_non_indexed_path(backend, tmp_path, monkeypatch):
@@ -257,9 +255,7 @@ def test_stringzilla_max_count_matches_cpu_backend(tmp_path):
     cpu_result = CPUBackend().search(str(log_file), "ERROR", config)
 
     assert sz_result.total_matches == cpu_result.total_matches == 3
-    assert [m.line_number for m in sz_result.matches] == [
-        m.line_number for m in cpu_result.matches
-    ]
+    assert [m.line_number for m in sz_result.matches] == [m.line_number for m in cpu_result.matches]
 
 
 def test_stringzilla_honors_max_count_non_indexed_path(backend, tmp_path, monkeypatch):

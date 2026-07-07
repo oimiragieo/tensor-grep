@@ -376,6 +376,14 @@ class StringZillaBackend(ComputeBackend):
 
         # Since StringZilla 4.x, we can split by lines extremely fast
         lines = sz_str.splitlines()
+        # Unlike Python's str.splitlines(), StringZilla's Str.splitlines() emits an
+        # extra trailing empty entry when the source text ends with a line
+        # terminator (e.g. "a\n" -> ["a", ""] instead of ["a"]). Uncorrected, that
+        # phantom empty "line" spuriously matches under invert_match (it never
+        # contains the pattern) and shifts every subsequent line number. Trim it so
+        # line numbering and invert_match semantics match cpu_backend/rg.
+        if lines and str(lines[-1]) == "" and content.endswith(("\n", "\r")):
+            lines = lines[:-1]
         matches = []
         invert_match = bool(config and config.invert_match)
         max_count = config.max_count if config else None
