@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.45.13 (2026-07-08)
+
+### Bug Fixes
+
+- **mcp**: Annotate anyio stream generics so the newer CI mypy passes (unblocks Formatting&Linting
+  on every PR) ([#446](https://github.com/oimiragieo/tensor-grep/pull/446),
+  [`8f1395b`](https://github.com/oimiragieo/tensor-grep/commit/8f1395b8de68562253859281c2a11470af74fecd))
+
+* fix(mcp): annotate anyio memory-object-stream generics (SessionMessage|Exception / SessionMessage)
+  so the newer CI mypy passes — was 'Need type annotation' at mcp_server.py:4375-4376, red-ing the
+  Formatting&Linting gate on every PR after a mypy version bump
+
+* fix(ci): pin mypy==1.19.1 (was mypy>=1.11) so a tool bump can't retroactively red the Formatting
+  gate — the root cause of #446 (audit C6); ruff was already pinned, mypy was not
+
+
 ## v1.45.12 (2026-07-08)
 
 ### Bug Fixes
