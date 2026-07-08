@@ -3333,6 +3333,8 @@ def _build_native_tg_search_command(
 
     if config.ignore_case:
         command.append("-i")
+    if config.case_sensitive:
+        command.append("-s")
     if config.fixed_strings:
         command.append("-F")
     if config.invert_match:
@@ -6171,6 +6173,43 @@ def search_command(
         paths_to_search = args[1:] or ["."]
         paths_defaulted = not args[1:]
 
+    # `-f/--file` (patterns-from-file) and multiple `-e/--regexp` never build a real combined-pattern
+    # regex -- `pattern` above is simply "" when the `elif file:` branch above actually ran (bool(file)
+    # AND no regexp given, since `elif regexp_patterns:` takes priority over `elif file:` and would make
+    # `-f` a dead flag), or regexp_patterns[0] (silently drops the rest) when multiple `-e` were given.
+    # -o/-r/--rank/--semantic all operate on that single `pattern` string, so combining them previously
+    # either silently returned zero matches (-o against pattern="") or reranked/replaced against the
+    # wrong text. The multi-pattern combine feature was scoped OUT (#441 closed); reject the combo up
+    # front instead, mirroring the plain-`--json` render-flag guard above (audit #5/#20). Excludes
+    # `--files` mode (a distinct, unrelated file-listing path) and a single `-e` alongside an
+    # otherwise-dead `-f` (regexp_patterns already wins there, so `pattern` is real).
+    multi_pattern_source = not files and (
+        (not regexp_patterns and bool(file)) or len(regexp_patterns) > 1
+    )
+    if multi_pattern_source:
+        conflicting_flags = [
+            spelling
+            for present, spelling in (
+                (only_matching, "-o/--only-matching"),
+                (replace is not None, "-r/--replace"),
+                (rank, "--rank/--bm25"),
+                (semantic, "--semantic"),
+            )
+            if present
+        ]
+        if conflicting_flags:
+            flag_list = " and ".join(conflicting_flags)
+            source = "multiple -e/--regexp patterns" if len(regexp_patterns) > 1 else "-f/--file"
+            _exit_search_error(
+                "unsupported_flag",
+                (
+                    f"{flag_list} not supported with {source} (no single combined-pattern regex "
+                    "is built from them); drop the flag(s), or provide a single -e/--regexp pattern."
+                ),
+                json_mode=json,
+                exit_code=2,
+            )
+
     if not files:
         missing_paths = [
             path for path in paths_to_search if path != "-" and not Path(path).exists()
@@ -7116,9 +7155,22 @@ def docs_coverage(
         render_docs_stale_text,
     )
 
+    # --fix renders a Markdown table of UNCOVERED source files (build_docs_coverage's
+    # uncovered_details shape); --stale reports a disjoint shape (doc -> dangling reference) with no
+    # analogous fix-table renderer. Silently ignoring --fix here previously looked like a no-op with
+    # no signal (audit #23); reject up front rather than emit a report the flag never affected.
+    if stale and fix:
+        typer.echo(
+            "Error: --fix is not supported with --stale (no fix table for stale references).",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     try:
         if stale:
-            stale_payload = build_docs_stale_references(path, max_files=max_repo_files)
+            stale_payload = build_docs_stale_references(
+                path, max_files=max_repo_files, ignore=tuple(ignore)
+            )
             if json_output:
                 typer.echo(_json.dumps(stale_payload))
             else:
@@ -7167,19 +7219,24 @@ def orient(
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
     from tensor_grep.cli.orient_capsule import build_orient_capsule, build_orient_capsule_json
 
-    if json_output:
-        typer.echo(
-            build_orient_capsule_json(
-                path,
-                max_tokens=max_tokens,
-                max_central_files=max_central_files,
-                ignore=tuple(ignore),
+    try:
+        if json_output:
+            typer.echo(
+                build_orient_capsule_json(
+                    path,
+                    max_tokens=max_tokens,
+                    max_central_files=max_central_files,
+                    ignore=tuple(ignore),
+                )
             )
+            return
+        payload = build_orient_capsule(
+            path, max_tokens=max_tokens, max_central_files=max_central_files, ignore=tuple(ignore)
         )
-        return
-    payload = build_orient_capsule(
-        path, max_tokens=max_tokens, max_central_files=max_central_files, ignore=tuple(ignore)
-    )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
     typer.echo(f"# Codebase orientation: {payload['path']}")
     typer.echo(f"central files ({len(payload['central_files'])}):")
     for cf in payload["central_files"]:
@@ -7220,7 +7277,7 @@ def context(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a ranked repository context pack for edit planning."""
-    from tensor_grep.cli.repo_map import build_context_pack, build_context_pack_json
+    from tensor_grep.cli.repo_map import build_context_pack
 
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
@@ -7229,18 +7286,6 @@ def context(
             query_option=query,
             command_name="context",
         )
-        if json_output:
-            typer.echo(
-                build_context_pack_json(
-                    resolved_query,
-                    resolved_path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_tokens=max_tokens,
-                )
-            )
-            return
-
         payload = build_context_pack(
             resolved_query,
             resolved_path,
@@ -7252,10 +7297,20 @@ def context(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Context pack for {payload['path']}")
-    typer.echo(f"query={payload['query']}")
-    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
-    typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+    # Build the payload ONCE and gate both branches on it (mirrors `map`'s cold-path contract,
+    # Cluster B 2026-07-06): the old json branch called build_context_pack_json + returned early,
+    # which meant a >max_repo_files scan (default cap) silently truncated and always exited 0 --
+    # `context` was the only command in this family that never gated on `_scan_incomplete` (audit #9).
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        typer.echo(f"Context pack for {payload['path']}")
+        typer.echo(f"query={payload['query']}")
+        typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+        typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 def _daemon_directory_path(path: str) -> str | None:
@@ -8928,6 +8983,12 @@ def blast_radius(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
+    # Honor rg's no-match exit convention (audit #12): a typo'd/nonexistent symbol previously exited
+    # 0 with an empty callers list -- on a refactor-safety command that reads as "resolved, zero
+    # impact" instead of "never found". Compute + stamp BEFORE any output path (mirrors
+    # _emit_symbol_command_result) so json/text/mermaid all see the same additive `not_found` field.
+    not_found = _symbol_payload_has_no_results(payload, "callers")
+    payload["not_found"] = not_found
     # Annotate completeness BEFORE any output path so mermaid/json/text all see result_incomplete and
     # honor the shared exit contract (cursor review 1.40.0): a --deadline partial or output-cap
     # truncation must exit 2, never a silent exit 0 that reads as complete. (The mermaid renderer also
@@ -8962,8 +9023,12 @@ def blast_radius(
         if caveat is not None:
             typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
 
+    # Exit-order: a SCAN truncation (2) always wins over a genuine no-match (1) -- a truncated scan
+    # never had the chance to find the symbol, so "not found" is not yet a trustworthy answer.
     if incomplete:
         raise typer.Exit(2)
+    if not_found:
+        raise typer.Exit(1)
 
 
 @app.command(name="blast-radius-render")
@@ -10475,6 +10540,14 @@ def scan(
         except ValueError as exc:
             typer.echo(f"Error: {exc}", err=True)
             sys.exit(1)
+        try:
+            # --filter was previously honored only for the sgconfig project-scan path (below) and
+            # explicitly rejected for --rule -- silently no-op'd here, so a --ruleset run always
+            # scanned every rule in the pack regardless of --filter (audit #22).
+            rules = _filter_ast_rule_specs(rules, filter_regex)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
         project_cfg: dict[str, object] = {
             "config_path": f"builtin:{ruleset_meta['name']}",
             "root_dir": Path(effective_scan_paths[0]).resolve(),
@@ -10518,6 +10591,14 @@ def scan(
     elif inline_rules is not None:
         try:
             rules = _load_inline_rule_specs(inline_rules, default_language=language)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        try:
+            # Same uniform --filter application as --ruleset above (audit #22): previously silently
+            # ignored here, so a --inline-rules run always scanned every parsed rule regardless of
+            # --filter.
+            rules = _filter_ast_rule_specs(rules, filter_regex)
         except ValueError as exc:
             typer.echo(f"Error: {exc}", err=True)
             sys.exit(1)

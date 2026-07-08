@@ -30,3 +30,26 @@ def test_orient_command_json_is_parseable(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["routing_reason"] == "orient"
     assert "central_files" in payload
+
+
+def test_orient_command_bad_path_exits_1_without_traceback(tmp_path: Path) -> None:
+    # audit #1: `build_orient_capsule` had no try/except, so a bad path dumped a raw traceback
+    # (disclosing internal source paths) instead of the sibling `context`/`map` contract of a clean
+    # stderr message + Exit(1).
+    missing = tmp_path / "does-not-exist"
+
+    result = runner.invoke(app, ["orient", str(missing)])
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output
+
+
+def test_orient_command_json_bad_path_exits_1_without_traceback(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist"
+
+    result = runner.invoke(app, ["orient", str(missing), "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output

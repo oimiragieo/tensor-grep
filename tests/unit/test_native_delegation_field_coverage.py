@@ -34,9 +34,9 @@ _NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS = frozenset({
     "query_pattern",  # auto-set to the pattern on EVERY search (main.py ~6045);
     # a runtime "differs-from-default" gate would trip on this and kill the fast path.
     "input_total_bytes",  # set AFTER the gate; 0 at decision time.
-    # Case / ignore-scope semantics — likely inert (native defaults already match)
-    # but NOT re-audited here; candidates for a follow-up forward-or-refuse pass.
-    "case_sensitive",
+    # Ignore-scope semantics — likely inert (native defaults already match) but NOT
+    # re-audited here; candidates for a follow-up forward-or-refuse pass.
+    # (case_sensitive was forwarded via `-s` -- audit #19 -- and is no longer a gap.)
     "ignore_dot",
     "ignore_exclude",
     "ignore_files",

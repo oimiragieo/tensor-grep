@@ -1662,17 +1662,13 @@ def test_cli_source_accepts_provider_option(tmp_path: Path, monkeypatch) -> None
 
 
 def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        repo_map,
-        "build_symbol_blast_radius_json",
-        lambda symbol, path, max_depth=3, semantic_provider="native", **_: json.dumps({
-            "symbol": symbol,
-            "path": str(path),
-            "max_depth": max_depth,
-            "semantic_provider": semantic_provider,
-        }),
-    )
-
+    # The `blast-radius` CLI command builds its own JSON via `build_symbol_blast_radius` +
+    # `json.dumps` (main.py) and never delegates to `build_symbol_blast_radius_json`, so a
+    # monkeypatch on the latter was always dead here -- this test already exercised the REAL
+    # (unmocked) payload against an empty `tmp_path`. audit #12 gave `blast-radius` the same
+    # no-match exit-1 convention `impact`/`source` already have (see
+    # test_cli_impact_accepts_provider_option / test_cli_source_accepts_provider_option above),
+    # so "create_invoice" resolving to nothing in an empty dir now correctly exits 1.
     result = CliRunner().invoke(
         app,
         [
@@ -1686,9 +1682,10 @@ def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["semantic_provider"] == "hybrid"
+    assert payload["not_found"] is True
 
 
 def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:

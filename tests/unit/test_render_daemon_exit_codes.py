@@ -133,6 +133,59 @@ def test_map_text_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------------------------
+# context -- cold path (json + text) -- audit #9 (NET-NEW): `context` was the only command in this
+# family that never gated on `_scan_incomplete`; the old json branch called build_context_pack_json
+# and returned immediately, so a >max_repo_files scan always exited 0 even when silently truncated.
+# --------------------------------------------------------------------------------------------
+
+
+def test_context_json_scan_truncated_exits_2_with_full_payload(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(
+        app,
+        ["context", str(project), "helper", "--json", "--max-repo-files", "1"],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    # full payload still printed, not swallowed by the exit
+    assert "files" in payload and "symbols" in payload
+
+
+def test_context_json_complete_stays_exit_0(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["context", str(project), "helper", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is False
+
+
+def test_context_text_scan_truncated_exits_2_with_full_output(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["context", str(project), "helper", "--max-repo-files", "1"])
+    assert result.exit_code == 2, result.output
+    assert "Context pack for" in result.output
+    assert "files=" in result.output
+
+
+def test_context_text_complete_stays_exit_0(tmp_path: Path) -> None:
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["context", str(project), "helper"])
+    assert result.exit_code == 0, result.output
+
+
+def test_context_json_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
+    # An OUTPUT cap (--max-files) is a COMPLETE analysis capped only for display and must stay
+    # exit 0 -- mirrors map's/context-render's output-cap-only contract.
+    project = _flat_repo(tmp_path, 8)
+    result = runner.invoke(app, ["context", str(project), "helper", "--json", "--max-files", "1"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["output_limit"]["possibly_truncated"] is True
+    assert payload["scan_limit"]["possibly_truncated"] is False
+
+
+# --------------------------------------------------------------------------------------------
 # context-render -- cold path (json + text)
 # --------------------------------------------------------------------------------------------
 

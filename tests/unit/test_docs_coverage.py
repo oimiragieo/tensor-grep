@@ -79,6 +79,62 @@ def test_check_stale_exits_nonzero(tmp_path):
     assert result.exit_code == 1
 
 
+def test_stale_references_respects_ignore_glob(tmp_path):
+    # audit #23: `--ignore` was silently dropped for `--stale` even though the `--check` help text
+    # already promises "Respects --ignore" for both modes.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "exists.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "examples").mkdir()  # real parent dir -> a real "stale" reference, not fictional
+    (tmp_path / "CLAUDE.md").write_text(
+        "See `src/gone.py` and `examples/example.stub.py` for details.\n", encoding="utf-8"
+    )
+    base = build_docs_stale_references(str(tmp_path))
+    references = {item["reference"] for item in base["stale_references"]}
+    assert {"src/gone.py", "examples/example.stub.py"} <= references
+
+    filtered = build_docs_stale_references(str(tmp_path), ignore=("*.stub.py",))
+    filtered_references = {item["reference"] for item in filtered["stale_references"]}
+    assert "examples/example.stub.py" not in filtered_references
+    assert "src/gone.py" in filtered_references
+    assert filtered["applied_ignore"] == ["*.stub.py"]
+    # the ignored reference is dropped entirely, not just unflagged -- references_checked shrinks too
+    assert filtered["totals"]["references_checked"] < base["totals"]["references_checked"]
+
+
+def test_docs_coverage_stale_cli_respects_ignore(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "exists.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "examples").mkdir()  # real parent dir -> a real "stale" reference, not fictional
+    (tmp_path / "CLAUDE.md").write_text(
+        "See `examples/example.stub.py` for details.\n", encoding="utf-8"
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "docs-coverage",
+            str(tmp_path),
+            "--stale",
+            "--check",
+            "--ignore",
+            "*.stub.py",
+        ],
+    )
+    assert result.exit_code == 0, result.output  # ignored -> nothing stale -> gate passes
+
+
+def test_docs_coverage_stale_and_fix_is_rejected(tmp_path):
+    # audit #23: --fix's Markdown table renders build_docs_coverage's uncovered-files shape, which
+    # does not exist in --stale mode -- previously a silent no-op (the table was never rendered,
+    # with no signal that --fix had no effect).
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "exists.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("See `src/gone.py`.\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--stale", "--fix"])
+    assert result.exit_code == 1
+    assert "--fix" in result.output
+    assert "--stale" in result.output
+
+
 def test_exclusion_matches_relative_parts_not_ancestor_dirs(tmp_path):
     # Round-6 rank-2: a project checked out UNDER a dir named build/venv/target/... must not have
     # its whole tree excluded (source_files=0 -> coverage_pct=100.0 false green). Only dirs BELOW

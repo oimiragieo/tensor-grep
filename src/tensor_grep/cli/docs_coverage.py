@@ -361,12 +361,21 @@ def _extract_doc_path_references(text: str) -> set[str]:
 
 
 def build_docs_stale_references(
-    path: str = ".", *, max_files: int = DEFAULT_MAX_INVENTORY_FILES
+    path: str = ".",
+    *,
+    max_files: int = DEFAULT_MAX_INVENTORY_FILES,
+    ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Inverse of coverage: governing-doc references to files that no longer exist (doc drift the
     other way). A reference is stale only when it resolves to NEITHER the doc's own directory nor the
     repo root AND its parent directory DOES exist -- a moved/deleted file, not a fictional example
-    path (precision guard so illustrative snippets don't flood)."""
+    path (precision guard so illustrative snippets don't flood).
+
+    ``ignore`` mirrors ``build_docs_coverage``'s glob exclusion (audit #23): a reference matching an
+    ignore glob (against its posix-relative form or basename) is dropped entirely, never reported as
+    stale and never counted in ``references_checked`` -- an intentional stub/example group stops being
+    re-flagged, same contract the ``--check`` help text already promises for ``--stale``.
+    """
     root = Path(path)
     if not root.exists():
         raise FileNotFoundError(f"docs-coverage path does not exist: {path}")
@@ -393,6 +402,8 @@ def build_docs_stale_references(
             continue
         doc_rel = _relative_posix(doc_path, resolved_root)
         for reference in sorted(_extract_doc_path_references(text)):
+            if ignore and _matches_ignore(reference, reference.rsplit("/", 1)[-1], ignore):
+                continue
             references_checked += 1
             candidates = (doc_path.parent / reference, resolved_root / reference)
             if any(candidate.exists() for candidate in candidates):
@@ -409,6 +420,7 @@ def build_docs_stale_references(
             "stale": len(stale),
         },
         "stale_references": stale,
+        "applied_ignore": list(ignore),
         "scan_limit": {
             "max_files": max_files,
             "possibly_truncated": possibly_truncated,
