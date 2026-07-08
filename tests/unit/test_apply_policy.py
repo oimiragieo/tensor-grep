@@ -81,6 +81,26 @@ def _has_ast_grep_binary() -> bool:
     return any(shutil.which(name) is not None for name in ("ast-grep", "ast-grep.exe", "sg"))
 
 
+def _write_fake_executable(directory: Path, name: str, echo: str) -> Path:
+    """Create a minimal, genuinely-executable stub named ``name`` in ``directory``.
+
+    Cross-platform so the shadow-executable tests (audit #35) are deterministic on
+    any box, per the test-path-resolved-binary-trap lesson: never resolve a real
+    system binary in a security test. Windows resolves commands via PATHEXT (a
+    bare ``name`` needs an extension like ``.cmd``); POSIX resolves by the exact
+    filename plus the executable permission bit.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        target = directory / f"{name}.cmd"
+        target.write_text(f"@echo {echo}\n", encoding="utf-8")
+    else:
+        target = directory / name
+        target.write_text(f"#!/bin/sh\necho {echo}\n", encoding="utf-8")
+        target.chmod(0o755)
+    return target
+
+
 def _skip_if_real_ruleset_scan_fixture_is_unsupported(source_file: Path) -> None:
     try:
         payload = _scan_baseline_payload(source_file)
@@ -1204,7 +1224,9 @@ def test_run_policy_command_resolves_relative_executable_to_absolute(
 
     fake_abs = str(tmp_path / "trusted-bin" / "ruff")
     monkeypatch.setattr(
-        apply_policy.shutil, "which", lambda cmd: fake_abs if cmd == "ruff" else None
+        apply_policy.shutil,
+        "which",
+        lambda cmd, path=None: fake_abs if cmd == "ruff" else None,
     )
     captured: dict[str, object] = {}
 
@@ -1219,3 +1241,116 @@ def test_run_policy_command_resolves_relative_executable_to_absolute(
 
     assert captured["argv"][0] == fake_abs  # absolute, PATH-resolved — not a cwd search
     assert result["passed"] is True
+
+
+def test_run_policy_command_rejects_repo_local_shadow_executable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """audit #35 (CWE-427, Py3.11/Windows cwd shadow-exe): even when shutil.which()
+    resolves argv[0] to a path whose PARENT directory is the untrusted target repo
+    root -- exactly what happens on Python < 3.12 + Windows, where shutil.which()
+    unconditionally re-inserts the current working directory into its search
+    regardless of the `path=` kwarg we pass (cpython#91558) -- the resolution must
+    be rejected fail-closed, never spawned. This directly exercises the
+    parent-equals-untrusted-root guard, independent of any real OS/Python-version
+    shutil.which quirk.
+    """
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    repo.mkdir()
+    shadow = _write_fake_executable(repo, "pytest", "shadow-pwned")
+
+    monkeypatch.setattr(
+        apply_policy.shutil,
+        "which",
+        lambda cmd, path=None: str(shadow) if cmd == "pytest" else None,
+    )
+    spawn_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        apply_policy.subprocess,
+        "run",
+        lambda argv, **kwargs: spawn_calls.append(list(argv)),
+    )
+
+    result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
+
+    assert result["passed"] is False
+    assert "refusing a repo-local executable shadow" in str(result["detail"])
+    assert str(shadow) in str(result["detail"])
+    assert not spawn_calls  # the shadow binary must never be spawned
+
+
+def test_run_policy_command_does_not_execute_planted_repo_local_cwd_shadow(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """End-to-end (audit #35): plant a `pytest` shadow at the untrusted repo root,
+    chdir into that repo, and point PATH at a trusted-but-empty directory (so the
+    only way `pytest` could resolve is via an implicit/leftover cwd search -- the
+    exact vector under test). Real shutil.which() behavior differs by OS/Python
+    version, so either outcome is fail-closed and acceptable: "not found on PATH"
+    (cwd never searched) or "refusing a repo-local executable shadow" (cwd searched, guard rejects it).
+    What must NEVER happen, on any box, is the shadow binary being spawned.
+    """
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    repo.mkdir()
+    _write_fake_executable(repo, "pytest", "shadow-pwned")
+
+    trusted_empty_dir = tmp_path / "trusted-empty"
+    trusted_empty_dir.mkdir()
+    monkeypatch.setenv("PATH", str(trusted_empty_dir))
+    monkeypatch.chdir(repo)
+
+    spawn_calls: list[list[str]] = []
+
+    def _fake_run(argv, **kwargs):
+        spawn_calls.append(list(argv))
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(apply_policy.subprocess, "run", _fake_run)
+
+    result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
+
+    assert result["passed"] is False
+    assert not spawn_calls
+    assert "not found on PATH" in str(
+        result["detail"]
+    ) or "refusing a repo-local executable shadow" in str(result["detail"])
+
+
+def test_run_policy_command_prefers_trusted_path_entry_over_cwd_shadow(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The real tool, when it lives on a trusted PATH directory (not cwd), must be
+    the one resolved and spawned -- the untrusted repo's same-named shadow must
+    never win just because CreateProcess/shutil.which might also search cwd."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    repo.mkdir()
+    _write_fake_executable(repo, "pytest", "shadow-pwned")
+
+    trusted_dir = tmp_path / "trusted-bin"
+    real_tool = _write_fake_executable(trusted_dir, "pytest", "real-tool")
+
+    monkeypatch.setenv("PATH", str(trusted_dir))
+    monkeypatch.chdir(repo)
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(apply_policy.subprocess, "run", _fake_run)
+
+    result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
+
+    assert result["passed"] is True
+    assert Path(str(captured["argv"][0])).resolve() == real_tool.resolve()
