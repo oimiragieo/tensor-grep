@@ -9,7 +9,11 @@ on:
     - cron: "17 6 * * 1"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keying purely on `github.ref` puts the weekly `schedule` trigger (which also runs against
+  # refs/heads/main) in the SAME group as a merge-triggered push run, letting the cron run queue
+  # ahead of / behind the release-carrying push run and widen the publish push-race window. Key
+  # `schedule` into its own bucket so it never contends with the push-to-main group.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
