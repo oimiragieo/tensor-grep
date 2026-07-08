@@ -4878,6 +4878,10 @@ def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     assert "follow_up_reads" in payload["omissions"]
     assert payload["raw_context_ref"]["command"].startswith("tg context-render")
     assert payload["ask_user_before_editing"]["required"] is False
+    # DAR (arxiv steal #4): `create_invoice` here has no outbound calls (its body is a single
+    # arithmetic expression), so the capsule must emit NEITHER outbound-dependency key.
+    assert "outbound_dependencies" not in payload
+    assert "outbound_dependency_evidence" not in payload
 
 
 def test_agent_capsule_collects_bounded_call_site_evidence_for_explicit_symbol(tmp_path):
