@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.48.1 (2026-07-08)
+
+### Bug Fixes
+
+- **repo_map**: Reference line content uses the parsed-source read, not a separate stale text read
+  (audit C3 TOCTOU) — lines/source_bytes/tree now all come from the single _parsed_source_and_tree
+  product; a file edited between the two independent cache lookups no longer indexes tree
+  line-offsets into stale lines ([#447](https://github.com/oimiragieo/tensor-grep/pull/447),
+  [`436fe7a`](https://github.com/oimiragieo/tensor-grep/commit/436fe7ab70b9c9531042833212142ee1cea34b68))
+
+
 ## v1.48.0 (2026-07-08)
 
 ### Features
