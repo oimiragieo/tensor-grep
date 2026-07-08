@@ -5,6 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use hmac::{Hmac, Mac};
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
+use process_control::{ChildExt, Control};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{
     AstBackend, AstMatch, AstMetaVariables, BatchRewritePlan, BatchRewriteRule,
 };
@@ -52,6 +53,15 @@ const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent -
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
+/// Default --lint-cmd/--test-cmd timeout, matching apply_policy.py's `_run_policy_command` default
+/// (see apply_policy.py:256-260) so the Rust `tg run --apply` path never hangs longer than the
+/// Python validation path does.
+const DEFAULT_VALIDATION_TIMEOUT_MS: u64 = 120_000;
+const TG_VALIDATION_TIMEOUT_MS_ENV: &str = "TG_VALIDATION_TIMEOUT_MS";
+/// Default cap on the number of per-file validation targets spawned by a single `--lint-cmd`/
+/// `--test-cmd` run (audit #34): an 800-edited-file batch-rewrite would otherwise fan out 800
+/// serial subprocesses per command.
+const DEFAULT_MAX_VALIDATION_TARGETS: usize = 50;
 const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
     "__pycache__",
     ".claude",
@@ -740,6 +750,15 @@ pub struct RunArgs {
     /// Run this command after apply/verify and capture structured test results
     #[arg(long = "test-cmd")]
     pub test_cmd: Option<String>,
+
+    /// Kill a --lint-cmd/--test-cmd validation command that runs past this many milliseconds
+    /// (env TG_VALIDATION_TIMEOUT_MS; default 120000, parity with the Python apply-policy path)
+    #[arg(long = "validation-timeout-ms")]
+    pub validation_timeout_ms: Option<u64>,
+
+    /// Cap the number of per-file --lint-cmd/--test-cmd targets spawned in one run (0 disables the cap)
+    #[arg(long = "max-validation-targets", default_value_t = DEFAULT_MAX_VALIDATION_TARGETS)]
+    pub max_validation_targets: usize,
 
     /// Create a rollback checkpoint before applying rewrite edits
     #[arg(long)]
@@ -2135,6 +2154,7 @@ fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn parse_run_args(tokens: &[&str]) -> RunArgs {
         use clap::Parser;
@@ -2372,6 +2392,7 @@ mod tests {
             Some("/repo/evil; rm -rf ~.py"),
             "$file",
             std::path::Path::new("."),
+            DEFAULT_VALIDATION_TIMEOUT_MS,
         );
         assert!(!result.success);
         assert!(result.stderr.contains("must name a program"));
@@ -2385,9 +2406,295 @@ mod tests {
             None,
             "python \"foo",
             std::path::Path::new("."),
+            DEFAULT_VALIDATION_TIMEOUT_MS,
         );
         assert!(!result.success);
         assert!(result.stderr.contains("empty or has unbalanced quotes"));
+    }
+
+    // -- audit #10 (validation subprocess timeout) + #34 (validation fan-out cap) -------------
+
+    /// Builds a validation-command TEMPLATE string from a program + argv, quoting any argument
+    /// that contains whitespace so `split_validation_command_argv` round-trips it back into a
+    /// single token (mirrors how a real `--test-cmd`/`--lint-cmd` value is authored).
+    fn command_template(program: &str, args: &[String]) -> String {
+        let mut parts = vec![program.to_string()];
+        for arg in args {
+            if arg.chars().any(char::is_whitespace) {
+                assert!(
+                    !arg.contains('"'),
+                    "test helper does not support embedded double quotes"
+                );
+                parts.push(format!("\"{arg}\""));
+            } else {
+                parts.push(arg.clone());
+            }
+        }
+        parts.join(" ")
+    }
+
+    /// Cross-platform "block forever" command as a SINGLE process (no shell/grandchild
+    /// indirection), so a kill-on-timeout assertion only has to reason about one PID.
+    fn platform_hang_forever_command() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            (
+                "powershell",
+                vec![
+                    "-NoProfile".to_string(),
+                    "-NonInteractive".to_string(),
+                    "-Command".to_string(),
+                    "Start-Sleep -Seconds 300".to_string(),
+                ],
+            )
+        } else {
+            ("sleep", vec!["300".to_string()])
+        }
+    }
+
+    /// Cross-platform "exit 0 immediately" command.
+    fn platform_fast_success_command() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            (
+                "cmd",
+                vec!["/C".to_string(), "exit".to_string(), "0".to_string()],
+            )
+        } else {
+            ("true", Vec::new())
+        }
+    }
+
+    /// Cross-platform "write ~2.5MB to stdout, fast, without reading anything" command: large
+    /// enough to exceed a typical OS pipe buffer (commonly 4-64KB), so a successful capture here
+    /// proves the wait path drains output concurrently instead of deadlocking against a full pipe.
+    fn platform_large_stdout_command() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            (
+                "powershell",
+                vec![
+                    "-NoProfile".to_string(),
+                    "-NonInteractive".to_string(),
+                    "-Command".to_string(),
+                    "$s = 'A' * 65536; for ($i = 0; $i -lt 40; $i++) { [Console]::Out.Write($s) }"
+                        .to_string(),
+                ],
+            )
+        } else {
+            (
+                "dd",
+                vec![
+                    "if=/dev/zero".to_string(),
+                    "bs=65536".to_string(),
+                    "count=40".to_string(),
+                ],
+            )
+        }
+    }
+
+    #[test]
+    fn run_validation_command_kills_a_hanging_process_within_the_timeout() {
+        let (program, args) = platform_hang_forever_command();
+        let template = command_template(program, &args);
+        let timeout_ms = 300;
+
+        let started = Instant::now();
+        let result = run_validation_command(
+            "test",
+            &template,
+            None,
+            &template,
+            std::path::Path::new("."),
+            timeout_ms,
+        );
+        let elapsed = started.elapsed();
+
+        assert!(!result.success, "a hung command must not report success");
+        assert_eq!(result.exit_code, None, "a killed process has no exit code");
+        assert!(
+            result.stderr.contains("exceeded") && result.stderr.contains("timeout"),
+            "expected a timeout message, got: {}",
+            result.stderr
+        );
+        // Bounded, not the full 300s the command asked to sleep for: proves the child was
+        // actually terminated at the timeout rather than the call blocking until natural exit
+        // (the exact #400 hang class, applied to the validation subprocess path).
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "expected the timeout to bound the wait; took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn run_validation_command_fast_command_still_succeeds_within_timeout() {
+        let (program, args) = platform_fast_success_command();
+        let template = command_template(program, &args);
+
+        let result = run_validation_command(
+            "lint",
+            &template,
+            None,
+            &template,
+            std::path::Path::new("."),
+            DEFAULT_VALIDATION_TIMEOUT_MS,
+        );
+
+        assert!(result.success, "expected success, got: {result:?}");
+        assert_eq!(result.exit_code, Some(0));
+    }
+
+    #[test]
+    fn run_validation_command_captures_large_stdout_without_deadlock() {
+        let (program, args) = platform_large_stdout_command();
+        let template = command_template(program, &args);
+        // Generous but bounded: if the pipe-fill deadlock footgun (rust-lang#45572) were
+        // reintroduced (e.g. a hand-rolled spawn + wait_timeout + wait_with_output instead of
+        // process_control's drain-while-timing-out wait), the child would block writing to a
+        // full, undrained pipe and this call would hit the timeout and report failure instead of
+        // completing quickly -- this is a regression guard, not just a happy-path check.
+        let timeout_ms = 15_000;
+
+        let started = Instant::now();
+        let result = run_validation_command(
+            "test",
+            &template,
+            None,
+            &template,
+            std::path::Path::new("."),
+            timeout_ms,
+        );
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.success,
+            "expected the large-output command to finish successfully, got: {result:?}"
+        );
+        assert!(
+            result.stdout.len() > 1_000_000,
+            "expected >1MB of captured stdout (pipe-buffer-exceeding), got {} bytes",
+            result.stdout.len()
+        );
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "expected the large-output command to finish well under the timeout (no deadlock), took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_validation_timeout_ms_prefers_flag_over_env_over_default() {
+        assert_eq!(
+            resolve_validation_timeout_ms(Some(5_000), Some("9000".to_string())),
+            5_000,
+            "an explicit --validation-timeout-ms flag must win over the env var"
+        );
+        assert_eq!(
+            resolve_validation_timeout_ms(None, Some("9000".to_string())),
+            9_000,
+            "TG_VALIDATION_TIMEOUT_MS must be honored when no flag is set"
+        );
+        assert_eq!(
+            resolve_validation_timeout_ms(None, None),
+            DEFAULT_VALIDATION_TIMEOUT_MS
+        );
+        assert_eq!(
+            resolve_validation_timeout_ms(None, Some("not-a-number".to_string())),
+            DEFAULT_VALIDATION_TIMEOUT_MS,
+            "a malformed env value must fall back to the default, not panic or become 0"
+        );
+    }
+
+    #[test]
+    fn cap_validation_targets_truncates_and_reports_totals() {
+        let targets: Vec<String> = (0..100).map(|i| format!("file_{i}.py")).collect();
+
+        let (capped, truncated, total) = cap_validation_targets(targets.clone(), 50);
+        assert_eq!(capped.len(), 50);
+        assert!(truncated);
+        assert_eq!(total, 100);
+        assert_eq!(capped, targets[..50]);
+
+        let (not_capped, truncated, total) = cap_validation_targets(targets.clone(), 200);
+        assert_eq!(not_capped.len(), 100);
+        assert!(!truncated);
+        assert_eq!(total, 100);
+
+        let (unlimited, truncated, total) = cap_validation_targets(targets, 0);
+        assert_eq!(unlimited.len(), 100, "0 must disable the cap");
+        assert!(!truncated);
+        assert_eq!(total, 100);
+    }
+
+    #[test]
+    fn run_post_apply_validation_caps_targets_and_reports_truncation() {
+        let edits: Vec<tensor_grep_rs::backend_ast::RewriteEdit> = (0..100)
+            .map(|i| tensor_grep_rs::backend_ast::RewriteEdit {
+                id: format!("edit-{i}"),
+                file: PathBuf::from(format!("validation_target_{i}.py")),
+                planned_mtime_ns: 0,
+                line: 1,
+                byte_range: 0..0,
+                original_text: String::new(),
+                replacement_text: String::new(),
+                metavar_env: HashMap::new(),
+            })
+            .collect();
+
+        let (program, mut args) = platform_fast_success_command();
+        args.push("{file}".to_string());
+        let template = command_template(program, &args);
+
+        let cli_args = parse_run_args(&[
+            "tg",
+            "run",
+            "--test-cmd",
+            &template,
+            "--max-validation-targets",
+            "50",
+            ".",
+        ]);
+
+        let summary = run_post_apply_validation(&cli_args, ".", &edits)
+            .expect("expected a validation summary when --test-cmd is set");
+
+        assert_eq!(
+            summary.commands.len(),
+            50,
+            "expected exactly 50 spawns, one per capped target"
+        );
+        assert!(summary.validation_targets_truncated);
+        assert_eq!(summary.validation_targets_total, 100);
+        assert!(
+            summary.success,
+            "all 50 spawned no-op commands should succeed: {summary:?}"
+        );
+    }
+
+    #[test]
+    fn run_post_apply_validation_does_not_truncate_when_under_the_cap() {
+        let edits: Vec<tensor_grep_rs::backend_ast::RewriteEdit> = (0..5)
+            .map(|i| tensor_grep_rs::backend_ast::RewriteEdit {
+                id: format!("edit-{i}"),
+                file: PathBuf::from(format!("validation_target_{i}.py")),
+                planned_mtime_ns: 0,
+                line: 1,
+                byte_range: 0..0,
+                original_text: String::new(),
+                replacement_text: String::new(),
+                metavar_env: HashMap::new(),
+            })
+            .collect();
+
+        let (program, mut args) = platform_fast_success_command();
+        args.push("{file}".to_string());
+        let template = command_template(program, &args);
+
+        let cli_args = parse_run_args(&["tg", "run", "--test-cmd", &template, "."]);
+
+        let summary = run_post_apply_validation(&cli_args, ".", &edits)
+            .expect("expected a validation summary when --test-cmd is set");
+
+        assert_eq!(summary.commands.len(), 5);
+        assert!(!summary.validation_targets_truncated);
+        assert_eq!(summary.validation_targets_total, 5);
+        assert!(summary.success);
     }
 
     #[test]
@@ -5395,6 +5702,13 @@ struct CheckpointMetadata {
 struct ValidationSummary {
     success: bool,
     commands: Vec<ValidationCommandResult>,
+    /// True when at least one of --lint-cmd/--test-cmd had more edited-file targets than
+    /// --max-validation-targets allowed and some targets were skipped (audit #34). Fail-closed
+    /// VISIBLE: the cap silently dropping targets would otherwise look like a clean pass.
+    validation_targets_truncated: bool,
+    /// The real number of edited-file validation targets discovered before any cap was applied
+    /// (the max across --lint-cmd/--test-cmd, since both usually see the same edited-file set).
+    validation_targets_total: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6487,12 +6801,38 @@ fn validation_working_dir(path: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Resolve the --lint-cmd/--test-cmd subprocess timeout: --validation-timeout-ms flag takes
+/// precedence over the TG_VALIDATION_TIMEOUT_MS environment variable, which takes precedence over
+/// DEFAULT_VALIDATION_TIMEOUT_MS (mirrors the TG_RESIDENT_AST env-var-fallback convention).
+fn validation_timeout_ms(args: &RunArgs) -> u64 {
+    resolve_validation_timeout_ms(
+        args.validation_timeout_ms,
+        std::env::var(TG_VALIDATION_TIMEOUT_MS_ENV).ok(),
+    )
+}
+
+/// Env lookup is threaded in as a plain `Option<String>` (rather than read directly with
+/// `std::env::var` inside this function) so precedence can be unit-tested deterministically --
+/// mutating a real process-wide env var from parallel `cargo test` threads would be racy.
+fn resolve_validation_timeout_ms(flag: Option<u64>, env_value: Option<String>) -> u64 {
+    if let Some(explicit) = flag {
+        return explicit;
+    }
+    if let Some(raw) = env_value {
+        if let Ok(parsed) = raw.trim().parse::<u64>() {
+            return parsed;
+        }
+    }
+    DEFAULT_VALIDATION_TIMEOUT_MS
+}
+
 fn run_validation_command(
     kind: &'static str,
     template: &str,
     file_path: Option<&str>,
     display_command: &str,
     working_dir: &Path,
+    timeout_ms: u64,
 ) -> ValidationCommandResult {
     // Validate the template can run as a direct program invocation BEFORE substituting the file
     // path: an empty/blank program, unbalanced quotes, or the $file placeholder in program position
@@ -6534,18 +6874,64 @@ fn run_validation_command(
             stderr: "validation command is empty".to_string(),
         };
     };
-    match Command::new(program)
+
+    // A deadlocked/interactive/infinite-looping validation command must never hang `tg run
+    // --apply` forever (the #400 hang class, applied to the validation path -- audit #10). We
+    // spawn with piped stdout/stderr and bound the wait with `process_control`'s
+    // `controlled_with_output`, which drains the pipes WHILE timing out. Do NOT replace this with
+    // a hand-rolled `spawn` + `wait_timeout` + `wait_with_output`: if the child fills the OS pipe
+    // buffer before exiting, it blocks on write() until someone reads, but `wait_timeout` never
+    // reads the pipes -- the parent and child deadlock before the timeout can fire (rust-lang#45572).
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(working_dir)
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return ValidationCommandResult {
+                kind,
+                command: display_command.to_string(),
+                success: false,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: format!(
+                    "failed to spawn validation command in {}: {error}",
+                    working_dir.display()
+                ),
+            };
+        }
+    };
+
+    match child
+        .controlled_with_output()
+        .time_limit(Duration::from_millis(timeout_ms))
+        .terminate_for_timeout()
+        .wait()
     {
-        Ok(output) => ValidationCommandResult {
+        Ok(Some(output)) => ValidationCommandResult {
             kind,
             command: display_command.to_string(),
             success: output.status.success(),
-            exit_code: output.status.code(),
+            exit_code: output.status.code().map(|code| code as i32),
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        },
+        // `terminate_for_timeout()` makes `wait()` return `Ok(None)` when the time limit expires:
+        // the crate has already terminated (and reaped) the child, so there is no zombie left
+        // behind. Report this as a FAILED result (never a panic) so the caller's on_failure
+        // rollback path runs, exactly like any other failed validation command.
+        Ok(None) => ValidationCommandResult {
+            kind,
+            command: display_command.to_string(),
+            success: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: format!("validation command exceeded {timeout_ms}ms timeout"),
         },
         Err(error) => ValidationCommandResult {
             kind,
@@ -6554,7 +6940,7 @@ fn run_validation_command(
             exit_code: None,
             stdout: String::new(),
             stderr: format!(
-                "failed to spawn validation command in {}: {error}",
+                "failed to wait for validation command in {}: {error}",
                 working_dir.display()
             ),
         },
@@ -6610,6 +6996,24 @@ fn validation_template_targets_for_command(
     }
 }
 
+/// Cap the per-command validation target list to at most `max_targets` entries (audit #34: an
+/// 800-edited-file `--batch-rewrite ... --test-cmd 'pytest {file}'` would otherwise fan out 800
+/// serial subprocess spawns). `max_targets == 0` disables the cap (mirrors ClassifyArgs.max_lines's
+/// "0 disables the cap" convention). Returns the possibly-truncated list, whether truncation
+/// occurred, and the real pre-cap target count so the caller can report it (fail-closed VISIBLE:
+/// a silently-dropped target must never look like a clean, complete validation pass).
+fn cap_validation_targets(
+    mut targets: Vec<String>,
+    max_targets: usize,
+) -> (Vec<String>, bool, usize) {
+    let total = targets.len();
+    if max_targets == 0 || total <= max_targets {
+        return (targets, false, total);
+    }
+    targets.truncate(max_targets);
+    (targets, true, total)
+}
+
 fn run_post_apply_validation(
     args: &RunArgs,
     path: &str,
@@ -6617,9 +7021,19 @@ fn run_post_apply_validation(
 ) -> Option<ValidationSummary> {
     let mut commands = Vec::new();
     let working_dir = validation_working_dir(path);
+    let timeout_ms = validation_timeout_ms(args);
+    let max_targets = args.max_validation_targets;
+    let mut targets_truncated = false;
+    let mut targets_total = 0usize;
 
     if let Some(command) = &args.lint_cmd {
-        for target in validation_template_targets_for_command(command, path, edits) {
+        let (targets, truncated, total) = cap_validation_targets(
+            validation_template_targets_for_command(command, path, edits),
+            max_targets,
+        );
+        targets_truncated |= truncated;
+        targets_total = targets_total.max(total);
+        for target in targets {
             let expanded = expand_validation_command_template(command, &target);
             let file_path = validation_command_uses_file_placeholder(command)
                 .then(|| validation_template_file_path(&target));
@@ -6629,11 +7043,18 @@ fn run_post_apply_validation(
                 file_path.as_deref(),
                 &expanded,
                 &working_dir,
+                timeout_ms,
             ));
         }
     }
     if let Some(command) = &args.test_cmd {
-        for target in validation_template_targets_for_command(command, path, edits) {
+        let (targets, truncated, total) = cap_validation_targets(
+            validation_template_targets_for_command(command, path, edits),
+            max_targets,
+        );
+        targets_truncated |= truncated;
+        targets_total = targets_total.max(total);
+        for target in targets {
             let expanded = expand_validation_command_template(command, &target);
             let file_path = validation_command_uses_file_placeholder(command)
                 .then(|| validation_template_file_path(&target));
@@ -6643,6 +7064,7 @@ fn run_post_apply_validation(
                 file_path.as_deref(),
                 &expanded,
                 &working_dir,
+                timeout_ms,
             ));
         }
     }
@@ -6654,6 +7076,8 @@ fn run_post_apply_validation(
     Some(ValidationSummary {
         success: commands.iter().all(|command| command.success),
         commands,
+        validation_targets_truncated: targets_truncated,
+        validation_targets_total: targets_total,
     })
 }
 
@@ -7024,6 +7448,12 @@ fn verify_audit_manifest_payload(
 }
 
 fn emit_validation_status(summary: &ValidationSummary) {
+    if summary.validation_targets_truncated {
+        eprintln!(
+            "[validation] {} edited-file validation target(s) found; only the first --max-validation-targets were run. Rerun with a higher --max-validation-targets to validate the rest.",
+            summary.validation_targets_total
+        );
+    }
     for result in &summary.commands {
         if result.success {
             eprintln!(
