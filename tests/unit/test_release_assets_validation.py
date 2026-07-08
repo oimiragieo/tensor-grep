@@ -1063,6 +1063,7 @@ def test_should_require_dev_tooling_security_floors_for_ci_format_parity():
     errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
     joined_errors = "\n".join(errors)
     assert "ruff==0.15.20" in joined_errors
+    assert "mypy==1.19.1" in joined_errors
     assert "pytest>=9.0.3" in joined_errors
 
 
@@ -1081,11 +1082,37 @@ def test_should_accept_dev_tooling_security_floors_for_ci_format_parity():
     version = "1.3.2"
 
     [project.optional-dependencies]
-    dev = ["ruff==0.15.20", "pytest>=9.0.3"]
+    dev = ["ruff==0.15.20", "mypy==1.19.1", "pytest>=9.0.3"]
     bench = ["pytest>=9.0.3"]
     """
     errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == []
+
+
+def test_should_require_exact_mypy_pin_not_a_floor_constraint():
+    # Regression guard for #446 (a loosened mypy dependency merged green, then the next mypy
+    # release turned main red). A floor like `mypy>=1.11` must NOT satisfy the pin -- only the
+    # exact `mypy==1.19.1` pin does.
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+
+    [project.optional-dependencies]
+    dev = ["ruff==0.15.20", "mypy>=1.11", "pytest>=9.0.3"]
+    bench = ["pytest>=9.0.3"]
+    """
+    errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
+    joined_errors = "\n".join(errors)
+    assert "mypy==1.19.1" in joined_errors
 
 
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
@@ -1218,6 +1245,195 @@ def test_should_require_release_job_to_depend_on_benchmark_regression_gate():
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any("release job must depend on benchmark-regression" in err for err in errors)
+
+
+def test_should_require_release_job_to_depend_on_full_required_gate_set():
+    # Guard for the "spot-check only benchmark-regression" gap: dropping ANY blocking gate from
+    # the release job's `needs` list (not just benchmark-regression) must fail validation, or a
+    # future refactor could silently drop e.g. static-analysis/windows-agent-readiness and still
+    # publish without that check having run.
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [smoke, release-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
+    """
+    # Missing: agent-readiness, windows-agent-readiness
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("release job must depend on agent-readiness" in err for err in errors)
+    assert any("release job must depend on windows-agent-readiness" in err for err in errors)
+
+
+def test_should_accept_release_job_with_full_required_gate_set():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [smoke, release-readiness, agent-readiness, windows-agent-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert not any("release job must depend on" in err for err in errors)
+
+
+def test_should_require_registration_completeness_step_in_static_analysis_job():
+    # Audit #36: a future "just make CI green" pass could re-add `continue-on-error: true` to the
+    # Registration completeness step, silently softening the --rank-class front-door gate back to
+    # warn-only with no test failing. Guard both "step missing" and "step present but softened".
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow_missing_step = """
+    jobs:
+      static-analysis:
+        steps:
+          - name: Some other step
+            run: echo hi
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow_missing_step)
+    assert any(
+        "static-analysis job must include step `Registration completeness`" in err for err in errors
+    )
+
+    ci_workflow_softened = """
+    jobs:
+      static-analysis:
+        steps:
+          - name: Registration completeness
+            continue-on-error: true
+            run: python -m tensor_grep.core.registration_check .tg-registration.toml
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow_softened)
+    assert any(
+        "Registration completeness` step must not set `continue-on-error: true`" in err
+        for err in errors
+    )
+
+
+def test_should_accept_registration_completeness_step_without_continue_on_error():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      static-analysis:
+        steps:
+          - name: Registration completeness
+            run: python -m tensor_grep.core.registration_check .tg-registration.toml
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert not any("Registration completeness" in err for err in errors)
+
+
+def test_should_require_concurrency_group_to_isolate_scheduled_runs():
+    # Audit #39: a concurrency group keyed only on `github.ref` puts the weekly `schedule`
+    # trigger in the SAME group as a merge-triggered push run, letting a queued weekly run widen
+    # the known release push-race window. The group must key `schedule` into its own bucket.
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    jobs:
+      release:
+        needs: []
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "concurrency `group` must key the `schedule` trigger into its own group" in err
+        for err in errors
+    )
+
+
+def test_should_accept_concurrency_group_that_isolates_scheduled_runs():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    jobs:
+      release:
+        needs: []
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert not any("concurrency" in err for err in errors)
+
+
+def test_should_require_ast_grep_version_parity_between_ci_and_benchmark_workflows():
+    # Audit #40: ci.yml's agent-readiness ast-grep probe and benchmark.yml's ast-grep comparator
+    # are pinned independently (a comment says "matches the pinned version" with no enforcement),
+    # so one file's version can drift from the other silently.
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow_content = "run: cargo install ast-grep --version 0.41.1 --locked"
+    benchmark_workflow_content = "run: cargo install ast-grep --version 0.40.0 --locked"
+    errors = module.validate_ast_grep_version_parity(
+        ci_workflow_content=ci_workflow_content,
+        benchmark_workflow_content=benchmark_workflow_content,
+    )
+    assert any("ast-grep CLI version pin mismatch" in err for err in errors)
+    assert any("0.41.1" in err and "0.40.0" in err for err in errors)
+
+
+def test_should_accept_ast_grep_version_parity_when_pins_match():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow_content = "run: cargo install ast-grep --version 0.41.1 --locked"
+    benchmark_workflow_content = "run: cargo install ast-grep --version 0.41.1 --locked"
+    errors = module.validate_ast_grep_version_parity(
+        ci_workflow_content=ci_workflow_content,
+        benchmark_workflow_content=benchmark_workflow_content,
+    )
+    assert errors == []
 
 
 def test_should_require_release_intent_job_and_semantic_pr_title_validator():

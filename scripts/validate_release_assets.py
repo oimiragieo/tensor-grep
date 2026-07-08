@@ -24,6 +24,23 @@ RELEASE_DOC_PATHS = (
     "docs/CONTINUATION_PLAN.md",
     "docs/CONTRACTS.md",
 )
+# The full set of blocking gates the `release` (Semantic Release) job must depend on. Spot-checking
+# only `benchmark-regression` let a dropped gate (e.g. `static-analysis`, `windows-agent-readiness`)
+# pass validation while still publishing without that check having run.
+RELEASE_JOB_REQUIRED_GATES = (
+    "smoke",
+    "release-readiness",
+    "agent-readiness",
+    "windows-agent-readiness",
+    "package-manager-readiness",
+    "static-analysis",
+    "test-python",
+    "test-rust-core",
+    "search-golden-parity",
+    "native-build-smoke",
+    "test-gpu-linux",
+    "benchmark-regression",
+)
 
 
 def _read(path: Path) -> str:
@@ -317,8 +334,50 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     except yaml.YAMLError:
         parsed_ci = {}
     if isinstance(parsed_ci, dict):
+        # Push-race hardening: a concurrency group keyed only on `github.ref` puts the weekly
+        # `schedule` trigger (which also runs against refs/heads/main) in the SAME group as a
+        # merge-triggered push run. A queued schedule run can then sit ahead of (or behind) the
+        # release-carrying push run and widen the known publish push-race window. The group must
+        # key schedule runs into their own bucket.
+        concurrency_block = parsed_ci.get("concurrency")
+        if not isinstance(concurrency_block, dict):
+            errors.append("CI workflow must define a top-level `concurrency` block")
+        else:
+            concurrency_group = str(concurrency_block.get("group", ""))
+            if "github.event_name" not in concurrency_group or "schedule" not in concurrency_group:
+                errors.append(
+                    "CI workflow concurrency `group` must key the `schedule` trigger into its "
+                    "own group (e.g. via `github.event_name == 'schedule'`) so a weekly cron run "
+                    "cannot queue behind or block a merge-triggered release sharing the "
+                    "push-to-main concurrency group"
+                )
+
         jobs = parsed_ci.get("jobs")
         if isinstance(jobs, dict):
+            static_analysis_job = jobs.get("static-analysis")
+            if isinstance(static_analysis_job, dict):
+                static_analysis_steps = static_analysis_job.get("steps", [])
+                registration_step = None
+                if isinstance(static_analysis_steps, list):
+                    for step in static_analysis_steps:
+                        if (
+                            isinstance(step, dict)
+                            and step.get("name") == "Registration completeness"
+                        ):
+                            registration_step = step
+                            break
+                if registration_step is None:
+                    errors.append(
+                        "CI workflow static-analysis job must include step "
+                        "`Registration completeness`"
+                    )
+                elif registration_step.get("continue-on-error") is True:
+                    errors.append(
+                        "CI workflow static-analysis `Registration completeness` step must not "
+                        "set `continue-on-error: true` (softens the --rank-class front-door "
+                        "registration gate back to warn-only)"
+                    )
+
             release_intent_job = jobs.get("release-intent")
             if isinstance(release_intent_job, dict):
                 release_intent_if = release_intent_job.get("if")
@@ -355,8 +414,9 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     needs_list = [str(item) for item in needs]
                 else:
                     needs_list = []
-                if "benchmark-regression" not in needs_list:
-                    errors.append("CI workflow release job must depend on benchmark-regression")
+                for required_gate in RELEASE_JOB_REQUIRED_GATES:
+                    if required_gate not in needs_list:
+                        errors.append(f"CI workflow release job must depend on {required_gate}")
                 release_outputs = release_job.get("outputs", {})
                 if not isinstance(release_outputs, dict):
                     release_outputs = {}
@@ -2162,6 +2222,41 @@ def validate_ci_pipeline_doc_contract(
     return errors
 
 
+_AST_GREP_VERSION_PIN_RE = re.compile(r"cargo install ast-grep --version ([0-9][0-9A-Za-z.\-]*)")
+
+
+def validate_ast_grep_version_parity(
+    *, ci_workflow_content: str, benchmark_workflow_content: str
+) -> list[str]:
+    """ci.yml's agent-readiness ast-grep probe and benchmark.yml's ast-grep comparator must run the
+    SAME ast-grep CLI version -- the two files only pin it in a comment as "matches the pinned
+    version" with no enforcement, so one file's version can drift from the other silently."""
+    errors: list[str] = []
+    ci_match = _AST_GREP_VERSION_PIN_RE.search(ci_workflow_content)
+    benchmark_match = _AST_GREP_VERSION_PIN_RE.search(benchmark_workflow_content)
+    if ci_match is None:
+        errors.append(
+            "ci.yml must pin an ast-grep CLI version via `cargo install ast-grep --version <ver>`"
+        )
+    if benchmark_match is None:
+        errors.append(
+            "benchmark.yml must pin an ast-grep CLI version via "
+            "`cargo install ast-grep --version <ver>`"
+        )
+    if (
+        ci_match is not None
+        and benchmark_match is not None
+        and ci_match.group(1) != benchmark_match.group(1)
+    ):
+        errors.append(
+            "ast-grep CLI version pin mismatch: ci.yml pins "
+            f"{ci_match.group(1)} but benchmark.yml pins {benchmark_match.group(1)} "
+            "(agent-readiness's ast-grep probe and the benchmark comparator must run the same "
+            "ast-grep build)"
+        )
+    return errors
+
+
 def validate_readme_contract(*, readme_content: str) -> list[str]:
     errors: list[str] = []
     # the canonical-docs section heading is matched case-insensitively (the README uses
@@ -3358,6 +3453,14 @@ def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
             "pyproject.toml [project.optional-dependencies].dev must pin "
             f"`{expected_ruff_pin}` for CI/local formatter parity"
         )
+    # Governance for the #446 fix: an unpinned/floor mypy dependency (e.g. `mypy>=1.11`) can
+    # silently resolve a newer mypy release into CI, reproducing the #446 red-main incident.
+    expected_mypy_pin = "mypy==1.19.1"
+    if expected_mypy_pin not in {str(entry) for entry in dev_dependencies}:
+        errors.append(
+            "pyproject.toml [project.optional-dependencies].dev must pin "
+            f"`{expected_mypy_pin}` for CI/local type-check parity"
+        )
     expected_pytest_floor = "pytest>=9.0.3"
     for group_name, dependencies in (("dev", dev_dependencies), ("bench", bench_dependencies)):
         if expected_pytest_floor not in {str(entry) for entry in dependencies}:
@@ -3598,10 +3701,17 @@ def validate_all() -> list[str]:
             expected_version=py_version,
         )
     )
+    benchmark_workflow_content = _read(ROOT / ".github" / "workflows" / "benchmark.yml")
     errors.extend(
         validate_ci_pipeline_doc_contract(
             ci_pipeline_content=_read(ROOT / "docs" / "CI_PIPELINE.md"),
-            benchmark_workflow_content=_read(ROOT / ".github" / "workflows" / "benchmark.yml"),
+            benchmark_workflow_content=benchmark_workflow_content,
+        )
+    )
+    errors.extend(
+        validate_ast_grep_version_parity(
+            ci_workflow_content=ci_workflow,
+            benchmark_workflow_content=benchmark_workflow_content,
         )
     )
     support_matrix = _read(ROOT / "docs" / "SUPPORT_MATRIX.md")
