@@ -1,7 +1,11 @@
+import time
 import types
 import warnings
 from unittest.mock import patch
 
+import pytest
+
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.core.config import SearchConfig
 
@@ -247,15 +251,21 @@ class TestCPUBackend:
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
-    def test_should_skip_rust_fast_path_when_context_is_requested(self, tmp_path, caplog):
+    def test_should_route_context_searches_through_the_rust_match_set(self, tmp_path):
+        # Audit #6 (ReDoS gate bypass) fix: -C/-A/-B now route the MATCH-SET through the
+        # linear-time Rust engine (context windows are assembled in pure Python around it)
+        # instead of unconditionally falling to Python's unbounded backtracking `re`.
         log = tmp_path / "rust_context.log"
         log.write_text("before\napple\nafter\n", encoding="utf-8")
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
+        calls = []
 
         class FakeRustBackend:
             def search(self, **kwargs):
-                raise AssertionError("context searches should bypass the Rust fast path")
+                calls.append(kwargs["pattern"])
+                assert kwargs["pattern"] == "apple"
+                return [(2, "apple")]
 
         rust_mod.RustBackend = FakeRustBackend
 
@@ -263,14 +273,88 @@ class TestCPUBackend:
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
             result = backend.search(str(log), "apple", config=SearchConfig(context=1))
 
+        assert calls == ["apple"]  # Rust WAS invoked -- no Python-re fallback
         assert [(match.line_number, match.text) for match in result.matches] == [
             (1, "before"),
             (2, "apple"),
             (3, "after"),
         ]
-        assert "Rust backend failed" not in caplog.text
         assert result.routing_backend == "CPUBackend"
-        assert result.routing_reason == "cpu_python_regex"
+        assert result.routing_reason == "cpu_rust_regex_context"
+
+    def test_should_fail_closed_when_context_search_cannot_use_rust(self, tmp_path):
+        # THE RESIDUAL (audit #16): Rust genuinely absent must fail closed for -C, not fall
+        # open to the unbounded Python backtracking engine.
+        log = tmp_path / "rust_context_absent.log"
+        log.write_text("before\napple\nafter\n", encoding="utf-8")
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(str(log), "apple", config=SearchConfig(context=1))
+
+    def test_should_fail_closed_when_context_search_hits_generic_rust_failure(self, tmp_path):
+        log = tmp_path / "rust_context_fail.log"
+        log.write_text("before\napple\nafter\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("native panic")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(str(log), "apple", config=SearchConfig(context=1))
+
+    def test_should_match_word_regexp_via_rust_match_set(self, tmp_path):
+        log = tmp_path / "word.log"
+        log.write_text("cat\nconcatenate\nscatter cat here\n", encoding="utf-8")
+
+        backend = CPUBackend()
+        result = backend.search(str(log), "cat", config=SearchConfig(word_regexp=True))
+
+        assert [m.line_number for m in result.matches] == [1, 3]
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_rust_regex"
+
+    def test_should_match_line_regexp_via_rust_match_set(self, tmp_path):
+        log = tmp_path / "line.log"
+        log.write_text("cat\ncat dog\nCAT\n", encoding="utf-8")
+
+        backend = CPUBackend()
+        result = backend.search(str(log), "cat", config=SearchConfig(line_regexp=True))
+
+        assert [m.line_number for m in result.matches] == [1]
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_rust_regex"
+
+    def test_should_combine_word_regexp_with_context_via_rust(self, tmp_path):
+        log = tmp_path / "word_context.log"
+        log.write_text("before\ncat\nconcatenate\nafter\n", encoding="utf-8")
+
+        backend = CPUBackend()
+        result = backend.search(
+            str(log), "cat", config=SearchConfig(word_regexp=True, after_context=1)
+        )
+
+        assert [(m.line_number, m.text) for m in result.matches] == [
+            (2, "cat"),
+            (3, "concatenate"),
+        ]
+        assert result.routing_reason == "cpu_rust_regex_context"
+
+    def test_should_fail_closed_for_word_regexp_when_rust_unavailable(self, tmp_path):
+        log = tmp_path / "word_absent.log"
+        log.write_text("cat\nconcatenate\n", encoding="utf-8")
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(str(log), "cat", config=SearchConfig(word_regexp=True))
 
     def test_should_match_ltl_eventually_sequence_when_ordered(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
@@ -365,6 +449,68 @@ class TestCPUBackend:
             raise AssertionError("Expected ValueError for invalid LTL expression")
         except ValueError as exc:
             assert "Unsupported LTL query" in str(exc)
+
+    def test_should_route_ltl_sub_expressions_through_rust_match_sets(self, tmp_path):
+        # Audit #6 fix: --ltl now resolves both sub-expressions via the linear-time Rust
+        # engine's match-set instead of Python's backtracking `re.search()` per line.
+        log = tmp_path / "ltl_rust.log"
+        log.write_text("INFO boot\nAUTH_FAIL user=a\nINFO retry\nDB_TIMEOUT after auth\n")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+        seen_patterns = []
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                seen_patterns.append(kwargs["pattern"])
+                if kwargs["pattern"] == "AUTH_FAIL":
+                    return [(2, "AUTH_FAIL user=a")]
+                if kwargs["pattern"] == "DB_TIMEOUT":
+                    return [(4, "DB_TIMEOUT after auth")]
+                return []
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(
+                str(log), "AUTH_FAIL -> eventually DB_TIMEOUT", config=SearchConfig(ltl=True)
+            )
+
+        assert seen_patterns == ["AUTH_FAIL", "DB_TIMEOUT"]  # Rust WAS invoked, twice
+        assert result.total_matches == 1
+        assert [m.line_number for m in result.matches] == [2, 4]
+
+    def test_should_fail_closed_when_ltl_search_cannot_use_rust(self, tmp_path):
+        # THE RESIDUAL (audit #16): Rust genuinely absent must fail closed for --ltl, not fall
+        # open to the unbounded Python backtracking engine.
+        log = tmp_path / "ltl_absent.log"
+        log.write_text("AUTH_FAIL user=a\nDB_TIMEOUT after auth\n")
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(
+                    str(log), "AUTH_FAIL -> eventually DB_TIMEOUT", config=SearchConfig(ltl=True)
+                )
+
+    def test_should_fail_closed_when_ltl_search_hits_generic_rust_failure(self, tmp_path):
+        log = tmp_path / "ltl_fail.log"
+        log.write_text("AUTH_FAIL user=a\nDB_TIMEOUT after auth\n")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("native panic")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(
+                    str(log), "AUTH_FAIL -> eventually DB_TIMEOUT", config=SearchConfig(ltl=True)
+                )
 
     def test_should_suppress_non_fatal_regex_futurewarnings_in_python_fallback(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
@@ -635,7 +781,12 @@ class TestCPUBackend:
         # Fell open to the Python engine (prefilter variant counts) — no raise, no engine block.
         assert result.routing_reason.startswith("cpu_python_regex")
 
-    def test_should_allow_backreference_when_pcre2_explicitly_requested(self, tmp_path):
+    def test_should_fail_closed_when_pcre2_backreference_cannot_run_through_rust(self, tmp_path):
+        # Audit #16: --pcre2 is a "Python-re-is-unavoidable" residual. CPUBackend has no real
+        # PCRE2 engine -- only Python `re` as a backtracking approximation -- so a pattern Rust
+        # cannot compile must now fail closed (BackendExecutionError) instead of silently
+        # running through the ReDoS-hazardous Python fallback. (Real PCRE2 semantics are
+        # available through ripgrep itself, which this refusal message points users at.)
         f = tmp_path / "x.txt"
         f.write_text("aa bb\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
@@ -646,8 +797,25 @@ class TestCPUBackend:
 
         rust_mod.RustBackend = RejectingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
-            result = CPUBackend().search(str(f), r"(a)\1", config=SearchConfig(pcre2=True))
-        assert result.total_matches == 1  # user opted in; Python re ran the backref pattern
+            with pytest.raises(BackendExecutionError):
+                CPUBackend().search(str(f), r"(a)\1", config=SearchConfig(pcre2=True))
+
+    def test_should_fail_closed_when_pcre2_hits_generic_rust_failure(self, tmp_path):
+        # The --pcre2 residual is fail-closed regardless of WHY Rust could not service the
+        # request -- not just a syntax rejection, per audit #16 (the old "Rust accepted syntax
+        # so it's safe" premise does not hold for a generic runtime failure either).
+        f = tmp_path / "x.txt"
+        f.write_text("aa bb\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("native panic, unrelated to pattern syntax")
+
+        rust_mod.RustBackend = FailingRustBackend
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            with pytest.raises(BackendExecutionError):
+                CPUBackend().search(str(f), "aa", config=SearchConfig(pcre2=True))
 
 
 def test_max_count_zero_returns_no_matches_on_pure_python_path(tmp_path):
@@ -681,3 +849,74 @@ def test_max_count_zero_returns_no_matches_on_ltl_path(tmp_path):
     zero = backend.search(str(log), "alpha ~> beta", config=SearchConfig(ltl=True, max_count=0))
     assert zero.total_matches == 0
     assert zero.routing_reason == "cpu_max_count_zero"
+
+
+# --- Audit #6 + #16: ReDoS-gate bypass regression -----------------------------------------
+#
+# `(a+)+$` is a classic catastrophic-backtracking payload for a BACKTRACKING regex engine
+# (nested quantifiers): under Python's `re`, searching it against a long run of "a"s followed
+# by a non-matching character can take exponential time. It is, however, perfectly valid Rust
+# `regex` crate syntax that Rust's automata engine runs in guaranteed O(n) -- so these cases
+# must EITHER complete quickly via the linear-time Rust engine (the common case, Rust present)
+# OR raise `BackendExecutionError` (the fail-closed residual) -- and must NEVER hang. Each test
+# wall-clock-bounds the call; a hang manifests as a test timeout, not a silent pass.
+_HAZARD_PATTERN = r"(a+)+$"
+_HAZARD_BOUND_SECONDS = 2.0
+
+
+def _run_hazard_pattern_bounded(backend, log_path, config):
+    start = time.perf_counter()
+    try:
+        backend.search(str(log_path), _HAZARD_PATTERN, config=config)
+    except BackendExecutionError:
+        pass  # fail-closed residual is an acceptable, bounded outcome
+    elapsed = time.perf_counter() - start
+    assert elapsed < _HAZARD_BOUND_SECONDS, (
+        f"hazard pattern took {elapsed:.2f}s (must be < {_HAZARD_BOUND_SECONDS}s, never hang)"
+    )
+
+
+def test_ltl_hazard_pattern_is_bounded_not_hung(tmp_path):
+    log = tmp_path / "ltl_hazard.log"
+    log.write_text("a" * 40 + "!\nDONE\n", encoding="utf-8")
+    backend = CPUBackend()
+    config = SearchConfig(ltl=True)
+    start = time.perf_counter()
+    try:
+        backend.search(str(log), f"{_HAZARD_PATTERN} -> eventually DONE", config=config)
+    except BackendExecutionError:
+        pass
+    elapsed = time.perf_counter() - start
+    assert elapsed < _HAZARD_BOUND_SECONDS
+
+
+def test_word_regexp_hazard_pattern_is_bounded_not_hung(tmp_path):
+    log = tmp_path / "word_hazard.log"
+    log.write_text("a" * 40 + "!\n", encoding="utf-8")
+    _run_hazard_pattern_bounded(CPUBackend(), log, SearchConfig(word_regexp=True))
+
+
+def test_line_regexp_hazard_pattern_is_bounded_not_hung(tmp_path):
+    log = tmp_path / "line_hazard.log"
+    log.write_text("a" * 40 + "!\n", encoding="utf-8")
+    _run_hazard_pattern_bounded(CPUBackend(), log, SearchConfig(line_regexp=True))
+
+
+def test_context_hazard_pattern_is_bounded_not_hung(tmp_path):
+    log = tmp_path / "context_hazard.log"
+    log.write_text("a" * 40 + "!\n", encoding="utf-8")
+    _run_hazard_pattern_bounded(CPUBackend(), log, SearchConfig(context=2))
+
+
+def test_pcre2_hazard_pattern_alone_is_bounded_not_hung(tmp_path):
+    log = tmp_path / "pcre2_hazard.log"
+    log.write_text("a" * 40 + "!\n", encoding="utf-8")
+    _run_hazard_pattern_bounded(CPUBackend(), log, SearchConfig(pcre2=True))
+
+
+def test_context_and_word_regexp_combined_hazard_pattern_is_bounded_not_hung(tmp_path):
+    log = tmp_path / "combo_hazard.log"
+    log.write_text("a" * 40 + "!\n", encoding="utf-8")
+    _run_hazard_pattern_bounded(
+        CPUBackend(), log, SearchConfig(word_regexp=True, context=2, pcre2=True)
+    )

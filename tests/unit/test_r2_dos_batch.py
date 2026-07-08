@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
-
-import pytest
+from unittest.mock import patch
 
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.cli.scan_guardrails import _has_scan_bound, _is_bounded_depth
@@ -34,32 +34,36 @@ def test_ltl_no_right_match_returns_zero(tmp_path: Path) -> None:
     assert result.total_matches == 0
 
 
-def test_ltl_right_scan_is_linear_not_quadratic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ltl_right_scan_is_linear_not_quadratic(tmp_path: Path) -> None:
+    # Audit #6/#16 (ReDoS gate bypass): --ltl no longer probes `right_regex.search()` per line
+    # at all -- both sub-expressions are resolved to a match-SET via exactly ONE call each to
+    # the linear-time Rust engine, then the existing O(n) backward pass (see `_search_ltl`)
+    # does pure set-membership lookups. This is a STRONGER guarantee than "not quadratic": the
+    # old nested per-left-match rescan (~n*(n-1)/2 probes for n=400, a hang vector on large
+    # files) is now architecturally impossible, since there is no per-line regex re-scan.
     n = 400
     f = tmp_path / "patho.txt"
     f.write_text("A\n" * n, encoding="utf-8")  # every line matches left, none matches right
     backend = CPUBackend()
-    calls = {"right": 0}
-    orig = CPUBackend._compile_ltl
 
-    def _spy(pattern: str, flags: int):
-        left, right = orig(pattern, flags)
+    rust_mod = types.ModuleType("tensor_grep.rust_core")
+    call_counts: dict[str, int] = {}
 
-        class _Counting:
-            def search(self, text: str):
-                calls["right"] += 1
-                return right.search(text)
+    class CountingRustBackend:
+        def search(self, **kwargs):
+            call_counts[kwargs["pattern"]] = call_counts.get(kwargs["pattern"], 0) + 1
+            if kwargs["pattern"] == "A":
+                return [(i, "A") for i in range(1, n + 1)]
+            return []
 
-        return left, _Counting()
+    rust_mod.RustBackend = CountingRustBackend
 
-    monkeypatch.setattr(backend, "_compile_ltl", _spy)
-    result = backend._search_ltl(f, "A -> eventually ZZZ", SearchConfig())
+    with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+        result = backend._search_ltl(f, "A -> eventually ZZZ", SearchConfig())
+
     assert result.total_matches == 0
-    # O(n): exactly one right-regex probe per line (the backward pass). The old nested scan
-    # was ~n*(n-1)/2 right probes (~80k for n=400) — a hang vector on large files.
-    assert calls["right"] <= n + 1
+    # Exactly one Rust call per sub-expression (not once per left-match).
+    assert call_counts == {"A": 1, "ZZZ": 1}
 
 
 # --- scan_guardrails: a huge max_depth no longer rubber-stamps a hostile-root scan ---
