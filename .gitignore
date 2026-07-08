@@ -92,3 +92,13 @@ src/tensor_grep/core/profile_stats
 # Transient agent git worktrees (harness-created; contain duplicate source copies that must
 # not be committed OR walked by the repo-map/agent-capsule scan — see F8 scan-pollution).
 .claude/worktrees/
+
+# --- repo hygiene 2026-07-08 (Fable tracked-tree audit): untrack tool-state + stale blobs ---
+# (.factory/validation, bench_ast_data, gpu_bench_data already ignored above but committed pre-rule)
+/benchmarks/tg_rust.exe
+/docs/superpowers/
+/.factory/library/
+/.factory/research/
+/.factory/skills/
+/.factory/init.sh
+/.review_tmp/
