@@ -72,3 +72,40 @@ def test_json_output_is_parseable(tmp_path: Path) -> None:
     text = build_orient_capsule_json(tmp_path, max_tokens=500)
     parsed = json.loads(text)
     assert parsed["routing_reason"] == "orient"
+
+
+def test_truncated_false_when_final_snippet_lands_exactly_on_budget(tmp_path, monkeypatch):
+    """A snippet that fits EXACTLY on the token budget (nothing dropped, the loop completes) must
+    not be flagged truncated. The old `token_budget_used >= max_tokens` proxy false-flagged this."""
+    import tensor_grep.cli.orient_capsule as oc
+
+    (tmp_path / "hub.py").write_text("def hub_fn():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "leaf.py").write_text(
+        "import hub\n\n\ndef leaf_fn():\n    return hub.hub_fn()\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(oc._repo_map, "_estimate_tokens", lambda *_a, **_k: 100)
+
+    # One snippet, budget == its exact token estimate -> fits whole, loop completes, nothing cut.
+    payload = build_orient_capsule(tmp_path, max_snippet_files=1, max_tokens=100)
+    assert payload["snippets"], "expected at least one snippet"
+    assert all(not s["truncated"] for s in payload["snippets"])
+    assert payload["truncated"] is False
+
+
+def test_truncated_true_when_budget_drops_a_later_snippet(tmp_path, monkeypatch):
+    """When the budget cannot fit a further central file's snippet, content IS dropped -> truncated
+    stays True (the fix must not lose this real-truncation signal)."""
+    import tensor_grep.cli.orient_capsule as oc
+
+    (tmp_path / "hub.py").write_text("def hub_fn():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "leaf.py").write_text(
+        "import hub\n\n\ndef leaf_fn():\n    return hub.hub_fn()\n", encoding="utf-8"
+    )
+    (tmp_path / "other.py").write_text(
+        "import hub\n\n\ndef other_fn():\n    return hub.hub_fn()\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(oc._repo_map, "_estimate_tokens", lambda *_a, **_k: 100)
+
+    # Two snippet slots but the budget (100) fits only the first -> the second is dropped.
+    payload = build_orient_capsule(tmp_path, max_snippet_files=2, max_tokens=100)
+    assert payload["truncated"] is True
