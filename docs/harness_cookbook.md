@@ -165,7 +165,7 @@ For broad repo roots, read `scan_limit` before assuming the inventory is complet
 
 ## Session Reuse Flow
 
-Use sessions when the agent will issue multiple context queries against the same repo during one edit loop.
+Use sessions when the agent will issue multiple context queries against the same repo during one edit loop. When several agents work the same repo concurrently, sessions plus the warm daemon become a shared code-intelligence plane -- see [docs/multi_agent_context_plane.md](multi_agent_context_plane.md) for what is (and is not) shared across agents.
 
 Open a cached session:
 

@@ -39,6 +39,7 @@ nav:
     - Hotfix Procedure: HOTFIX_PROCEDURE.md
     - Package Manager Publish: package_manager_publish.md
   - Architecture: architecture.md
+  - Multi-Agent Context Plane: multi_agent_context_plane.md
   - Benchmarks: benchmarks.md
   - Tool Comparison: tool_comparison.md
 

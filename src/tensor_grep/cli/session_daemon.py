@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import hmac
 import json
 import os
@@ -13,7 +14,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
@@ -38,6 +39,7 @@ from tensor_grep.cli.session_store import (
     _SessionServeCache,
     _SessionServeResponseCacheEntry,
     _write_index,
+    _write_json_atomic,
     open_session,
     refresh_session,
     serve_session_request,
@@ -83,6 +85,64 @@ _DAEMON_LIFECYCLE_POLL_SECONDS = 5.0
 # audit r8: cap the wait for in-flight requests to drain at the hard max-uptime shutdown, so a
 # wedged request cannot postpone the daemon's self-shutdown forever.
 _DAEMON_SHUTDOWN_DRAIN_GRACE_SECONDS = 30.0
+
+# tg-ledger step-0 (demand instrumentation, NOT a ledger): a lightweight, fail-open, PII-free
+# demand receipt used only to decide whether a shared local code-intelligence plane ("tg
+# ledger") is worth building. Never stores raw symbol/query text -- only a truncated SHA-256
+# hash -- and never changes response behavior. See docs/multi_agent_context_plane.md.
+_DAEMON_METRICS_ENABLED_ENV = "TG_DAEMON_METRICS"
+_DAEMON_METRICS_FILE = "daemon_metrics.json"
+_DAEMON_METRICS_SCHEMA_VERSION = 1
+# Commands that are auto-issued by daemon-lifecycle plumbing itself (health probes, the CLI's
+# start-or-reuse probe, stats polling, and stop) and would fabricate demand if counted.
+_DAEMON_METRICS_EXCLUDED_COMMANDS = frozenset({"ping", "stats", "stop", "health"})
+# The commands that build/return an expensive artifact (a rendered repo map, a symbol graph
+# query, a context/edit-plan render) -- the surface where a shared plane would de-duplicate
+# repeated work across concurrent agents.
+_DAEMON_METRICS_EXPENSIVE_COMMANDS = frozenset({
+    "repo_map",
+    "context",
+    "context_render",
+    "context_edit_plan",
+    "defs",
+    "impact",
+    "refs",
+    "callers",
+    "blast_radius",
+    "blast_radius_render",
+    "blast_radius_plan",
+})
+_DAEMON_METRICS_SYMBOL_COMMANDS = frozenset({
+    "defs",
+    "impact",
+    "refs",
+    "callers",
+    "blast_radius",
+    "blast_radius_render",
+    "blast_radius_plan",
+})
+_DAEMON_METRICS_QUERY_COMMANDS = frozenset({"context", "context_render", "context_edit_plan"})
+_DAEMON_METRICS_CLIENT_WINDOW_SECONDS = 300.0
+_DAEMON_METRICS_DUP_WINDOW_SECONDS = 900.0
+_DAEMON_METRICS_DUP_LRU_MAX_ENTRIES = 256
+_DAEMON_METRICS_DAY_PID_SET_CAP = 128
+_DAEMON_METRICS_MAX_DAY_BUCKETS = 30
+_DAEMON_METRICS_MAX_DUP_TARGETS_PER_DAY = 32
+_DAEMON_METRICS_FLUSH_POLL_INTERVALS = 12  # ~60s at the default 5s lifecycle poll
+_DAEMON_METRICS_ROLLUP_WINDOW_DAYS = 14
+_DAEMON_METRICS_ROLLUP_SHORT_WINDOW_DAYS = 7
+# Heuristic build-decision gate for the tg-ledger step-0 demand receipt -- deliberately not a
+# hard business commitment, just a documented, adjustable bar for "there is real cross-agent
+# concurrency AND real repeated-artifact demand" over the trailing 14 days.
+_DAEMON_METRICS_PRE_GATE_MIN_CONCURRENT_DAYS = 3
+_DAEMON_METRICS_PRE_GATE_MIN_DUP_REQUESTS_14D = 10
+
+
+def _daemon_metrics_enabled() -> bool:
+    raw = os.environ.get(_DAEMON_METRICS_ENABLED_ENV)
+    if raw is None:
+        return True
+    return raw.strip() != "0"
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -296,6 +356,15 @@ def _daemon_request(
     # client (which read the token from the 0600 daemon.json) authenticates transparently.
     if token:
         request = {**request, _DAEMON_TOKEN_FIELD: token}
+    # tg-ledger step-0 (demand instrumentation): tag every request with the CALLING process's
+    # pid so the daemon can distinguish concurrent distinct clients. A fresh TCP connection per
+    # request means client_address is ephemeral and the token is shared per-daemon (not
+    # per-client), so pid is the only signal available. Every client path (request_session_daemon,
+    # request_running_session_daemon, the ping/stats probes) funnels through this function. The
+    # pid is diagnostic-only -- never used for auth/routing -- and no response-cache key reads it
+    # (see _context_render_response_cache_key / _context_edit_plan_response_cache_key), so it
+    # cannot fragment cache hits between otherwise-identical requests.
+    request = {**request, "client_pid": os.getpid()}
     with socket.create_connection(
         (host, int(port)),
         timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
@@ -404,47 +473,59 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
             live = _probe_daemon(discovered_root)
             if live is None:
                 continue
-            return _merge_live_daemon_stats(
-                {
-                    "version": _SESSION_VERSION,
-                    "root": str(discovered_root),
-                    "requested_root": str(root),
-                    "discovered": True,
-                    "running": True,
-                    "host": str(live.get("host", _DAEMON_HOST)),
-                    "port": int(live["port"]),
-                    "pid": int(live["pid"]),
-                    "started_at": str(live["started_at"]),
-                },
-                token=_daemon_token(live),
+            return _attach_demand_metrics(
+                _merge_live_daemon_stats(
+                    {
+                        "version": _SESSION_VERSION,
+                        "root": str(discovered_root),
+                        "requested_root": str(root),
+                        "discovered": True,
+                        "running": True,
+                        "host": str(live.get("host", _DAEMON_HOST)),
+                        "port": int(live["port"]),
+                        "pid": int(live["pid"]),
+                        "started_at": str(live["started_at"]),
+                    },
+                    token=_daemon_token(live),
+                ),
+                discovered_root,
             )
-        return {
-            "version": _SESSION_VERSION,
-            "root": str(root),
-            "discovered": False,
-            "running": False,
-        }
+        return _attach_demand_metrics(
+            {
+                "version": _SESSION_VERSION,
+                "root": str(root),
+                "discovered": False,
+                "running": False,
+            },
+            root,
+        )
     live = _probe_daemon(root)
     if live is None:
-        return {
-            "version": _SESSION_VERSION,
-            "root": str(root),
-            "discovered": False,
-            "running": False,
-            "stale_metadata": True,
-        }
-    return _merge_live_daemon_stats(
-        {
-            "version": _SESSION_VERSION,
-            "root": str(root),
-            "discovered": False,
-            "running": True,
-            "host": str(live.get("host", _DAEMON_HOST)),
-            "port": int(live["port"]),
-            "pid": int(live["pid"]),
-            "started_at": str(live["started_at"]),
-        },
-        token=_daemon_token(live),
+        return _attach_demand_metrics(
+            {
+                "version": _SESSION_VERSION,
+                "root": str(root),
+                "discovered": False,
+                "running": False,
+                "stale_metadata": True,
+            },
+            root,
+        )
+    return _attach_demand_metrics(
+        _merge_live_daemon_stats(
+            {
+                "version": _SESSION_VERSION,
+                "root": str(root),
+                "discovered": False,
+                "running": True,
+                "host": str(live.get("host", _DAEMON_HOST)),
+                "port": int(live["port"]),
+                "pid": int(live["pid"]),
+                "started_at": str(live["started_at"]),
+            },
+            token=_daemon_token(live),
+        ),
+        root,
     )
 
 
@@ -853,6 +934,291 @@ def _serve_daemon_response_with_cache(
     return response, "miss"
 
 
+# --------------------------------------------------------------------------------------------
+# tg-ledger step-0: demand instrumentation (docs/multi_agent_context_plane.md)
+#
+# Answers two questions with real traffic, not intuition, before any ledger/claims/A2A surface
+# is built: (1) do multiple distinct agent processes actually hit the same daemon concurrently,
+# and (2) do they actually re-request the same expensive artifact (symbol/query) within a short
+# window that a shared plane would de-duplicate. This is diagnostic-only: it never changes a
+# response, never stores raw symbol/query text (hash only), and a failure in `record()` must
+# never break serving (callers wrap it in `except Exception: pass`).
+# --------------------------------------------------------------------------------------------
+
+
+def _metrics_file_path(root: Path) -> Path:
+    return _sessions_dir(root) / _DAEMON_METRICS_FILE
+
+
+def _metrics_target_hash(command: str, target: str) -> str:
+    digest = hashlib.sha256(f"{command}\x00{target}".encode()).hexdigest()
+    return digest[:16]
+
+
+def _metrics_target_for_request(command: str, request: dict[str, Any]) -> str:
+    if command in _DAEMON_METRICS_SYMBOL_COMMANDS:
+        return str(request.get("symbol", "")).strip().lower()
+    if command in _DAEMON_METRICS_QUERY_COMMANDS:
+        return str(request.get("query", "")).strip().lower()
+    return ""
+
+
+def _utc_day_bucket(epoch_seconds: float) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).strftime("%Y-%m-%d")
+
+
+def _normalize_client_pid(client_pid: object) -> int | None:
+    try:
+        pid = int(cast(Any, client_pid))
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _empty_metrics_day_bucket() -> dict[str, Any]:
+    return {
+        "requests": 0,
+        "expensive_requests": 0,
+        "distinct_client_pids": 0,
+        "max_concurrent_distinct_clients": 0,
+        "overlap_events": 0,
+        "dup_requests": 0,
+        "dup_targets": {},
+        "by_command": {},
+    }
+
+
+def _sanitize_metrics_days(raw: object) -> dict[str, dict[str, Any]]:
+    """Defensively normalize a loaded (possibly hand-edited or stale-schema) days dict."""
+    sanitized: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw, dict):
+        return sanitized
+    for day, bucket in raw.items():
+        if not isinstance(day, str) or not isinstance(bucket, dict):
+            continue
+        dup_targets_raw = bucket.get("dup_targets")
+        dup_targets = (
+            {str(key): int(cast(Any, value)) for key, value in dup_targets_raw.items()}
+            if isinstance(dup_targets_raw, dict)
+            else {}
+        )
+        by_command_raw = bucket.get("by_command")
+        by_command = (
+            {str(key): int(cast(Any, value)) for key, value in by_command_raw.items()}
+            if isinstance(by_command_raw, dict)
+            else {}
+        )
+        clean = _empty_metrics_day_bucket()
+        for field in (
+            "requests",
+            "expensive_requests",
+            "distinct_client_pids",
+            "max_concurrent_distinct_clients",
+            "overlap_events",
+            "dup_requests",
+        ):
+            try:
+                clean[field] = int(cast(Any, bucket.get(field, 0)) or 0)
+            except (TypeError, ValueError):
+                clean[field] = 0
+        clean["dup_targets"] = dup_targets
+        clean["by_command"] = by_command
+        sanitized[day] = clean
+    return sanitized
+
+
+class _DemandMetrics:
+    """In-memory, fail-open, PII-free demand counters for the tg-ledger step-0 gate.
+
+    Guarded by its own lock (independent of ``server._request_lock`` /
+    ``_response_cache_lock``) so metrics bookkeeping never contends with request dispatch or
+    the response cache. Every public method is defensive: bad input degrades to a no-op rather
+    than raising, because a metrics bug must never take the daemon down.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._clients: dict[int, float] = {}  # client_pid -> last_seen (monotonic)
+        self._day_pid_sets: dict[str, set[int]] = {}  # day -> distinct client pids seen this run
+        self._dup_lru: OrderedDict[str, float] = OrderedDict()  # target_hash -> last_seen (wall)
+        self._days: dict[str, dict[str, Any]] = {}
+        self._dirty = False
+
+    def load(self, days: object) -> None:
+        """Seed from a previously-persisted ``daemon_metrics.json`` (startup load-merge)."""
+        with self._lock:
+            self._days = _sanitize_metrics_days(days)
+
+    def record(self, *, command: str, client_pid: object, request: dict[str, Any]) -> None:
+        if command in _DAEMON_METRICS_EXCLUDED_COMMANDS or not _daemon_metrics_enabled():
+            return
+        now_monotonic = monotonic()
+        now_wall = time.time()
+        day = _utc_day_bucket(now_wall)
+        pid = _normalize_client_pid(client_pid)
+        with self._lock:
+            bucket = self._days.setdefault(day, _empty_metrics_day_bucket())
+            bucket["requests"] += 1
+            by_command = cast(dict[str, int], bucket["by_command"])
+            by_command[command] = by_command.get(command, 0) + 1
+
+            if pid is not None:
+                stale = [
+                    seen_pid
+                    for seen_pid, last_seen in self._clients.items()
+                    if now_monotonic - last_seen > _DAEMON_METRICS_CLIENT_WINDOW_SECONDS
+                ]
+                for seen_pid in stale:
+                    del self._clients[seen_pid]
+                self._clients[pid] = now_monotonic
+                concurrent = len(self._clients)
+                bucket["max_concurrent_distinct_clients"] = max(
+                    cast(int, bucket["max_concurrent_distinct_clients"]), concurrent
+                )
+                day_pids = self._day_pid_sets.setdefault(day, set())
+                if len(day_pids) < _DAEMON_METRICS_DAY_PID_SET_CAP:
+                    day_pids.add(pid)
+                bucket["distinct_client_pids"] = max(
+                    cast(int, bucket["distinct_client_pids"]), len(day_pids)
+                )
+                if concurrent >= 2:
+                    bucket["overlap_events"] += 1
+
+            if command in _DAEMON_METRICS_EXPENSIVE_COMMANDS:
+                bucket["expensive_requests"] += 1
+                target = _metrics_target_for_request(command, request)
+                target_hash = _metrics_target_hash(command, target)
+                last_seen_wall = self._dup_lru.get(target_hash)
+                if (
+                    last_seen_wall is not None
+                    and (now_wall - last_seen_wall) <= _DAEMON_METRICS_DUP_WINDOW_SECONDS
+                ):
+                    bucket["dup_requests"] += 1
+                    dup_targets = cast(dict[str, int], bucket["dup_targets"])
+                    if target_hash in dup_targets:
+                        dup_targets[target_hash] += 1
+                    elif len(dup_targets) < _DAEMON_METRICS_MAX_DUP_TARGETS_PER_DAY:
+                        dup_targets[target_hash] = 1
+                self._dup_lru[target_hash] = now_wall
+                self._dup_lru.move_to_end(target_hash)
+                while len(self._dup_lru) > _DAEMON_METRICS_DUP_LRU_MAX_ENTRIES:
+                    self._dup_lru.popitem(last=False)
+
+            self._dirty = True
+
+    def consume_dirty(self) -> bool:
+        with self._lock:
+            was_dirty = self._dirty
+            self._dirty = False
+            return was_dirty
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            if len(self._days) > _DAEMON_METRICS_MAX_DAY_BUCKETS:
+                newest_days = sorted(self._days)[-_DAEMON_METRICS_MAX_DAY_BUCKETS:]
+                self._days = {day: self._days[day] for day in newest_days}
+            return copy.deepcopy(self._days)
+
+
+def _write_demand_metrics(root: Path, metrics: _DemandMetrics) -> None:
+    payload = {
+        "version": _DAEMON_METRICS_SCHEMA_VERSION,
+        "root": str(root),
+        "days": metrics.snapshot(),
+    }
+    _write_json_atomic(_metrics_file_path(root), payload)
+
+
+def _flush_demand_metrics_if_dirty(server: _ThreadedSessionDaemon, *, force: bool = False) -> None:
+    dirty = server.demand_metrics.consume_dirty()
+    if not (force or dirty):
+        return
+    try:
+        _write_demand_metrics(server.root, server.demand_metrics)
+    except Exception:
+        pass  # metrics persistence must never crash the daemon
+
+
+def _read_demand_metrics_days(root: Path) -> dict[str, Any]:
+    path = _metrics_file_path(root)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    days = data.get("days") if isinstance(data, dict) else None
+    return days if isinstance(days, dict) else {}
+
+
+def _demand_metrics_status_payload(
+    root: Path, *, reference: datetime | None = None
+) -> dict[str, Any]:
+    """Read ``daemon_metrics.json`` from disk (works even with the daemon STOPPED) and roll the
+    trailing 14 days up into a build-decision-ready summary for the tg-ledger step-0 gate.
+    """
+    days = _sanitize_metrics_days(_read_demand_metrics_days(root))
+    now = reference or datetime.now(UTC)
+    cutoff_14 = (now - timedelta(days=_DAEMON_METRICS_ROLLUP_WINDOW_DAYS)).date()
+    cutoff_7 = (now - timedelta(days=_DAEMON_METRICS_ROLLUP_SHORT_WINDOW_DAYS)).date()
+
+    days_covered = 0
+    days_with_2plus_concurrent = 0
+    overlap_events_14d = 0
+    dup_requests_7d = 0
+    dup_requests_14d = 0
+    max_distinct_client_pids_14d = 0
+
+    for day_str, bucket in days.items():
+        try:
+            day_date = datetime.strptime(day_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if day_date > now.date() or day_date < cutoff_14:
+            continue
+        days_covered += 1
+        if cast(int, bucket["max_concurrent_distinct_clients"]) >= 2:
+            days_with_2plus_concurrent += 1
+        overlap_events_14d += cast(int, bucket["overlap_events"])
+        dup_requests_14d += cast(int, bucket["dup_requests"])
+        if day_date >= cutoff_7:
+            dup_requests_7d += cast(int, bucket["dup_requests"])
+        max_distinct_client_pids_14d = max(
+            max_distinct_client_pids_14d, cast(int, bucket["distinct_client_pids"])
+        )
+
+    pre_gate_met = (
+        days_covered > 0
+        and days_with_2plus_concurrent >= _DAEMON_METRICS_PRE_GATE_MIN_CONCURRENT_DAYS
+        and dup_requests_14d >= _DAEMON_METRICS_PRE_GATE_MIN_DUP_REQUESTS_14D
+    )
+
+    return {
+        "window_days": _DAEMON_METRICS_ROLLUP_WINDOW_DAYS,
+        "days_covered": days_covered,
+        "days_with_2plus_concurrent": days_with_2plus_concurrent,
+        "overlap_events_14d": overlap_events_14d,
+        "dup_requests_7d": dup_requests_7d,
+        "dup_requests_14d": dup_requests_14d,
+        "max_distinct_client_pids_14d": max_distinct_client_pids_14d,
+        "pre_gate_met": pre_gate_met,
+        "pre_gate_thresholds": {
+            "min_concurrent_days": _DAEMON_METRICS_PRE_GATE_MIN_CONCURRENT_DAYS,
+            "min_dup_requests_14d": _DAEMON_METRICS_PRE_GATE_MIN_DUP_REQUESTS_14D,
+        },
+    }
+
+
+def _attach_demand_metrics(status: dict[str, Any], metrics_root: Path) -> dict[str, Any]:
+    try:
+        status["demand_metrics"] = _demand_metrics_status_payload(metrics_root)
+    except Exception:
+        # Read-back must never break `tg doctor` / `tg session daemon status` (fail-open,
+        # mirrors the record()-side contract).
+        status["demand_metrics"] = {"error": "unavailable"}
+    return status
+
+
 class _SessionResponseCache:
     def __init__(
         self,
@@ -952,6 +1318,8 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
         self.token = token
         self.payload_cache = _SessionServeCache()
         self.response_cache = _SessionResponseCache()
+        # tg-ledger step-0: demand instrumentation, see docs/multi_agent_context_plane.md.
+        self.demand_metrics = _DemandMetrics()
         self.implicit_session_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.started_at = monotonic()
         self.request_count = 0
@@ -1047,6 +1415,14 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 request, session_id, request_path
             )
             command = str(request.get("command", "")).strip().lower()
+            try:
+                server.demand_metrics.record(
+                    command=command,
+                    client_pid=request.get("client_pid"),
+                    request=request,
+                )
+            except Exception:
+                pass  # tg-ledger step-0 metrics must never break serving
             request_session_id = _implicit_session_id_for_request(
                 server,
                 command=command,
@@ -1210,7 +1586,14 @@ def _run_daemon_lifecycle_monitor(
     )
     if idle_limit <= 0 and max_uptime <= 0:
         return
+    # tg-ledger step-0: piggyback a low-frequency demand-metrics flush on this same poll loop
+    # (~once per _DAEMON_METRICS_FLUSH_POLL_INTERVALS ticks) rather than a dedicated thread.
+    flush_countdown = _DAEMON_METRICS_FLUSH_POLL_INTERVALS
     while not stop_event.wait(_DAEMON_LIFECYCLE_POLL_SECONDS):
+        flush_countdown -= 1
+        if flush_countdown <= 0:
+            flush_countdown = _DAEMON_METRICS_FLUSH_POLL_INTERVALS
+            _flush_demand_metrics_if_dirty(server)
         now = monotonic()
         with server._request_lock:
             idle_for = now - server.last_activity_at
@@ -1240,6 +1623,9 @@ def run_session_daemon_server(path: str = ".") -> None:
     # read daemon.json may issue commands.
     token = secrets.token_urlsafe(32)
     with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
+        # tg-ledger step-0: load any prior demand-metrics history for this root before serving,
+        # so a daemon restart never clobbers the day-bucket counts a prior run already persisted.
+        server.demand_metrics.load(_read_demand_metrics_days(root))
         host, port = cast(tuple[str, int], server.server_address)
         _write_daemon_metadata(
             root,
@@ -1264,6 +1650,7 @@ def run_session_daemon_server(path: str = ".") -> None:
             server.serve_forever(poll_interval=0.1)
         finally:
             stop_event.set()
+            _flush_demand_metrics_if_dirty(server, force=True)
             _remove_daemon_metadata(root)
 
 
