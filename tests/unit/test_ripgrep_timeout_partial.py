@@ -11,9 +11,20 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.backends import ripgrep_backend as rb
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.core.config import SearchConfig
+
+
+@pytest.fixture(autouse=True)
+def _mock_rg_binary(monkeypatch):
+    # rg need not be installed on the CI runner for these unit tests: mock binary resolution so
+    # _build_cmd succeeds and the (monkeypatched) run_subprocess raises the TimeoutExpired whose
+    # recovery is under test. Without this, _build_cmd raises "requires the 'rg' binary" on a clean
+    # runner before the timeout path runs (the resolve-a-real-binary-via-PATH CI false-fail class).
+    monkeypatch.setattr(RipgrepBackend, "_get_binary_name", lambda self: "rg")
 
 
 def test_search_counts_recovers_partial_tally_on_timeout(monkeypatch, tmp_path: Path) -> None:
