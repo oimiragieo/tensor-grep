@@ -4348,8 +4348,13 @@ def _js_ts_references_and_calls(
     parsed = _parsed_source_and_tree(str(path))
     if parsed is None:
         return [], []
-    _parsed_source, source_bytes, tree = parsed
-    lines = source.splitlines()
+    parsed_source, source_bytes, tree = parsed
+    # `lines` MUST come from the SAME read as `source_bytes`/`tree` (all three from the single
+    # `_parsed_source_and_tree` product), NOT from the earlier `source` text read above: the two are
+    # independent (path, mtime, size)-keyed cache lookups, so a file edited between them would leave
+    # tree node line-indices (from the parse) indexing into stale `lines` -> wrong reported line
+    # content / IndexError. The pre-parse text read keeps using `source` (a cheap heuristic gate).
+    lines = parsed_source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
@@ -4708,8 +4713,13 @@ def _rust_references_and_calls(
     parsed = _parsed_source_and_tree(str(path))
     if parsed is None:
         return [], []
-    _parsed_source, source_bytes, tree = parsed
-    lines = source.splitlines()
+    parsed_source, source_bytes, tree = parsed
+    # `lines` MUST come from the SAME read as `source_bytes`/`tree` (all three from the single
+    # `_parsed_source_and_tree` product), NOT from the earlier `source` text read above: the two are
+    # independent (path, mtime, size)-keyed cache lookups, so a file edited between them would leave
+    # tree node line-indices (from the parse) indexing into stale `lines` -> wrong reported line
+    # content / IndexError. The pre-parse text read keeps using `source` (a cheap heuristic gate).
+    lines = parsed_source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
