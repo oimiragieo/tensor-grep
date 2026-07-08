@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.45.17 (2026-07-08)
+
+### Bug Fixes
+
+- **#61**: --deadline bounds the import-consumer + preferred-definition sibling loops on
+  callers/refs (was unbounded -> --deadline ineffective on a central symbol); early break marks the
+  result partial for exit-2 honesty ([#440](https://github.com/oimiragieo/tensor-grep/pull/440),
+  [`7afb6e4`](https://github.com/oimiragieo/tensor-grep/commit/7afb6e4fbd2ff140f71e2f67df47117bacad1025))
+
+
 ## v1.45.16 (2026-07-08)
 
 ### Bug Fixes
