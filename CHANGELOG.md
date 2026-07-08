@@ -1,6 +1,117 @@
 # CHANGELOG
 
 
+## v1.51.0 (2026-07-08)
+
+### Chores
+
+- **privacy**: Untrack .factory/ tool config (leaked a machine-specific drive path) + broaden the
+  gitignore ([#458](https://github.com/oimiragieo/tensor-grep/pull/458),
+  [`1b050d3`](https://github.com/oimiragieo/tensor-grep/commit/1b050d3a998709c767202b5312fc083714032c6b))
+
+.factory/services.yaml is Factory-AI/droid local tool state, not tensor-grep product -- and it
+  contained an absolute local path (C:\Users\oimir\.cargo\...), publicly visible on GitHub. Untracks
+  it, replaces the piecemeal .factory/*.patch + per-subdir ignores with a single /.factory/ (nothing
+  under it should ever be tracked), and drops the governance test that read the now-untracked file.
+
+### Documentation
+
+- Capture the 2026-07-08 campaign learnings — orchestration disciplines (AGENTS.md A1-A8) +
+  accuracy-fix all 17 skills to v1.49.3 + 2 new global skills
+  ([#459](https://github.com/oimiragieo/tensor-grep/pull/459),
+  [`5a5290c`](https://github.com/oimiragieo/tensor-grep/commit/5a5290c327604904d39d1ff3e8df3de3da302e60))
+
+* docs(agents): capture the 2026-07-08 campaign orchestration disciplines (A1-A8: WIP-cap,
+  self-firing drain-cron, adversarial security-gate, resume-on-500, dont-kill-on-staleness,
+  anti-hang-test, harvest, Fable-via-Agent)
+
+* docs(skills): accuracy-fix 6 tier-C tg skills + fold adversarial-security-gate to v1.49.3 [capture
+  wsou4nekg]
+
+* docs(claude): skill index 16->18 (add large-repo-scale-campaign, backlog-campaign + the 2 new
+  global skills anti-hang-test-protocol/instrumented-build-gate) + point at the AGENTS.md
+  orchestration disciplines
+
+* docs(skills): accuracy-fix 5 tier-B/C tg skills to v1.49.3 (drain-cron, sentinel-resolved,
+  orchestration disciplines) [capture wsou4nekg]
+
+Applies the tier-B/C fixes from the wsou4nekg capture-plan synthesis to 5 in-repo onboarding skills,
+  ground-truthed against v1.49.3:
+
+- tensor-grep-run-and-operate: SS10 rewritten from "known open hang" to the shipped fail-fast/refuse
+  contract (#400/v1.40.3 vendored+workspace-root refusal, #413/v1.42.0 large-root refusal,
+  native-walk deadline backstop); fixed the broken MCP-tool-count verify command (-A1 context lines
+  never matched "^def "); bumped provenance to v1.49.3. - tensor-grep-research-frontier: Problem 3's
+  rg `--` sentinel marked RESOLVED (#326/#370, was reported as a round-4 open gap); Problem 5's
+  repo_map.py:1191 citation re-anchored to :1692; added Problem 4d (local agent context-sharing /
+  A2A landscape, CEO-gated instrumented-build-gate, explicitly flagged as an OPEN #456 PR) and a C14
+  falsifiable sub-item to 4b (#74 scoped file-dependency primitive, benchmark-validated demand gap).
+  - tensor-grep-backlog-campaign: brought into this worktree (previously uncommitted); replaced the
+  non-existent `scratchpad/drain_v2.sh` long-lived-background-loop pattern with the self-firing,
+  per-fire drain-cron pattern; bumped skill-library count 16->18; added Hard Rules for WIP-cap and
+  the mandatory adversarial security gate; broadened resume-from-transcript to any transient API 500
+  (not just session-limit kills) and folded in the don't-kill-on-staleness + worktree-harvest-
+  pattern disciplines. - tensor-grep-debugging-playbook: re-anchored 4 drifted citations
+  (degrade-to-ask safety floor, score_term_overlap call sites, the exit-124 hint,
+  _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS); discovered and fixed a 5th stale claim in the same
+  section (the rg_passthrough.rs `--` sentinel round-4 gap is resolved, not open, and the self-check
+  grep for it was misleading-passing); cross-referenced the new global anti-hang-test-protocol and
+  the adversarial-security-gate rule. - tensor-grep-research-methodology: re-grepped every AGENTS.md
+  citation against the live file (the new orchestration section shifted downstream line numbers
+  ~+18/+19, confirmed by direct grep, not trusted from the plan); added the instrumented-build-gate
+  fork (C12) to Part 3 with a worked example, and a C14 token-economy worked example to Part 4.
+
+No PR from the #455-458 merge-gate batch is cited as shipped; #456 is explicitly marked
+  open/unmerged everywhere it is referenced (guardrail G1).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(skills): accuracy-fix 5 tier-A tg skills to v1.49.3 (exit-code contract, dense-RRF-shipped,
+  512->2000 cap, rg-sentinel-fixed) [capture wsou4nekg]
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Scoped file-dependency primitives (tg imports / tg importers) — the benchmark-proven P4 moat gap
+  (#74) ([#460](https://github.com/oimiragieo/tensor-grep/pull/460),
+  [`05f49b8`](https://github.com/oimiragieo/tensor-grep/commit/05f49b8725045b2c79c9f571b4bdd21b7c27b4d5))
+
+* feat: add scoped file-dep primitives tg imports/importers (forward + reverse, precision-confirmed
+  edges, 4-site registered + MCP) -- ~1-2K tokens vs tg map's ~53K, the benchmark-proven P4 moat gap
+  (#74)
+
+- tg imports FILE: O(1) forward file-dependency lookup (no repo scan, no cap). Resolves
+  relative/require/index-probe JS-TS imports, Rust crate/workspace/ sibling-file imports, and a new
+  Python dotted/relative candidate-gen (no existing seam covered this). Over-cap or
+  unsupported-language files surface result_incomplete:true instead of a silently clean-empty import
+  list. - tg importers FILE [ROOT]: bounded reverse lookup. Prefilters candidates via the existing
+  alias-substring reverse-import graph, then CONFIRMS each candidate with the precise per-language
+  matcher before reporting an edge -- closes the Case-4 false-edge over-count bug for this
+  primitive. Bounded by CALLER_SCAN_FILE_CEILING + --deadline, honest exit-2 on truncation. - tg
+  session importers + daemon dispatch arm: zero-reparse session tier. - MCP: tg_file_imports,
+  tg_file_importers, tg_session_file_importers (+ registered in the _MCP_TOOL_CAPABILITIES
+  registry). - Registered at all 4 command sites (commands.py, rust_core native front door,
+  test_routing_parity.py PUBLIC_TOP_LEVEL_COMMANDS, main.py) so `tg imports <file>` routes to the
+  handler, not a literal ripgrep search. - TDD: forward resolution
+  (relative/require-index-probe/external/Python dotted+relative), reverse exactness (1 real importer
+  + 3 precision traps: comment-only mention, word-fragment alias-prefilter over-match, same-name
+  different-directory -- all excluded), tsconfig-alias prefilter recall, bootstrap-router
+  anti-misroute, token economy (<0.1x tg map payload), and honesty
+  (over-cap/missing/--max-repo-files exit codes, session==cold).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(repo_map): resolve-then-compare the Python reverse-import confirm (kill duplicate-basename
+  phantom importers) + record from-dot-import recall + Python reverse tests (#74 review fix)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.50.0 (2026-07-08)
 
 ### Features
