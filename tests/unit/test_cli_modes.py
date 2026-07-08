@@ -3243,6 +3243,32 @@ def test_native_delegation_forwards_resolved_line_number():
     assert "-n" not in auto_cmd and "-N" not in auto_cmd
 
 
+def test_native_delegation_forwards_case_sensitive():
+    """audit #19: the native argv builder forwarded -i (ignore_case) but silently dropped
+    -s/--case-sensitive, so `tg search -i -s Foo` ran case-insensitive under native delegation --
+    disagreeing with the same flags on the rg-passthrough path."""
+    from tensor_grep.cli.main import _build_native_tg_search_command
+    from tensor_grep.core.config import SearchConfig
+
+    cmd = _build_native_tg_search_command(
+        Path("tg.exe"),
+        pattern="needle",
+        paths=["file.txt"],
+        config=SearchConfig(force_cpu=True, case_sensitive=True),
+        ndjson=False,
+    )
+    assert "-s" in cmd
+
+    cmd_without = _build_native_tg_search_command(
+        Path("tg.exe"),
+        pattern="needle",
+        paths=["file.txt"],
+        config=SearchConfig(force_cpu=True, case_sensitive=False),
+        ndjson=False,
+    )
+    assert "-s" not in cmd_without
+
+
 def test_uv_tool_managed_python_detection():
     """Audit #2: `tg upgrade` must recognize a uv-tool-managed launcher so it upgrades via the
     uv-tool front door (`uv tool install --force`) rather than `uv pip`/`pip` into the isolated tool
@@ -3435,6 +3461,167 @@ def test_python_search_treats_file_option_as_pattern_file_not_regex(monkeypatch,
     assert seen["pattern"] == ""
     config = seen["config"]
     assert config.file_patterns == [windows_pattern_file]
+
+
+def test_search_file_option_rejects_only_matching(tmp_path):
+    # audit #5: `-f/--file` resolves `pattern` to "" (no combined-pattern regex is built), so -o
+    # against pattern="" silently returned zero matches (a false "no match"). The #441 combine
+    # feature was scoped out; reject the combo instead of silently mis-searching.
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("ERROR\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-f", str(patterns_file), "-o", str(project)],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "-o/--only-matching" in result.output
+    assert "-f/--file" in result.output
+
+
+def test_search_file_option_rejects_only_matching_json(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("ERROR\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-f", str(patterns_file), "-o", "--json", str(project)],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "unsupported_flag"
+    assert "-o/--only-matching" in payload["detail"]
+
+
+def test_search_file_option_rejects_replace(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("ERROR\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-f", str(patterns_file), "-r", "OK", str(project)],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "-r/--replace" in result.output
+    assert "-f/--file" in result.output
+
+
+def test_search_multiple_regexp_rejects_only_matching(tmp_path):
+    # audit #5 (parenthetical): only regexp_patterns[0] is ever used as `pattern`, so -o against
+    # multiple -e patterns silently drops every pattern after the first.
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-e", "ERROR", "-e", "WARN", "-o", str(project)],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "-o/--only-matching" in result.output
+    assert "multiple -e/--regexp" in result.output
+
+
+def test_search_file_option_rejects_rank(tmp_path):
+    # audit #20: --rank/--semantic would rerank against the same empty pattern="" query.
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("ERROR\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-f", str(patterns_file), "--rank", str(project)],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "--rank/--bm25" in result.output
+
+
+def test_search_file_option_rejects_semantic(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("ERROR\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-f", str(patterns_file), "--semantic", str(project)],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "--semantic" in result.output
+
+
+def test_search_file_option_without_conflicting_flag_still_works(monkeypatch, tmp_path):
+    # Guard-rail: the new reject must not fire on the plain, already-supported -f usage.
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("ERROR\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        lambda self, paths, pattern, config=None: 0,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "--format", "rg", "-f", str(patterns_file), str(project)],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_search_single_regexp_with_unused_file_option_and_only_matching_still_works(
+    monkeypatch, tmp_path
+):
+    # Guard-rail: `elif regexp_patterns:` takes priority over `elif file:`, so a single -e makes
+    # -f a dead flag and `pattern` a real single string -- -o must still work here, not be rejected
+    # as if -f were the active pattern source.
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.py"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.py": SearchResult(
+                matches=[MatchLine(line_number=1, text="prefix ERROR suffix", file="a.py")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+    patterns_file = tmp_path / "patterns.txt"
+    patterns_file.write_text("WARN\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "-e", "ERROR", "-f", str(patterns_file), "-o", "."],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == "ERROR"
 
 
 def test_search_version_should_run_from_python_search_entrypoint() -> None:
@@ -3764,12 +3951,13 @@ def test_symbol_commands_accept_path_symbol_positional_alias(tmp_path):
         "blast-radius-render": "symbol-blast-radius-render",
         "blast-radius-plan": "symbol-blast-radius-plan",
     }
-    # refs and callers exit 1 when the symbol has no call sites (L1: exit 1 on zero
-    # results).  The symbol `create_invoice` is only defined in the test file —
-    # it is never called, so references/callers are empty and the command exits 1.
-    # All other commands find non-empty results (defs, source, impact) or do not
-    # use _emit_symbol_command_result (blast-radius variants) and still exit 0.
-    commands_that_exit_1_on_empty = {"refs", "callers"}
+    # refs, callers, and blast-radius exit 1 when the symbol has no call sites (L1: exit 1 on
+    # zero results; blast-radius joined this contract via audit #12). The symbol
+    # `create_invoice` is only defined in the test file — it is never called, so
+    # references/callers/blast-radius's callers are empty and the command exits 1.
+    # All other commands find non-empty results (defs, source, impact) or do not use the
+    # no-match exit convention at all (blast-radius-render/-plan) and still exit 0.
+    commands_that_exit_1_on_empty = {"refs", "callers", "blast-radius"}
 
     for command, routing_reason in commands.items():
         result = runner.invoke(app, [command, str(project), "create_invoice", "--json"])
@@ -3818,10 +4006,11 @@ def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
         "blast-radius-render": "symbol-blast-radius-render",
         "blast-radius-plan": "symbol-blast-radius-plan",
     }
-    # refs and callers exit 1 when the symbol has no call sites (L1: exit 1 on zero
-    # results).  The symbol `create_invoice` is only defined in the test file —
-    # it is never called, so references/callers are empty and the command exits 1.
-    commands_that_exit_1_on_empty = {"refs", "callers"}
+    # refs, callers, and blast-radius exit 1 when the symbol has no call sites (L1: exit 1 on
+    # zero results; blast-radius joined this contract via audit #12). The symbol
+    # `create_invoice` is only defined in the test file — it is never called, so
+    # references/callers/blast-radius's callers are empty and the command exits 1.
+    commands_that_exit_1_on_empty = {"refs", "callers", "blast-radius"}
 
     for command, routing_reason in commands.items():
         result = runner.invoke(
@@ -4317,6 +4506,44 @@ def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
     assert any(level["depth"] == 0 for level in payload["caller_tree"])
     assert any(level["depth"] == 1 for level in payload["caller_tree"])
     assert "Depth 0:" in payload["rendered_caller_tree"]
+
+
+def test_blast_radius_json_no_match_exits_1(tmp_path):
+    # audit #12: blast-radius never honored rg's no-match exit convention -- a typo'd/nonexistent
+    # symbol previously exited 0 with an empty callers list, reading as "resolved, zero impact" on
+    # a refactor-safety command instead of "never found".
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app, ["blast-radius", "--symbol", "totally_nonexistent_symbol", "--json", str(project)]
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["no_match"] is True
+    assert payload["not_found"] is True
+
+
+def test_blast_radius_text_no_match_exits_1(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app, ["blast-radius", "--symbol", "totally_nonexistent_symbol", str(project)]
+    )
+
+    assert result.exit_code == 1, result.output
 
 
 def test_blast_radius_prioritizes_source_dirs_before_bounded_scan_cap(tmp_path):
@@ -12941,6 +13168,81 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
         "[scan] rule=python-hardcoded-named-api-key lang=python matches=0 files=0" in result.output
     )
     assert "Scan completed. rules=6 matched_rules=1 total_matches=1" in result.output
+
+
+def test_scan_ruleset_respects_filter(monkeypatch):
+    # audit #22: --filter was applied only on the sgconfig project-scan path (and explicitly
+    # rejected for --rule) -- silently ignored for --ruleset, so a --ruleset run always scanned
+    # every rule in the pack regardless of --filter.
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text('password = "$SECRET"\n', encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--ruleset",
+                "secrets-basic",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--filter",
+                "password",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "[scan] rule=python-hardcoded-password" in result.output
+    assert "python-hardcoded-api-key " not in result.output
+    assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
+
+
+def test_scan_inline_rules_respects_filter(monkeypatch):
+    # audit #22: same uniform application as --ruleset, for --inline-rules.
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    # `eval($A)` here is an ast-grep RULE PATTERN (a literal YAML string matched structurally
+    # against scanned source, mirroring test_scan_inline_rules_json_preserves_rule_metadata above)
+    # -- it is never passed to Python's eval() or executed.
+    inline_rules = (
+        "id: no-print\nlanguage: python\nrule:\n  pattern: print($A)\n"
+        "---\n"
+        "id: no-eval\nlanguage: python\nrule:\n  pattern: eval($A)\n"
+    )
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        # `_FakeAstBackend.search` (via the patched Pipeline) matches on literal substring, so the
+        # fixture content matches the rule pattern text exactly.
+        Path("a.py").write_text("print($A)\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--inline-rules",
+                inline_rules,
+                "--path",
+                ".",
+                "--filter",
+                "no-print",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "[scan] rule=no-print" in result.output
+    assert "no-eval" not in result.output
+    assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
 def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
