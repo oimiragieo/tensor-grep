@@ -40,6 +40,8 @@ from tensor_grep.cli.repo_map import (
     _apply_context_token_budget,
     build_context_pack,
     build_context_render,
+    build_file_importers,
+    build_file_imports,
     build_repo_map,
     build_symbol_blast_radius,
     build_symbol_blast_radius_render,
@@ -121,6 +123,9 @@ _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_symbol_impact",
     "tg_symbol_refs",
     "tg_symbol_callers",
+    "tg_file_imports",
+    "tg_file_importers",
+    "tg_session_file_importers",
     "tg_symbol_blast_radius",
     "tg_symbol_blast_radius_render",
     "tg_search",
@@ -2349,6 +2354,64 @@ def tg_session_blast_radius(
 
 
 @mcp.tool()  # type: ignore
+def tg_session_file_importers(
+    session_id: str,
+    file: str,
+    path: str = ".",
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a cached-session (zero-reparse) list of the files that import FILE.
+
+    Args:
+        session_id: Session ID to query.
+        file: File to find importers of.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_file_importers
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        return json.dumps(
+            session_file_importers(
+                session_id,
+                file,
+                path,
+                refresh_on_stale=effective_refresh,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"file": file},
+            file=file,
+        )
+    except FileNotFoundError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"file": file},
+            file=file,
+        )
+    except Exception as exc:  # propagate as structured error, never a raw exception
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="internal_error",
+            message=str(exc),
+            detail={"file": file},
+            file=file,
+        )
+
+
+@mcp.tool()  # type: ignore
 def tg_symbol_blast_radius_plan(
     symbol: str,
     path: str = ".",
@@ -2856,6 +2919,91 @@ def tg_symbol_callers(
             "message": str(exc),
             "retryable": False,
         }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_file_imports(file: str) -> str:
+    """
+    Return what a single FILE imports, resolved to target files where possible.
+
+    The scoped forward file-dependency primitive (#74): O(1) -- parses exactly one file, no
+    repo scan. Far cheaper than a whole-repo `tg_map` for a single file's dependency edges.
+
+    Args:
+        file: File to inspect for its own imports.
+    """
+    try:
+        return _inject_mcp_contract_fields(json.dumps(build_file_imports(file), indent=2))
+    except FileNotFoundError:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-imports",
+            include_schema_version=False,
+        )
+        payload["file"] = str(Path(file).expanduser())
+        payload["error"] = {
+            "code": "invalid_input",
+            "message": f"File not found: {Path(file).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-imports",
+            include_schema_version=False,
+        )
+        payload["file"] = str(Path(file).expanduser())
+        payload["error"] = _sanitized_tool_error("tg_file_imports", exc)
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_file_importers(
+    file: str,
+    path: str = ".",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+) -> str:
+    """
+    Return the files that import a single FILE (the reverse #74 file-dependency primitive).
+
+    Prefilters candidate importers via the repo's import-alias graph, then re-parses and
+    CONFIRMS each candidate against FILE before reporting it as an edge.
+
+    Args:
+        file: File to find importers of.
+        path: Root to scan for importers.
+        max_repo_files: Maximum repository files to scan before resolving importers.
+    """
+    try:
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_file_importers(file, path, max_repo_files=max_repo_files),
+                indent=2,
+            )
+        )
+    except FileNotFoundError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-importers",
+            include_schema_version=False,
+        )
+        payload["file"] = str(Path(file).expanduser())
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "invalid_input",
+            "message": str(exc),
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-importers",
+            include_schema_version=False,
+        )
+        payload["file"] = str(Path(file).expanduser())
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = _sanitized_tool_error("tg_file_importers", exc)
         return json.dumps(payload, indent=2)
 
 

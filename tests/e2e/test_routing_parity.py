@@ -35,6 +35,8 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "source",
     "impact",
     "callers",
+    "imports",
+    "importers",
     "blast-radius",
     "blast-radius-render",
     "blast-radius-plan",
@@ -331,6 +333,8 @@ COMMAND_CASES = [
     (["defs", "--help"], 0, assert_text_lines, no_check),
     (["refs", "--help"], 0, assert_text_lines, no_check),
     (["context", "--help"], 0, assert_text_lines, no_check),
+    (["imports", "--help"], 0, assert_text_lines, no_check),
+    (["importers", "--help"], 0, assert_text_lines, no_check),
     # --- blast-radius, rulesets, audit ---
     (["blast-radius", "--help"], 0, assert_text_lines, no_check),
     (["rulesets", "--help"], 0, assert_text_lines, no_check),

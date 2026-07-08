@@ -28,6 +28,8 @@ KNOWN_COMMANDS = {
     "source",
     "impact",
     "callers",
+    "imports",
+    "importers",
     "blast-radius",
     "blast-radius-render",
     "blast-radius-plan",

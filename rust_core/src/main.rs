@@ -1004,6 +1004,18 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Show what a file imports, resolved to target files
+    #[command(name = "imports", disable_help_flag = true)]
+    Imports {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Find the files that import a given file
+    #[command(name = "importers", disable_help_flag = true)]
+    Importers {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Build a transitive blast-radius graph for a symbol
     #[command(name = "blast-radius", disable_help_flag = true)]
     BlastRadius {
@@ -3924,6 +3936,8 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Source { args } => handle_python_passthrough("source", args),
         Commands::Impact { args } => handle_python_passthrough("impact", args),
         Commands::Callers { args } => handle_python_passthrough("callers", args),
+        Commands::Imports { args } => handle_python_passthrough("imports", args),
+        Commands::Importers { args } => handle_python_passthrough("importers", args),
         Commands::BlastRadius { args } => handle_python_passthrough("blast-radius", args),
         Commands::BlastRadiusRender { args } => {
             handle_python_passthrough("blast-radius-render", args)
