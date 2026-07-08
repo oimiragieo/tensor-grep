@@ -1352,5 +1352,61 @@ def test_run_policy_command_prefers_trusted_path_entry_over_cwd_shadow(
 
     result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
 
-    assert result["passed"] is True
-    assert Path(str(captured["argv"][0])).resolve() == real_tool.resolve()
+    # Deterministic across Windows cwd-search regimes (NoDefaultCurrentDirectoryInExePath set or
+    # not): the untrusted repo shadow must NEVER be spawned. Either the trusted-PATH tool resolves
+    # and spawns (passed True, e.g. this dev box), or which() found the cwd shadow and the guard
+    # rejected it (passed False, nothing spawned, e.g. a default Windows box) -- both are correct
+    # security outcomes; ONLY a spawned repo shadow is a failure. (Asserting passed is True here
+    # was env-dependent and false-failed on default Windows -- the PATH-resolved-binary trap.)
+    if captured.get("argv") is not None:
+        spawned = Path(str(captured["argv"][0]))
+        assert spawned.parent.resolve() != repo.resolve(), f"repo shadow was spawned: {spawned}"
+        assert spawned.resolve() == real_tool.resolve()
+    else:
+        assert result["passed"] is False and "shadow" in str(result["detail"]).lower()
+
+
+def test_run_policy_command_rejects_symlink_shadow_resolving_outside_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression (adversarial security gate): a repo-local shadow that is a SYMLINK into a subdir
+    must still be rejected. The guard compares os.path.abspath, NOT Path.resolve -- resolve()
+    follows the symlink and would put the parent (repo/tools) outside cwd, slipping the parent==cwd
+    check and spawning the payload."""
+    import pytest as _pytest
+
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    repo.mkdir()
+    tools = repo / "tools"
+    tools.mkdir()
+    payload = _write_fake_executable(tools, "evil", "pwned")
+    shadow = repo / "ruff.cmd"
+    try:
+        shadow.symlink_to(payload)
+    except (OSError, NotImplementedError):
+        _pytest.skip("symlink creation not permitted on this box")
+
+    trusted_empty = tmp_path / "trusted-empty"
+    trusted_empty.mkdir()
+    monkeypatch.setenv("PATH", str(trusted_empty))
+    monkeypatch.chdir(repo)
+    # Simulate the Windows cwd search returning the in-repo symlink shadow.
+    monkeypatch.setattr(apply_policy.shutil, "which", lambda _name, path=None: str(shadow))
+
+    spawn_calls: list[list[str]] = []
+
+    def _fake_run(argv, **kwargs):
+        spawn_calls.append(list(argv))
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(apply_policy.subprocess, "run", _fake_run)
+
+    result = apply_policy._run_policy_command("test", "ruff --check", repo, timeout=10)
+
+    assert result["passed"] is False, "a symlink shadow resolving into the repo must be rejected"
+    assert not spawn_calls, "the symlink shadow must never be spawned"
+    assert "refusing a repo-local executable shadow" in str(result["detail"])

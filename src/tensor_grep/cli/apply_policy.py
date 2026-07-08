@@ -509,25 +509,28 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
     # untrusted repo (which Windows CreateProcess searches) pre-empt the real tool. Passing an
     # absolute PATH-resolved binary removes the cwd search; fail closed if the tool is not on PATH.
     #
-    # audit #35 (CWE-427 refinement, Py3.11/Windows cwd shadow-exe): the guard above is
-    # INSUFFICIENT by itself on Python < 3.12 + Windows. shutil.which() there unconditionally
-    # inserts the current working directory into its search path -- regardless of what `path=`
-    # we pass -- because the NeedCurrentDirectoryForExePathW-gated skip only landed in 3.12
-    # (cpython#91558). A bare "strip os.curdir from our own PATH" is therefore not load-bearing:
-    # shutil.which() re-adds cwd itself. Two things are needed:
+    # audit #35 (CWE-427 refinement, Windows cwd shadow-exe): the resolve-to-absolute above is
+    # INSUFFICIENT by itself on Windows. shutil.which() there searches the current working
+    # directory regardless of what `path=` we pass, because WinAPI NeedCurrentDirectoryForExePath
+    # returns True BY DEFAULT -- disabled only by the `NoDefaultCurrentDirectoryInExePath` env var
+    # (the cpython#91558 / 3.12 change only made which() *consult* that API; the default cwd search
+    # is live on 3.11/3.12/3.13/3.14). So this is a WINDOWS-ENV condition, NOT a Python-version one
+    # -- do not weaken the guard below for any Python version. A bare "strip os.curdir from our own
+    # PATH" is not load-bearing: which() re-adds cwd itself. Two things:
     #   1) _search_path_without_cwd() passes an explicit `path=` with empty/"."/cwd-resolving
     #      entries stripped, closing the narrower case where the *environment* PATH string
     #      itself carries such an entry; and
     #   2) reject the resolution outright if it lands inside the untrusted target root (`cwd`) --
-    #      this is the load-bearing guard, since it holds even though (1) cannot stop the
-    #      implicit Windows cwd search on 3.11.
+    #      the load-bearing guard. It compares os.path.abspath, NOT Path.resolve: resolve() FOLLOWS
+    #      symlinks, which let a `repo/tool.cmd -> repo/sub/evil.cmd` symlink land its parent
+    #      OUTSIDE cwd and slip the parent==cwd check (caught by the adversarial security gate).
     resolved_executable = shutil.which(argv[0], path=_search_path_without_cwd()) if argv else None
     if resolved_executable is None:
         return _command_result(
             passed=False,
             detail=f"{name} command executable {(argv[0] if argv else command)!r} was not found on PATH.",
         )
-    resolved_path = Path(resolved_executable).resolve()
+    resolved_path = Path(os.path.abspath(resolved_executable))
     try:
         untrusted_root = cwd.resolve()
     except OSError:
