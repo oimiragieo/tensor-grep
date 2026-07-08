@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.47.0 (2026-07-08)
+
+### Features
+
+- **semantic**: Opt-in cAST structural AST chunking (TG_CHUNKER=structural) beside the fixed-window
+  chunker; fail-open, default-off, Chunk-shape-identical, index-version-bumped (arxiv 2506.15655; TS
+  retrieval win) ([#443](https://github.com/oimiragieo/tensor-grep/pull/443),
+  [`9015238`](https://github.com/oimiragieo/tensor-grep/commit/901523808db52d6aeb3572a97745d70daa97221f))
+
+- Add chunk_file_structural() to retrieval_chunker.py: tree-sitter split-then-merge -- recursively
+  split any AST node whose non-whitespace-char span exceeds the budget (module -> class/def -> block
+  -> statement), then greedily merge adjacent small sibling spans back up to budget so chunk
+  boundaries land on syntactic units instead of arbitrary line counts. Covers py/js/jsx/ts/tsx/
+  rust/go via the tree-sitter grammars already an optional dep; any other suffix falls open. -
+  chunk_file() dispatches to it when (and only when) TG_CHUNKER=structural is set in the
+  environment, mapping chunk_size/overlap onto budget/overlap_context -- every existing caller
+  (reranker.py, semantic_index.py, main.py) already calls chunk_file() with zero signature change,
+  so the env var is the entire opt-in surface. Unset (or any other value) is byte-identical to the
+  pre-cAST line-window implementation -- this PR does not flip the default. - FAIL-OPEN, never
+  raises: no tree-sitter grammar for the suffix, an unreadable/undecodable file, a syntax-error
+  parse (tree.root_node.has_error), or a budget pathology that would itself blow past MAX_CHUNKS all
+  fall back to chunk_file()'s line-window defaults, whose own loud MAX_CHUNKS guard still applies. -
+  Chunk dataclass shape is unchanged (file_path, 1-based inclusive start/end line, text). -
+  semantic_index.py: bump INDEX_VERSION 1 -> 2 and fold the active chunker mode into the persisted
+  meta + load_or_warn's staleness check, so a structural-chunked index can never silently fuse with
+  (or be silently reused by) a stale fixed-window index -- the silent-mixed-chunker bug class.
+
+TDD: 19 new tests in test_retrieval_chunker.py (function-boundary chunking, oversized-function
+  split-then-merge, fail-open on no-grammar/syntax-error/unreadable/empty files, byte-identical
+  default path, Chunk shape/line-numbering parity, MAX_CHUNKS guard still fires) + 4 new tests in
+  test_semantic_index.py (chunker_mode recorded, mode-mismatch and stale-schema rejection). Full
+  retrieval/reranker/semantic-index/integration suite (86 tests) green; ruff + ruff format --preview
+  + mypy clean on the touched files.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.46.0 (2026-07-08)
 
 ### Features
