@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.45.14 (2026-07-08)
+
+### Bug Fixes
+
+- **L7**: Rg --count / -l recover partial results on timeout instead of crashing
+  ([#435](https://github.com/oimiragieo/tensor-grep/pull/435),
+  [`71796d1`](https://github.com/oimiragieo/tensor-grep/commit/71796d17db07543b6f287667ff60d3aed67ac416))
+
+* fix(L7): rg --count / -l recover partial results on TimeoutExpired instead of hard-crashing
+  (mirror search()'s graceful partial handling); extract shared _parse_count_stdout
+
+* fix(test): L7 timeout tests mock rg binary resolution so they pass on a clean CI runner without rg
+  on PATH (was: _build_cmd raised 'requires rg binary' before the monkeypatched timeout ran, failing
+  7 platforms)
+
+
 ## v1.45.13 (2026-07-08)
 
 ### Bug Fixes
