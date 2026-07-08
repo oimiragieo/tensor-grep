@@ -412,9 +412,10 @@ version_variables = [
 
 
 
+
 [project]
 name = "tensor-grep"
-version = "1.45.12"
+version = "1.45.13"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -456,7 +457,7 @@ dev = [
   "pytest>=9.0.3", "pytest-cov>=5.0", "pytest-mock>=3.14",
   "pytest-asyncio>=0.24", "pytest-snapshot>=0.9",
   "hypothesis>=6.100", "mutmut>=3.0",
-  "ruff==0.15.20", "mypy>=1.11",
+  "ruff==0.15.20", "mypy==1.19.1",
   "numpy>=1.26.0",
   "stringzilla>=4.0",
   "psutil",

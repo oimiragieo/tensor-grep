@@ -4309,7 +4309,7 @@ wheels = [
 
 [[package]]
 name = "tensor-grep"
-version = "1.45.12"
+version = "1.45.13"
 source = { editable = "." }
 dependencies = [
     { name = "importlib-metadata", version = "8.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -4397,7 +4397,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "model2vec", marker = "extra == 'semantic'", specifier = ">=0.5" },
     { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = "==1.19.1" },
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.26.0" },
     { name = "numpy", marker = "extra == 'semantic'", specifier = ">=1.26" },
     { name = "nvtx", marker = "extra == 'bench'", specifier = ">=0.2" },
