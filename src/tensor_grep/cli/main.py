@@ -8860,6 +8860,101 @@ def callers(
     )
 
 
+@app.command()
+def imports(
+    file: str = typer.Argument(..., help="File to inspect for its own imports."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return what a single FILE imports, resolved to target files where possible.
+
+    The scoped forward file-dependency primitive (#74): O(1) -- parses exactly one file, no
+    repo scan, no --deadline. Use `tg importers FILE` for the reverse question (who imports
+    this file). Both are far cheaper than `tg map` for a single file's dependency edges.
+    """
+    from tensor_grep.cli.repo_map import build_file_imports
+
+    try:
+        payload = build_file_imports(file)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Imports for {current['file']}")
+        typer.echo(
+            f"imports={len(current['imports'])} resolved={len(current['resolved_files'])} "
+            f"external={len(current['external_modules'])} unresolved={len(current['unresolved'])}"
+        )
+        for entry in current["imports"]:
+            if entry.get("resolved"):
+                target = str(entry["resolved"])
+            elif entry.get("external"):
+                target = "external"
+            else:
+                target = "unresolved"
+            typer.echo(f"  {entry['line']}: {entry['module']} -> {target}")
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="imports",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
+
+
+@app.command()
+def importers(
+    file: str = typer.Argument(..., help="File to find importers of."),
+    root: str = typer.Argument(".", help="Root to scan for importers."),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return the files that import a single FILE (the reverse #74 file-dependency primitive).
+
+    Bounded reverse lookup: prefilters candidate importers via the repo's import-alias graph,
+    then re-parses and CONFIRMS each candidate against FILE before reporting it as an edge (the
+    alias prefilter alone over-counts -- see `tg callers`' import-consumer precision notes).
+    """
+    from tensor_grep.cli.repo_map import build_file_importers
+
+    try:
+        payload = build_file_importers(
+            file,
+            root,
+            max_repo_files=max_repo_files,
+            deadline_seconds=deadline,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Importers of {current['file']}")
+        typer.echo(f"importers={current['importer_count']} files={len(current['importer_files'])}")
+        _echo_symbol_location_rows(current["importers"])
+
+    _emit_symbol_command_result(
+        payload,
+        result_key="importers",
+        json_output=json_output,
+        emit_text=_emit_text,
+    )
+
+
 def _mermaid_label(text: str) -> str:
     """Neutralize characters that would break a quoted Mermaid node/edge label."""
     return text.replace("\\", "/").replace('"', "'")
@@ -9845,6 +9940,57 @@ def session_blast_radius_cmd(
         return
 
     typer.echo(payload["rendered_caller_tree"])
+
+
+@session_app.command("importers")
+def session_importers_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    file: str = typer.Argument(..., help="File to find importers of."),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session (zero-reparse) list of the files that import FILE."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import session_file_importers
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                ".",
+                {
+                    "command": "file_importers",
+                    "session_id": session_id,
+                    "path": ".",
+                    "file": file,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_file_importers(
+                session_id,
+                file,
+                refresh_on_stale=refresh_on_stale,
+            )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
+        return
+
+    typer.echo(f"Importers of {payload['file']}")
+    typer.echo(f"importers={payload['importer_count']} files={len(payload['importer_files'])}")
+    _echo_symbol_location_rows(payload["importers"])
 
 
 @session_app.command("blast-radius-render")

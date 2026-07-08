@@ -24,6 +24,7 @@ from tensor_grep.cli.repo_map import (
     build_context_edit_plan_from_map,
     build_context_pack_from_map,
     build_context_render_from_map,
+    build_file_importers_from_map,
     build_repo_map,
     build_repo_map_incremental,
     build_symbol_blast_radius_from_map,
@@ -1049,6 +1050,22 @@ def session_blast_radius(
     return response
 
 
+def session_file_importers(
+    session_id: str,
+    file_path: str,
+    path: str = ".",
+    *,
+    refresh_on_stale: bool = False,
+) -> dict[str, Any]:
+    """Zero-reparse reverse #74 lookup: who imports ``file_path``, served from the session's
+    cached repo map (no fresh repo scan, unlike the cold ``build_file_importers``)."""
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
+    response = build_file_importers_from_map(payload["repo_map"], file_path)
+    response["session_id"] = session_id
+    response["routing_reason"] = "session-file-importers"
+    return response
+
+
 def session_blast_radius_plan(
     session_id: str,
     symbol: str,
@@ -1246,6 +1263,15 @@ def _serve_session_request_from_payload(
         response = build_symbol_callers_from_map(repo_map, symbol, semantic_provider=provider)
         response["session_id"] = session_id
         response["routing_reason"] = "session-callers"
+        return response
+
+    if command == "file_importers":
+        target_file = str(request.get("file", "")).strip()
+        if not target_file:
+            raise ValueError("file_importers requests require a non-empty file")
+        response = build_file_importers_from_map(repo_map, target_file)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-file-importers"
         return response
 
     if command == "blast_radius":

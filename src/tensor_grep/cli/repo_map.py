@@ -1559,6 +1559,20 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
                 imports.append(node.module)
                 for alias in node.names:
                     imports.append(f"{node.module}.{alias.name}")
+            elif node.level:
+                # `from . import x` / `from .. import x` -- no dotted module text, only
+                # relative dots plus the imported names (which may themselves be sibling
+                # submodules, e.g. `from . import helpers` importing `helpers.py`). Recording
+                # the bare alias name keeps this import in the reverse-import alias graph
+                # (`_reverse_importers`/`_module_aliases_for_path`) so `tg importers` can even
+                # PREFILTER a sibling `from . import X` importer -- omitting it here (unlike
+                # `_python_imports_with_lines`, which already records it for the forward
+                # `tg imports` primitive) was a genuine recall gap, not an intentional
+                # exclusion (#74 review fix). The precise per-candidate CONFIRM step
+                # (`_python_module_matches_definition`) still disambiguates which file it
+                # actually resolves to -- this only widens the prefilter's candidate set.
+                for alias in node.names:
+                    imports.append(alias.name)
 
     for symbol_node in ast.walk(tree):
         if isinstance(symbol_node, ast.ClassDef):
@@ -5405,6 +5419,282 @@ def _imports_and_symbols_for_path(
         elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
+
+
+# #74 moat: `tg imports`/`tg importers` -- the scoped file-dependency primitive. Companion to
+# `_imports_and_symbols_for_path` above, which collapses imports to a deduped, line-less
+# `list[str]` (fine for the reverse-import alias graph, useless for a command that must report
+# *where* each import statement lives). Mirrors that function's per-language extraction sources
+# exactly (same AST node types / same regexes as `_python_imports_and_symbols` and
+# `_regex_imports_and_symbols`) so raw recall stays identical -- this only adds the line number
+# `tg imports` needs and keeps one row per import STATEMENT (not one row per imported symbol),
+# which is the right unit for a file-dependency primitive.
+def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    if path.suffix != ".py":
+        return []
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
+    if file_size > _max_parse_bytes():
+        return []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                entries.append({"module": alias.name, "line": int(node.lineno), "level": 0})
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                entries.append({
+                    "module": node.module,
+                    "line": int(node.lineno),
+                    "level": int(node.level or 0),
+                })
+            elif node.level:
+                # `from . import x` / `from .. import x` -- no dotted module text, only
+                # relative dots plus the imported names, which may themselves be
+                # submodules (e.g. `from . import utils` importing sibling `utils.py`).
+                for alias in node.names:
+                    entries.append({
+                        "module": alias.name,
+                        "line": int(node.lineno),
+                        "level": int(node.level),
+                    })
+    return entries
+
+
+def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    if path.suffix not in _JS_TS_SUFFIXES:
+        return []
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
+    if file_size > _max_parse_bytes():
+        return []
+    try:
+        lines = _read_source_text_cached(str(path)).splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
+        export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
+        require_match = re.match(
+            r"^\s*(?:const|let|var)\s+(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)"
+            r'\s*=\s*require\(["\']([^"\']+)["\']\)',
+            line,
+        )
+        if import_match:
+            entries.append({"module": import_match.group(1), "line": line_number})
+        if export_from_match:
+            entries.append({"module": export_from_match.group(1), "line": line_number})
+        if require_match:
+            entries.append({"module": require_match.group(1), "line": line_number})
+    return entries
+
+
+def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    if path.suffix not in _RUST_SUFFIXES:
+        return []
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
+    if file_size > _max_parse_bytes():
+        return []
+    try:
+        lines = _read_source_text_cached(str(path)).splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        # Same single-line `use ... ;` regex as `_regex_imports_and_symbols` -- a brace-group
+        # `use` spanning multiple lines is a pre-existing extraction gap there too, not a new
+        # one introduced here (recall gaps must stay honest, not silently "fixed" here only).
+        use_match = re.match(r"^\s*use\s+([^;]+);", line)
+        if use_match:
+            entries.append({"module": use_match.group(1).strip(), "line": line_number})
+    return entries
+
+
+def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
+    """Raw per-statement imports with 1-based line numbers for the 4 supported languages.
+
+    Returns ``[]`` for an unsupported language (e.g. Go) or an over-cap file -- callers that
+    need to distinguish "genuinely no imports" from "not scanned" must check those conditions
+    themselves (see ``build_file_imports``'s ``result_incomplete`` handling).
+    """
+    spec = lang_registry.spec_for_path(path)
+    if spec is None:
+        return []
+    if spec.language_id == "python":
+        return _python_imports_with_lines(path)
+    if spec.language_id in ("javascript", "typescript"):
+        return _js_ts_imports_with_lines(path)
+    if spec.language_id == "rust":
+        return _rust_imports_with_lines(path)
+    return []
+
+
+def _python_module_parts(module_name: str) -> list[str]:
+    return [part for part in module_name.split(".") if part]
+
+
+def _python_relative_base_dir(importer_path: Path, level: int) -> Path:
+    # PEP 328: level=1 ("from . import x") resolves relative to the importer's OWN package
+    # dir (its parent); level=2 ("from .. import x") goes one dir further up, etc.
+    current = importer_path.parent
+    for _ in range(max(0, level - 1)):
+        current = current.parent
+    return current
+
+
+def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -> list[Path]:
+    """Plausible absolute-import search roots for a Python file with no `sys.path` to consult.
+
+    Unlike JS/TS (tsconfig baseUrl/paths) or Rust (Cargo.toml workspace members), tensor-grep
+    has no primed "project context" for Python module resolution -- this is the net-new
+    resolution seam the #74 design flagged as the highest-risk part of `tg imports`. Tries, in
+    order: the repo root, a `src/` layout root, the importer's own directory, and each ancestor
+    directory up to the repo root (covers same-package absolute imports without a full
+    `sys.path` simulation). A bare specifier that is a local workspace package NOT reachable via
+    one of these roots is honestly misclassified as external -- see the module docstring risk
+    note; recall gaps here are disclosed via ``external``/``unresolved``, never silently hidden.
+    """
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(candidate: Path | None) -> None:
+        if candidate is None:
+            return
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            roots.append(candidate)
+
+    normalized_root = _normalized_repo_root(repo_root)
+    _add(normalized_root)
+    if normalized_root is not None:
+        _add(normalized_root / "src")
+    current = importer_path.parent
+    _add(current)
+    if normalized_root is not None:
+        try:
+            current.relative_to(normalized_root)
+            within_root = True
+        except ValueError:
+            within_root = False
+        if within_root:
+            while current != normalized_root:
+                current = current.parent
+                _add(current)
+    # Walk up past every `__init__.py`-marked package directory: the first ancestor WITHOUT
+    # one is the natural Python "import root" for an absolute dotted import (e.g. `pkg.helpers`
+    # written inside `pkg/main.py` resolves relative to pkg's PARENT, not pkg itself). This
+    # covers the common case where no project-root marker file exists at all.
+    package_top = importer_path.parent
+    while (package_top / "__init__.py").exists():
+        parent = package_top.parent
+        if parent == package_top:
+            break
+        package_top = parent
+    _add(package_top)
+    return roots
+
+
+def _python_module_candidates(
+    importer_path: Path,
+    module_name: str,
+    repo_root: Path | str | None = None,
+    *,
+    level: int = 0,
+) -> dict[str, Any]:
+    parts = _python_module_parts(module_name)
+    if not parts:
+        return {"paths": [], "provenance": [], "confidence": 0.0}
+
+    candidates: list[Path] = []
+    if level > 0:
+        base_dir = _python_relative_base_dir(importer_path, level)
+        target = base_dir.joinpath(*parts)
+        candidates.append(target.with_suffix(".py"))
+        candidates.append(target / "__init__.py")
+        provenance = ["relative"]
+        confidence = 1.0
+    else:
+        for root in _python_candidate_roots(importer_path, repo_root):
+            candidates.append(root.joinpath(*parts).with_suffix(".py"))
+            candidates.append(root.joinpath(*parts, "__init__.py"))
+        provenance = ["python-path-heuristic"]
+        confidence = 0.7
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            key = _resolved_path_str(str(candidate))
+        except OSError:
+            continue
+        if key not in seen:
+            seen.add(key)
+            deduped.append(Path(key))
+    return {"paths": deduped, "provenance": provenance, "confidence": confidence}
+
+
+def _python_module_match_details(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+    *,
+    level: int = 0,
+) -> dict[str, Any]:
+    """Resolve-then-compare Python reverse-import confirm.
+
+    Mirrors `_js_ts_module_match_details` / `_rust_module_match_details`: reuses the SAME
+    precise resolver the forward `tg imports` uses (`_python_module_candidates`) instead of a
+    bare path-SUFFIX match, so two files sharing a basename (`app/config.py` vs
+    `tools/config.py`) no longer produce a phantom reverse edge just because an importer's
+    `import config` textually ends with "config" (#74 review fix -- see
+    `_module_path_matches_definition`, which is exactly that suffix match and is what this
+    function replaces for the Python confirm step).
+
+    Deliberately has NO suffix-match fallback (unlike JS/TS's bare-specifier partial-resolution
+    or Rust's non-workspace-crate partial-resolution) -- that fallback IS the bug this closes,
+    so it must not be reintroduced here.
+    """
+    candidate_info = _python_module_candidates(importer_path, module_name, repo_root, level=level)
+    resolved_definition = _resolved_path_str(definition_path)
+    if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
+        return {
+            "matched": True,
+            "provenance": list(candidate_info["provenance"]),
+            "confidence": float(candidate_info["confidence"] or 1.0),
+        }
+    return {"matched": False, "provenance": [], "confidence": 0.0}
+
+
+def _python_module_matches_definition(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+    *,
+    level: int = 0,
+) -> bool:
+    return bool(
+        _python_module_match_details(
+            importer_path, module_name, definition_path, repo_root, level=level
+        )["matched"]
+    )
 
 
 def _group_symbols_by_file(symbols: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -13745,6 +14035,325 @@ def build_symbol_refs_json(
         ),
         indent=2,
     )
+
+
+# #74 moat: `tg imports FILE` / `tg importers FILE [ROOT]` -- the scoped file-dependency
+# primitive. The benchmark that motivated this (docs/benchmarks.md P4) showed `tg` losing to
+# plain grep ~10x on file-dependency lookups because the only existing primitive was the
+# whole-repo `tg map` (~53K tokens on a mid-size repo); these two commands answer "what does
+# this ONE file import" (O(1) parse, no scan) and "who imports this ONE file" (bounded reverse
+# lookup) directly, at ~1-2K tokens.
+_PROJECT_ROOT_MARKERS = (".git", "pyproject.toml", "package.json", "Cargo.toml", "tsconfig.json")
+
+
+def _infer_project_root(file_path: Path) -> Path:
+    """Walk upward from a file looking for a project-root marker; falls back to its own dir.
+
+    `tg imports FILE` takes no ROOT argument (by design -- it is meant to be a true O(1)
+    single-file operation), so bare-specifier / tsconfig-alias / Rust-workspace resolution needs
+    a plausible root inferred from the file's own location rather than passed explicitly.
+    """
+    current = file_path.parent
+    for candidate in [current, *current.parents]:
+        try:
+            if any((candidate / marker).exists() for marker in _PROJECT_ROOT_MARKERS):
+                return candidate
+        except OSError:
+            continue
+    return current
+
+
+_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({"python", "javascript", "typescript", "rust"})
+
+
+def _resolve_raw_import_entry(
+    importer_path: Path,
+    entry: dict[str, Any],
+    repo_root: Path | str | None,
+    language_id: str,
+) -> dict[str, Any]:
+    module = str(entry.get("module", ""))
+    line = int(entry.get("line", 0) or 0)
+
+    if language_id in ("javascript", "typescript"):
+        candidate_info = _js_ts_module_candidates(importer_path, module, repo_root)
+        is_relative = module.startswith(".")
+        has_candidates = bool(candidate_info["paths"])
+        resolved = next(
+            (str(current) for current in candidate_info["paths"] if Path(current).is_file()),
+            None,
+        )
+        external = (not is_relative) and not has_candidates
+        provenance = list(candidate_info["provenance"]) or (["relative"] if is_relative else [])
+        confidence = float(candidate_info["confidence"]) if resolved is not None else 0.0
+    elif language_id == "rust":
+        candidates = _rust_module_candidates(importer_path, module, repo_root)
+        resolved_candidate = next(
+            (current for current in candidates if Path(str(current["path"])).is_file()),
+            None,
+        )
+        parts = [part.strip() for part in module.split("::") if part.strip()]
+        first = parts[0] if parts else ""
+        is_workspace_crate = first not in {"crate", "self", "super"} and (
+            _rust_workspace_entry_for_crate(first, repo_root) is not None
+        )
+        is_local_syntax = first in {"crate", "self", "super"} or is_workspace_crate
+        resolved = str(resolved_candidate["path"]) if resolved_candidate else None
+        external = resolved is None and not is_local_syntax
+        provenance = list(resolved_candidate["provenance"]) if resolved_candidate else []
+        confidence = float(resolved_candidate["confidence"]) if resolved_candidate else 0.0
+    elif language_id == "python":
+        level = int(entry.get("level", 0) or 0)
+        candidate_info = _python_module_candidates(importer_path, module, repo_root, level=level)
+        resolved = next(
+            (str(current) for current in candidate_info["paths"] if Path(current).is_file()),
+            None,
+        )
+        external = resolved is None
+        provenance = list(candidate_info["provenance"])
+        confidence = float(candidate_info["confidence"]) if resolved is not None else 0.0
+    else:
+        resolved, external, provenance, confidence = None, True, [], 0.0
+
+    return {
+        "module": module,
+        "line": line,
+        "resolved": resolved,
+        "provenance": provenance,
+        "resolution_confidence": confidence,
+        "external": external,
+    }
+
+
+def build_file_imports(file_path: str | Path) -> dict[str, Any]:
+    """Return what a single FILE imports, resolved to target files where possible.
+
+    O(1): parses exactly one file (plus lazily-primed, cached repo context for tsconfig/Cargo
+    workspace lookups) -- no repo scan, no scan cap, no ``--deadline``. See ``build_file_importers``
+    for the reverse (who imports this file) primitive, which does need a bounded repo scan.
+    """
+    resolved_file = Path(file_path).expanduser().resolve()
+    if not resolved_file.exists():
+        raise FileNotFoundError(f"File not found: {resolved_file}")
+    if resolved_file.is_dir():
+        raise ValueError(f"tg imports expects a FILE, not a directory: {resolved_file}")
+
+    payload = _envelope(resolved_file)
+    payload["routing_reason"] = "file-imports"
+    payload["file"] = str(resolved_file)
+
+    spec = lang_registry.spec_for_path(resolved_file)
+    language_id = spec.language_id if spec is not None else None
+    supported = language_id in _SUPPORTED_FILE_DEPENDENCY_LANGUAGES
+
+    try:
+        file_size = resolved_file.stat().st_size
+    except OSError:
+        file_size = 0
+    max_parse_bytes = _max_parse_bytes()
+    over_cap = file_size > max_parse_bytes
+
+    imports: list[dict[str, Any]] = []
+    result_incomplete = False
+    incomplete_reason: str | None = None
+
+    if over_cap:
+        # Fix-A-lineage honesty rule (#74 design): the underlying per-file byte cap
+        # (`_imports_and_symbols_for_path`, `_imports_with_lines_for_path`) returns an empty
+        # result for an over-cap file -- that must NEVER read as "this file genuinely has zero
+        # imports". Surface it as an incomplete scan instead of a clean empty list.
+        result_incomplete = True
+        incomplete_reason = (
+            f"file exceeds the {max_parse_bytes}-byte parse cap (size={file_size}); "
+            "imports were not scanned"
+        )
+    elif not supported:
+        result_incomplete = True
+        incomplete_reason = (
+            "no import extractor registered for this file suffix"
+            if spec is None
+            else f"'{language_id}' has no import-resolution support in `tg imports` yet"
+        )
+    else:
+        repo_root = _infer_project_root(resolved_file)
+        for raw_entry in _imports_with_lines_for_path(resolved_file):
+            imports.append(
+                _resolve_raw_import_entry(resolved_file, raw_entry, repo_root, str(language_id))
+            )
+
+    payload["imports"] = imports
+    payload["resolved_files"] = sorted(
+        dict.fromkeys(str(current["resolved"]) for current in imports if current.get("resolved"))
+    )
+    payload["external_modules"] = sorted(
+        dict.fromkeys(str(current["module"]) for current in imports if current.get("external"))
+    )
+    payload["unresolved"] = sorted(
+        dict.fromkeys(
+            str(current["module"])
+            for current in imports
+            if not current.get("external") and not current.get("resolved")
+        )
+    )
+    payload["result_incomplete"] = result_incomplete
+    if incomplete_reason is not None:
+        payload["incomplete_reason"] = incomplete_reason
+    return payload
+
+
+def _confirm_import_edges(
+    candidate_importer: Path,
+    target_file: str,
+    repo_root: Path | str | None,
+) -> list[dict[str, Any]]:
+    """Re-parse ONE prefiltered candidate file and confirm which (if any) of its raw imports
+    actually resolve to ``target_file``.
+
+    Precision step for `tg importers`: the alias-substring prefilter (`_reverse_importers`)
+    deliberately over-counts (it is the same mechanism behind the Case-4 false-edge bug) --
+    this is what turns "maybe imports it" into "confirmed imports it, on this exact line".
+    """
+    spec = lang_registry.spec_for_path(candidate_importer)
+    language_id = spec.language_id if spec is not None else None
+    if language_id not in ("javascript", "typescript", "rust", "python"):
+        return []
+
+    edges: list[dict[str, Any]] = []
+    seen_lines: set[int] = set()
+    for raw_entry in _imports_with_lines_for_path(candidate_importer):
+        module = str(raw_entry.get("module", ""))
+        line = int(raw_entry.get("line", 0) or 0)
+        if language_id in ("javascript", "typescript"):
+            matched = _js_ts_module_matches_definition(
+                candidate_importer, module, target_file, repo_root
+            )
+        elif language_id == "rust":
+            matched = _rust_module_matches_definition(
+                candidate_importer, module, target_file, repo_root
+            )
+        else:
+            # Python: resolve-then-compare via the SAME precise resolver the forward
+            # `tg imports` uses, symmetric with the JS/TS/Rust branches above (#74 review
+            # fix). `level` (0 for absolute, >=1 for `from .`/`from ..`) is carried on the raw
+            # entry by `_python_imports_with_lines` -- threading it through here is what lets
+            # `_python_module_candidates` resolve a relative import correctly instead of
+            # falling back to a bare path-suffix match that ignores directory context.
+            level = int(raw_entry.get("level", 0) or 0)
+            matched = _python_module_matches_definition(
+                candidate_importer, module, target_file, repo_root, level=level
+            )
+        if not matched or line in seen_lines:
+            continue
+        seen_lines.add(line)
+        provenance = "parser-backed" if language_id == "python" else "heuristic"
+        edges.append({
+            "file": str(candidate_importer),
+            "line": line,
+            "text": _source_line_text(candidate_importer, line),
+            "kind": "import-consumer",
+            "edge_kind": "reverse-import",
+            "module": module,
+            "provenance": provenance,
+            "resolution_confidence": _import_graph_resolution_confidence(provenance),
+        })
+    return edges
+
+
+def build_file_importers_from_map(
+    repo_map: dict[str, Any],
+    file_path: str | Path,
+    *,
+    deadline_monotonic: float | None = None,
+) -> dict[str, Any]:
+    repo_root = Path(str(repo_map["path"])).resolve()
+    resolved_file = Path(file_path).expanduser()
+    if not resolved_file.is_absolute():
+        resolved_file = repo_root / resolved_file
+    resolved_file = resolved_file.resolve()
+    if not resolved_file.exists():
+        raise FileNotFoundError(f"File not found: {resolved_file}")
+    target_file = str(resolved_file)
+
+    payload = _envelope(repo_root)
+    payload["routing_reason"] = "file-importers"
+    payload["file"] = target_file
+
+    all_files = [str(current) for current in repo_map.get("files", [])]
+    imports_by_file = {
+        str(current["file"]): list(
+            dict.fromkeys(str(name) for name in current.get("imports", []) if name)
+        )
+        for current in repo_map.get("imports", [])
+    }
+    reverse_map = _reverse_importers(all_files, imports_by_file)
+    prefiltered = sorted(reverse_map.get(target_file, set()))
+
+    ceiling_hit = len(prefiltered) > CALLER_SCAN_FILE_CEILING
+    bounded_candidates = prefiltered[:CALLER_SCAN_FILE_CEILING]
+
+    edges: list[dict[str, Any]] = []
+    deadline_hit = False
+    scanned_count = 0
+    for candidate in bounded_candidates:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            deadline_hit = True
+            break
+        scanned_count += 1
+        edges.extend(_confirm_import_edges(Path(candidate), target_file, repo_root))
+    edges.sort(key=lambda item: (str(item["file"]), int(item.get("line", 0) or 0)))
+
+    payload["importers"] = edges
+    payload["importer_files"] = sorted(dict.fromkeys(str(item["file"]) for item in edges))
+    payload["importer_count"] = len(edges)
+    if ceiling_hit:
+        # task #61 lesson: bound this sibling loop with the SAME ceiling the caller-scan main
+        # loop uses, and mark it via the shared `caller_scan_limit` shape so the CLI's existing
+        # `_scan_truncation_warning`/exit-2 contract picks it up with no bespoke wiring.
+        payload["caller_scan_limit"] = {
+            "possibly_truncated": True,
+            "ceiling": CALLER_SCAN_FILE_CEILING,
+            "files_total": len(prefiltered),
+        }
+    if deadline_hit:
+        payload["partial"] = True
+        payload["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "importer_candidates_scanned": scanned_count,
+            "importer_candidates_total": len(bounded_candidates),
+        }
+    _copy_scan_limit(payload, repo_map)
+    payload["resolution_gaps"] = list(repo_map.get("resolution_gaps", []))
+    return payload
+
+
+def build_file_importers(
+    file_path: str | Path,
+    root: str | Path = ".",
+    *,
+    max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
+    """Return which files import a single FILE (the reverse #74 file-dependency primitive).
+
+    Cold tier: builds (or reuses a cached) repo map over ROOT, then confirms candidate importer
+    edges precisely. See ``session_file_importers`` in session_store.py for the zero-reparse
+    session tier, which calls ``build_file_importers_from_map`` directly on a cached map.
+    """
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = build_repo_map(
+        root,
+        max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        _profiling_collector=_profiling_collector,
+    )
+    result = build_file_importers_from_map(
+        repo_map,
+        file_path,
+        deadline_monotonic=deadline_monotonic,
+    )
+    _copy_partial_signal(result, repo_map)
+    return result
 
 
 def build_symbol_callers(
