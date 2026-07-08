@@ -19,6 +19,7 @@ def reciprocal_rank_fusion(
     rankings: Sequence[Sequence[int]],
     *,
     k: int = DEFAULT_K,
+    weights: Sequence[float] | None = None,
 ) -> list[int]:
     """Fuse per-leg chunk-index rankings into one ranking via Reciprocal Rank Fusion.
 
@@ -27,16 +28,29 @@ def reciprocal_rank_fusion(
     the fused score break by ascending chunk index (mirrors ``retrieval_bm25.py``'s tie-break),
     so the result is fully deterministic.
 
+    ``weights`` (optional) is a per-leg multiplier parallel to ``rankings`` -- leg ``i``'s
+    contribution becomes ``weight[i] / (k + rank)`` instead of the plain ``1 / (k + rank)``, so a
+    channel can be trusted more (>1.0) or less (<1.0) than the others without changing how it is
+    ranked internally. ``weights=None`` (the default) is a byte-identical no-op: every leg is
+    implicitly weighted 1.0, reproducing the un-weighted fusion exactly (multiplying by 1.0 is an
+    exact IEEE-754 operation). Raises :class:`ValueError` if ``weights`` is given and its length
+    does not match ``rankings``.
+
     Returns the fused chunk indices ordered best-first. Chunks that appear in NO leg are absent
     from the input entirely and therefore never appear in the output.
     """
     if k <= 0:
         raise ValueError(f"k must be positive, got {k}")
+    if weights is not None and len(weights) != len(rankings):
+        raise ValueError(
+            f"weights length ({len(weights)}) must match rankings length ({len(rankings)})"
+        )
 
     scores: dict[int, float] = {}
-    for ranking in rankings:
+    for leg_index, ranking in enumerate(rankings):
+        weight = 1.0 if weights is None else weights[leg_index]
         for rank, chunk_index in enumerate(ranking, start=1):
-            scores[chunk_index] = scores.get(chunk_index, 0.0) + 1.0 / (k + rank)
+            scores[chunk_index] = scores.get(chunk_index, 0.0) + (1.0 / (k + rank)) * weight
 
     ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     return [chunk_index for chunk_index, _ in ordered]

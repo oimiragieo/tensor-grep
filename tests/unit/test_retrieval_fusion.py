@@ -71,3 +71,53 @@ def test_chunks_absent_from_every_leg_never_appear() -> None:
     fused = reciprocal_rank_fusion([[0, 1], [1, 0]])
     assert 2 not in fused
     assert set(fused) == {0, 1}
+
+
+# --- PR-S2: channelized RRF (`weights` param) -------------------------------------------------
+# ADDITIVE: `weights=None` (the default) must reproduce today's output bit-for-bit. Every test
+# above this marker calls `reciprocal_rank_fusion` without `weights` and continues to pass
+# UNMODIFIED after this change -- that is itself the strongest byte-identical no-op proof.
+
+
+def test_weights_omitted_and_weights_none_are_identical() -> None:
+    rankings = [[2, 0, 1], [1, 2, 0], [0, 1, 2]]
+    assert reciprocal_rank_fusion(rankings, k=17) == reciprocal_rank_fusion(
+        rankings, k=17, weights=None
+    )
+
+
+def test_weights_all_ones_is_bit_identical_to_none() -> None:
+    # Multiplying by 1.0 is an exact IEEE-754 no-op, so all-ones weights must reproduce the
+    # unweighted fused order exactly -- not just an equivalent order, the SAME order.
+    rankings = [[0, 1, 2], [2, 1, 0], [1, 0, 2]]
+    assert reciprocal_rank_fusion(rankings, k=10, weights=None) == reciprocal_rank_fusion(
+        rankings, k=10, weights=[1.0, 1.0, 1.0]
+    )
+
+
+def test_weights_changes_fused_order_in_expected_direction() -> None:
+    # leg_a puts chunk 0 first, leg_b puts chunk 1 first -- symmetric, so equal weights tie
+    # (broken by ascending chunk index -> chunk 0 wins). Upweighting leg_b should flip the winner
+    # to chunk 1.
+    leg_a = [0, 1]
+    leg_b = [1, 0]
+    equal = reciprocal_rank_fusion([leg_a, leg_b], k=10)
+    assert equal[0] == 0
+
+    weighted = reciprocal_rank_fusion([leg_a, leg_b], k=10, weights=[1.0, 2.0])
+    assert weighted[0] == 1
+
+
+def test_weights_length_mismatch_raises() -> None:
+    with pytest.raises(ValueError):
+        reciprocal_rank_fusion([[0, 1], [1, 0]], weights=[1.0])
+    with pytest.raises(ValueError):
+        reciprocal_rank_fusion([[0, 1]], weights=[1.0, 2.0])
+
+
+def test_deterministic_repeated_calls_with_weights() -> None:
+    rankings = [[2, 0, 1], [1, 2, 0]]
+    weights = [1.5, 0.5]
+    assert reciprocal_rank_fusion(rankings, weights=weights) == reciprocal_rank_fusion(
+        rankings, weights=weights
+    )

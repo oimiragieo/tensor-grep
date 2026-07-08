@@ -1,5 +1,5 @@
 """Re-rank an existing SearchResult by BM25 chunk relevance (and, for the hybrid variant, an
-RRF fusion of BM25 + dense embedding relevance).
+RRF fusion of BM25 + dense embedding [+ opt-in path/filename] relevance).
 
 This is the lightweight post-processing seam for ``tg search --rank`` / ``tg search --semantic``:
 the normal backend produces matches in grep order, and this re-orders them by the relevance score
@@ -11,6 +11,7 @@ order.
 from __future__ import annotations
 
 import dataclasses
+import os
 from collections import defaultdict
 
 from tensor_grep.core.result import SearchResult
@@ -18,6 +19,44 @@ from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
 from tensor_grep.core.retrieval_dense import DenseIndex
 from tensor_grep.core.retrieval_fusion import DEFAULT_K, reciprocal_rank_fusion
+from tensor_grep.core.retrieval_lexical import split_terms
+
+# PR-S2 (channelized RRF, sverklo steal-list #2): a third, opt-in fusion leg that ranks chunks by
+# filename-token overlap with the query -- a precision signal (a query mentioning "invoice" should
+# surface invoice_parser.py's chunks first). DEFAULT-OFF (gated by `_RRF_CHANNELS_ENV`) so this is
+# a zero-risk additive change pending a golden-set default-flip in a separate PR. A symbol-name
+# channel is DEFERRED to a later phase (it would need a def-scan source and couple this free-file
+# module to repo_map).
+_RRF_CHANNELS_ENV: str = "TG_RRF_CHANNELS"
+PATH_CHANNEL_WEIGHT: float = 1.5
+
+
+def _rrf_channels_enabled() -> bool:
+    return os.environ.get(_RRF_CHANNELS_ENV) == "1"
+
+
+def _path_channel_ranking(chunks: list[Chunk], query: str) -> list[int]:
+    """Rank chunk indices by query-token overlap with their file's stem (basename minus
+    extension), best-first. Reuses ``retrieval_lexical.split_terms`` -- the same tokenizer the
+    BM25 leg uses -- so "parse_invoice" query terms match an "invoice_parser.py" filename despite
+    the different word order. Only chunks with at least one overlapping token are included
+    (mirrors ``Bm25Index.query`` excluding zero-score docs, so a non-matching filename contributes
+    0 to this leg rather than an arbitrary tie-broken rank). Ties break by ascending chunk index
+    for full determinism.
+    """
+    query_terms = set(split_terms(query))
+    if not query_terms:
+        return []
+
+    scored: list[tuple[int, int]] = []
+    for i, chunk in enumerate(chunks):
+        stem = os.path.splitext(os.path.basename(chunk.file_path))[0]
+        overlap = len(query_terms & set(split_terms(stem)))
+        if overlap > 0:
+            scored.append((i, overlap))
+
+    ranked = sorted(scored, key=lambda item: (-item[1], item[0]))
+    return [chunk_index for chunk_index, _overlap in ranked]
 
 
 def rerank_by_bm25(
@@ -77,6 +116,14 @@ def rerank_hybrid(
     fail-closed BM25-only degrade (see ``core/retrieval_dense.py``), so ``dense_index=None`` here
     simply means "fuse with the BM25 leg alone" (still routed through RRF).
 
+    A third, opt-in PATH channel (see :func:`_path_channel_ranking`) ranks chunks by
+    filename-token overlap with the query at ``PATH_CHANNEL_WEIGHT`` (1.5x) vs the BM25/dense
+    legs' implicit 1.0x. It is gated behind the ``TG_RRF_CHANNELS=1`` environment variable and is
+    DEFAULT-OFF: with the flag unset (the default), fusion runs BM25 [+ dense] with
+    ``weights=None`` exactly as before -- a byte-identical no-op (see
+    :func:`~tensor_grep.core.retrieval_fusion.reciprocal_rank_fusion`) -- so this is a zero-risk
+    additive change pending a golden-set default-flip in a separate PR.
+
     NOTE (F15): a BM25-only RRF degrade is NOT byte-identical to :func:`rerank_by_bm25` on a BM25
     SCORE TIE -- RRF breaks ties by ascending chunk index, whereas ``rerank_by_bm25``'s stable sort
     preserves grep order. Both are valid orderings; when ``--semantic`` is requested the fused path
@@ -94,12 +141,20 @@ def rerank_hybrid(
 
     total = max(1, len(chunks))
     bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
-    rankings = [bm25_ranking]
+    rankings: list[list[int]] = [bm25_ranking]
     if dense_index is not None:
         dense_ranking = [chunk_idx for chunk_idx, _ in dense_index.query(query, top_k=total)]
         rankings.append(dense_ranking)
 
-    fused_order = reciprocal_rank_fusion(rankings, k=k)
+    weights: list[float] | None = None
+    if _rrf_channels_enabled():
+        weights = [1.0] * len(rankings)
+        path_ranking = _path_channel_ranking(chunks, query)
+        if path_ranking:
+            rankings.append(path_ranking)
+            weights.append(PATH_CHANNEL_WEIGHT)
+
+    fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights)
     # Position in the fused order is a monotonic proxy for the underlying RRF score: RRF ties are
     # already broken by ascending chunk index before this list is built, so using position
     # preserves the exact fused ordering while giving `match_score` below a single comparable
