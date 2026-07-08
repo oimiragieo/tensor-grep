@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.49.0 (2026-07-08)
+
+### Features
+
+- **run**: Bound validation subprocesses with a timeout
+  (--validation-timeout-ms/TG_VALIDATION_TIMEOUT_MS, process_control drain-while-kill) + cap fan-out
+  (--max-validation-targets, visible truncation) — Rust-path parity with apply_policy.py's 120s
+  (audit #10+#34) ([#449](https://github.com/oimiragieo/tensor-grep/pull/449),
+  [`6b15a9b`](https://github.com/oimiragieo/tensor-grep/commit/6b15a9b690ff63a834147ec5ef01618af335c104))
+
+### Testing
+
+- **ci**: Governance hardening -- pin-assert mypy (#446 follow-up), registration-gate
+  no-continue-on-error, full release-needs set, ast-grep version parity, schedule concurrency
+  isolation (audit #36-#40) ([#448](https://github.com/oimiragieo/tensor-grep/pull/448),
+  [`f8aab1c`](https://github.com/oimiragieo/tensor-grep/commit/f8aab1c6f03aaaba286be86052ca7d3bddb20eb4))
+
+- #38: assert the exact `mypy==1.19.1` pin in validate_dev_tooling_constraints, mirroring the
+  existing ruff==0.15.20 pin. Proven to fail when loosened to `mypy>=1.11` (reproduces the #446
+  red-main class). - #36: assert the `Registration completeness` step exists in the static-analysis
+  job and never carries `continue-on-error: true`, so a future "make CI green" pass cannot silently
+  soften the --rank-class front-door gate back to warn-only. - #37: assert the `release` job's
+  `needs` list covers the FULL required gate set (smoke, release-readiness, agent-readiness,
+  windows-agent-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core,
+  search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression), not just
+  benchmark-regression. - #40: assert the ast-grep `--version` pin is equal between ci.yml and
+  benchmark.yml (parsed independently; previously only a comment, unenforced). - #39: give the
+  scheduled cron its own concurrency bucket (`github.event_name == 'schedule'`) so a weekly run can
+  no longer queue behind (or block) a merge-triggered release sharing the push-to-main group -- the
+  minimal ci.yml behavior change in this cluster, everything else is test-only.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
+## v1.48.1 (2026-07-08)
+
+### Bug Fixes
+
+- **repo_map**: Reference line content uses the parsed-source read, not a separate stale text read
+  (audit C3 TOCTOU) — lines/source_bytes/tree now all come from the single _parsed_source_and_tree
+  product; a file edited between the two independent cache lookups no longer indexes tree
+  line-offsets into stale lines ([#447](https://github.com/oimiragieo/tensor-grep/pull/447),
+  [`436fe7a`](https://github.com/oimiragieo/tensor-grep/commit/436fe7ab70b9c9531042833212142ee1cea34b68))
+
+
 ## v1.48.0 (2026-07-08)
 
 ### Features

@@ -344,3 +344,33 @@ def test_oversize_file_bypasses_parse_product_cache(tmp_path, monkeypatch) -> No
     assert first[0] == second[0] == content
     # Bypassed the cache both times -- a giant file must never sit in the parse-product cache.
     assert calls["n"] == 2
+
+
+def test_references_use_parsed_source_lines_not_a_separate_stale_text_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # C3 (audit): `_js_ts_references_and_calls` reads the source TEXT once (cheap pre-parse gate)
+    # and the parse PRODUCT (source+bytes+tree) via a SECOND independent (path, mtime, size) cache
+    # lookup. `lines` (used for a reference's "text" line content) must come from the SAME read as
+    # the tree, or a file edited between the two lookups makes tree line-indices index into stale
+    # `lines` -> wrong reported line content. Simulate the skew: freeze the parse product on the
+    # real file while the text read returns a line-shifted stale copy; the reference text must match
+    # the PARSED source (correct), not the stale text read (blank-shifted).
+    source_file = tmp_path / "widget.ts"
+    real_source = "const total = computeWidgetTotal();\ncomputeWidgetTotal();\n"
+    source_file.write_text(real_source, encoding="utf-8")
+
+    # Stale text read: same symbol present (so the symbol-absent early-exit still falls through),
+    # but two blank lines prepended -> every line index is shifted by 2 vs the real parsed source.
+    stale_source = "\n\n" + real_source
+    monkeypatch.setattr(repo_map, "_read_source_text_cached", lambda _p: stale_source)
+
+    references, _calls = repo_map._js_ts_references_and_calls(source_file, "computeWidgetTotal")
+
+    assert references, "expected at least one reference to computeWidgetTotal"
+    # With the fix, line content comes from the parsed source (real file) -> the actual code line.
+    # With the bug (lines from the stale text read), index 0 would be the prepended blank line "".
+    for ref in references:
+        assert "computeWidgetTotal" in ref["text"], (
+            f"reference text {ref['text']!r} came from the stale text read, not the parsed source"
+        )
