@@ -459,6 +459,42 @@ def _policy_command_instances(
     return instances, None
 
 
+def _search_path_without_cwd() -> str:
+    """Build the ``path=`` string passed to ``shutil.which()``, with cwd-equivalent
+    PATH entries stripped.
+
+    Defense-in-depth only -- see the load-bearing guard in ``_run_policy_command``.
+    On Python < 3.12 + Windows, ``shutil.which()`` unconditionally re-inserts the
+    current working directory into its search regardless of the ``path=`` argument
+    supplied here (``if curdir not in path: path.insert(0, curdir)`` runs no matter
+    what; the ``NeedCurrentDirectoryForExePathW``-gated skip only landed in 3.12 --
+    cpython#91558). So stripping "." from our own PATH cannot, by itself, stop that
+    implicit prepend. It still closes a narrower, distinct vector: an untrusted
+    entry planted directly in the *environment* PATH string itself (an explicit
+    ``.`` / empty / cwd-resolving segment), rather than the implicit Windows search.
+    """
+    raw_path = os.environ.get("PATH", "")
+    if not raw_path:
+        return raw_path
+    try:
+        cwd = Path.cwd()
+    except OSError:
+        cwd = None
+    filtered: list[str] = []
+    for entry in raw_path.split(os.pathsep):
+        stripped = entry.strip()
+        if not stripped or stripped == os.curdir:
+            continue
+        if cwd is not None:
+            try:
+                if Path(entry).resolve() == cwd:
+                    continue
+            except (OSError, RuntimeError, ValueError):
+                pass
+        filtered.append(entry)
+    return os.pathsep.join(filtered)
+
+
 def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dict[str, object]:
     try:
         argv = _parse_policy_command(command)
@@ -472,13 +508,43 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
     # with a relative argv[0] and cwd=<target repo> lets a shadow executable planted in the
     # untrusted repo (which Windows CreateProcess searches) pre-empt the real tool. Passing an
     # absolute PATH-resolved binary removes the cwd search; fail closed if the tool is not on PATH.
-    resolved_executable = shutil.which(argv[0]) if argv else None
+    #
+    # audit #35 (CWE-427 refinement, Windows cwd shadow-exe): the resolve-to-absolute above is
+    # INSUFFICIENT by itself on Windows. shutil.which() there searches the current working
+    # directory regardless of what `path=` we pass, because WinAPI NeedCurrentDirectoryForExePath
+    # returns True BY DEFAULT -- disabled only by the `NoDefaultCurrentDirectoryInExePath` env var
+    # (the cpython#91558 / 3.12 change only made which() *consult* that API; the default cwd search
+    # is live on 3.11/3.12/3.13/3.14). So this is a WINDOWS-ENV condition, NOT a Python-version one
+    # -- do not weaken the guard below for any Python version. A bare "strip os.curdir from our own
+    # PATH" is not load-bearing: which() re-adds cwd itself. Two things:
+    #   1) _search_path_without_cwd() passes an explicit `path=` with empty/"."/cwd-resolving
+    #      entries stripped, closing the narrower case where the *environment* PATH string
+    #      itself carries such an entry; and
+    #   2) reject the resolution outright if it lands inside the untrusted target root (`cwd`) --
+    #      the load-bearing guard. It compares os.path.abspath, NOT Path.resolve: resolve() FOLLOWS
+    #      symlinks, which let a `repo/tool.cmd -> repo/sub/evil.cmd` symlink land its parent
+    #      OUTSIDE cwd and slip the parent==cwd check (caught by the adversarial security gate).
+    resolved_executable = shutil.which(argv[0], path=_search_path_without_cwd()) if argv else None
     if resolved_executable is None:
         return _command_result(
             passed=False,
             detail=f"{name} command executable {(argv[0] if argv else command)!r} was not found on PATH.",
         )
-    argv = [resolved_executable, *argv[1:]]
+    resolved_path = Path(os.path.abspath(resolved_executable))
+    try:
+        untrusted_root = cwd.resolve()
+    except OSError:
+        untrusted_root = cwd
+    if os.path.normcase(str(resolved_path.parent)) == os.path.normcase(str(untrusted_root)):
+        return _command_result(
+            passed=False,
+            detail=(
+                f"{name} command executable {argv[0]!r}: refusing a repo-local executable "
+                f"shadow: {resolved_path} (resolves inside the untrusted target repository "
+                f"{untrusted_root})."
+            ),
+        )
+    argv = [str(resolved_path), *argv[1:]]
 
     try:
         completed = subprocess.run(
