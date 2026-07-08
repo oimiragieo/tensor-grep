@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.49.2 (2026-07-08)
+
+### Bug Fixes
+
+- **cli**: 8 audit HIGH/MED fixes on main.py -- orient traceback->Exit(1), -f+-o/-r reject, context
+  exit-2 gate, blast-radius no-match Exit(1), native -s passthrough, rank+-f reject, scan --filter
+  uniform, docs-coverage --stale flag-threading (audit #1,5,9,12,19,20,22,23)
+  ([#451](https://github.com/oimiragieo/tensor-grep/pull/451),
+  [`62a1fff`](https://github.com/oimiragieo/tensor-grep/commit/62a1fff7e10f3eebc4f0c62235db0c41859e8829))
+
+All 8 items are contained fixes on src/tensor_grep/cli/main.py (plus one param addition to
+  docs_coverage.py), TDD'd with governance-test updates where the fix changed a pinned contract:
+
+- #1 HIGH: `orient` had no try/except around build_orient_capsule[_json] -- a bad path dumped a raw
+  traceback (info disclosure) instead of the sibling `context`/`map` Exit(1) contract. Wrapped both
+  branches in `except (FileNotFoundError, ValueError): Exit(1)`. - #5 HIGH: `-f/--file` (or multiple
+  `-e`) resolves `pattern` to "" (or drops all but the first), so `-o`/`-r` combined with it
+  silently mis-searched. The #441 combine feature stays closed -- reject the combo up front instead,
+  mirroring the plain-`--json` render-flag guard. - #9 HIGH (NET-NEW): `context` never gated on
+  `_scan_incomplete` -- the json branch called build_context_pack_json and returned before the
+  truncation check could run. Build the payload once and gate both branches, matching `map`'s
+  cold-path contract. - #12 HIGH: `blast-radius` never honored rg's no-match exit convention -- a
+  typo'd symbol exited 0 with an empty callers list, reading as "resolved, zero impact" instead of
+  "never found". Added the same not_found/Exit(1) `_symbol_payload_has_no_results` contract
+  `callers`/`refs` already have; truncation (Exit 2) still wins over no-match (Exit 1). - #19 MED:
+  native delegation forwarded `-i` but silently dropped `-s/--case-sensitive`. - #20 MED:
+  `--rank/--semantic` + `-f` reranked against the same empty-pattern query -- folded into the #5
+  reject guard. - #22 MED: `scan --filter` was silently ignored for `--ruleset`/`--inline-rules`
+  (only the sgconfig path and the explicit `--rule` reject handled it) -- apply
+  `_filter_ast_rule_specs` uniformly. - #23 MED: `docs-coverage --stale` dropped `--ignore` (despite
+  the `--check` help text already promising it) and silently no-op'd `--fix` (no analogous fix-table
+  for stale references). Threaded `ignore` into `build_docs_stale_references` and reject
+  `--stale`+`--fix`.
+
+Fixed two pre-existing tests pinned to the old blast-radius exit-0-on-no-match contract
+  (test_symbol_commands_accept_path_symbol_positional_alias,
+  test_symbol_commands_warn_for_legacy_symbol_option, test_cli_blast_radius_accepts_provider_option
+  -- the latter's monkeypatch target was already dead since main.py's `blast_radius` never delegated
+  to build_symbol_blast_radius_json, so it was already exercising the real no-match path) and the
+  native-delegation field-coverage governance test (case_sensitive moved from KNOWN_GAP to
+  forwarded).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.49.1 (2026-07-08)
 
 ### Bug Fixes
