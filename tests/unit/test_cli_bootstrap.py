@@ -389,6 +389,76 @@ def test_main_entry_should_preserve_explicit_rg_json_for_rg_passthrough(monkeypa
     assert seen == {"binary_name": "rg", "search_args": ["--json", "ERROR", "."]}
 
 
+def test_main_entry_should_route_tg_only_flag_with_explicit_rg_json_to_full_cli(monkeypatch):
+    # Audit #8: `--format rg --json` is a fast-path signal meaning "give me raw ripgrep
+    # JSON Lines", but when a TG-only flag like --cpu rides along, the real `rg` binary
+    # does not understand it and dies outright ("unrecognized flag --cpu"). The combo must
+    # route to the full CLI, not be blindly forwarded to rg passthrough (or to the native
+    # tg binary, which would silently ignore the explicit `--format rg` request).
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "--cpu", "--format", "rg", "--json", "ERROR", "."],
+    )
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native tg should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_should_route_rank_flag_with_explicit_rg_json_to_full_cli(monkeypatch):
+    # Same failure class as above but for --rank (audit #8's other named example).
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "--rank", "--format", "rg", "--json", "ERROR", "."],
+    )
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_requires_full_cli_ignoring_rg_json_only_exempts_json() -> None:
+    # Unit-level pin for the audit #8 helper: bare --json is exempt (rg understands it
+    # natively), but any OTHER TG-only flag riding along still forces the full CLI.
+    assert not bootstrap._requires_full_cli_ignoring_rg_json(["--json", "ERROR", "."])
+    assert bootstrap._requires_full_cli_ignoring_rg_json(["--json", "--cpu", "ERROR", "."])
+    assert bootstrap._requires_full_cli_ignoring_rg_json(["--json", "--force-cpu", "ERROR", "."])
+    assert bootstrap._requires_full_cli_ignoring_rg_json(["--json", "--rank", "ERROR", "."])
+    assert bootstrap._requires_full_cli_ignoring_rg_json([
+        "--json",
+        "--gpu-device-ids=0",
+        "ERROR",
+        ".",
+    ])
+
+
 def test_main_entry_should_strip_noop_rg_format_and_keep_sort_for_rg_passthrough(monkeypatch):
     seen: dict[str, object] = {}
 
@@ -662,6 +732,58 @@ def test_main_entry_should_delegate_force_cpu_env_to_native_tg(monkeypatch):
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--cpu"]}
 
 
+def test_main_entry_should_insert_forced_cpu_before_user_sentinel_for_native_tg(monkeypatch):
+    # Audit #11: TG_FORCE_CPU=1 with a user `--` sentinel (tg's own recommended hardening
+    # for a pattern that looks like a flag, e.g. `tg search -- '-pattern'`) must not append
+    # the forced --cpu AFTER the sentinel -- that would both silently defeat force-CPU (the
+    # token is no longer parsed as a flag) and inject a bogus `--cpu` positional path arg
+    # alongside the user's own pattern/paths.
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "--", "-pattern", "src"])
+    monkeypatch.setenv("TG_FORCE_CPU", "1")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {
+        "binary_name": "tg.exe",
+        "search_args": ["--cpu", "--", "-pattern", "src"],
+    }
+
+
+def test_effective_native_tg_search_args_inserts_before_sentinel(monkeypatch) -> None:
+    monkeypatch.setenv("TG_FORCE_CPU", "1")
+    assert bootstrap._effective_native_tg_search_args(["--", "-pattern"]) == [
+        "--cpu",
+        "--",
+        "-pattern",
+    ]
+    # No sentinel present: preserve the pre-existing append-at-end behavior.
+    assert bootstrap._effective_native_tg_search_args(["ERROR", "."]) == [
+        "ERROR",
+        ".",
+        "--cpu",
+    ]
+    # Already-explicit --cpu/--force-cpu short-circuits before the sentinel is even
+    # considered (unchanged pre-existing behavior).
+    assert bootstrap._effective_native_tg_search_args(["--cpu", "--", "-pattern"]) == [
+        "--cpu",
+        "--",
+        "-pattern",
+    ]
+
+
 def test_main_entry_should_delegate_plain_search_to_native_tg_when_rust_first_env_is_enabled(
     monkeypatch,
 ):
@@ -752,6 +874,48 @@ def test_main_entry_should_not_delegate_path_first_invalid_regexp(monkeypatch):
     bootstrap.main_entry()
 
     assert called["full_cli"] is True
+
+
+def test_main_entry_should_not_delegate_invalid_regex_after_sentinel(monkeypatch):
+    # Audit #24: `_regex_patterns_from_search_args` must honor the `--` sentinel the same
+    # way `_search_path_args` already does. Before this fix, a pattern passed after `--`
+    # that looks like a flag (an unbalanced-paren regex starting with `-`) fell through the
+    # `arg.startswith("-")` branch and was silently dropped as an "unrecognized option", so
+    # the invalid-regex guard never saw it and the combo slipped past to rg passthrough
+    # instead of getting tg's structured invalid-regex/PCRE2-fallback diagnostics.
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "--", "-(unbalanced", "src"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("flagged invalid regex needs CLI diagnostics"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("flagged invalid regex needs CLI diagnostics"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_regex_patterns_from_search_args_respects_double_dash_sentinel() -> None:
+    # Content after a user `--` sentinel is positional -- the first token is the bare
+    # pattern even when it looks like a flag.
+    assert bootstrap._regex_patterns_from_search_args(["--", "-(unbalanced"]) == ["-(unbalanced"]
+    assert bootstrap._regex_patterns_from_search_args(["--", "-(unbalanced", "src"]) == [
+        "-(unbalanced"
+    ]
+    # -e/--regexp before the sentinel still takes precedence over the positional pattern.
+    assert bootstrap._regex_patterns_from_search_args(["-e", "foo", "--", "-(bad"]) == ["foo"]
+    # No sentinel present: unchanged pre-existing behavior.
+    assert bootstrap._regex_patterns_from_search_args(["ERROR", "src"]) == ["ERROR"]
 
 
 def test_main_entry_should_delegate_cpu_flag_to_env_override_native_tg(monkeypatch, tmp_path):

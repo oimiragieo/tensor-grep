@@ -310,6 +310,19 @@ def _requires_full_cli(search_args: list[str]) -> bool:
     return False
 
 
+def _requires_full_cli_ignoring_rg_json(search_args: list[str]) -> bool:
+    """Like ``_requires_full_cli``, but does not treat a bare ``--json`` token as a reason
+    to route to the full CLI.
+
+    Only call this once ``explicit_rg_json`` (``--format rg`` + ``--json``) has already
+    been confirmed: in that combo ``--json`` is a deliberate request for ripgrep's own
+    JSON Lines output, which the real ``rg`` binary understands natively -- it is not the
+    tensor-grep aggregate-JSON flag. Any OTHER TG-only flag riding along (``--cpu``,
+    ``--force-cpu``, ``--rank``, ``--gpu-device-ids``, ...) must still force the full CLI,
+    since real ``rg`` rejects those flags outright and dies (audit #8)."""
+    return _requires_full_cli([arg for arg in search_args if arg != "--json"])
+
+
 def _strip_noop_rg_format(search_args: list[str]) -> list[str] | None:
     stripped: list[str] = []
     index = 0
@@ -611,25 +624,38 @@ def _regex_patterns_from_search_args(search_args: list[str]) -> list[str]:
     skip_next = False
     bare_pattern: str | None = None
     regexp_patterns: list[str] = []
+    parse_options = True
     for index, arg in enumerate(search_args):
         if skip_next:
             skip_next = False
             continue
-        if arg in _SEARCH_PATTERN_FLAGS:
-            if index + 1 < len(search_args):
-                regexp_patterns.append(search_args[index + 1])
+        if parse_options and arg == "--":
+            parse_options = False
+            continue
+        if parse_options:
+            if arg in _SEARCH_PATTERN_FLAGS:
+                if index + 1 < len(search_args):
+                    regexp_patterns.append(search_args[index + 1])
+                    skip_next = True
+                continue
+            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
+                regexp_patterns.append(arg.split("=", 1)[1])
+                continue
+            if arg in _SEARCH_FLAGS_WITH_VALUES:
                 skip_next = True
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
-            regexp_patterns.append(arg.split("=", 1)[1])
-            continue
-        if arg in _SEARCH_FLAGS_WITH_VALUES:
-            skip_next = True
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
-            continue
-        if arg.startswith("-"):
-            continue
+                continue
+            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
+                continue
+            if arg.startswith("-"):
+                continue
+        # Past the `--` sentinel (or a plain positional arg before it): the first
+        # positional token is the bare pattern, exactly like `_search_path_args` treats it
+        # -- even when it looks like a flag (e.g. an unbalanced-paren regex starting with
+        # `-`). Before this fix, content after `--` still fell through to the
+        # `arg.startswith("-")` check above and was silently dropped as an "unrecognized
+        # option", so an invalid regex passed after `--` (e.g. `tg search -- '-(unbalanced'`)
+        # never reached `_search_args_include_obviously_invalid_regex`'s re.compile check
+        # (audit #24).
         if bare_pattern is None:
             bare_pattern = arg
     if regexp_patterns:
@@ -659,6 +685,14 @@ def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
         or "--force-cpu" in search_args
     ):
         return list(search_args)
+    # Audit #11: a forced `--cpu` must never land AFTER a user `--` sentinel -- everything
+    # past `--` is positional (rg/native argv semantics), so appending there would both
+    # silently defeat TG_FORCE_CPU (the token is no longer parsed as a flag) and inject a
+    # bogus `--cpu` path argument alongside the user's own pattern/paths. Insert it before
+    # the sentinel instead; with no sentinel present, append at the end as before.
+    if "--" in search_args:
+        sentinel_index = search_args.index("--")
+        return [*search_args[:sentinel_index], "--cpu", *search_args[sentinel_index:]]
     return [*search_args, "--cpu"]
 
 
@@ -970,11 +1004,18 @@ def main_entry() -> None:
             )
             raise SystemExit(_run_native_tg_search(native_binary, command_args))
 
-        if (
-            not guarded_broad_root
-            and not invalid_regex
-            and (explicit_rg_json or not _requires_full_cli(passthrough_search_args))
-        ):
+        # audit #8: `explicit_rg_json` (`--format rg --json`) must NOT be an unconditional
+        # green light for rg passthrough -- it only means real `rg`'s own JSON output is
+        # deliberately being requested. If a TG-only flag rides along in the same
+        # invocation (`--cpu`, `--force-cpu`, `--rank`, `--gpu-device-ids`, ...), real `rg`
+        # does not understand it and dies outright, so that combo must still route to the
+        # full CLI instead of being forwarded to rg passthrough.
+        if explicit_rg_json:
+            rg_json_requires_full_cli = _requires_full_cli_ignoring_rg_json(passthrough_search_args)
+        else:
+            rg_json_requires_full_cli = _requires_full_cli(passthrough_search_args)
+
+        if not guarded_broad_root and not invalid_regex and not rg_json_requires_full_cli:
             rg_binary_path = resolve_ripgrep_binary()
             binary_name = str(rg_binary_path) if rg_binary_path else None
             if binary_name is not None:
