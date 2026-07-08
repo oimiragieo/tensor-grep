@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.49.1 (2026-07-08)
+
+### Bug Fixes
+
+- **bootstrap**: --format-rg-json honors TG-only flags (route to full CLI), forced --cpu before the
+  -- sentinel, regex-patterns respects -- (audit #8,11,24)
+  ([#450](https://github.com/oimiragieo/tensor-grep/pull/450),
+  [`66c099f`](https://github.com/oimiragieo/tensor-grep/commit/66c099fa7c5e9c5245722376e30936e40aa67633))
+
+- #8 HIGH: `--format rg --json` no longer unconditionally short-circuits to rg passthrough. A
+  TG-only flag riding along (--cpu/--force-cpu/--rank/ --gpu-device-ids) now routes the combo to the
+  full CLI instead of forwarding to the real rg binary, which rejects those flags outright. New
+  `_requires_full_cli_ignoring_rg_json` treats bare --json as exempt (rg understands it natively)
+  while still catching every other TG-only flag. - #11 HIGH: TG_FORCE_CPU's forced `--cpu` is now
+  inserted BEFORE a user `--` sentinel instead of appended after it, so `TG_FORCE_CPU=1 tg search --
+  '-pat'` no longer silently defeats force-CPU or injects a bogus positional --cpu arg. - #24 MED:
+  `_regex_patterns_from_search_args` now mirrors the `--` sentinel handling `_search_path_args`
+  already has, so `tg search -- '-(unbalanced'` reaches tg's structured invalid-regex/PCRE2-fallback
+  diagnostics instead of silently passing through to rg passthrough.
+
+Verified: 66/66 bootstrap unit tests pass, ruff check clean, ruff format --check --preview clean on
+  touched files, mypy clean on src/tensor_grep. Dogfooded via real subprocess spawns (real rg on
+  PATH, and a stub "native" binary via a genuine Popen) confirming both the pre-fix crash mode and
+  the post-fix routing/argv-order behavior.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.49.0 (2026-07-08)
 
 ### Features
