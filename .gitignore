@@ -49,8 +49,8 @@ npm/node_modules/
 /*.txt
 /.tmp*/
 /.tensor-grep/
-/.factory/*.patch
-/.factory/*.txt
+# .factory/ is Factory-AI/droid local tool state (contains machine-specific paths) -- never track any of it.
+/.factory/
 /_archive/
 /agent_out.json
 /src/.tensor-grep/
