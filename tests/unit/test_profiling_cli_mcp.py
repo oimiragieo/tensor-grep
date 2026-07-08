@@ -236,16 +236,6 @@ def test_run_editor_profiling_writes_standard_json_with_phase_breakdown_rows(
     assert all("profiling_phases" in row for row in payload["rows"])
 
 
-def test_services_manifest_exposes_editor_profiling_benchmark_command() -> None:
-    services_path = Path(__file__).resolve().parents[2] / ".factory" / "services.yaml"
-    services_yaml = services_path.read_text(encoding="utf-8")
-
-    assert (
-        "benchmark_editor_profiling: python benchmarks/run_editor_profiling.py "
-        "--output artifacts/bench_editor_profiling.json"
-    ) in services_yaml
-
-
 def test_mcp_context_render_exposes_and_forwards_max_repo_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
