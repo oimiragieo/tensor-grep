@@ -95,3 +95,92 @@ def test_hybrid_preserves_other_fields() -> None:
 
     assert out.routing_backend == "cpu"
     assert out.total_matches == 3
+
+
+# --- PR-S2: channelized RRF (opt-in PATH channel, TG_RRF_CHANNELS=1) ---------------------------
+# DEFAULT-OFF: every test above this marker never sets TG_RRF_CHANNELS and continues to pass
+# UNMODIFIED after this change -- that is the byte-identical no-regression proof for the default
+# (flag-unset) path.
+
+
+def _path_channel_scenario() -> tuple[SearchResult, Bm25Index]:
+    # Both chunks have IDENTICAL text -> BM25 tie for any query term they share. Only the second
+    # chunk's FILENAME ("invoice_parser.py") overlaps the query token "invoice"; the first
+    # chunk's filename ("other_helper.py") does not.
+    chunks = [
+        Chunk(file_path="other_helper.py", start_line=1, end_line=1, text="shared_content"),
+        Chunk(file_path="invoice_parser.py", start_line=1, end_line=1, text="shared_content"),
+    ]
+    bm25_index = Bm25Index(chunks)
+    result = SearchResult(
+        matches=[
+            MatchLine(line_number=1, text="shared_content", file="other_helper.py"),
+            MatchLine(line_number=1, text="shared_content", file="invoice_parser.py"),
+        ],
+        total_matches=2,
+    )
+    return result, bm25_index
+
+
+def test_default_flag_unset_rerank_hybrid_byte_identical_to_bm25_only_rrf(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """With TG_RRF_CHANNELS unset (the default), a BM25 score TIE breaks by ascending chunk
+    index -- the path channel must NOT be consulted at all."""
+    monkeypatch.delenv("TG_RRF_CHANNELS", raising=False)
+    result, bm25_index = _path_channel_scenario()
+
+    out = rerank_hybrid(result, "invoice shared", [], bm25_index=bm25_index)
+
+    assert [m.file for m in out.matches] == ["other_helper.py", "invoice_parser.py"]
+
+
+def test_path_channel_boosts_filename_match_under_flag(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """With TG_RRF_CHANNELS=1, the chunk whose FILENAME matches a query token ("invoice" ->
+    invoice_parser.py) must outrank an equal-BM25-score chunk whose filename does not match."""
+    result, bm25_index = _path_channel_scenario()
+
+    monkeypatch.delenv("TG_RRF_CHANNELS", raising=False)
+    baseline = rerank_hybrid(result, "invoice shared", [], bm25_index=bm25_index)
+    assert [m.file for m in baseline.matches] == ["other_helper.py", "invoice_parser.py"]
+
+    monkeypatch.setenv("TG_RRF_CHANNELS", "1")
+    boosted = rerank_hybrid(result, "invoice shared", [], bm25_index=bm25_index)
+    assert [m.file for m in boosted.matches] == ["invoice_parser.py", "other_helper.py"]
+
+
+def test_path_channel_flag_requires_exact_value_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Any value other than the literal "1" leaves the flag OFF (mirrors the rest of the tg
+    TG_* env-var convention: fail closed on ambiguous truthy strings)."""
+    result, bm25_index = _path_channel_scenario()
+
+    for off_value in ("0", "true", "TRUE", "yes", ""):
+        monkeypatch.setenv("TG_RRF_CHANNELS", off_value)
+        out = rerank_hybrid(result, "invoice shared", [], bm25_index=bm25_index)
+        assert [m.file for m in out.matches] == ["other_helper.py", "invoice_parser.py"]
+
+
+def test_hybrid_deterministic_repeated_calls_with_channels_enabled(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TG_RRF_CHANNELS", "1")
+    result, bm25_index = _path_channel_scenario()
+
+    first = rerank_hybrid(result, "invoice shared", [], bm25_index=bm25_index)
+    second = rerank_hybrid(result, "invoice shared", [], bm25_index=bm25_index)
+
+    assert [m.file for m in first.matches] == [m.file for m in second.matches]
+
+
+def test_path_channel_no_filename_overlap_falls_back_to_bm25_dense_only(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """When TG_RRF_CHANNELS=1 but no filename overlaps the query at all, the path leg is simply
+    omitted (not added as an empty/no-op leg) and the fused order matches the flag-off baseline."""
+    monkeypatch.setenv("TG_RRF_CHANNELS", "1")
+    result, bm25_index, dense_index = _build_scenario()
+
+    hybrid_flag_on = rerank_hybrid(
+        result, "invoice", [], bm25_index=bm25_index, dense_index=dense_index
+    )
+
+    monkeypatch.delenv("TG_RRF_CHANNELS", raising=False)
+    hybrid_flag_off = rerank_hybrid(
+        result, "invoice", [], bm25_index=bm25_index, dense_index=dense_index
+    )
+
+    assert [m.file for m in hybrid_flag_on.matches] == [m.file for m in hybrid_flag_off.matches]
