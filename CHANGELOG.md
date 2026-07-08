@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.45.15 (2026-07-08)
+
+### Bug Fixes
+
+- **cpu-backend**: --max-count 0 returns zero matches, not all (0 was falsy -> cap silently disabled
+  on the pure-Python path) ([#438](https://github.com/oimiragieo/tensor-grep/pull/438),
+  [`2b89224`](https://github.com/oimiragieo/tensor-grep/commit/2b89224e670bd91c1ebfe0dcb93fd780e329df0c))
+
+### Documentation
+
+- **backlog**: Sync tracker to reality — #424-430 merged, PERF/1D/M9/L7 draining, add C-EDGE-1
+  (competitive), mark M13 rejected ([#437](https://github.com/oimiragieo/tensor-grep/pull/437),
+  [`a6b4cae`](https://github.com/oimiragieo/tensor-grep/commit/a6b4cae39a998e567039cad24a3edea20a1d5920))
+
+- **handoff**: Record the v1.45.x correctness+trust cluster, the PERF parse-cache, and the
+  2026-07-07 competitive/caller-precision finding
+  ([#436](https://github.com/oimiragieo/tensor-grep/pull/436),
+  [`10f92ae`](https://github.com/oimiragieo/tensor-grep/commit/10f92aeb89c0c30e8e7ff8d50140b58d21fbcaea))
+
+
 ## v1.45.14 (2026-07-08)
 
 ### Bug Fixes
