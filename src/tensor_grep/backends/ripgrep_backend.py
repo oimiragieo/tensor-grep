@@ -314,8 +314,81 @@ class RipgrepBackend(ComputeBackend):
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
             return search_result
+        except subprocess.TimeoutExpired as e:
+            # L7: rg timed out mid-scan -> recover the file list it already flushed instead of
+            # hard-erroring, mirroring search()'s TimeoutExpired handling. Fail-graceful, not
+            # fail-crash: a `tg search -l` on a huge tree returns partial + result_incomplete.
+            partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
+            path_parts = partial_stdout.split("\0") if config.null else partial_stdout.split("\n")
+            matched_file_paths = [path for path in path_parts if path]
+            reason = (
+                "rg files-with-matches search timed out; returning the partial file list. Scope "
+                "the search to a smaller path (e.g. `tg search PATTERN src/`) or raise "
+                "TG_RG_TIMEOUT_SECONDS."
+            )
+            sys.stderr.write(f"tg: {reason}\n")
+            return SearchResult(
+                matches=[],
+                matched_file_paths=matched_file_paths,
+                match_counts_by_file=dict.fromkeys(matched_file_paths, 1),
+                total_files=len(matched_file_paths),
+                total_matches=len(matched_file_paths),
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_files_with_matches",
+                routing_distributed=False,
+                routing_worker_count=1,
+                result_incomplete=True,
+                incomplete_reason=reason,
+            )
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+
+    def _parse_count_stdout(
+        self, stdout: str, config: SearchConfig, file_path: str | list[str]
+    ) -> tuple[int, int, list[str], dict[str, int]]:
+        """Parse rg ``--count`` stdout into (total_matches, total_files, matched_file_paths,
+        match_counts_by_file). Shared by the success path and the L7 TimeoutExpired partial-recovery
+        path so a timed-out count still tallies whatever rg had flushed."""
+        lines = [line.strip() for line in stdout.split("\n") if line.strip()]
+        total_matches = 0
+        total_files = 0
+        matched_file_paths: list[str] = []
+        match_counts_by_file: dict[str, int] = {}
+
+        multi_file = (
+            (isinstance(file_path, (list, tuple)) and len(file_path) > 1)
+            or (isinstance(file_path, str) and Path(file_path).is_dir())
+            or (
+                isinstance(file_path, (list, tuple))
+                and len(file_path) == 1
+                and Path(file_path[0]).is_dir()
+            )
+        )
+        # Audit HIGH: rg emits `path:count` whenever it prints the filename, which is driven by
+        # -H/--no-filename (config.with_filename/no_filename), NOT only by the multi-file heuristic.
+        path_prefixed = (multi_file or config.with_filename) and not config.no_filename
+        for line in lines:
+            matched_path: str | None = None
+            if config.null and "\0" in line:
+                matched_path, count_text = line.rsplit("\0", 1)
+            elif path_prefixed and ":" in line:
+                matched_path, count_text = line.rsplit(":", 1)
+            else:
+                count_text = line
+            try:
+                count_value = int(count_text.strip())
+            except ValueError:
+                continue
+            total_matches += count_value
+            if count_value > 0:
+                total_files += 1
+                if matched_path:
+                    matched_file_paths.append(matched_path)
+                    match_counts_by_file[matched_path] = count_value
+                elif isinstance(file_path, str):
+                    matched_file_paths.append(file_path)
+                    match_counts_by_file[file_path] = count_value
+        return total_matches, total_files, matched_file_paths, match_counts_by_file
 
     def _search_counts(
         self, file_path: str | list[str], pattern: str, config: SearchConfig
@@ -330,47 +403,9 @@ class RipgrepBackend(ComputeBackend):
                 encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            lines = [line.strip() for line in result.stdout.split("\n") if line.strip()]
-            total_matches = 0
-            total_files = 0
-            matched_file_paths: list[str] = []
-            match_counts_by_file: dict[str, int] = {}
-
-            multi_file = (
-                (isinstance(file_path, (list, tuple)) and len(file_path) > 1)
-                or (isinstance(file_path, str) and Path(file_path).is_dir())
-                or (
-                    isinstance(file_path, (list, tuple))
-                    and len(file_path) == 1
-                    and Path(file_path[0]).is_dir()
-                )
+            total_matches, total_files, matched_file_paths, match_counts_by_file = (
+                self._parse_count_stdout(result.stdout, config, file_path)
             )
-            # Audit HIGH: rg emits `path:count` whenever it prints the filename, which is
-            # driven by -H/--no-filename (config.with_filename/no_filename), NOT only by the
-            # multi-file heuristic. A single-file `--count -H` yielded `path:count`, hit the
-            # bare-count branch, `int()` raised, and the line was silently dropped -> false 0.
-            path_prefixed = (multi_file or config.with_filename) and not config.no_filename
-            for line in lines:
-                matched_path: str | None = None
-                if config.null and "\0" in line:
-                    matched_path, count_text = line.rsplit("\0", 1)
-                elif path_prefixed and ":" in line:
-                    matched_path, count_text = line.rsplit(":", 1)
-                else:
-                    count_text = line
-                try:
-                    count_value = int(count_text.strip())
-                except ValueError:
-                    continue
-                total_matches += count_value
-                if count_value > 0:
-                    total_files += 1
-                    if matched_path:
-                        matched_file_paths.append(matched_path)
-                        match_counts_by_file[matched_path] = count_value
-                    elif isinstance(file_path, str):
-                        matched_file_paths.append(file_path)
-                        match_counts_by_file[file_path] = count_value
 
             partial = result.returncode == 2 and total_matches > 0
             if result.returncode > 1 and not partial:
@@ -396,6 +431,32 @@ class RipgrepBackend(ComputeBackend):
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
             return search_result
+        except subprocess.TimeoutExpired as e:
+            # L7: recover the partial tally rg had flushed before the timeout instead of
+            # hard-erroring, mirroring search()'s TimeoutExpired handling.
+            partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
+            total_matches, total_files, matched_file_paths, match_counts_by_file = (
+                self._parse_count_stdout(partial_stdout, config, file_path)
+            )
+            routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
+            reason = (
+                "rg count search timed out; returning the partial tally. Scope the search to a "
+                "smaller path or raise TG_RG_TIMEOUT_SECONDS."
+            )
+            sys.stderr.write(f"tg: {reason}\n")
+            return SearchResult(
+                matches=[],
+                matched_file_paths=matched_file_paths,
+                match_counts_by_file=match_counts_by_file,
+                total_files=total_files,
+                total_matches=total_matches,
+                routing_backend="RipgrepBackend",
+                routing_reason=routing_reason,
+                routing_distributed=False,
+                routing_worker_count=1,
+                result_incomplete=True,
+                incomplete_reason=reason,
+            )
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
 
