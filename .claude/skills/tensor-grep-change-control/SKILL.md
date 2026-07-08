@@ -72,6 +72,31 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 - **LSP** availability is install evidence only, not proof of working navigation; a row counts as LSP proof only with `lsp_provider_response = true` from a completed request (`AGENTS.md:163`).
 - **classify** is deterministic-local by default; provider mode requires `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` and provider failure must fall back **before** loading a tokenizer/model (`AGENTS.md:154`).
 
+### 5. Mandatory adversarial security gate before merge
+
+**Rule:** Every PR touching a security-sensitive surface — `apply_policy`, `mcp_server`, native-argv
+construction (`cpu_backend`/`rg_passthrough`), `index_lock`, auth, money, or a schema/data migration —
+gets a dedicated **adversarial** review before merge, in addition to (never instead of) green tests:
+"try to actually BREAK this, cite `file:line` for every claim, default to FIX-FIRST when uncertain."
+This is a distinct pass from ordinary code review — a reviewer optimizing for "does this look right"
+misses what a reviewer optimizing for "how would I exploit this" catches.
+
+**Why / incident (2026-07-08 ultracode session):** this exact gate caught a **real symlink-follow RCE
+bypass** on a security PR — `.resolve()` followed the symlink *before* the path-containment check ran,
+so a crafted symlink escaped the intended root — and separately a **lock-release TOCTOU** on an
+index-lock hardening PR. Both PRs had fully green test suites; neither bug was a test-coverage gap, it
+was a missing adversarial pass. Ordinary review (Codex) proved unreliable/WSL-flaky for this role in
+practice — run the security-adversarial pass on **Opus or Sonnet-5, never Fable** (Fable 5 ships a
+semantic+cumulative cyber-safety classifier that auto-falls-back to Opus mid-turn on vuln-hunting
+content, which just adds friction rather than blocking anything — see the global memory
+`feedback-fable5-cyber-classifier-audit-on-opus`).
+
+**Verdict is binary, not a rubric score:** `SHIP` or `FIX-FIRST(file:line + repro + fix)`. A rubber-stamp
+"looks fine" is not a passing verdict — the reviewer must state what they tried to break and why it held.
+
+**Applies to:** any PR in the security-sensitive surface list above; extend the list as new
+security-relevant subsystems appear (this is a floor, not an exhaustive enumeration).
+
 ---
 
 ## Part 2 — The written Operating Rules
@@ -237,6 +262,10 @@ For release/workflow/package-manager changes, also:
 uv run python scripts/validate_release_assets.py
 ```
 
+**Writing a test for a hang-class bug** (ReDoS, deadlock, lock-race, unbounded subprocess/loop)?
+Wrap it per the global skill `anti-hang-test-protocol` first — an unwrapped red-phase test against
+un-fixed code can hang the runner itself and look indistinguishable from a stuck build.
+
 Fast agent-critical gate (3–5 min) — complements, does not replace, the full gate:
 
 ```powershell
@@ -263,6 +292,7 @@ tg dogfood --output artifacts/dogfood_readiness.json
 - [ ] New command → all **4 registration sites** present (Part 3); new search flag → **both front doors** present.
 - [ ] Any registration in a **set/decorator/table** confirmed by grep/`tg scan`, not just `tg callers`.
 - [ ] Backend/router/pipeline touched → **fail-closed** verified; no bare `except` swallow; degraded fallback carries `fallback_reason`.
+- [ ] Touches `apply_policy`/`mcp_server`/native-argv/`index_lock`/auth/money/a migration → a dedicated **adversarial "try to break it"** security pass ran and returned `SHIP` (Part 1 Rule 5) — not just green functional tests.
 - [ ] Flag/command touched → **dogfooded on the real binary** (`scripts/dogfood/`), not CliRunner alone.
 - [ ] FFI/PyO3 change → proven with a **live call into the built extension**, not mocks.
 - [ ] Hot-path change → **benchmarked vs the accepted baseline**; artifact carries launcher mode/kind; no stale in-tree binary.
@@ -277,11 +307,12 @@ tg dogfood --output artifacts/dogfood_readiness.json
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows). Re-verify anything below before relying on it:
+Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), and a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA). Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
-| Current release tag | `grep release_docs_current_tag AGENTS.md` (currently `v1.19.3`, `AGENTS.md:19`, as of 2026-07-03) |
+| Current release tag | `grep release_docs_current_tag AGENTS.md` (was `v1.49.3` as of 2026-07-08 — re-check, it moves every release) |
+| Mandatory adversarial security gate (Part 1 Rule 5) | `feedback-fable5-cyber-classifier-audit-on-opus` + `tensor-grep-campaign-orchestration-playbook-2026-07-08` (global memory) — no single code anchor, this is a process rule; verify it is still being applied by checking recent security-touching PR descriptions for a stated adversarial-review verdict |
 | 4 command registration sites | `grep -n KNOWN_COMMANDS src/tensor_grep/cli/commands.py`; `grep -n "enum Commands" rust_core/src/main.rs`; `grep -n PUBLIC_TOP_LEVEL_COMMANDS tests/e2e/test_routing_parity.py`; `grep -cn "@app.command" src/tensor_grep/cli/main.py` |
 | 2 search-flag front doors | `grep -n SEARCH_PYTHON_PASSTHROUGH_FLAGS rust_core/src/main.rs`; `grep -n _TG_ONLY_SEARCH_FLAGS src/tensor_grep/cli/bootstrap.py` |
 | Fail-closed error type | `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` |

@@ -8,7 +8,7 @@ description: Use when setting up the tensor-grep dev environment from a fresh cl
 Recreate a working tensor-grep dev environment from nothing, and rebuild it correctly after
 touching Rust. Every command below is verified against `pyproject.toml`, `rust_core/Cargo.toml`,
 `rust_core/rust-toolchain.toml`, `CONTRIBUTING.md`, `AGENTS.md`, and `.github/workflows/ci.yml` as
-of **2026-07-02, v1.17.25**. Re-verify anything version-shaped before trusting it long-term — see
+of **2026-07-08, v1.49.3**. Re-verify anything version-shaped before trusting it long-term — see
 "Provenance and maintenance" at the bottom.
 
 ## When to use this skill
@@ -73,8 +73,8 @@ editable Python install does **not** watch and recompile Rust for you. See the r
 | maturin | `>=1.5,<2.0` | `pyproject.toml:2` `[build-system].requires` | PEP 517 backend that compiles `rust_core/` |
 | Rust toolchain | `1.96.0` | `rust_core/rust-toolchain.toml` | reproducible, supply-chain-safe builds (audit MEDIUM finding) |
 | rustfmt, clippy | bundled with 1.96.0 | `rust_core/rust-toolchain.toml` `components` | CI's "Check Rust Formatting" + clippy jobs need them; a channel-only pin on a minimal-profile runner would drop them |
-| ruff | `==0.15.11` | `pyproject.toml` `[project.optional-dependencies].dev` | lint + format gate |
-| mypy | `>=1.11` | same | typecheck gate, `strict = true` (`pyproject.toml:112`) |
+| ruff | `==0.15.20` | `pyproject.toml` `[project.optional-dependencies].dev` | lint + format gate |
+| mypy | `==1.19.1` | same | typecheck gate, `strict = true` (`pyproject.toml:112`) |
 
 ## Zero-to-running setup (copy-paste)
 
@@ -191,7 +191,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-**Test corpus size** (2026-07-02): `tests/` has 155 unit test files + 15 e2e test files + 9
+**Test corpus size** (2026-07-08): `tests/` has 208 unit test files + 15 e2e test files + 10
 integration test files (`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `uv run pytest -q`
 covers all three). `uv run pytest -q` "can take substantially longer than 70-90 seconds on
 [a Windows] machine when the full JS/TS and e2e surface is hot" — use a timeout of at least 120s for
@@ -282,6 +282,25 @@ Build-specific check: after any change touching `rust_core/src/*` and its Python
 (`src/tensor_grep/backends/rust_backend.py`), run a live call into the compiled extension — step 4's
 `import tensor_grep.rust_core` plus `tests/unit/test_rust_core.py` — not just mock-patched unit tests.
 
+### 9. A worktree agent's "tests pass" is a HYPOTHESIS, not proof (harvest pattern)
+
+**Symptom:** a background/subagent working in an isolated `git worktree` reports its local test suite
+green, but the change misbehaves (or a real Rust-extension bridge is dead — Trap 8) once it lands on
+the main checkout.
+**Cause:** a fresh worktree does not inherit a built venv — it may run against a **copied or absent**
+native extension, a stale `.venv`, or skip the Rust rebuild step entirely, so "pytest passed" in that
+worktree can be true for the wrong reason (mocked/stubbed backend, no real `rust_core` import).
+**Fix — the harvest procedure:** never merge a worktree's own green run as the proof. Cherry-pick its
+commit onto a fresh branch off `origin/main` (or the current integration branch), then **re-verify in
+the real, fully-built venv**: `uv run maturin develop` (or a full `uv pip install -e ".[dev,ast]"`),
+`uv run ruff check . && uv run ruff format --check --preview .`, `uv run mypy src/tensor_grep`,
+`uv run pytest -q`, plus a live smoke (`uv run tg --version`, a real search) — only then does it clear
+the gate for PR. Cleanup after harvesting: `git checkout main; git reset --hard origin/main;
+git worktree remove --force <path>`. This caught 3/3 real issues in a 2026-07-03 worktree-council
+verify pass (a Linux-reasoning agent's Windows-FS-blind concurrency claim among them) — see
+`tensor-grep-worktree-council-verify-caught-3of3-2026-07-03` memory / `tensor-grep-change-control`'s
+change-control gates for where this sits in the merge pipeline.
+
 ## CI parity cheat sheet
 
 What `.github/workflows/ci.yml` actually runs, and the closest local reproduction. Release/publish
@@ -307,7 +326,7 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **Version pins** (Python floor, uv, maturin, Rust toolchain, ruff, mypy, pyo3):
   `grep -nE "requires-python|version|channel" pyproject.toml rust_core/Cargo.toml rust_core/rust-toolchain.toml`
 - **uv version CI pins**: `grep -n "uv==" .github/workflows/ci.yml`
-- **Test file counts** (155 unit / 15 e2e / 9 integration as of 2026-07-02):
+- **Test file counts** (208 unit / 15 e2e / 10 integration as of 2026-07-08):
   `find tests/unit tests/e2e tests/integration -name "test_*.py" | wc -l` run per directory, or one
   combined `find tests -name "test_*.py" | wc -l` for the total file count.
   Note this counts *files*, not individual `def test_*` cases — the suite has thousands of the latter.
@@ -315,6 +334,6 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml`
 - **Registration-completeness gate presence**: `ls .tg-registration.toml` and
   `grep -n "registration_check" .github/workflows/ci.yml`
-- **Current versions at authoring time**: tensor-grep `v1.17.25`, Rust toolchain `1.96.0`, uv
-  `0.11.25`, ruff `0.15.11`, mypy `>=1.11`, pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`,
+- **Current versions re-verified 2026-07-08**: tensor-grep `v1.49.3`, Rust toolchain `1.96.0`, uv
+  `0.11.25`, ruff `==0.15.20`, mypy `==1.19.1`, pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`,
   Python floor `>=3.11`.
