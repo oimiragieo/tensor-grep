@@ -1559,6 +1559,20 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
                 imports.append(node.module)
                 for alias in node.names:
                     imports.append(f"{node.module}.{alias.name}")
+            elif node.level:
+                # `from . import x` / `from .. import x` -- no dotted module text, only
+                # relative dots plus the imported names (which may themselves be sibling
+                # submodules, e.g. `from . import helpers` importing `helpers.py`). Recording
+                # the bare alias name keeps this import in the reverse-import alias graph
+                # (`_reverse_importers`/`_module_aliases_for_path`) so `tg importers` can even
+                # PREFILTER a sibling `from . import X` importer -- omitting it here (unlike
+                # `_python_imports_with_lines`, which already records it for the forward
+                # `tg imports` primitive) was a genuine recall gap, not an intentional
+                # exclusion (#74 review fix). The precise per-candidate CONFIRM step
+                # (`_python_module_matches_definition`) still disambiguates which file it
+                # actually resolves to -- this only widens the prefilter's candidate set.
+                for alias in node.names:
+                    imports.append(alias.name)
 
     for symbol_node in ast.walk(tree):
         if isinstance(symbol_node, ast.ClassDef):
@@ -5633,6 +5647,54 @@ def _python_module_candidates(
             seen.add(key)
             deduped.append(Path(key))
     return {"paths": deduped, "provenance": provenance, "confidence": confidence}
+
+
+def _python_module_match_details(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+    *,
+    level: int = 0,
+) -> dict[str, Any]:
+    """Resolve-then-compare Python reverse-import confirm.
+
+    Mirrors `_js_ts_module_match_details` / `_rust_module_match_details`: reuses the SAME
+    precise resolver the forward `tg imports` uses (`_python_module_candidates`) instead of a
+    bare path-SUFFIX match, so two files sharing a basename (`app/config.py` vs
+    `tools/config.py`) no longer produce a phantom reverse edge just because an importer's
+    `import config` textually ends with "config" (#74 review fix -- see
+    `_module_path_matches_definition`, which is exactly that suffix match and is what this
+    function replaces for the Python confirm step).
+
+    Deliberately has NO suffix-match fallback (unlike JS/TS's bare-specifier partial-resolution
+    or Rust's non-workspace-crate partial-resolution) -- that fallback IS the bug this closes,
+    so it must not be reintroduced here.
+    """
+    candidate_info = _python_module_candidates(importer_path, module_name, repo_root, level=level)
+    resolved_definition = _resolved_path_str(definition_path)
+    if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
+        return {
+            "matched": True,
+            "provenance": list(candidate_info["provenance"]),
+            "confidence": float(candidate_info["confidence"] or 1.0),
+        }
+    return {"matched": False, "provenance": [], "confidence": 0.0}
+
+
+def _python_module_matches_definition(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+    *,
+    level: int = 0,
+) -> bool:
+    return bool(
+        _python_module_match_details(
+            importer_path, module_name, definition_path, repo_root, level=level
+        )["matched"]
+    )
 
 
 def _group_symbols_by_file(symbols: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -14170,7 +14232,16 @@ def _confirm_import_edges(
                 candidate_importer, module, target_file, repo_root
             )
         else:
-            matched = _module_path_matches_definition(module, target_file)
+            # Python: resolve-then-compare via the SAME precise resolver the forward
+            # `tg imports` uses, symmetric with the JS/TS/Rust branches above (#74 review
+            # fix). `level` (0 for absolute, >=1 for `from .`/`from ..`) is carried on the raw
+            # entry by `_python_imports_with_lines` -- threading it through here is what lets
+            # `_python_module_candidates` resolve a relative import correctly instead of
+            # falling back to a bare path-suffix match that ignores directory context.
+            level = int(raw_entry.get("level", 0) or 0)
+            matched = _python_module_matches_definition(
+                candidate_importer, module, target_file, repo_root, level=level
+            )
         if not matched or line in seen_lines:
             continue
         seen_lines.add(line)

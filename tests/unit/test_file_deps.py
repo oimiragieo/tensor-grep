@@ -258,6 +258,102 @@ def test_build_file_importers_finds_tsconfig_alias_importer(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------------------------
+# Python reverse precision + recall (#74 review fix): the reverse confirm step used to suffix-
+# match Python imports (`_module_path_matches_definition`) with NO directory/resolution
+# context, unlike the already-precise JS/TS/Rust branches -- two files sharing a basename
+# (e.g. `app/config.py` and `tools/config.py`) produced a phantom importer edge on the wrong
+# one. The fix makes the Python confirm step resolve-then-compare via the SAME precise
+# resolver the forward `tg imports` uses (`_python_module_candidates`). A companion recall gap
+# (`from . import X` was silently dropped from the reverse alias graph because it has no
+# dotted `node.module` text) is fixed alongside it.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_importers_python_excludes_duplicate_basename_false_edge(
+    tmp_path: Path,
+) -> None:
+    """The Case-4-style false edge, but for Python: `import config` in tools/run.py resolves
+    (per Python's own import semantics -- the importer's own directory is searched) to
+    tools/config.py, NOT app/config.py, even though both end with the same basename."""
+    project = tmp_path / "project"
+    app_dir = project / "app"
+    tools_dir = project / "tools"
+    app_dir.mkdir(parents=True)
+    tools_dir.mkdir(parents=True)
+
+    app_config = app_dir / "config.py"
+    app_config.write_text("APP_SETTING = 1\n", encoding="utf-8")
+    tools_config = tools_dir / "config.py"
+    tools_config.write_text("TOOLS_SETTING = 2\n", encoding="utf-8")
+
+    run_py = tools_dir / "run.py"
+    run_py.write_text("import config\n", encoding="utf-8")
+
+    app_payload = repo_map.build_file_importers(app_config, project)
+    tools_payload = repo_map.build_file_importers(tools_config, project)
+
+    assert str(run_py.resolve()) not in set(app_payload["importer_files"])
+    assert app_payload["importer_count"] == 0
+
+    assert str(run_py.resolve()) in set(tools_payload["importer_files"])
+    edge = next(
+        current
+        for current in tools_payload["importers"]
+        if current["file"] == str(run_py.resolve())
+    )
+    assert edge["module"] == "config"
+
+
+def test_build_file_importers_python_recalls_from_dot_import(tmp_path: Path) -> None:
+    """`from . import helpers` has no dotted `node.module` text -- the reverse-import alias
+    graph used to silently DROP it, so a sibling `from . import X` importer was invisible to
+    `tg importers` entirely (never even reached the confirm step), not merely over-counted."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    main_path = pkg / "main.py"
+    main_path.write_text("from . import helpers\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(helpers_path, project)
+
+    assert str(main_path.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(main_path.resolve())
+    )
+    assert edge["module"] == "helpers"
+    assert edge["line"] == 1
+
+
+def test_build_file_importers_python_dotted_import_precision(tmp_path: Path) -> None:
+    """A dotted absolute import (`from app.config import X`) must confirm against the file it
+    actually names, not a same-basename sibling under a different top-level package."""
+    project = tmp_path / "project"
+    app_dir = project / "app"
+    tools_dir = project / "tools"
+    app_dir.mkdir(parents=True)
+    tools_dir.mkdir(parents=True)
+    (app_dir / "__init__.py").write_text("", encoding="utf-8")
+    (tools_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    app_config = app_dir / "config.py"
+    app_config.write_text("APP_SETTING = 1\n", encoding="utf-8")
+    tools_config = tools_dir / "config.py"
+    tools_config.write_text("TOOLS_SETTING = 2\n", encoding="utf-8")
+
+    consumer = project / "consumer.py"
+    consumer.write_text("from app.config import APP_SETTING\n", encoding="utf-8")
+
+    app_payload = repo_map.build_file_importers(app_config, project)
+    tools_payload = repo_map.build_file_importers(tools_config, project)
+
+    assert str(consumer.resolve()) in set(app_payload["importer_files"])
+    assert str(consumer.resolve()) not in set(tools_payload["importer_files"])
+
+
+# ---------------------------------------------------------------------------------------------
 # Token economy: the reverse payload must be far smaller than a whole-repo `tg map`.
 # ---------------------------------------------------------------------------------------------
 
