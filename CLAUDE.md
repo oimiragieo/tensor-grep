@@ -30,20 +30,27 @@ Claude Code guidance for the **tensor-grep** repository.
   (use `-F`/heredoc); cargo/rustc off `PATH` and a "hanging" Rust build is slow LTO that finishes;
   verify FFI/bridge changes against the REAL extension (not mocks); apply post-merge fixes by SYMBOL
   not line number; a dependency upper-cap can silently downgrade the whole install on a newer Python.
+- **Campaign Orchestration Disciplines (2026-07-08)** — running a multi-PR drain+build campaign so fixes
+  *land*: the WIP cap, the self-firing drain-cron (beats a long-lived background drain), the mandatory
+  adversarial security gate before merge, resume-a-dead-agent-from-transcript (on a transient 500),
+  don't-kill-a-slow-build-on-staleness, the anti-hang test protocol, harvest, and Fable-only-via-`Agent`.
 - The ruff `--preview` (format only, not lint), line-ending, decode-the-structured-CI-failure-first,
   and release rules.
 
 ## Skills that apply here
 
 - **Using `tg`**: `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`).
-- **Carrying the project forward (in-repo onboarding library, 16 skills)**: `.claude/skills/tensor-grep-*`
+- **Carrying the project forward (in-repo onboarding library, 18 skills)**: `.claude/skills/tensor-grep-*`
   + `code-search-and-retrieval-reference` — the retirement handbook so a new engineer or a Sonnet-class
   session can debug, extend, validate, and advance `tg`. Change: `change-control`, `debugging-playbook`,
   `failure-archaeology`, `validation-and-qa`. Understand: `architecture-contract`,
   `code-search-and-retrieval-reference`, `config-and-flags`. Operate: `build-and-env`, `run-and-operate`,
   `diagnostics-and-tooling`, `docs-and-writing`, `release-and-positioning`. Advance:
-  `semantic-search-campaign`, `benchmark-and-proof-toolkit`, `research-frontier`, `research-methodology`.
+  `semantic-search-campaign`, `benchmark-and-proof-toolkit`, `research-frontier`, `research-methodology`,
+  `large-repo-scale-campaign`. Orchestrate: `backlog-campaign` (the multi-PR drain+build campaign playbook).
   Each auto-loads by task; this is the index.
 - **Build/release discipline** (global, `~/.claude/skills/`): `dogfood-the-shipped-artifact`,
-  `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`.
+  `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`,
+  `anti-hang-test-protocol` (hang-class test hygiene: shell-timeout + fix-before-red-test),
+  `instrumented-build-gate` (measure demand before building a speculative feature).
 - **Post-release dogfood harness**: `scripts/dogfood/`.
