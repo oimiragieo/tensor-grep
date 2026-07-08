@@ -6,8 +6,8 @@ description: Use when adding, changing, or auditing a tg environment variable, C
 # tensor-grep config and flags
 
 A ground-truthed catalog of every tg config axis — env vars, CLI flags, provider modes — plus the
-registration checklist for adding a new one. Verified against source as of 2026-07-02, **v1.17.25**
-(`pyproject.toml:322`). Re-verify commands are in [Provenance and maintenance](#provenance-and-maintenance)
+registration checklist for adding a new one. Verified against source as of 2026-07-08, **v1.49.3**
+(`pyproject.toml:430`). Re-verify commands are in [Provenance and maintenance](#provenance-and-maintenance)
 because these drift with every release.
 
 ## When to use this skill
@@ -135,6 +135,7 @@ from "asked for heuristic". Never read a classify result as model-backed without
 | `TG_SESSION_NEARBY_LOOKUP` | off | By default session discovery is confined to the explicit root; set to opt into parent/sibling-directory session discovery. | `session_store.py:52-54`, `124-130` |
 | `TG_SESSION_DAEMON_IDLE_SECONDS` | 900.0s | Idle stretch (no requests) after which the warm `tg session daemon` self-shuts-down. Non-positive disables the idle limit. | `session_daemon.py:67-72` |
 | `TG_SESSION_DAEMON_MAX_UPTIME_SECONDS` | 86400.0s (24h) | Hard max daemon lifetime regardless of activity. Non-positive disables the uptime limit. | `session_daemon.py:67-73` |
+| `TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS` | 60.0s | Client-side socket read timeout for a daemon response (#390, moat P0-6 step 5). Env-configurable so a large repo whose warm-daemon graph query legitimately needs >60s isn't killed by a hard cap that returns a bare "timed out"/exit 1/zero JSON. Does **not** by itself bound the daemon's own traversal — the served graph commands run on a cached map and are not covered by the scan-side `--deadline`; see the #390 daemon-path gap in `tensor-grep-large-repo-scale-campaign`. | `session_daemon.py:52,58` |
 | `TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES` | 8 MiB (`8 * 1024 * 1024`) | Byte cap on the in-process session response cache. | `session_store.py:44-45`, `main.py:200` |
 
 The daemon binds to `127.0.0.1` only (`session_daemon.py:46`) — it is not exposed off-host. Operational
@@ -221,33 +222,46 @@ when it carries `lsp_provider_response = true` from a completed provider request
 ## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
 
 `tg inventory PATH [--json] [--max-repo-files N]` (`src/tensor_grep/cli/inventory.py`,
-registered `main.py:6641-6668`) emits a single-pass file/byte/language/category manifest by
+registered `main.py:7090-7091`) emits a single-pass file/byte/language/category manifest by
 reusing the same gitignore-aware walker (`repo_map._iter_repo_files`) that `orient`/`callers`/
 `blast-radius` trust — so counts stay truth-consistent with every other `tg` command and inherit
 its `.tensor-grep`/`.git`/vendor exclusions for free.
 
-**`--max-repo-files` defaults to `50_000`, not the AST `512` cap** — this is a deliberate,
-documented divergence, not an oversight:
+**`--max-repo-files` defaults to `50_000`, still well above the AST map limit** — this is a
+deliberate, documented divergence, not an oversight. **The AST-side number changed underneath this
+divergence** (backlog #1, 2026-07-06): `DEFAULT_AGENT_REPO_MAP_LIMIT` was raised from `512` to
+**`2000`** (`repo_map.py:155`), and the CLI-side mirror `_DEFAULT_AGENT_REPO_SCAN_LIMIT` (`main.py:66`)
+was raised to match — do not describe the AST cap as `512` anymore.
 
-- `DEFAULT_MAX_INVENTORY_FILES = 50_000` (`inventory.py:35`), passed to the CLI option as a
-  literal `50_000` (`main.py:6647`) rather than importing the constant, so the (heavy) `repo_map`
-  import stays lazy — same pattern `map` uses for its own limit. A guard test pins the two
-  literals together; re-verify with `grep -rn "50_000" src/tensor_grep/cli/inventory.py
-  src/tensor_grep/cli/main.py`.
-- `DEFAULT_AGENT_REPO_MAP_LIMIT = 512` (`repo_map.py:94`) budgets a **full AST parse per file**
+- `DEFAULT_MAX_INVENTORY_FILES = 50_000` (`inventory.py:36`), passed to the CLI option as a
+  literal `50_000` (`main.py:7093-7095`) rather than importing the constant, so the (heavy)
+  `repo_map` import stays lazy. A nearby code comment still says "matching `map`'s 512 pattern" —
+  that comment is about the STYLE (keep-literal, don't import), not the current live number; `map`'s
+  own limit is 2000 now, not 512. A guard test pins the `50_000` literals together; re-verify with
+  `grep -rn "50_000" src/tensor_grep/cli/inventory.py src/tensor_grep/cli/main.py`.
+- `DEFAULT_AGENT_REPO_MAP_LIMIT = 2000` (`repo_map.py:155`) budgets a **full AST parse per file**
   for `tg map`/`orient`/`context`/`edit-plan`/session repo-map defaults — reusing it for
-  `inventory` would silently truncate any repo over ~500 files and defeat the "whole-repo
+  `inventory` would silently truncate any repo over ~2000 files and defeat the "whole-repo
   manifest" purpose (`inventory.py:31-34` states this explicitly in a code comment).
   `inventory` is walk-only (`stat()` + an 8KB read for binary-sniffing per file), orders of
-  magnitude cheaper than an AST parse, so a much higher cap is safe.
+  magnitude cheaper than an AST parse, so a much higher cap (`50_000`) is still safe even after the
+  AST-side raise.
+- **The trap: `CALLER_SCAN_FILE_CEILING = 512` (`repo_map.py:168`) is a DIFFERENT, deliberately
+  separate constant that now holds the old `512` numeral** — do not confuse it with
+  `DEFAULT_AGENT_REPO_MAP_LIMIT`. Per the code comment at `repo_map.py:161-164`: raising the AST map
+  limit to 2000 is safe for caller-scan latency *only because* this ceiling independently bounds the
+  slow per-file caller-scan hot loop (`callers`/`refs`/`blast-radius`/`impact`) at a single internal
+  chokepoint, regardless of how large the map itself is — "a naive raise [of the caller-scan ceiling]
+  to 2000 would make it worse" (reintroducing the task #52 ~100s-hang shape; see
+  `tensor-grep-large-repo-scale-campaign`). If you see the bare number `512` anywhere in this
+  subsystem going forward, check WHICH constant it is before assuming it's the map limit.
 - Truncation is **never silent**: a repo over the cap is surfaced via
   `scan_limit.possibly_truncated` + `scan_limit.truncation_cause` in the JSON payload, and as an
   ASCII `[!] truncated at max_files=...` line in text output (fixed from a U+26A0 emoji that
   crashed `typer.echo` on Windows cp1252 consoles — `#346`, commit `6b7b518`; ASCII-only is now
   the rule for all `tg` CLI output, not just `inventory`).
 - Fails closed: a nonexistent `path` raises `FileNotFoundError` -> CLI exits 1
-  (`inventory.py:175-176`, `main.py:6661-6663`) — a missing path must never read as a valid empty
-  repo.
+  (`inventory.py:175-176`) — a missing path must never read as a valid empty repo.
 
 Registration follows the standard 4-site table (`KNOWN_COMMANDS` in `commands.py`, native Rust
 `Commands::Inventory` in `rust_core/src/main.rs`, `PUBLIC_TOP_LEVEL_COMMANDS` in
@@ -303,12 +317,15 @@ AST-derives the forwarded-field set directly from `_build_native_tg_search_comma
 3. **Gate-handled** — `files_with_matches`/`files_without_match`; read off explicit keyword args
    at the call site rather than the config object, so the gate itself covers them.
 4. **`KNOWN_GAP`** — `_NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS` in the test file: pre-existing
-   fields (AST-mode selectors, NLP threshold, internal telemetry, `case_sensitive`/`ignore_*`
-   scope flags, `no_*` double-negation flags) that were *already* dropped through delegation
-   before `#342` and are acknowledged tech debt, not blessed as safe — a documented gap, not a
-   silent one. A companion test (`test_known_gap_has_no_stale_entries`) fails if a `KNOWN_GAP`
-   entry is later forwarded/refused/removed and the entry isn't pruned, so the gap set can't rot
-   into a false-safe list either.
+   fields (AST-mode selectors, NLP threshold, internal telemetry, `ignore_*` scope flags, `no_*`
+   double-negation flags) that were *already* dropped through delegation before `#342` and are
+   acknowledged tech debt, not blessed as safe — a documented gap, not a silently-dropped one.
+   **`case_sensitive` is NOT in this set anymore** — audit #19 forwarded it into the native argv
+   via `-s` (`main.py:3353`), so it's now bucket 1 (Forwarded), not a gap; the test file's own
+   comment at the `KNOWN_GAP` set records this explicitly. Don't describe `case_sensitive` as a
+   native-delegation gap in new docs. A companion test (`test_known_gap_has_no_stale_entries`)
+   fails if a `KNOWN_GAP` entry is later forwarded/refused/removed and the entry isn't pruned, so
+   the gap set can't rot into a false-safe list either.
 
 **When you add a `SearchConfig` field, this test goes RED until you classify it** — that red is the
 checklist: forward it (native argv), refuse it (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`),
@@ -401,21 +418,22 @@ grep -n 'native.*lsp.*hybrid' src/tensor_grep/cli/main.py
 # Confirm the GPU fail-loud contract still raises (not falls back)
 grep -n '_raise_explicit_gpu_configuration_error\|class ConfigurationError' src/tensor_grep/core/pipeline.py
 
-# Re-verify tg inventory's two caps (50_000 walk-only vs 512 AST) still diverge deliberately
+# Re-verify tg inventory's two caps (50_000 walk-only vs the AST map limit) still diverge deliberately
 grep -n 'DEFAULT_MAX_INVENTORY_FILES\|max_repo_files' src/tensor_grep/cli/inventory.py src/tensor_grep/cli/main.py
-grep -n 'DEFAULT_AGENT_REPO_MAP_LIMIT = ' src/tensor_grep/cli/repo_map.py
+grep -n 'DEFAULT_AGENT_REPO_MAP_LIMIT = \|CALLER_SCAN_FILE_CEILING = ' src/tensor_grep/cli/repo_map.py
 
 # Re-verify the native-delegation field-coverage ratchet still exists and passes
 grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = ' src/tensor_grep/cli/main.py
 uv run pytest tests/unit/test_native_delegation_field_coverage.py -v
 ```
 
-Verified against source as of 2026-07-03 (this update): `tg inventory` section against `origin/main`
-commit `13acb2a` (v1.19.3, `pyproject.toml:338`); the native-delegation field-coverage ratchet against
-commit `5e6f780` (#342) plus its follow-on `ab717a1` (#343). The rest of this file (env-var catalog,
-front-door tables, GPU/LSP/provider sections above) was last fully re-verified at `v1.17.25` and has
-**not** been re-walked in this pass — treat those sections' line numbers as needing a fresh check per
-the rule below, independent of the two sections just re-verified.
+Verified against source as of 2026-07-08 (this update, v1.49.3): `tg inventory` section including
+the `DEFAULT_AGENT_REPO_MAP_LIMIT` 512->2000 raise + the `CALLER_SCAN_FILE_CEILING` trap; the
+native-delegation field-coverage ratchet including `case_sensitive`'s removal from `KNOWN_GAP`
+(audit #19); the new `TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS` env var (#390). The rest of this
+file (env-var catalog, front-door tables, GPU/LSP/provider sections above) was **not** re-walked
+line-by-line in this pass — treat those sections' exact line numbers as needing a fresh check per
+the rule below, independent of the sections just re-verified.
 
-If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.19.3`, treat every default/line-number
+If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.49.3`, treat every default/line-number
 claim in this file as needing re-verification, not just the version string.
