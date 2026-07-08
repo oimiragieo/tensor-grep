@@ -25,9 +25,13 @@ import sys
 from pathlib import Path
 
 from tensor_grep.core.retrieval_bm25 import Bm25Index
-from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
+from tensor_grep.core.retrieval_chunker import Chunk, chunk_file, current_chunker_mode
 
-INDEX_VERSION: int = 1
+# v2 (was 1): folds the active chunker mode (fixed-window vs cAST structural, TG_CHUNKER) into the
+# schema so a structural-chunked index can never silently fuse with -- or be silently reused by --
+# a stale fixed-window index (or vice versa). See ``load_or_warn``'s version+mode check below and
+# ``retrieval_chunker.current_chunker_mode``'s docstring for the bug class this closes.
+INDEX_VERSION: int = 2
 _CHUNKS_NAME = "bm25_chunks.json"
 _META_NAME = "bm25_meta.json"
 
@@ -82,6 +86,7 @@ def build_and_save(
         "file_count": len(file_paths),
         "chunk_count": len(chunks),
         "version": INDEX_VERSION,
+        "chunker_mode": current_chunker_mode(),
         "files": sorted(file_paths),
     }
     (index_dir / _META_NAME).write_text(json.dumps(meta), encoding="utf-8")
@@ -100,6 +105,27 @@ def load_or_warn(index_dir: Path) -> Bm25Index | None:
         return None
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    if meta.get("version") != INDEX_VERSION:
+        print(
+            f"tg: semantic index at {index_dir} was built with schema version "
+            f"{meta.get('version')!r} (current is {INDEX_VERSION}); falling back to in-memory "
+            "ranking.",
+            file=sys.stderr,
+        )
+        return None
+
+    stored_mode = meta.get("chunker_mode")
+    active_mode = current_chunker_mode()
+    if stored_mode != active_mode:
+        print(
+            f"tg: semantic index at {index_dir} was built with chunker mode {stored_mode!r} but "
+            f"the active mode is {active_mode!r} (TG_CHUNKER); falling back to in-memory ranking "
+            "rather than mixing chunk boundaries from two different chunkers.",
+            file=sys.stderr,
+        )
+        return None
+
     current = compute_fingerprint(list(meta.get("files", [])))
     if current != meta.get("fingerprint"):
         print(
