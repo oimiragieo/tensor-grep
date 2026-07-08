@@ -32,6 +32,14 @@ class SearchResult:
     routing_gpu_chunk_plan_mb: list[tuple[int, int]] = field(default_factory=list)
     routing_distributed: bool = False
     routing_worker_count: int = 0
+    # M9: the DISTINCT backends actually used across a heterogeneous per-file scan. `routing_backend`
+    # above is last-write-wins (a per-file merge overwrites it each call), so on a scan where some
+    # files ran on Torch and others fell back to CPU, `routing_backend` alone reports only whichever
+    # file was processed last — silently hiding that matches came from more than one engine. These
+    # two additive fields carry the truth: `routing_backends_seen` is the accumulated set (insertion
+    # order), `is_mixed_routing` is True once >1 distinct backend contributed.
+    routing_backends_seen: list[str] = field(default_factory=list)
+    is_mixed_routing: bool = False
     # GPU execution telemetry — optional; None when not measured or not applicable.
     # Populated by GPU backends that instrument their kernel and transfer timing.
     kernel_time_ms: float | None = None
@@ -64,6 +72,13 @@ def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None
     backend must adopt the runtime values rather than keep reporting the planned route.
     Shared by the CLI, MCP, and GPU-sidecar paths so the merge semantics cannot drift.
     """
+    # M9: accumulate the distinct backends BEFORE the last-write-wins overwrite below, so a
+    # heterogeneous per-file scan (e.g. Torch for some files, CPU-fallback for others) surfaces
+    # every engine that contributed rather than only the last-merged one.
+    for _seen_backend in (aggregate.routing_backend, result.routing_backend):
+        if _seen_backend and _seen_backend not in aggregate.routing_backends_seen:
+            aggregate.routing_backends_seen.append(_seen_backend)
+    aggregate.is_mixed_routing = len(aggregate.routing_backends_seen) > 1
     if result.routing_backend:
         aggregate.routing_backend = result.routing_backend
         aggregate.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
