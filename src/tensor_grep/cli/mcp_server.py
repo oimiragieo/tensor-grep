@@ -1663,13 +1663,21 @@ def tg_rulesets() -> str:
 
 
 def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
-    """Resolve an MCP-supplied write path and refuse anything outside ``anchor`` (round-4).
+    """Resolve an MCP-supplied path and refuse anything outside ``anchor`` (round-4, round-6).
 
-    The MCP write tools (ruleset baseline/suppressions, review-bundle output) take a path
-    straight from the (LLM/attacker-influenceable) tool call. Without confinement that is an
-    arbitrary-file-write primitive. Resolve the candidate (relative paths join the anchor),
-    normalize ``..`` and parent symlinks, and require the result to be the anchor itself or a
-    descendant; raise ``ValueError`` otherwise (fail closed).
+    Originally the write-path guard (ruleset baseline/suppressions, review-bundle output):
+    those tools take a path straight from the (LLM/attacker-influenceable) tool call, and
+    without confinement that is an arbitrary-file-write primitive. Round-6 reuses the same
+    mechanism to confine READ paths on the audit/review-bundle tools (audit #7): an
+    unconfined read is an arbitrary-file-read/exfil primitive -- the manifest/bundle/scan
+    contents are echoed back into the JSON tool result, so any path the caller can name gets
+    its bytes disclosed. Resolve the candidate (relative paths join the anchor), which also
+    follows symlinks -- correct for confinement, since a symlink planted inside the anchor
+    that points outside it must resolve to its real (outside) target to be caught -- and
+    require the result to be the anchor itself or a descendant; raise ``ValueError``
+    otherwise (fail closed). Callers MUST forward the resolved ``Path`` this returns, not the
+    raw candidate string, so the downstream read/write sees the same anchor-validated
+    location this check validated (closes the discard/TOCTOU class).
     """
     anchor_resolved = anchor.expanduser().resolve()
     raw = Path(candidate).expanduser()
@@ -3835,14 +3843,32 @@ def tg_audit_manifest_verify(
     Verify a rewrite audit manifest digest, chain, and optional signature.
 
     Args:
-        manifest_path: Path to the rewrite audit manifest JSON file.
-        signing_key: Optional HMAC signing key path for signed manifests.
-        previous_manifest: Optional previous manifest path for validating manifest chaining.
+        manifest_path: Path to the rewrite audit manifest JSON file. Confined to the
+            project root (cwd); a manifest that legitimately lives outside the project
+            must be copied in first (fail-closed, not a silent drop).
+        signing_key: Optional HMAC signing key path for signed manifests. Not confined
+            (operators legitimately keep HMAC keys outside the repo, e.g. ~/.config).
+        previous_manifest: Optional previous manifest path for validating manifest
+            chaining. Confined to the project root (cwd) like manifest_path.
     """
     from tensor_grep.cli.audit_manifest import verify_audit_manifest_json
 
     if not manifest_path.strip():
         return _audit_manifest_error("manifest_path must not be empty.", code="invalid_input")
+
+    # round-6 security (audit #7): confine the read-path params to the project root (cwd) --
+    # unconfined they are an arbitrary-file-read/exfil primitive reachable from any MCP
+    # client. Forward the RESOLVED paths so the downstream read in audit_manifest.py sees
+    # the same anchor-validated location this check validated (closes the discard/TOCTOU
+    # class), mirroring the write-side _confine_write_path precedent (round-4/5).
+    try:
+        manifest_path = str(_confine_write_path(manifest_path, Path.cwd(), label="manifest_path"))
+        if previous_manifest is not None:
+            previous_manifest = str(
+                _confine_write_path(previous_manifest, Path.cwd(), label="previous_manifest")
+            )
+    except ValueError as exc:
+        return _audit_manifest_error(str(exc), code="invalid_input")
 
     try:
         return verify_audit_manifest_json(
@@ -3887,8 +3913,11 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
     Compute a semantic diff between two audit manifest JSON files.
 
     Args:
-        previous_manifest: Path to the previous audit manifest JSON file.
-        current_manifest: Path to the current audit manifest JSON file.
+        previous_manifest: Path to the previous audit manifest JSON file. Confined to
+            the project root (cwd); a manifest outside the project must be copied in
+            first (fail-closed, not a silent drop).
+        current_manifest: Path to the current audit manifest JSON file. Confined to
+            the project root (cwd) like previous_manifest.
     """
     from tensor_grep.cli.audit_manifest import diff_audit_manifests_payload
 
@@ -3897,6 +3926,21 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
             "previous_manifest and current_manifest must not be empty.",
             code="invalid_input",
         )
+
+    # round-6 security (audit #7): confine both read-path params to the project root
+    # (cwd) -- unconfined they are an arbitrary-file-read/exfil primitive: the diff
+    # (added/removed/changed) echoes raw field values from BOTH files verbatim into the
+    # returned JSON. Forward the RESOLVED paths (see the audit #7 note on
+    # tg_audit_manifest_verify above / _confine_write_path docstring).
+    try:
+        previous_manifest = str(
+            _confine_write_path(previous_manifest, Path.cwd(), label="previous_manifest")
+        )
+        current_manifest = str(
+            _confine_write_path(current_manifest, Path.cwd(), label="current_manifest")
+        )
+    except ValueError as exc:
+        return _audit_diff_error(str(exc), code="invalid_input")
 
     try:
         return _inject_mcp_contract_fields(
@@ -3925,10 +3969,14 @@ def tg_review_bundle_create(
     Create a review bundle containing audit, scan, checkpoint, and diff artifacts.
 
     Args:
-        manifest_path: Path to the rewrite audit manifest JSON file.
-        scan_path: Optional path to the ruleset scan JSON file.
+        manifest_path: Path to the rewrite audit manifest JSON file. Confined to the
+            project root (cwd); a manifest outside the project must be copied in first
+            (fail-closed, not a silent drop).
+        scan_path: Optional path to the ruleset scan JSON file. Confined to the project
+            root (cwd) like manifest_path.
         checkpoint_id: Optional checkpoint ID to include.
         previous_manifest: Optional previous audit manifest JSON for diff generation.
+            Confined to the project root (cwd) like manifest_path.
         output_path: Optional file path where the bundle JSON should be written.
     """
     from tensor_grep.cli.audit_manifest import create_review_bundle_json
@@ -3936,6 +3984,28 @@ def tg_review_bundle_create(
     if not manifest_path.strip():
         return _review_bundle_error(
             "manifest_path must not be empty.",
+            code="invalid_input",
+            routing_reason="review-bundle-create",
+        )
+
+    # round-6 security (audit #7): confine the read-path params (manifest_path, scan_path,
+    # previous_manifest) to the project root (cwd) -- unconfined they are an
+    # arbitrary-file-read/exfil primitive: create_review_bundle_json echoes the manifest
+    # and scan_results contents (and a diff of previous_manifest) verbatim into the
+    # returned bundle JSON. Forward the RESOLVED paths so the downstream reads in
+    # audit_manifest.py see the same anchor-validated locations this check validated
+    # (closes the discard/TOCTOU class), mirroring the output_path write-confinement below.
+    try:
+        manifest_path = str(_confine_write_path(manifest_path, Path.cwd(), label="manifest_path"))
+        if scan_path is not None:
+            scan_path = str(_confine_write_path(scan_path, Path.cwd(), label="scan_path"))
+        if previous_manifest is not None:
+            previous_manifest = str(
+                _confine_write_path(previous_manifest, Path.cwd(), label="previous_manifest")
+            )
+    except ValueError as exc:
+        return _review_bundle_error(
+            str(exc),
             code="invalid_input",
             routing_reason="review-bundle-create",
         )
@@ -3989,13 +4059,27 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
     Verify review bundle integrity and component checksums.
 
     Args:
-        bundle_path: Path to the review bundle JSON file.
+        bundle_path: Path to the review bundle JSON file. Confined to the project root
+            (cwd); a bundle outside the project must be copied in first (fail-closed,
+            not a silent drop).
     """
     from tensor_grep.cli.audit_manifest import verify_review_bundle_json
 
     if not bundle_path.strip():
         return _review_bundle_error(
             "bundle_path must not be empty.",
+            code="invalid_input",
+            routing_reason="review-bundle-verify",
+        )
+
+    # round-6 security (audit #7): confine bundle_path to the project root (cwd) --
+    # unconfined it is an arbitrary-file-read/exfil primitive (see the audit #7 note on
+    # tg_review_bundle_create above / _confine_write_path docstring).
+    try:
+        bundle_path = str(_confine_write_path(bundle_path, Path.cwd(), label="bundle_path"))
+    except ValueError as exc:
+        return _review_bundle_error(
+            str(exc),
             code="invalid_input",
             routing_reason="review-bundle-verify",
         )

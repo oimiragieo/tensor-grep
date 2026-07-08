@@ -2433,9 +2433,10 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, mon
     ]
 
 
-def test_tg_audit_manifest_verify_supports_signed_manifests(tmp_path):
+def test_tg_audit_manifest_verify_supports_signed_manifests(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
     manifest_path = tmp_path / "rewrite-audit.json"
     signing_key_path = tmp_path / "audit.key"
     signing_key = b"top-secret"
@@ -2489,9 +2490,10 @@ def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path):
     assert payload["history"] == []
 
 
-def test_tg_audit_diff_matches_cli_json_schema(tmp_path):
+def test_tg_audit_diff_matches_cli_json_schema(tmp_path, monkeypatch):
     from tensor_grep.cli import audit_manifest, mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
     left_path = tmp_path / "left.json"
     right_path = tmp_path / "right.json"
     _write_audit_manifest(left_path)
@@ -2514,9 +2516,10 @@ def test_tg_audit_diff_matches_cli_json_schema(tmp_path):
     )
 
 
-def test_tg_audit_diff_reports_not_found(tmp_path):
+def test_tg_audit_diff_reports_not_found(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
     missing_left = tmp_path / "missing-left.json"
     missing_right = tmp_path / "missing-right.json"
 
@@ -2527,9 +2530,10 @@ def test_tg_audit_diff_reports_not_found(tmp_path):
     assert parsed["error"]["code"] == "not_found"
 
 
-def test_tg_audit_diff_reports_invalid_json(tmp_path):
+def test_tg_audit_diff_reports_invalid_json(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
     left_path = tmp_path / "left.json"
     right_path = tmp_path / "right.json"
     _write_audit_manifest(left_path)
@@ -2552,9 +2556,10 @@ def test_tg_audit_manifest_verify_reports_invalid_input_for_empty_path():
     assert parsed["error"]["code"] == "invalid_input"
 
 
-def test_tg_audit_manifest_verify_reports_chain_failure(tmp_path):
+def test_tg_audit_manifest_verify_reports_chain_failure(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
     previous_manifest_path = tmp_path / "previous-audit.json"
     _write_audit_manifest(previous_manifest_path)
     manifest_path = tmp_path / "rewrite-audit.json"
@@ -2574,7 +2579,7 @@ def test_tg_audit_manifest_verify_reports_chain_failure(tmp_path):
     assert "Previous manifest digest does not match previous_manifest_sha256." in parsed["errors"]
 
 
-def test_tg_review_bundle_create_matches_bundle_schema(tmp_path):
+def test_tg_review_bundle_create_matches_bundle_schema(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
     from tensor_grep.cli.checkpoint_store import create_checkpoint
 
@@ -2583,6 +2588,7 @@ def test_tg_review_bundle_create_matches_bundle_schema(tmp_path):
     audit_dir.mkdir(parents=True)
     (project / "src").mkdir(parents=True)
     (project / "src" / "sample.py").write_text("print('hello')\n", encoding="utf-8")
+    monkeypatch.chdir(project)  # cwd = the read-path confinement anchor (audit #7)
 
     previous_path = audit_dir / "previous.json"
     previous_payload = _write_audit_manifest(previous_path, project_root=project)
@@ -2613,10 +2619,11 @@ def test_tg_review_bundle_create_matches_bundle_schema(tmp_path):
     }
 
 
-def test_tg_review_bundle_verify_reports_invalid_integrity(tmp_path):
+def test_tg_review_bundle_verify_reports_invalid_integrity(tmp_path, monkeypatch):
     from tensor_grep.cli import audit_manifest as audit_manifest_module
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
     project = tmp_path / "project"
     audit_dir = project / ".tensor-grep" / "audit"
     audit_dir.mkdir(parents=True)
@@ -2638,6 +2645,372 @@ def test_tg_review_bundle_verify_reports_invalid_integrity(tmp_path):
     assert parsed["checks"]["audit_manifest"]["valid"] is True
     assert parsed["bundle_integrity"]["valid"] is False
     assert parsed["valid"] is False
+
+
+# round-6 security (audit #7): tg_audit_manifest_verify, tg_audit_diff,
+# tg_review_bundle_create, and tg_review_bundle_verify read caller-supplied JSON paths and
+# echo their contents (or content-derived diffs/checksums/fields) back into the tool
+# result. Unconfined, any of those 9 read-path params (manifest_path/scan_path/
+# previous_manifest x2 across the 4 tools, current_manifest, bundle_path) is an
+# arbitrary-file-read/exfil primitive reachable from any MCP client (e.g.
+# manifest_path=~/.config/service-account.json). Each param must now resolve inside the
+# project root (cwd) -- refusing an absolute path outside it, a "../" escape, AND a
+# symlink planted inside the root that resolves to a target outside it -- and the refused
+# response must never contain the target file's bytes. The "in-root path still works" case
+# is covered by the (now cwd-anchored) tests above: test_tg_audit_manifest_verify_
+# supports_signed_manifests, test_tg_audit_diff_matches_cli_json_schema,
+# test_tg_review_bundle_create_matches_bundle_schema, and test_tg_review_bundle_verify_
+# reports_invalid_integrity.
+
+_AUDIT7_SECRET_MARKER = "SECRET_MARKER_AUDIT7_EXFIL_PROBE"
+
+
+def _write_audit7_secret(path, *, field: str = "kind") -> None:
+    path.write_text(json.dumps({field: _AUDIT7_SECRET_MARKER}), encoding="utf-8")
+
+
+def _assert_audit7_refused_no_leak(out: str) -> None:
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "invalid_input"
+    assert _AUDIT7_SECRET_MARKER not in out
+
+
+def test_tg_audit_manifest_verify_refuses_manifest_path_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+
+    out = mcp_server.tg_audit_manifest_verify(str(secret))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_manifest_verify_refuses_manifest_path_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+
+    out = mcp_server.tg_audit_manifest_verify("../secret.json")
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_manifest_verify_refuses_manifest_path_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+    link = proj / "link.json"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_audit_manifest_verify(str(link))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_manifest_verify_refuses_previous_manifest_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "rewrite-audit.json"
+    _write_audit_manifest(manifest_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+
+    out = mcp_server.tg_audit_manifest_verify(str(manifest_path), previous_manifest=str(secret))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_manifest_verify_refuses_previous_manifest_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "rewrite-audit.json"
+    _write_audit_manifest(manifest_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+
+    out = mcp_server.tg_audit_manifest_verify(
+        str(manifest_path), previous_manifest="../secret.json"
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_manifest_verify_refuses_previous_manifest_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "rewrite-audit.json"
+    _write_audit_manifest(manifest_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+    link = proj / "prev-link.json"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_audit_manifest_verify(str(manifest_path), previous_manifest=str(link))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_diff_refuses_previous_manifest_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    current_path = proj / "current.json"
+    _write_audit_manifest(current_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+
+    out = mcp_server.tg_audit_diff(str(secret), str(current_path))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_diff_refuses_previous_manifest_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    current_path = proj / "current.json"
+    _write_audit_manifest(current_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+
+    out = mcp_server.tg_audit_diff("../secret.json", str(current_path))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_diff_refuses_previous_manifest_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    current_path = proj / "current.json"
+    _write_audit_manifest(current_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+    link = proj / "prev-link.json"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_audit_diff(str(link), str(current_path))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_diff_refuses_current_manifest_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    previous_path = proj / "previous.json"
+    _write_audit_manifest(previous_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+
+    out = mcp_server.tg_audit_diff(str(previous_path), str(secret))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_diff_refuses_current_manifest_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    previous_path = proj / "previous.json"
+    _write_audit_manifest(previous_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+
+    out = mcp_server.tg_audit_diff(str(previous_path), "../secret.json")
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_diff_refuses_current_manifest_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    previous_path = proj / "previous.json"
+    _write_audit_manifest(previous_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+    link = proj / "current-link.json"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_audit_diff(str(previous_path), str(link))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_create_refuses_manifest_path_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+
+    out = mcp_server.tg_review_bundle_create(manifest_path=str(secret))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_create_refuses_manifest_path_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+
+    out = mcp_server.tg_review_bundle_create(manifest_path="../secret.json")
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_create_refuses_manifest_path_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret)
+    link = proj / "link.json"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_review_bundle_create(manifest_path=str(link))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_create_refuses_scan_path_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "manifest.json"
+    _write_audit_manifest(manifest_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="findings")
+
+    out = mcp_server.tg_review_bundle_create(
+        manifest_path=str(manifest_path), scan_path=str(secret)
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_create_refuses_previous_manifest_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "manifest.json"
+    _write_audit_manifest(manifest_path)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="reviewer")
+
+    out = mcp_server.tg_review_bundle_create(
+        manifest_path=str(manifest_path), previous_manifest=str(secret)
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_verify_refuses_bundle_path_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="bundle_sha256")
+
+    out = mcp_server.tg_review_bundle_verify(str(secret))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_verify_refuses_bundle_path_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="bundle_sha256")
+
+    out = mcp_server.tg_review_bundle_verify("../secret.json")
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_review_bundle_verify_refuses_bundle_path_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.json"
+    _write_audit7_secret(secret, field="bundle_sha256")
+    link = proj / "link.json"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_review_bundle_verify(str(link))
+
+    _assert_audit7_refused_no_leak(out)
 
 
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
