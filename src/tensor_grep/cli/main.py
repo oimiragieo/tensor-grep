@@ -7558,7 +7558,7 @@ def agent(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
-    from tensor_grep.cli.agent_capsule import build_agent_capsule, build_agent_capsule_json
+    from tensor_grep.cli.agent_capsule import build_agent_capsule
 
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
@@ -7568,24 +7568,6 @@ def agent(
             command_name="agent",
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
-        if json_output:
-            typer.echo(
-                build_agent_capsule_json(
-                    resolved_query,
-                    resolved_path,
-                    max_files=max_files,
-                    max_sources=max_sources,
-                    max_tokens=max_tokens,
-                    max_repo_files=max_repo_files,
-                    model=model,
-                    semantic_provider=provider,
-                    gpu_device_ids=parsed_gpu_device_ids,
-                    gpu_timeout_s=gpu_timeout_s,
-                    ignore=tuple(ignore),
-                )
-            )
-            return
-
         payload = build_agent_capsule(
             resolved_query,
             resolved_path,
@@ -7603,31 +7585,43 @@ def agent(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    primary = payload.get("primary_target", {})
-    primary_file = primary.get("file") or "<none>"
-    primary_line = primary.get("line") or 1
-    primary_symbol = primary.get("symbol") or "<unknown>"
-    validation_commands = payload.get("validation_commands", [])
-    confidence = payload.get("confidence", {}).get("overall", 0)
-    gpu_acceleration = payload.get("gpu_acceleration", {})
-    ambiguity = payload.get("ambiguity", {})
-    ask_user_before_editing = payload.get("ask_user_before_editing", {})
-    context_consistency = payload.get("context_consistency", {})
-    alternatives = payload.get("alternative_targets", [])
-    typer.echo(f"Agent capsule for {payload['path']}")
-    typer.echo(f"query={payload['query']}")
-    typer.echo(f"primary={primary_file}#L{primary_line} {primary_symbol}")
-    typer.echo(f"validation={len(validation_commands)} commands")
-    typer.echo(f"confidence={confidence}")
-    typer.echo(f"ask_required={bool(ask_user_before_editing.get('required'))}")
-    typer.echo(f"ambiguity={ambiguity.get('status', 'unknown')}")
-    typer.echo(
-        "alternatives="
-        f"{len(alternatives)}"
-        f" omitted={context_consistency.get('alternative_targets_omitted_count', 0)}"
-    )
-    if gpu_device_ids:
-        typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
+    # Cold path (PR-1 1D, mirrors the context-render cold path :7486-7499): build the payload once
+    # and dump it here for both the json and text branches -- BYTE-IDENTICAL to the old
+    # `build_agent_capsule_json` serialization (`ensure_ascii=False, indent=2`) -- so they share
+    # ONE scan-truncation gate below. Output the full payload FIRST, then exit 2 if the SCAN itself
+    # (not just the capsule's own render/token output budget) was capped -- `tg agent` was
+    # previously the only command in this family that never gated on `_scan_incomplete`.
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        primary = payload.get("primary_target", {})
+        primary_file = primary.get("file") or "<none>"
+        primary_line = primary.get("line") or 1
+        primary_symbol = primary.get("symbol") or "<unknown>"
+        validation_commands = payload.get("validation_commands", [])
+        confidence = payload.get("confidence", {}).get("overall", 0)
+        gpu_acceleration = payload.get("gpu_acceleration", {})
+        ambiguity = payload.get("ambiguity", {})
+        ask_user_before_editing = payload.get("ask_user_before_editing", {})
+        context_consistency = payload.get("context_consistency", {})
+        alternatives = payload.get("alternative_targets", [])
+        typer.echo(f"Agent capsule for {payload['path']}")
+        typer.echo(f"query={payload['query']}")
+        typer.echo(f"primary={primary_file}#L{primary_line} {primary_symbol}")
+        typer.echo(f"validation={len(validation_commands)} commands")
+        typer.echo(f"confidence={confidence}")
+        typer.echo(f"ask_required={bool(ask_user_before_editing.get('required'))}")
+        typer.echo(f"ambiguity={ambiguity.get('status', 'unknown')}")
+        typer.echo(
+            "alternatives="
+            f"{len(alternatives)}"
+            f" omitted={context_consistency.get('alternative_targets_omitted_count', 0)}"
+        )
+        if gpu_device_ids:
+            typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 @app.command(name="edit-plan")

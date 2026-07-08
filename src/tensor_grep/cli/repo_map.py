@@ -1155,6 +1155,92 @@ def _read_source_cached_bounded(path_str: str) -> bytes:
     return Path(path_str).read_bytes()
 
 
+# PERF increment 1 (parse-product cache, Fable-designed): every JS/TS/Rust symbol/ref/caller
+# extractor independently did its own `path.read_text(...)` + `parser.parse(...)` on the SAME
+# file -- caller_scan and edit-plan seeding can re-parse one file up to 3x per symbol lookup
+# (_js_ts_parser_symbols during repo-map build, _js_ts_references_and_calls during caller_scan,
+# _js_ts_import_update_target during edit-plan seeding -- the last one alone profiled at ~26% of
+# edit_plan wall time). These two functions share ONE read + ONE parse per (path, mtime, size)
+# across all of them via the same @_mtime_aware_cache seam Fix A/B7 already use.
+#
+# CRITICAL PARITY: _read_source_text_cached uses Path.read_text (universal-newline \r\n -> \n
+# translation) -- NOT a decode() of the raw-bytes cache above -- because that translated text is
+# exactly what every tree-sitter consumer .encode()'s and parses today. A raw-bytes .decode()
+# would leave \r\n intact and shift every node's byte offset on a CRLF file (silent wrong output
+# on Windows-authored sources). Do not "simplify" this into a decode of _read_source_cached.
+def _read_source_text_cached(path_str: str) -> str:
+    """Read file text (universal-newline decoded), cached by (mtime_ns, size).
+
+    Mirrors _read_source_cached's outer/inner split: oversize files bypass the cache entirely
+    (Guard 4) and are read directly, uncached, every call.
+    """
+    try:
+        size = Path(path_str).stat().st_size
+    except OSError:
+        size = -1
+    if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+        return Path(path_str).read_text(encoding="utf-8")
+    return _read_source_text_cached_bounded(path_str)
+
+
+@_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
+def _read_source_text_cached_bounded(path_str: str) -> str:
+    return Path(path_str).read_text(encoding="utf-8")
+
+
+_PARSE_PRODUCT_CACHE_MAXSIZE = 1024
+
+
+def _parser_for_source_suffix(suffix: str) -> Any | None:
+    """Select the tree-sitter parser the same way each consumer picked one inline before this
+    fix -- TS suffixes (incl. tsx) get the typescript parser, the rest of the JS/TS suffix set
+    gets the javascript parser, Rust gets the rust parser. Returns None for any other suffix (a
+    caller-side suffix pre-check, e.g. `path.suffix not in _JS_TS_SUFFIXES`, is expected to have
+    already gated the call, matching the pre-fix per-site behavior)."""
+    if suffix in _TS_SUFFIXES:
+        return _typescript_parser(tsx=suffix == ".tsx")
+    if suffix in _JS_TS_SUFFIXES:
+        return _javascript_parser()
+    if suffix in _RUST_SUFFIXES:
+        return _rust_parser()
+    return None
+
+
+def _parse_source_uncached(path_str: str) -> tuple[str, bytes, Any] | None:
+    parser = _parser_for_source_suffix(Path(path_str).suffix)
+    if parser is None:
+        return None
+    try:
+        source = _read_source_text_cached(path_str)
+    except (OSError, UnicodeDecodeError):
+        return None
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    return source, source_bytes, tree
+
+
+def _parsed_source_and_tree(path_str: str) -> tuple[str, bytes, Any] | None:
+    """One tree-sitter parse per (path, mtime, size), shared across every symbol/ref/caller/
+    import-update-target extractor that used to parse this file independently.
+
+    Guard-4 mirror (:1134-1150 note above _read_source_cached): oversize files bypass the
+    parse-product cache too -- stat-fail or size over _SYMBOL_LITERAL_SEED_MAX_BYTES reads +
+    parses UNCACHED every call, via the same outer/inner split as _read_source_cached/_bounded.
+    """
+    try:
+        size = Path(path_str).stat().st_size
+    except OSError:
+        size = -1
+    if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+        return _parse_source_uncached(path_str)
+    return _parsed_source_and_tree_bounded(path_str)
+
+
+@_mtime_aware_cache(maxsize=_PARSE_PRODUCT_CACHE_MAXSIZE)
+def _parsed_source_and_tree_bounded(path_str: str) -> tuple[str, bytes, Any] | None:
+    return _parse_source_uncached(path_str)
+
+
 def _file_may_contain_literal_symbol(path: Path, symbol: str) -> bool:
     normalized_symbol = (symbol or "").strip()
     if not normalized_symbol:
@@ -1194,12 +1280,48 @@ def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) 
     if not any(marker in lowered for marker in spec.import_markers):
         return False
     if spec.language_id in ("javascript", "typescript"):
-        return True
+        # PERF increment 1 / Section C (Fable-designed): a naive mirror of the branch below --
+        # matching a definition-file alias literally in this file's text -- changes results and
+        # drops a pinned caller: _module_aliases_for_path yields the DEFINITION file's own
+        # stem/parts, but a barrel re-export consumer (`import { x as y } from "./barrel"`) has
+        # neither the target symbol's name nor the definition file's alias anywhere in its text
+        # -- see test_js_ts_advanced_resolution.py::
+        # test_aliased_re_export_chain_resolves_to_original_definition. The SOUND gate instead
+        # checks for >=1 import BINDING from the exact set the expensive checks
+        # (_js_ts_file_imports_symbol_from_definition, _js_ts_import_update_target) can ever
+        # match through -- named/default/namespace imports -- which a barrel consumer always
+        # has (its own `import {...} from "./barrel"` statement), independent of what the
+        # definition file is named. This only gates out files with zero real import bindings
+        # (an "import"/"from"/"require(" marker hit only inside a comment or string, or an
+        # export-only barrel leaf with no import statement of its own).
+        return _js_ts_has_import_bindings(str(path))
     for definition_file in definition_files:
         for alias in _module_aliases_for_path(definition_file):
             if alias and alias.encode("utf-8") in lowered:
                 return True
     return False
+
+
+@_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
+def _js_ts_has_import_bindings(path_str: str) -> bool:
+    """True iff *path_str* has >=1 real JS/TS import binding (named/default/namespace).
+
+    Backs the sound gate in _file_may_import_symbol_definition above. Fails OPEN (True) on a
+    read error, matching the fail-open stat/read-error arms just above it (:1269-70, :1275-76)
+    -- an unreadable file must never be silently excluded from the caller/import-graph scan.
+    """
+    try:
+        source = _read_source_text_cached(path_str)
+    except (OSError, UnicodeDecodeError):
+        return True
+    if any(
+        str(binding.get("statement_kind", "import")) == "import"
+        for binding in _js_ts_named_import_bindings(source)
+    ):
+        return True
+    if _js_ts_default_import_bindings(source):
+        return True
+    return bool(_js_ts_namespace_import_bindings(source))
 
 
 def _literal_symbol_seed_files(
@@ -2920,7 +3042,7 @@ def _file_imports_symbol_from_definition(
 ) -> bool:
     file_path = Path(path_str)
     try:
-        source = file_path.read_text(encoding="utf-8")
+        source = _read_source_text_cached(path_str)
     except (OSError, UnicodeDecodeError):
         return False
     spec = lang_registry.spec_for_path(file_path)
@@ -3029,17 +3151,18 @@ def _js_ts_import_update_target(
     repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
     try:
-        source = file_path.read_text(encoding="utf-8")
+        source = _read_source_text_cached(str(file_path))
     except (OSError, UnicodeDecodeError):
         return None
 
-    parser = (
-        _typescript_parser(tsx=file_path.suffix == ".tsx")
-        if file_path.suffix in _TS_SUFFIXES
-        else _javascript_parser()
-    )
-    if parser is not None:
-        tree = parser.parse(source.encode("utf-8"))
+    # PERF increment 1 / read site 5 (Fable-designed, the "surprise 5th" site): this used to
+    # re-read + re-parse the file on every (file, symbol, definition) pair -- edit-plan seeding
+    # and _build_import_graph_consumers_from_map call it once per definition_file, profiled at
+    # ~26% of edit_plan wall time. Share the parse product with every other JS/TS extractor via
+    # the same (path, mtime, size)-keyed cache instead of parsing locally.
+    parsed = _parsed_source_and_tree(str(file_path))
+    if parsed is not None:
+        _parsed_source, _source_bytes, tree = parsed
         stack = [tree.root_node]
         while stack:
             node = stack.pop()
@@ -3502,7 +3625,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
         return [], []
 
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _read_source_text_cached(str(path)).splitlines()
     except (OSError, UnicodeDecodeError):
         return [], []
 
@@ -3669,20 +3792,10 @@ def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
     if path.suffix not in _JS_TS_SUFFIXES:
         return []
 
-    if path.suffix in {".ts", ".tsx"}:
-        parser = _typescript_parser(tsx=path.suffix == ".tsx")
-    else:
-        parser = _javascript_parser()
-    if parser is None:
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
         return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
+    _source, source_bytes, tree = parsed
     symbols: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
@@ -3721,17 +3834,10 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
     if path.suffix not in _RUST_SUFFIXES:
         return []
 
-    parser = _rust_parser()
-    if parser is None:
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
         return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
+    _source, source_bytes, tree = parsed
     symbols: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
@@ -4145,23 +4251,20 @@ def _js_ts_references_and_calls(
     if path.suffix not in _JS_TS_SUFFIXES:
         return [], []
 
-    if path.suffix in {".ts", ".tsx"}:
-        parser = _typescript_parser(tsx=path.suffix == ".tsx")
-    else:
-        parser = _javascript_parser()
-    if parser is None:
-        return [], []
-
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    lines = source.splitlines()
-    references: list[dict[str, Any]] = []
-    calls: list[dict[str, Any]] = []
+    # PERF increment 1 / Section B (Fable-designed): binding resolution only needs the source
+    # TEXT (not a parse tree), so it now runs BEFORE the parse -- letting a symbol-absent file
+    # skip tree-sitter parsing entirely below (the refs loop that follows has no prefilter,
+    # unlike the caller-scan literal check, so this is the biggest single payoff in this file).
+    # TRAP (do not reorder): this pass must run first so a renamed re-export
+    # (`export {x as y} from "./mod"`) still triggers a parse even though the literal target
+    # symbol name never appears in THIS file's text -- alias_names ends up non-empty and the
+    # early-exit below correctly falls through to parsing. See test_js_ts_advanced_resolution.py
+    # ::test_aliased_re_export_chain_resolves_to_original_definition.
     alias_resolution_by_name: dict[str, dict[str, Any]] = {}
     for binding in _js_ts_named_import_bindings(source):
         if str(binding.get("statement_kind", "import")) != "import":
@@ -4193,6 +4296,17 @@ def _js_ts_references_and_calls(
             continue
         alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
     alias_names = {name for name in alias_resolution_by_name if name}
+
+    if symbol not in source and not alias_names:
+        return [], []
+
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
+        return [], []
+    _parsed_source, source_bytes, tree = parsed
+    lines = source.splitlines()
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
         return _tree_sitter_node_text(source_bytes, node)
@@ -4310,7 +4424,7 @@ def _js_ts_provider_alias_calls(
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -4522,20 +4636,15 @@ def _rust_references_and_calls(
     if path.suffix not in _RUST_SUFFIXES:
         return [], []
 
-    parser = _rust_parser()
-    if parser is None:
-        return [], []
-
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    lines = source.splitlines()
-    references: list[dict[str, Any]] = []
-    calls: list[dict[str, Any]] = []
+    # PERF increment 1 / Section B mirror (Fable-designed): same alias-aware early exit as
+    # _js_ts_references_and_calls above -- bindings only need the source TEXT, so they're
+    # resolved before the parse, and a symbol-absent file with no matching `use` binding skips
+    # tree-sitter parsing entirely.
     bindings = _rust_use_bindings(source)
     local_name_resolution_by_name: dict[str, dict[str, Any]] = {}
     for binding in bindings:
@@ -4547,6 +4656,17 @@ def _rust_references_and_calls(
         if bool(binding.get("wildcard")):
             local_name_resolution_by_name.setdefault(symbol, dict(resolved_import))
     local_names = {name for name in local_name_resolution_by_name if name}
+
+    if symbol not in source and not local_names:
+        return [], []
+
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
+        return [], []
+    _parsed_source, source_bytes, tree = parsed
+    lines = source.splitlines()
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
         return _tree_sitter_node_text(source_bytes, node)
