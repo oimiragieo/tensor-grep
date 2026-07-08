@@ -288,6 +288,23 @@ class CPUBackend(ComputeBackend):
 
             config = SearchConfig()
 
+        # A `--max-count 0` request means "return zero matches" (ripgrep's contract, matched by the
+        # rg-routed path and the Rust-delegated `rust_results[: config.max_count]` slice below). The
+        # pure-Python loops check the cap AFTER appending, and `config.max_count and ...` treats a 0
+        # cap as falsy -- so without this guard `-m 0` on the pure-Python path (forced by
+        # -C/-A/-B/-w/-x or an LTL query) would emit EVERY match instead of none. Short-circuit here
+        # so all three CPUBackend paths agree on zero.
+        if config.max_count == 0:
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="CPUBackend",
+                routing_reason="cpu_max_count_zero",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return SearchResult(
