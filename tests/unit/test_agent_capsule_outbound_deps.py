@@ -30,6 +30,31 @@ _PRIMARY_SOURCE = f"def {_PRIMARY_SYMBOL}(payload):\n    return {_DEPENDENCY_SYM
 _MANY_DEP_NAMES = [f"dep_{index}" for index in range(9)]
 
 
+@pytest.fixture(autouse=True)
+def _dar_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    # DAR ships default-OFF (opt-in, matching the other retrieval-quality features). These tests
+    # exercise the ENABLED behavior, so opt in here; the kill-switch/off tests below explicitly
+    # re-set "0"/off-values (a later setenv wins), and the default-off test below delenv's it.
+    monkeypatch.setenv("TG_CAPSULE_OUTBOUND_DEPS", "1")
+
+
+def test_dar_defaults_off_when_env_unset() -> None:
+    import os as _os
+
+    saved = _os.environ.pop("TG_CAPSULE_OUTBOUND_DEPS", None)
+    try:
+        assert agent_capsule._capsule_outbound_dependencies_enabled() is False
+        _os.environ["TG_CAPSULE_OUTBOUND_DEPS"] = "1"
+        assert agent_capsule._capsule_outbound_dependencies_enabled() is True
+        _os.environ["TG_CAPSULE_OUTBOUND_DEPS"] = "0"
+        assert agent_capsule._capsule_outbound_dependencies_enabled() is False
+    finally:
+        if saved is None:
+            _os.environ.pop("TG_CAPSULE_OUTBOUND_DEPS", None)
+        else:
+            _os.environ["TG_CAPSULE_OUTBOUND_DEPS"] = saved
+
+
 def _write_dar_project(tmp_path: Path) -> dict[str, Path]:
     project = tmp_path / "workspace"
     project.mkdir()

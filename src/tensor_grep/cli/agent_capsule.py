@@ -558,14 +558,15 @@ _CAPSULE_OUTBOUND_DEPENDENCY_KIND_PRIORITY = {"call+import": 0, "call": 1, "impo
 
 
 def _capsule_outbound_dependencies_enabled() -> bool:
-    """Always-ON kill-switch -- the OPPOSITE default polarity from
-    `_capsule_lsp_confidence_boost_enabled` (that one is opt-IN), but the same off-value parsing:
-    any of `{"", "0", "false", "no", "off"}` (case-insensitive) disables DAR.
+    """Opt-IN flag (default OFF) -- same polarity as `_capsule_lsp_confidence_boost_enabled` and the
+    other retrieval-quality features (channelized RRF, cAST chunker): DAR ships default-off pending a
+    measured golden-set win, so the capsule stays byte-identical for every user until they opt in via
+    `TG_CAPSULE_OUTBOUND_DEPS` in `{"1", "true", "yes", "on"}` (case-insensitive).
     """
     raw = os.environ.get(_CAPSULE_OUTBOUND_DEPENDENCIES_ENV)
     if raw is None:
-        return True
-    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _outbound_dependency_import_tails(imports: list[str]) -> dict[str, str]:
