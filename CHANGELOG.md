@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.45.16 (2026-07-08)
+
+### Bug Fixes
+
+- **orient**: Don't false-flag truncated when a snippet lands exactly on the token budget (track
+  break-driven truncation, not the token_budget_used>=max_tokens proxy)
+  ([#439](https://github.com/oimiragieo/tensor-grep/pull/439),
+  [`c1a55f8`](https://github.com/oimiragieo/tensor-grep/commit/c1a55f8a845dd76def72191834e49a06ac3cfff3))
+
+
 ## v1.45.15 (2026-07-08)
 
 ### Bug Fixes
