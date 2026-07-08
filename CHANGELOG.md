@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.50.0 (2026-07-08)
+
+### Features
+
+- **daemon**: Document the shared code-intelligence plane + add opt-out demand instrumentation
+  (concurrent-client + repeat-artifact counters, PII-free, fail-open) to gate the tg-ledger build
+  decision (step-0) ([#456](https://github.com/oimiragieo/tensor-grep/pull/456),
+  [`fca77a4`](https://github.com/oimiragieo/tensor-grep/commit/fca77a4abcb339ff061907e9d95d854cd7a76a36))
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.49.3 (2026-07-08)
 
 ### Bug Fixes
