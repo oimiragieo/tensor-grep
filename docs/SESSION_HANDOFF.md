@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-07-03
+Last updated: 2026-07-07
 
 ## Current Release State
 
@@ -9,6 +9,8 @@ release_docs_current_tag: v1.45.14
 - Latest tagged version: `v1.45.14`
 - Latest complete PyPI version: `v1.45.14`
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.45.14>
+
+**Recent shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
 
 **Recent shipped milestones (round-4, through the v1.19.x line — 2026-07-03):** the rg-parse correctness moat (non-UTF-8 `lines.bytes` decode, `-u`/`-uu`/`-uuu` forwarding, `--vimgrep`/`--column` per-occurrence byte columns, and rg exit-2 partial-results with rg-parity exit codes); the `tg inventory` walk-only repository manifest; a roughly 4.8x `tg blast-radius` speedup from memoizing the pure `_module_aliases_for_path` (the reported cross-version latency delta was separately confirmed to be measurement noise, not a code regression); the native-delegation deny-by-default guard so `--rank`/`--sort-files` no longer silently drop through delegation to the native front door; a `MatchLine` hashability fix; and `tg blast-radius --mermaid`. `tg diff-docs` was prototyped and deliberately deferred pending a precision rebuild — naive doc-drift detection floods false positives (documented follow-up).
 
