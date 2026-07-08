@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -119,11 +119,11 @@ class RipgrepBackend(ComputeBackend):
             # one unreadable/missing path among many); if it still emitted matches for the readable
             # files, KEEP them + flag incomplete so we exit 2 like rg AND surface a "suppression !=
             # absence" marker. Only a genuine total failure (exit >2, or exit 2 with nothing parsed)
-            # stays fail-closed with the byte-identical RuntimeError message.
+            # stays fail-closed with the byte-identical BackendExecutionError message.
             partial = result.returncode == 2 and total_matches > 0
             if result.returncode > 1 and not partial:
                 stderr = result.stderr.strip()
-                raise RuntimeError(
+                raise BackendExecutionError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
             search_result = SearchResult(
@@ -194,7 +194,7 @@ class RipgrepBackend(ComputeBackend):
                 incomplete_reason=reason,
             )
         except Exception as e:
-            raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+            raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
 
     @staticmethod
     def _parse_ndjson_matches(
@@ -294,7 +294,7 @@ class RipgrepBackend(ComputeBackend):
             partial = result.returncode == 2 and bool(matched_file_paths)
             if result.returncode > 1 and not partial:
                 stderr = result.stderr.strip()
-                raise RuntimeError(
+                raise BackendExecutionError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
             search_result = SearchResult(
@@ -341,7 +341,7 @@ class RipgrepBackend(ComputeBackend):
                 incomplete_reason=reason,
             )
         except Exception as e:
-            raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+            raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
 
     def _parse_count_stdout(
         self, stdout: str, config: SearchConfig, file_path: str | list[str]
@@ -410,7 +410,7 @@ class RipgrepBackend(ComputeBackend):
             partial = result.returncode == 2 and total_matches > 0
             if result.returncode > 1 and not partial:
                 stderr = result.stderr.strip()
-                raise RuntimeError(
+                raise BackendExecutionError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
             routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
@@ -458,7 +458,7 @@ class RipgrepBackend(ComputeBackend):
                 incomplete_reason=reason,
             )
         except Exception as e:
-            raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+            raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
 
     def search_passthrough(
         self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
@@ -502,7 +502,7 @@ class RipgrepBackend(ComputeBackend):
     ) -> list[str]:
         binary_name = self._get_binary_name()
         if binary_name is None:
-            raise RuntimeError("RipgrepBackend requires the 'rg' binary to be installed.")
+            raise BackendExecutionError("RipgrepBackend requires the 'rg' binary to be installed.")
 
         cmd: list[str] = [binary_name]
         if json_mode:

@@ -371,6 +371,64 @@ def test_should_raise_on_rg_fatal_error():
             backend.search("test.log", "(")
 
 
+def test_should_raise_backend_execution_error_on_rg_fatal_exit_code():
+    """audit #79: a fatal rg exit code previously raised a bare RuntimeError, which is
+    invisible to a caller's `except BackendExecutionError` handler (e.g. main.py's
+    per-file CPU-fallback retry, cli/main.py:6756-6761) -- it fell into the broad
+    `except Exception` there instead and crashed the whole search. It must raise
+    BackendExecutionError (still a RuntimeError, so broader `except RuntimeError`/
+    `except Exception` handlers keep working)."""
+    from tensor_grep.backends.base import BackendExecutionError
+
+    backend = RipgrepBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 2
+    mock_result.stdout = ""
+    mock_result.stderr = "regex parse error"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch("tensor_grep.backends.ripgrep_backend.run_subprocess", return_value=mock_result),
+    ):
+        with pytest.raises(BackendExecutionError):
+            backend.search("test.log", "(")
+
+
+def test_should_raise_backend_execution_error_on_unexpected_subprocess_failure():
+    """audit #79: an unexpected exception from run_subprocess (e.g. an OSError launching
+    rg) fell into search()'s broad `except Exception` and was re-raised as a bare
+    RuntimeError. It must now be BackendExecutionError so the CLI's per-file loop retries
+    on the CPU backend instead of crashing with an uncaught traceback (audit B2/I1)."""
+    from tensor_grep.backends.base import BackendExecutionError
+
+    backend = RipgrepBackend()
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.run_subprocess",
+            side_effect=OSError("boom"),
+        ),
+    ):
+        with pytest.raises(BackendExecutionError):
+            backend.search("test.log", "ERROR")
+
+
+def test_should_raise_backend_execution_error_when_rg_binary_missing():
+    """audit #79: _build_cmd's missing-binary guard raised a bare RuntimeError. Any
+    direct caller of search()/search_passthrough() that skips the is_available() gate
+    must see BackendExecutionError, per the Backend Fail-Closed Contract (base.py)."""
+    from tensor_grep.backends.base import BackendExecutionError
+
+    backend = RipgrepBackend()
+    with patch.object(backend, "_get_binary_name", return_value=None):
+        with pytest.raises(BackendExecutionError):
+            backend._build_cmd(
+                file_path="test.log", pattern="ERROR", config=SearchConfig(), json_mode=True
+            )
+
+
 def test_count_with_filename_single_file_parses_path_prefixed_output():
     """Audit HIGH: a single-file ``--count -H`` makes rg emit ``path:count``, but the
     count parser only path-split on the list/dir heuristic (ignoring ``with_filename``),

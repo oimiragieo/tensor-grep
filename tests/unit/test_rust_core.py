@@ -352,21 +352,28 @@ def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_
     assert result.routing_reason == "rust_count"
 
 
-def test_rust_backend_unavailable_should_report_routing_metadata(monkeypatch, tmp_path: Path):
+def test_rust_backend_unavailable_should_raise_backend_execution_error(monkeypatch, tmp_path: Path):
+    """audit #14: a direct caller that bypasses the ``is_available()`` gate and calls
+    ``search()`` while ``self.inner is None`` must not get a silent empty-but-success
+    ``SearchResult`` -- that is indistinguishable from a genuine no-match. Per the Backend
+    Fail-Closed Contract (base.py), it must raise ``BackendExecutionError`` instead, exactly
+    like a genuine native-search failure (see
+    ``test_rust_backend_exception_should_raise_backend_execution_error`` below), which a
+    caller catching ``BackendExecutionError`` (e.g. main.py's per-file CPU-fallback retry)
+    can react to instead of silently trusting a false no-match.
+    """
     from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.backends.base import BackendExecutionError
 
     monkeypatch.setattr(rb, "HAVE_RUST", False)
 
     backend = rb.RustCoreBackend()
+    assert backend.inner is None
     log_file = tmp_path / "missing_rust.log"
     log_file.write_text("ERROR\n")
-    result = backend.search(str(log_file), "ERROR")
 
-    assert result.total_matches == 0
-    assert result.routing_backend == "RustCoreBackend"
-    assert result.routing_reason == "rust_unavailable"
-    assert result.routing_distributed is False
-    assert result.routing_worker_count == 1
+    with pytest.raises(BackendExecutionError):
+        backend.search(str(log_file), "ERROR")
 
 
 def test_rust_backend_exception_should_raise_backend_execution_error(monkeypatch, tmp_path: Path):

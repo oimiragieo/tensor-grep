@@ -5,7 +5,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import ClassVar
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -349,66 +349,77 @@ class StringZillaBackend(ComputeBackend):
     ) -> SearchResult:
         # audit D3: removed the outer `try/except Exception: raise e` wrapper — it only
         # obscured the original traceback without providing any fallback behaviour.
-        import stringzilla as sz
+        # audit #10: replaced with a wrap that converts a native StringZilla fault (or any
+        # other failure in this method) into BackendExecutionError per the Backend
+        # Fail-Closed Contract (base.py), instead of letting it escape raw -- main.py's
+        # per-file loop only retries on the CPU fallback for BackendExecutionError (`except
+        # BackendExecutionError`); an unwrapped native error falls into its broad `except
+        # Exception` and re-raises uncaught instead of degrading to CPU.
+        try:
+            import stringzilla as sz
 
-        ignore_case = bool(config and config.ignore_case)
-        if config and config.fixed_strings:
-            indexed = self._search_with_index(file_path, pattern, config, ignore_case)
-            if indexed is not None:
-                return indexed
+            ignore_case = bool(config and config.ignore_case)
+            if config and config.fixed_strings:
+                indexed = self._search_with_index(file_path, pattern, config, ignore_case)
+                if indexed is not None:
+                    return indexed
 
-        content = self._load_searchable_text(
-            file_path,
-            treat_binary_as_text=self._should_search_binary_as_text(config),
-        )
-        if content is None:
+            content = self._load_searchable_text(
+                file_path,
+                treat_binary_as_text=self._should_search_binary_as_text(config),
+            )
+            if content is None:
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="StringZillaBackend",
+                    routing_reason="stringzilla_fixed_strings_skipped_binary",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                )
+
+            sz_str = sz.Str(content)
+
+            # Since StringZilla 4.x, we can split by lines extremely fast
+            lines = sz_str.splitlines()
+            # Unlike Python's str.splitlines(), StringZilla's Str.splitlines() emits an
+            # extra trailing empty entry when the source text ends with a line
+            # terminator (e.g. "a\n" -> ["a", ""] instead of ["a"]). Uncorrected, that
+            # phantom empty "line" spuriously matches under invert_match (it never
+            # contains the pattern) and shifts every subsequent line number. Trim it so
+            # line numbering and invert_match semantics match cpu_backend/rg.
+            if lines and str(lines[-1]) == "" and content.endswith(("\n", "\r")):
+                lines = lines[:-1]
+            matches = []
+            invert_match = bool(config and config.invert_match)
+            max_count = config.max_count if config else None
+
+            # Evaluate using stringzilla's native find
+            for i, line in enumerate(lines):
+                haystack = str(line).lower() if ignore_case else line
+                needle = pattern.lower() if ignore_case else pattern
+                found = haystack.find(needle) != -1
+                # H5: honor invert_match -- a matching line under invert_match is one
+                # where the pattern is ABSENT, the complement of the normal result.
+                matched = (not found) if invert_match else found
+                if matched:
+                    matches.append(MatchLine(line_number=i + 1, text=str(line), file=file_path))
+                    # H6: cap to config.max_count, matching cpu_backend's per-file cap
+                    # semantics -- never return every match once the cap is reached.
+                    if max_count and len(matches) >= max_count:
+                        break
+
             return SearchResult(
-                matches=[],
-                total_files=0,
-                total_matches=0,
+                matches=matches,
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
                 routing_backend="StringZillaBackend",
-                routing_reason="stringzilla_fixed_strings_skipped_binary",
+                routing_reason="stringzilla_fixed_strings",
                 routing_distributed=False,
                 routing_worker_count=1,
             )
-
-        sz_str = sz.Str(content)
-
-        # Since StringZilla 4.x, we can split by lines extremely fast
-        lines = sz_str.splitlines()
-        # Unlike Python's str.splitlines(), StringZilla's Str.splitlines() emits an
-        # extra trailing empty entry when the source text ends with a line
-        # terminator (e.g. "a\n" -> ["a", ""] instead of ["a"]). Uncorrected, that
-        # phantom empty "line" spuriously matches under invert_match (it never
-        # contains the pattern) and shifts every subsequent line number. Trim it so
-        # line numbering and invert_match semantics match cpu_backend/rg.
-        if lines and str(lines[-1]) == "" and content.endswith(("\n", "\r")):
-            lines = lines[:-1]
-        matches = []
-        invert_match = bool(config and config.invert_match)
-        max_count = config.max_count if config else None
-
-        # Evaluate using stringzilla's native find
-        for i, line in enumerate(lines):
-            haystack = str(line).lower() if ignore_case else line
-            needle = pattern.lower() if ignore_case else pattern
-            found = haystack.find(needle) != -1
-            # H5: honor invert_match -- a matching line under invert_match is one
-            # where the pattern is ABSENT, the complement of the normal result.
-            matched = (not found) if invert_match else found
-            if matched:
-                matches.append(MatchLine(line_number=i + 1, text=str(line), file=file_path))
-                # H6: cap to config.max_count, matching cpu_backend's per-file cap
-                # semantics -- never return every match once the cap is reached.
-                if max_count and len(matches) >= max_count:
-                    break
-
-        return SearchResult(
-            matches=matches,
-            total_files=1 if matches else 0,
-            total_matches=len(matches),
-            routing_backend="StringZillaBackend",
-            routing_reason="stringzilla_fixed_strings",
-            routing_distributed=False,
-            routing_worker_count=1,
-        )
+        except Exception as e:
+            raise BackendExecutionError(
+                f"StringZillaBackend failed to search {file_path}: {e}"
+            ) from e

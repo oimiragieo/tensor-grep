@@ -2,6 +2,8 @@ import types
 from typing import ClassVar
 from unittest.mock import patch
 
+import pytest
+
 from tensor_grep.core.config import SearchConfig
 
 
@@ -438,6 +440,91 @@ def test_torch_backend_search_should_fallback_to_get_device_ids_when_enumeration
     assert result.routing_gpu_device_ids == [5, 2]
     assert "cuda:5" in fake_torch.device_calls
     assert "cuda:2" in fake_torch.device_calls
+
+
+def test_torch_backend_unavailable_raises_backend_execution_error(tmp_path):
+    """audit #79: search() previously raised a bare RuntimeError when CUDA/PyTorch is
+    unavailable. It must raise BackendExecutionError so a caller's `except
+    BackendExecutionError` handler (main.py's per-file CPU-fallback retry) catches it
+    instead of the search crashing with an uncaught traceback."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_unavailable.log"
+    path.write_text("ERROR A\n", encoding="utf-8")
+
+    backend = TorchBackend()
+    with patch.object(TorchBackend, "is_available", return_value=False):
+        with pytest.raises(BackendExecutionError):
+            backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+
+def test_torch_backend_no_concrete_device_ids_raises_backend_execution_error(tmp_path):
+    """audit #79: the 'no routable devices' guard also raised a bare RuntimeError."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_no_ids.log"
+    path.write_text("ERROR A\n", encoding="utf-8")
+
+    class _CountOnlyDetector:
+        def get_device_count(self):
+            return 2
+
+    fake_torch = _FakeTorch()
+    backend = TorchBackend(device_ids=None)
+    backend.device_detector = _CountOnlyDetector()
+
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        with pytest.raises(BackendExecutionError, match="concrete CUDA device IDs"):
+            backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+
+class _FailingTensorTorch(types.ModuleType):
+    """A fake ``torch`` module whose tensor allocation raises, simulating a native
+    CUDA/tensor compute fault (e.g. a CUDA-OOM or device fault) inside the compute
+    region."""
+
+    uint8 = "uint8"
+
+    def __init__(self):
+        super().__init__("torch")
+
+    def device(self, value: str):
+        return value
+
+    def tensor(self, values, dtype=None, device=None):
+        raise RuntimeError("CUDA error: out of memory")
+
+
+def test_torch_backend_compute_fault_raises_backend_execution_error(tmp_path):
+    """audit #10: the CUDA compute region (device tensor allocation, unfold/compare
+    kernels, multi-GPU fan-out) previously had no try/except, so a native CUDA/tensor
+    fault escaped raw. It must surface as BackendExecutionError per the Backend
+    Fail-Closed Contract (base.py), caught by `except BackendExecutionError` (not just a
+    bare `except RuntimeError` that happens to also match), so main.py's per-file loop
+    retries on the CPU fallback instead of the search crashing outright."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_fault.log"
+    path.write_text("ERROR A\n", encoding="utf-8")
+
+    backend = TorchBackend(device_ids=[0])
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": _FailingTensorTorch()}),
+    ):
+        try:
+            backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+        except BackendExecutionError as exc:
+            assert isinstance(exc, RuntimeError)  # broader `except RuntimeError` still works
+            assert "CUDA error" in str(exc)
+        else:
+            pytest.fail("expected BackendExecutionError")
 
 
 def test_torch_backend_empty_pattern_should_preserve_routing_metadata(tmp_path):
