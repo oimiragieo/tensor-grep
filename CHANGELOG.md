@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.48.0 (2026-07-08)
+
+### Features
+
+- **agent**: Dar — capsule surfaces the primary target's outbound dependencies (imports+callees) as
+  budget-isolated related-context ([#445](https://github.com/oimiragieo/tensor-grep/pull/445),
+  [`ac4126b`](https://github.com/oimiragieo/tensor-grep/commit/ac4126bba33046ab7cd074fdd9117a61de0c5c36))
+
+* feat(agent): DAR — capsule surfaces the primary target's outbound dependencies (imports+callees)
+  as budget-isolated related-context so agents edit without extra reads (arxiv steal #4; kill-switch
+  TG_CAPSULE_OUTBOUND_DEPS; byte-identical fail-safe)
+
+* fix(agent): DAR ships default-OFF (opt-in via TG_CAPSULE_OUTBOUND_DEPS), not default-ON (audit C2)
+  — matches the other retrieval features + Enablement Discipline; capsule byte-identical for every
+  user until opted in + measured
+
+
 ## v1.47.0 (2026-07-08)
 
 ### Features
