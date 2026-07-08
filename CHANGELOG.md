@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.49.3 (2026-07-08)
+
+### Bug Fixes
+
+- **apply**: Harden validation-command resolution against a Py3.11/Windows cwd shadow-exe (CWE-427,
+  audit #35) ([#453](https://github.com/oimiragieo/tensor-grep/pull/453),
+  [`5773a39`](https://github.com/oimiragieo/tensor-grep/commit/5773a39d4d728478e9920e4112314165cbfc0d79))
+
+* fix(apply): harden validation-command resolution against a Py3.11/Windows cwd shadow-exe — strip
+  cwd from the which() PATH + reject a resolved repo-local parent (CWE-427, audit #35)
+
+The #400-era CWE-427 fix resolved argv[0] via shutil.which() before spawning, but on Python 3.11 +
+  Windows that resolver unconditionally re-inserts the current working directory into its search
+  regardless of the `path=` argument supplied (the NeedCurrentDirectoryForExePathW-gated skip only
+  landed in 3.12; see cpython#91558). A pytest.cmd/npm.cmd planted at an untrusted repo root could
+  therefore still pre-empt the real tool when the MCP process cwd is that repo.
+
+Two additions in _run_policy_command, both needed: 1. _search_path_without_cwd() passes
+  shutil.which() an explicit PATH with empty/"."/cwd-resolving entries stripped (closes the narrower
+  case where the environment PATH itself carries such an entry). 2. The load-bearing guard: reject
+  the resolution outright if its parent directory equals the untrusted target root (`cwd`), since
+  (1) alone cannot stop the implicit Windows cwd search on 3.11.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(apply): reject a symlink cwd-shadow (os.path.abspath, not Path.resolve which follows symlinks)
+  + make the trusted-PATH test env-independent + reword the Python-version comment (Opus adversarial
+  security gate on #453 — Findings 1/2/3)
+
+Finding 1 (HIGH): resolve() followed a repo/tool.cmd -> repo/sub/evil.cmd symlink, putting the
+  parent outside cwd -> slipped the parent==cwd guard -> payload spawned. abspath normalizes without
+  following the symlink -> parent==cwd -> rejected. New regression test proves it. Finding 2: test
+  asserted passed is True (only holds where NoDefaultCurrentDirectoryInExePath is set) -> made
+  deterministic: the repo shadow is never spawned (trusted spawns, or guard rejects), across both
+  Windows cwd-search regimes. Finding 3: comment keyed on 'Python < 3.12'; the cwd search is
+  default-on for ALL versions (Windows-env condition) -> reworded.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **mcp**: Confine the audit/review-bundle read-path params to the project root (fail-closed,
+  forward resolved path) — closes an arbitrary-file-read exfil via 9 params across 4 tools (audit
+  #7) ([#454](https://github.com/oimiragieo/tensor-grep/pull/454),
+  [`a5ccc1f`](https://github.com/oimiragieo/tensor-grep/commit/a5ccc1fd07fce198050bc6462102436d14cb872a))
+
+An MCP client (or prompt-injected tool args) could pass an absolute path, a "../" escape, or an
+  in-root symlink pointing outside the project to any of the 9 read-path params across
+  tg_audit_manifest_verify (manifest_path, previous_manifest), tg_audit_diff (previous_manifest,
+  current_manifest), tg_review_bundle_create (manifest_path, scan_path, previous_manifest), and
+  tg_review_bundle_verify (bundle_path) — the file contents (or a content-derived
+  diff/checksum/field) get echoed straight back into the tool result, an arbitrary-file-read/exfil
+  primitive reachable from any MCP client.
+
+Reuse the existing _confine_write_path helper (round-4/5 write-side precedent): resolve-both +
+  descendant check, following symlinks so a symlink planted inside the anchor that points outside it
+  is caught via its resolved (real) target. Anchor reads to Path.cwd(), same as the write-side
+  confinement; a legitimately external manifest must be copied into the project first (documented
+  limitation, not a silent drop — the caller gets a structured invalid_input error). Forward the
+  RESOLVED path to the downstream read at each of the 4 call sites so the validated location is what
+  actually gets read (closes the discard/TOCTOU class). signing_key stays unconfined, matching the
+  existing audit_signing_key precedent (operators legitimately keep HMAC keys outside the repo).
+
+TDD: 20 new tests (5 params x {absolute-outside, "../"-escape, symlink-escape}, plus one
+  manifest-only param covered via 2 params) assert a structured invalid_input error AND that the
+  target file's marker content never appears in the response body. Verified red against pre-fix code
+  (all 20 fail) and green post-fix. Updated 7 existing tests that read fixture manifests from
+  tmp_path (outside the process cwd) to monkeypatch.chdir into the anchor first.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Chores
+
+- **repo**: Untrack tool-state + stale generated blobs (ignored-but-committed, Fable audit)
+  ([#452](https://github.com/oimiragieo/tensor-grep/pull/452),
+  [`103c48d`](https://github.com/oimiragieo/tensor-grep/commit/103c48d05e76264945e1fe8c1852593152db48c6))
+
+Removes 173 files (~7MB) from HEAD, kept on disk: -
+  .factory/{validation(161),library,research,skills,init.sh} — droid/Factory tool state (leaked
+  C:\Users paths) - docs/superpowers/ — planning ephemera (was only in .git/info/exclude) -
+  benchmarks/tg_rust.exe — 2.9MB unsigned Windows exe; runtime_paths REFUSES it (test-proven), zero
+  function - benchmarks/{bench_ast_data,gpu_bench_data/test_api.py} — regenerable corpora (resolver
+  uses artifacts/) KEPT: .gemini (gemini-skill-ab benchmark input), benchmarks/rg.zip (Windows CI
+  fallback rg), .factory/services.yaml (test-pinned).
+
+
 ## v1.49.2 (2026-07-08)
 
 ### Bug Fixes
