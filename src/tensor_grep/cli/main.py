@@ -3259,6 +3259,23 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         state = "stale-metadata" if session_payload.get("stale_metadata") else "stopped"
         lines.append(f"session_daemon: {state}")
 
+    # tg-ledger step-0 (demand instrumentation, see docs/multi_agent_context_plane.md): a single
+    # human summary line for the trailing-14-day demand receipt that the daemon persists to
+    # daemon_metrics.json (read-back works even when the daemon is currently stopped).
+    demand_metrics = cast(dict[str, Any], session_payload.get("demand_metrics") or {})
+    demand_days_covered = int(demand_metrics.get("days_covered", 0) or 0)
+    if "error" in demand_metrics or demand_days_covered == 0:
+        demand_pre_gate = "NO-COVERAGE"
+    else:
+        demand_pre_gate = "MET" if demand_metrics.get("pre_gate_met") else "NOT-MET"
+    lines.append(
+        "session_daemon_demand(14d): "
+        f"clients={int(demand_metrics.get('max_distinct_client_pids_14d', 0) or 0)} "
+        f"concurrent_days={int(demand_metrics.get('days_with_2plus_concurrent', 0) or 0)} "
+        f"dup_requests={int(demand_metrics.get('dup_requests_14d', 0) or 0)} "
+        f"pre_gate={demand_pre_gate}"
+    )
+
     lsp_payload = cast(dict[str, Any], payload.get("lsp", {}))
     if lsp_payload.get("enabled"):
         lines.append("lsp_providers:")

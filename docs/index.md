@@ -15,6 +15,7 @@
 - [docs/tool_comparison.md](tool_comparison.md) for the public workload-class comparison story
 - [docs/routing_policy.md](routing_policy.md) for backend routing behavior
 - [docs/harness_api.md](harness_api.md) for machine-readable CLI contracts
+- [docs/multi_agent_context_plane.md](multi_agent_context_plane.md) for how concurrent agents share machine-computed code facts through the session store and warm daemon
 - [docs/installation.md](installation.md) for install and package-manager guidance
 - [docs/CI_PIPELINE.md](CI_PIPELINE.md) for CI, release, Dependabot, and scheduled audit automation
 
