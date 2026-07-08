@@ -31,6 +31,45 @@ REAL venv (`uv run --no-sync`; a worktree "tests pass" is a hypothesis, re-run i
 common-sense gate before pending any question to the CEO. Keep docs (this file, `docs/BACKLOG.md`,
 `docs/SESSION_HANDOFF.md`, skills, CLAUDE.md) synchronized as work lands.
 
+## Campaign Orchestration Disciplines (2026-07-08, hard-won)
+
+Running a multi-PR drain+build campaign so fixes *land* instead of piling up. Each rule is a fix for a
+concrete failure observed this session.
+
+- **A1 — WIP cap.** No new *build* dispatch while >5 PRs are undrained OR the `main` gate is red. A red
+  gate is a drop-everything hotfix that jumps the queue. Prevents "churning not completing" — generating
+  faster than the ~40–66 min/publish drain empties (backlog stays constant-size = the smell).
+- **A2 — A self-firing drain-cron beats a long-lived background drain.** A short-lived per-fire cron that
+  merges ONE lowest-CLEAN PR (`gh pr merge --squash --delete-branch`, push-race-checked) is robust; a
+  long-lived `drain.sh &` background process kept *dying* during the long CI/publish waits (and an inner
+  `&` in a `run_in_background` wrapper orphaned it). Each fire is short-lived, so nothing can be killed
+  mid-run. Push-race gate per fire: the latest `chore(release)` tag must be on PyPI AND `main` CI
+  `completed` before merging.
+- **A3 — Mandatory adversarial security gate before merge.** Every security PR — touching `apply_policy`
+  / `mcp_server` / `*_backend` / an index-or-session lock / auth / money / migration — gets an Opus "try
+  to BREAK it, cite `file:line`, default FIX-FIRST if uncertain" review *before* merge. Not a rubber
+  stamp: this session it returned SHIP on some and caught real issues on others (a symlink RCE bypass; a
+  lock-release TOCTOU). `codex` is the nominal second vendor but its WSL path is unreliable → Opus is the
+  reliable substitute. Verdict shape: `SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)`.
+- **A4 — Resume a dead agent from its transcript.** A background subagent that dies with "terminated
+  early due to an API error: 500" is REVIVED by `SendMessage` to its `agentId` (partial work intact) — do
+  NOT re-dispatch fresh (loses the work). Happened 3× this session; all recovered.
+- **A5 — Don't kill a build on staleness.** A complex build (a redesign + heavy test rewiring) legitimately
+  runs >10–15 min between output flushes. A "stale > N min" heuristic kill destroys a *working* agent (a
+  build was killed twice before its kill-note proved it was mid-work). Trust the completion notification;
+  diagnose a suspected hang from the kill-note's last line, not an mtime guess.
+- **A6 — Anti-hang test protocol.** Wrap every test run in a shell `timeout` (`timeout 120 uv run
+  --no-sync … pytest … --timeout=15`), and write the fix *before* the red-phase adversarial test — a
+  ReDoS/deadlock red-test executed against un-fixed code IS the hang it is testing. Distinguish
+  slow-but-protected from hung by exit code (124 timeout / 137 SIGKILL), not elapsed time.
+- **A7 — Harvest a worktree agent's work, then re-verify.** A worktree agent's "tests pass" is a
+  hypothesis (its venv may lack the compiled `rust_core` ext). Cherry-pick its commit onto a fresh branch
+  off `origin/main`, re-verify in the real venv + `ruff`/`format --preview`/`mypy` + a live smoke, THEN the
+  gate, THEN PR.
+- **A8 — Fable is reachable only via `Agent(model:fable)`.** A Workflow `agent()` call cannot reach Fable —
+  it silently falls back to the session model. Dispatch Fable design/audit seats as `Agent` subagents,
+  never inside a `Workflow`.
+
 ## Current Handoff
 
 release_docs_current_tag: v1.49.3
