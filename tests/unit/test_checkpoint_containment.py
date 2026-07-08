@@ -181,3 +181,56 @@ def test_create_checkpoint_prunes_to_retention_cap(tmp_path: Path, monkeypatch) 
         assert not checkpoint_store._checkpoint_dir(root, dropped).exists()  # snapshot removed
     for kept in ids[-3:]:
         assert checkpoint_store._checkpoint_dir(root, kept).exists()
+
+
+def test_select_retained_checkpoints_prunes_by_created_at_not_insert_position(
+    tmp_path: Path,
+) -> None:
+    """M8: created_at is stamped BEFORE the caller acquires index_lock, so concurrent
+    writers can insert out of created_at order. Retention selection must sort by
+    created_at (newest first) before slicing, not trust list position -- otherwise it can
+    drop a genuinely NEWER checkpoint (the `checkpoint undo` safety net) and keep an older
+    one."""
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    # Deliberately out-of-order: position 0 is the OLDEST record (as if its writer won the
+    # lock-acquisition race despite being stamped first), positions 1/2 are progressively
+    # newer -- mirroring a concurrent-insert race where lock-arrival order != created_at
+    # order.
+    records = [
+        checkpoint_store.CheckpointRecord(
+            version=checkpoint_store._CHECKPOINT_VERSION,
+            checkpoint_id="oldest",
+            mode="filesystem-snapshot",
+            root=str(root),
+            created_at="2026-01-01T00:00:00+00:00",
+            file_count=1,
+        ),
+        checkpoint_store.CheckpointRecord(
+            version=checkpoint_store._CHECKPOINT_VERSION,
+            checkpoint_id="newest",
+            mode="filesystem-snapshot",
+            root=str(root),
+            created_at="2026-01-03T00:00:00+00:00",
+            file_count=1,
+        ),
+        checkpoint_store.CheckpointRecord(
+            version=checkpoint_store._CHECKPOINT_VERSION,
+            checkpoint_id="middle",
+            mode="filesystem-snapshot",
+            root=str(root),
+            created_at="2026-01-02T00:00:00+00:00",
+            file_count=1,
+        ),
+    ]
+
+    retained, _dirs_to_delete = checkpoint_store._select_retained_checkpoints(
+        root, records, max_records=2
+    )
+
+    retained_ids = {record.checkpoint_id for record in retained}
+    # Position-based (buggy) pruning would keep {"oldest", "newest"} (records[:2]).
+    # created_at-based (fixed) pruning must keep the two NEWEST: {"newest", "middle"}.
+    assert retained_ids == {"newest", "middle"}
+    assert "oldest" not in retained_ids

@@ -790,6 +790,56 @@ def test_capsule_uplifts_render_truncated_confidence_for_corroborated_primary(
     assert payload["ask_user_before_editing"]["required"] is False
 
 
+def test_capsule_scan_truncated_disqualifies_render_truncated_uplift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-1 (1D) T2 disqualifier: the SAME render-truncated + graph-corroborated fixture as the
+    uplift test above must NOT uplift when the underlying repo SCAN was also truncated
+    (`scan_limit.possibly_truncated`) -- the ranking that produced this "corroborated" primary
+    never saw the whole repository, so call-site evidence collected against an incomplete scan
+    cannot justify raising confidence to the same degree as a genuinely complete scan.
+    """
+    paths = _write_t2_project(tmp_path)
+
+    def fake_context_render(*args: object, **kwargs: object) -> dict[str, Any]:
+        payload = _t2_context_payload(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+        )
+        payload["scan_limit"] = {
+            "max_repo_files": 1,
+            "scanned_files": 1,
+            "possibly_truncated": True,
+            "truncation_cause": "project-files",
+        }
+        payload["scan_remediation"] = "raise --max-repo-files"
+        return payload
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        _T2_PRIMARY_SYMBOL,
+        paths["project"],
+        max_tokens=8000,
+    )
+
+    assert payload["context_consistency"]["capsule_primary_file_omitted"] is False
+    assert payload["call_site_evidence"]["status"] == "collected"
+    # NOT uplifted: confidence must stay below the 0.8 uplift ceiling despite collected call-site
+    # evidence, because the scan itself was truncated.
+    assert payload["confidence"]["overall"] < 0.8
+    assert payload["primary_target"]["confidence"] < 0.8
+    assert payload["context_consistency"].get("confidence_basis") != "resolution-quality"
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert any(
+        "scan was truncated" in reason for reason in payload["ask_user_before_editing"]["reasons"]
+    )
+    # Additive scan-truncation signals propagate onto the capsule (PR-1 1D data propagation).
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    assert payload["scan_remediation"] == "raise --max-repo-files"
+    assert payload["result_incomplete"] is True
+
+
 def test_capsule_render_truncated_genuine_tie_still_requires_confirmation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -884,6 +884,51 @@ def test_evaluate_apply_policy_rollback_restores_checkpointed_files(tmp_path: Pa
     assert payload["policy_result"]["action_taken"] == "rollback"
 
 
+def test_evaluate_apply_policy_rollback_without_checkpoint_reports_unavailable(
+    tmp_path: Path,
+) -> None:
+    """H8: on_failure="rollback" with no usable checkpoint must NOT claim a rollback that
+    never happened. _rollback_summary returns {"performed": False} when the rewrite payload
+    carries no checkpoint_id -- action_taken must reflect that (not silently report
+    "rollback" while the failed edit is still on disk)."""
+    from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source_file = project / "sample.py"
+    source_file.write_text("print('after')\n", encoding="utf-8")
+
+    policy_path = _write_policy(
+        tmp_path,
+        {
+            "version": 1,
+            "lint_cmd": "lint",
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "rollback",
+        },
+    )
+    policy = load_apply_policy(str(policy_path))
+
+    payload, exit_code = evaluate_apply_policy(
+        _base_rewrite_payload(checkpoint=None),
+        policy,
+        path=str(project),
+        run_command_fn=lambda *_args: {
+            "passed": False,
+            "detail": "lint failed",
+            "exit_code": 4,
+        },
+    )
+
+    assert exit_code == 1
+    # No checkpoint was ever created, so the file must be untouched -- there is nothing to
+    # roll back to, and the receipt must say so rather than claim a rollback occurred.
+    assert source_file.read_text(encoding="utf-8") == "print('after')\n"
+    assert payload["rollback"]["performed"] is False
+    assert payload["policy_result"]["action_taken"] == "rollback_unavailable"
+
+
 @pytest.mark.skipif(not _has_ast_grep_binary(), reason="requires ast-grep binary")
 def test_evaluate_apply_policy_real_ruleset_scan_fails_without_baseline(tmp_path: Path) -> None:
     from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy

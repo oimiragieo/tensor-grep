@@ -631,19 +631,25 @@ def _select_retained_checkpoints(
 ) -> tuple[list[CheckpointRecord], list[Path]]:
     """Pure selector for bounded on-disk checkpoint retention (round-4 DoS).
 
-    Keep at most ``max_records`` newest records (``records`` must already be newest-first).
-    Returns ``(retained, dirs_to_delete)`` and performs NO filesystem mutation -- the caller
-    removes ``dirs_to_delete`` (metadata.json + the full snapshot copy for each dropped
-    checkpoint). Doing no I/O here lets ``create_checkpoint`` run this selector INSIDE the
-    index lock and defer the slow, index-unrelated ``rmtree`` calls until after the lock is
-    released (q10 RMW race fix).
+    Keep at most ``max_records`` newest records. Returns ``(retained, dirs_to_delete)`` and
+    performs NO filesystem mutation -- the caller removes ``dirs_to_delete`` (metadata.json +
+    the full snapshot copy for each dropped checkpoint). Doing no I/O here lets
+    ``create_checkpoint`` run this selector INSIDE the index lock and defer the slow,
+    index-unrelated ``rmtree`` calls until after the lock is released (q10 RMW race fix).
+
+    M8: ``created_at`` is stamped BEFORE the caller acquires ``index_lock``, so under
+    concurrent writers the insert (lock-arrival) order does not reliably match creation
+    order -- trusting list position for the ``[:limit]`` cut can prune a genuinely newer
+    checkpoint (the ``checkpoint undo`` safety net) and keep an older one. Re-sort by
+    ``created_at`` (newest first) immediately before slicing.
     """
     limit = _configured_checkpoint_max() if max_records is None else max(1, int(max_records))
     if len(records) <= limit:
         return records, []
-    retained = records[:limit]
+    ordered = sorted(records, key=lambda record: record.created_at, reverse=True)
+    retained = ordered[:limit]
     dirs_to_delete: list[Path] = []
-    for dropped in records[limit:]:
+    for dropped in ordered[limit:]:
         try:
             dirs_to_delete.append(_checkpoint_dir(root, dropped.checkpoint_id))
         except (OSError, ValueError):

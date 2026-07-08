@@ -1,6 +1,101 @@
 # CHANGELOG
 
 
+## v1.45.12 (2026-07-08)
+
+### Bug Fixes
+
+- **M9**: Merge_runtime_routing tracks mixed backends across a heterogeneous scan (is_mixed_routing
+  + routing_backends_seen) instead of silently reporting only the last-merged engine
+  ([#434](https://github.com/oimiragieo/tensor-grep/pull/434),
+  [`5b9ab71`](https://github.com/oimiragieo/tensor-grep/commit/5b9ab71c175d5ddfd4f2608ff8b400689fa4f7fb))
+
+- **test**: Relax the flaky _reverse_importers wall-clock bound 1.0s->10.0s (matches the sibling
+  perf test) — CI-runner jitter (observed 1.14s, no code change) was red-ing every release
+  ([#444](https://github.com/oimiragieo/tensor-grep/pull/444),
+  [`bbe77de`](https://github.com/oimiragieo/tensor-grep/commit/bbe77de7fc7be95c8435372052134589a23d1153))
+
+
+## v1.45.11 (2026-07-07)
+
+### Bug Fixes
+
+- **1D**: Tg agent honors the exit-2-on-scan-truncation contract (propagate scan_limit + gate the
+  command) + a truncated scan disqualifies the T2 confidence uplift and forces ask_user
+  (Fable-designed; the flagship command's only exit-2 hole)
+  ([#433](https://github.com/oimiragieo/tensor-grep/pull/433),
+  [`16448c2`](https://github.com/oimiragieo/tensor-grep/commit/16448c27262d76f0606d651eb9d4bf1a765e3756))
+
+
+## v1.45.10 (2026-07-07)
+
+### Performance Improvements
+
+- **repo_map**: Parse-product cache — one tree-sitter parse per (file,mtime) shared across
+  symbol/ref/caller extractors + alias-aware symbol-in-source early-exit + sound import-binding
+  prefilter gate; golden-parity locked (Fable-designed increment 1)
+  ([#432](https://github.com/oimiragieo/tensor-grep/pull/432),
+  [`504c674`](https://github.com/oimiragieo/tensor-grep/commit/504c6743f8a9d04012dd712e721353429d7edd7e))
+
+
+## v1.45.9 (2026-07-07)
+
+### Bug Fixes
+
+- **audit LOW F15/F23**: Correct the BM25-tie ordering claim in rerank_hybrid docstring; go.work
+  parsing ignores the use-block header + strips trailing // comments
+  ([#431](https://github.com/oimiragieo/tensor-grep/pull/431),
+  [`8c68351`](https://github.com/oimiragieo/tensor-grep/commit/8c68351eba0390cae27780a97d9c54cbb41b1bb0))
+
+
+## v1.45.8 (2026-07-07)
+
+### Bug Fixes
+
+- **FFI R1**: Pass Rust bridge args by keyword + real-extension bidirectional test (retires the
+  mock-green-but-dead bridge class) ([#430](https://github.com/oimiragieo/tensor-grep/pull/430),
+  [`16b74c8`](https://github.com/oimiragieo/tensor-grep/commit/16b74c81cd469714d30b024eda03d9c8ea6d79e3))
+
+* fix(FFI R1 partial): pass Rust bridge args by keyword (WIP: mock-test update incomplete)
+
+* test(FFI R1): add real-extension bidirectional oracle (match + non-match + invert_match kwarg
+  through the live pyo3 bridge) — finalizes R1
+
+### Documentation
+
+- Canonical backlog + PR tracker (docs/BACKLOG.md)
+  ([#429](https://github.com/oimiragieo/tensor-grep/pull/429),
+  [`5b206a0`](https://github.com/oimiragieo/tensor-grep/commit/5b206a0d0394b37ed8e113823d77362da01c1688))
+
+* docs: add BACKLOG.md — canonical prioritized backlog + PR tracker (subagent reference + CEO-status
+  source; synced with the CLI task store)
+
+* docs(AGENTS): point to docs/BACKLOG.md as the canonical tracker + codify the standing multi-model
+  pipeline
+
+* fix(docs): BACKLOG.md links AGENTS.md by absolute URL so mkdocs --strict resolves it
+  (release-readiness gate)
+
+
+## v1.45.7 (2026-07-07)
+
+### Bug Fixes
+
+- **MCP H3/H4**: Port #400 walk-deadline/refusal to tg_search/tg_ast_search + tg_session_context
+  token-budget + M10/M11 ([#428](https://github.com/oimiragieo/tensor-grep/pull/428),
+  [`15beb24`](https://github.com/oimiragieo/tensor-grep/commit/15beb24dab82dd5c8560ef6259f1a64bd7a6135f))
+
+
+## v1.45.6 (2026-07-07)
+
+### Bug Fixes
+
+- **reliability H8/H9/M6/M8**: Apply_policy stops reporting phantom rollbacks; index_lock reclaims a
+  fresh dead holder (timeout>stale); session_store fsyncs atomic writes; retention prunes by
+  created_at ([#427](https://github.com/oimiragieo/tensor-grep/pull/427),
+  [`9309a30`](https://github.com/oimiragieo/tensor-grep/commit/9309a30fa2cc348fe46be4e805cd1adff381a9b7))
+
+
 ## v1.45.5 (2026-07-07)
 
 ### Bug Fixes

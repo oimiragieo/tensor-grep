@@ -389,6 +389,9 @@ def test_session_max_defaults_to_64(monkeypatch) -> None:
 
 
 def test_prune_session_records_keeps_newest(tmp_path: Path) -> None:
+    """M8: pruning must keep the records with the newest ``created_at``, not the first N by
+    list position. ``session-4`` has the latest ``created_at`` even though it is last in the
+    input list, so it (and ``session-3``) must survive the prune."""
     root = (tmp_path / "project").resolve()
     sessions_dir = session_store._sessions_dir(root)
     sessions_dir.mkdir(parents=True)
@@ -408,9 +411,10 @@ def test_prune_session_records_keeps_newest(tmp_path: Path) -> None:
         )
 
     retained = session_store._prune_session_records(root, records, max_records=2)
-    assert [record.session_id for record in retained] == ["session-0", "session-1"]
-    assert session_store._session_payload_path(root, "session-0").exists()
-    for dropped in ("session-2", "session-3", "session-4"):
+    assert [record.session_id for record in retained] == ["session-4", "session-3"]
+    for kept in ("session-3", "session-4"):
+        assert session_store._session_payload_path(root, kept).exists()
+    for dropped in ("session-0", "session-1", "session-2"):
         assert not session_store._session_payload_path(root, dropped).exists()
 
 

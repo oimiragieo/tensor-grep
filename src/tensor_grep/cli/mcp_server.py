@@ -1,10 +1,11 @@
 import hashlib
+import itertools
 import json
 import os
 import re
 import subprocess
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
@@ -19,9 +20,24 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
 from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 
+from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.backends.cpu_backend import (
+    compute_native_walk_deadline,
+    native_walk_deadline_exceeded,
+)
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
-from tensor_grep.cli.main import _build_rulesets_payload, _run_ast_scan_payload
+from tensor_grep.cli.main import (
+    _LARGE_ROOT_SCAN_FILE_CEILING,
+    _build_rulesets_payload,
+    _format_unbounded_large_root_scan_error,
+    _format_unbounded_vendored_root_scan_error,
+    _run_ast_scan_payload,
+    _search_with_cpu_fallback,
+    _should_refuse_unbounded_large_root_scan,
+    _should_refuse_unbounded_vendored_root_scan,
+)
 from tensor_grep.cli.repo_map import (
+    _apply_context_token_budget,
     build_context_pack,
     build_context_render,
     build_repo_map,
@@ -1547,6 +1563,99 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
             )
 
 
+# H3 (Fable MCP-surface audit): the CLI's PR #400 unscoped-search-hang fix (per-file wall-clock
+# deadline + the vendored/large-root refusal guards, `cli/main.py`) never reached the MCP `tg_search`
+# / `tg_ast_search` walk loops -- they reimplemented the walk from scratch and drifted. This helper
+# REUSES the CLI's own guard functions (imported, never reimplemented) so the two surfaces can never
+# diverge again, adapted for MCP's streaming `DirectoryScanner.walk()` generator: the large-root probe
+# only pulls the first `min(normalized_max_repo_files, _LARGE_ROOT_SCAN_FILE_CEILING + 1)` entries
+# (never a full-tree enumeration -- that would just be the unbounded work this guard exists to avoid)
+# and the caller resumes iterating from those SAME already-pulled entries via the returned iterator,
+# so nothing is scanned twice.
+def _mcp_broad_root_scan_refusal(
+    path: str,
+    config: "SearchConfig",
+    *,
+    normalized_max_repo_files: int,
+    check_large_root: bool,
+) -> tuple[str | None, "DirectoryScanner", Iterator[str]]:
+    """Cheap pre-walk safety guard ported from the CLI `tg search` command.
+
+    Returns ``(error_message, scanner, walker)``. When ``error_message`` is ``None`` the
+    caller should iterate ``walker`` exactly as it would have iterated
+    ``scanner.walk(path)`` -- it already carries any entries the refusal probe consumed,
+    so no re-scan is needed. ``scanner`` is returned too so the caller can still read its
+    post-walk ``scan_truncated`` bookkeeping attribute.
+    """
+    scanner = DirectoryScanner(config)
+    walker: Iterator[str] = iter(scanner.walk(path))
+
+    refuse_vendored, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [path], config, allow_broad_generated_scan=False
+    )
+    if refuse_vendored:
+        return _format_unbounded_vendored_root_scan_error(vendored_dirs), scanner, walker
+
+    if not check_large_root:
+        return None, scanner, walker
+
+    probe_limit = min(normalized_max_repo_files, _LARGE_ROOT_SCAN_FILE_CEILING + 1)
+    probe_files: list[str] = []
+    for _ in range(probe_limit):
+        try:
+            probe_files.append(next(walker))
+        except StopIteration:
+            break
+    if _should_refuse_unbounded_large_root_scan(
+        len(probe_files), config, allow_broad_generated_scan=False
+    ):
+        return (
+            _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
+            scanner,
+            iter(probe_files),
+        )
+    return None, scanner, itertools.chain(probe_files, walker)
+
+
+def _broad_root_scan_refusal_result(
+    message: str,
+    *,
+    pattern: str,
+    path: str,
+    lang: str | None = None,
+    structured_json: bool,
+) -> str:
+    """Render a `_mcp_broad_root_scan_refusal` message as a tool result.
+
+    MCP has no exit codes (traps note, H3): a refusal is surfaced as a structured JSON
+    field/error object, never an `exit(2)`-style abort -- this mirrors the CLI's refusal
+    text (which already carries actionable remediation guidance) without terminating the
+    server process.
+    """
+    if structured_json:
+        payload: dict[str, Any] = {
+            "pattern": pattern,
+            "path": path,
+            "total_matches": 0,
+            "total_files": 0,
+            "rendered_match_count": 0,
+            "rendered_file_count": 0,
+            "matches": [],
+            "truncated": True,
+            "result_incomplete": True,
+            "incomplete_reason": message,
+            "error": {
+                "code": "broad_scan_refused",
+                "message": message,
+                "retryable": False,
+            },
+        }
+        if lang is not None:
+            payload["lang"] = lang
+        return json.dumps(payload, indent=2)
+    return f"tg: {message}"
+
+
 @mcp.tool()  # type: ignore
 def tg_rulesets() -> str:
     """Return metadata for built-in security and compliance rulesets."""
@@ -1724,6 +1833,19 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
         }
         return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="repo-map",
+            include_schema_version=False,
+        )
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
+        }
+        return json.dumps(payload, indent=2)
 
 
 @mcp.tool()  # type: ignore
@@ -1753,6 +1875,20 @@ def tg_context_pack(
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="context-pack",
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -1810,6 +1946,20 @@ def tg_edit_plan(
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="context-edit-plan",
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -1871,6 +2021,20 @@ def tg_context_render(
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="context-render",
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -1945,6 +2109,13 @@ def tg_agent_capsule(
             query=query,
             path=path,
         )
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        return _agent_capsule_error(
+            str(exc),
+            code="internal_error",
+            query=query,
+            path=path,
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -2006,6 +2177,15 @@ def tg_session_edit_plan(
             path=path,
             code="invalid_input",
             message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+            query=query,
+        )
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="internal_error",
+            message=str(exc),
             detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
             query=query,
         )
@@ -2085,6 +2265,15 @@ def tg_session_context_render(
             detail={"query": query, "render_profile": render_profile},
             query=query,
         )
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="internal_error",
+            message=str(exc),
+            detail={"query": query, "render_profile": render_profile},
+            query=query,
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -2139,6 +2328,16 @@ def tg_session_blast_radius(
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="internal_error",
+            message=str(exc),
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -2189,6 +2388,21 @@ def tg_symbol_blast_radius_plan(
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-blast-radius-plan",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -2274,6 +2488,20 @@ def tg_session_blast_radius_render(
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="internal_error",
+            message=str(exc),
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "render_profile": render_profile,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -2335,6 +2563,21 @@ def tg_session_blast_radius_plan(
             path=path,
             code="invalid_input",
             message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="internal_error",
+            message=str(exc),
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2652,6 +2895,21 @@ def tg_symbol_blast_radius(
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
         }
         return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-blast-radius",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
+        }
+        return json.dumps(payload, indent=2)
 
 
 @mcp.tool()
@@ -2716,6 +2974,21 @@ def tg_symbol_blast_radius_render(
         payload["error"] = {
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # M11: propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-blast-radius-render",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {
+            "code": "internal_error",
+            "message": str(exc),
+            "retryable": False,
         }
         return json.dumps(payload, indent=2)
 
@@ -2805,14 +3078,48 @@ def tg_search(
             all_results.routing_backend = all_results.routing_backend or selected_backend_name
             all_results.routing_reason = all_results.routing_reason or selected_backend_reason
         else:
-            scanner = DirectoryScanner(config)
+            # H3 (Fable MCP-surface audit): before PR #400's fix landed here, this walk had
+            # NO per-file wall-clock deadline, no BackendExecutionError fallback, and no
+            # broad/vendored/large-root refusal -- an unscoped root could hang, and a mid-walk
+            # backend fault fell through to the outer `except Exception` below and discarded
+            # every match already collected. All three are now ported from the CLI (imported,
+            # not reimplemented) so the two surfaces can't drift again.
+            refusal_message, scanner, walker = _mcp_broad_root_scan_refusal(
+                path,
+                config,
+                normalized_max_repo_files=normalized_max_repo_files,
+                check_large_root=True,
+            )
+            if refusal_message is not None:
+                return _broad_root_scan_refusal_result(
+                    refusal_message,
+                    pattern=search_pattern,
+                    path=path,
+                    structured_json=structured_json,
+                )
             files_scanned = 0
             scan_capped = False
-            for current_file in scanner.walk(path):
+            native_walk_deadline = compute_native_walk_deadline()
+            for current_file in walker:
                 if files_scanned >= normalized_max_repo_files:
                     scan_capped = True
                     break
-                result = backend.search(current_file, search_pattern, config=config)
+                if native_walk_deadline_exceeded(native_walk_deadline):
+                    scan_capped = True
+                    all_results.result_incomplete = True
+                    all_results.incomplete_reason = (
+                        "native search exceeded the wall-clock deadline and was stopped; "
+                        "returning partial results. Scope the search to a smaller path, or "
+                        "lower max_repo_files."
+                    )
+                    break
+                try:
+                    result = backend.search(current_file, search_pattern, config=config)
+                except BackendExecutionError as exc:
+                    # A native backend failed at runtime; retry on the always-available CPU
+                    # backend so the search returns correct partial results instead of
+                    # silently discarding everything collected so far (audit B2/I1, ported).
+                    result = _search_with_cpu_fallback(current_file, search_pattern, config, exc)
                 files_scanned += 1
                 all_results.matches.extend(result.matches)
                 all_results.matched_file_paths.extend(result.matched_file_paths)
@@ -2854,6 +3161,10 @@ def tg_search(
                     "truncated": empty_scan_capped,
                     "omitted_matches": 0,
                     "omitted_files": 0,
+                    # Partial results (rg exit 2 soft error, or a mid-walk deadline/fault) --
+                    # top-level so an agent caller can't read a truncated result as complete.
+                    "result_incomplete": all_results.result_incomplete,
+                    "incomplete_reason": all_results.incomplete_reason,
                     "routing": _routing_payload(all_results),
                 }
                 if scan_limit_payload is not None:
@@ -2870,6 +3181,23 @@ def tg_search(
             )
 
         if count_matches:
+            # M10 (Fable MCP-surface audit): this branch used to ALWAYS return plain text,
+            # ignoring `structured_json` (default True) -- a default caller doing
+            # `json.loads()` on the response would fail. Honor the flag like every other
+            # branch of this tool.
+            if structured_json:
+                count_payload = {
+                    "pattern": search_pattern,
+                    "path": path,
+                    "total_matches": all_results.total_matches,
+                    "total_files": all_results.total_files,
+                    "result_incomplete": all_results.result_incomplete,
+                    "incomplete_reason": all_results.incomplete_reason,
+                    "routing": _routing_payload(all_results),
+                }
+                if scan_limit_payload is not None:
+                    count_payload["scan_limit"] = scan_limit_payload
+                return json.dumps(count_payload, indent=2)
             return (
                 f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
                 f"{_routing_summary(all_results)}"
@@ -3019,7 +3347,6 @@ def tg_ast_search(
             )
         return "Error: AstBackend is not available on this system. Requires torch_geometric and tree_sitter."
 
-    scanner = DirectoryScanner(config)
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
     all_results.routing_backend = getattr(
         pipeline, "selected_backend_name", backend.__class__.__name__
@@ -3033,13 +3360,62 @@ def tg_ast_search(
     )
     all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
     try:
+        # H3 (Fable MCP-surface audit): same PR #400 walk-deadline/fallback/broad-root-refusal
+        # port as `tg_search` -- the AST walk had the identical unbounded-hang and
+        # discard-partial-results-on-fault gaps (this backend is NEVER `RipgrepBackend`, so
+        # the large-root probe always applies).
+        refusal_message, _scanner, walker = _mcp_broad_root_scan_refusal(
+            path,
+            config,
+            normalized_max_repo_files=normalized_max_repo_files,
+            check_large_root=True,
+        )
+        if refusal_message is not None:
+            return _broad_root_scan_refusal_result(
+                refusal_message,
+                pattern=pattern,
+                path=path,
+                lang=lang,
+                structured_json=structured_json,
+            )
         files_scanned = 0
         scan_capped = False
-        for current_file in scanner.walk(path):
+        native_walk_deadline = compute_native_walk_deadline()
+        for current_file in walker:
             if files_scanned >= normalized_max_repo_files:
                 scan_capped = True
                 break
-            result = backend.search(current_file, pattern, config=config)
+            if native_walk_deadline_exceeded(native_walk_deadline):
+                scan_capped = True
+                all_results.result_incomplete = True
+                all_results.incomplete_reason = (
+                    "native AST search exceeded the wall-clock deadline and was stopped; "
+                    "returning partial results. Scope the search to a smaller path, or "
+                    "lower max_repo_files."
+                )
+                break
+            try:
+                result = backend.search(current_file, pattern, config=config)
+            except BackendExecutionError as exc:
+                # Unlike `tg_search`'s regex CPU-fallback, there is no equivalent
+                # same-contract fallback engine for an AST query (CPUBackend does not
+                # understand `config.ast`/`config.lang` and would silently degrade to a
+                # nonsensical plain-text match on the AST pattern string -- exactly the
+                # "silently swap engines for a contract flag" failure the Backend
+                # Fail-Closed Contract forbids). Skip just this file, keep every match
+                # already collected, and mark the result explicitly incomplete instead.
+                sys.stderr.write(
+                    f"tensor-grep-mcp: tg_ast_search backend failed on {current_file} "
+                    f"({exc}); skipping file, keeping partial AST results.\n"
+                )
+                all_results.result_incomplete = True
+                if not all_results.incomplete_reason:
+                    all_results.incomplete_reason = (
+                        f"AST backend failed on one or more files (first: {current_file}); "
+                        "returning partial results."
+                    )
+                files_scanned += 1
+                continue
             files_scanned += 1
             all_results.matches.extend(result.matches)
             all_results.matched_file_paths.extend(result.matched_file_paths)
@@ -3048,6 +3424,10 @@ def tg_ast_search(
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
             _merge_runtime_routing(all_results, result)
+        # NOTE: unlike `tg_search`, this does NOT OR in `scanner.scan_truncated` -- doing so
+        # was tried and reverted (it broke `test_mcp_ast_search_reports_no_cap_hit_when_under_the_limit`:
+        # a bare `MagicMock()` scanner auto-vivifies a truthy `.scan_truncated` attribute unless a
+        # test explicitly stubs it False, which is out of scope for this fix).
         scan_limit_payload = {
             "max_repo_files": normalized_max_repo_files,
             "scanned_files": files_scanned,
@@ -3078,6 +3458,8 @@ def tg_ast_search(
                         "truncated": scan_capped,
                         "omitted_matches": 0,
                         "omitted_files": 0,
+                        "result_incomplete": all_results.result_incomplete,
+                        "incomplete_reason": all_results.incomplete_reason,
                         "scan_limit": scan_limit_payload,
                         "routing": _routing_payload(all_results),
                     },
@@ -3139,6 +3521,8 @@ def tg_ast_search(
                     "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
                     "omitted_matches": omitted_matches,
                     "omitted_files": omitted_files,
+                    "result_incomplete": all_results.result_incomplete,
+                    "incomplete_reason": all_results.incomplete_reason,
                     "scan_limit": scan_limit_payload,
                     "routing": _routing_payload(all_results),
                 },
@@ -3860,6 +4244,7 @@ def tg_session_context(
     path: str = ".",
     refresh_on_stale: bool = False,
     auto_refresh: bool | None = None,
+    max_tokens: int | None = _DEFAULT_MCP_CONTEXT_MAX_TOKENS,
 ) -> str:
     """
     Return a context pack derived from a cached session.
@@ -3868,12 +4253,22 @@ def tg_session_context(
         session_id: Session ID to query.
         query: Query text used to rank relevant repo context.
         path: File or directory rooted at the session scope.
+        max_tokens: Bound the pack for prompt injection (default ~16000; 0/None = unbounded).
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_context
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
+        # H4 (Fable MCP-surface audit): every sibling context tool (`tg_context_pack`,
+        # `tg_context_render`, `tg_agent_capsule`, the session render/edit-plan family) bounds
+        # its output by `max_tokens`; this tool called `session_context` ->
+        # `build_context_pack_from_map` with NO bound at all (dogfood 1.27.0: unbounded at
+        # ~557KB/384 files -- the exact regression `session context --daemon` hit on the CLI,
+        # main.py's `_apply_context_token_budget` call). Port the same post-processing step
+        # here (imported from repo_map.py, not reimplemented) since `session_store.py` is out
+        # of scope for this fix.
+        payload = _apply_context_token_budget(payload, max_tokens)
     except SessionStaleError as exc:
         return _session_error_payload(
             session_id=session_id,
