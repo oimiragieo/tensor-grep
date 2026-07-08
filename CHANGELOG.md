@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.46.0 (2026-07-08)
+
+### Features
+
+- **semantic**: Opt-in channelized RRF (TG_RRF_CHANNELS=1) — weighted per-channel fusion + a 1.5x
+  path/filename channel; additive weights param, default-off byte-identical (sverklo steal-list;
+  precision win) ([#442](https://github.com/oimiragieo/tensor-grep/pull/442),
+  [`a402f81`](https://github.com/oimiragieo/tensor-grep/commit/a402f81a331a1ad4bae02346ae1bf253917e981c))
+
+
 ## v1.45.17 (2026-07-08)
 
 ### Bug Fixes
