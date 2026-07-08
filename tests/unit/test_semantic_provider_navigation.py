@@ -401,14 +401,17 @@ def test_cli_edit_plan_accepts_provider_option(
 def test_cli_agent_accepts_provider_option(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from tensor_grep.cli import agent_capsule
 
+    # PR-1 (1D): the CLI stopped calling `build_agent_capsule_json` (it now builds the payload
+    # once via `build_agent_capsule` and dumps it itself so both json/text branches share the
+    # exit-2-on-scan-truncation gate) -- repoint this monkeypatch to the function actually called.
     monkeypatch.setattr(
         agent_capsule,
-        "build_agent_capsule_json",
-        lambda query, path, semantic_provider="native", **_: json.dumps({
+        "build_agent_capsule",
+        lambda query, path, semantic_provider="native", **_: {
             "query": query,
             "path": str(path),
             "semantic_provider": semantic_provider,
-        }),
+        },
     )
 
     result = CliRunner().invoke(

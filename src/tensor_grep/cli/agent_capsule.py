@@ -42,6 +42,16 @@ _CAPSULE_BUDGET_ONLY_DOWNGRADE_REASONS = frozenset({
     "context omitted by token or render budget",
 })
 
+# PR-1 (1D): a truncated repo SCAN (as opposed to the capsule's own render/token OUTPUT budget) is
+# a genuine ambiguity signal, never a budget-only artifact -- deliberately kept OUT of
+# `_CAPSULE_BUDGET_ONLY_DOWNGRADE_REASONS` above so the T2 uplift's `other_reasons` scan
+# disqualifies the corroborated-resolution uplift even if the dedicated `scan_truncated`
+# early-return in `_capsule_token_budget_uplift_eligible` is ever refactored away.
+_CAPSULE_SCAN_TRUNCATED_DOWNGRADE_REASON = "repository scan truncated before ranking completed"
+_CAPSULE_SCAN_TRUNCATED_ASK_REASON = (
+    "repository scan was truncated; the ranked primary may not be the true target"
+)
+
 
 def _as_dict(value: object) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
@@ -1313,6 +1323,7 @@ def _capsule_token_budget_uplift_eligible(
     snippets: list[dict[str, Any]],
     consistency: dict[str, Any],
     call_site_evidence: dict[str, Any],
+    scan_truncated: bool,
 ) -> bool:
     """T2: eligibility for the corroborated-resolution uplift, covering BOTH the original
     capsule-own-budget primary omission (F4) and a render-truncated-only cut where the primary's
@@ -1324,6 +1335,12 @@ def _capsule_token_budget_uplift_eligible(
     validation misalignment, ...). Only a target independently corroborated by the query AND by
     verified call-site evidence is eligible.
 
+    PR-1 (1D): a TRUNCATED repo scan (`scan_truncated`, from `_capsule_scan_incomplete` on the
+    inner context-render payload) is ALSO a first-class disqualifier, checked first -- the ranking
+    that produced this "corroborated" primary never saw the whole repository, so a capped-scan
+    primary may simply be the best candidate among the files that were visible, not the true best
+    candidate. Call-site evidence collected against an incomplete scan cannot repair that.
+
     NOTE: `other_reasons` deliberately scans only `consistency["downgrade_reasons"]`, not
     `confidence["downgrade_reasons"]` -- the latter also carries a generic "context consistency
     downgraded confidence" restatement whenever `consistency["confidence_downgraded"]` is set for
@@ -1332,6 +1349,8 @@ def _capsule_token_budget_uplift_eligible(
     its own specific, non-generic text in `consistency["downgrade_reasons"]` (trust mismatches) or
     is checked explicitly above (ties, marker-helper demotion, never-ranked primary).
     """
+    if scan_truncated:
+        return False
     if not snippets:
         return False
     if consistency.get("primary_file_included") is False:
@@ -1371,6 +1390,7 @@ def _apply_capsule_token_budget_confidence_uplift(
     confidence_cap: float,
     call_site_evidence: dict[str, Any],
     ask_reasons: list[str],
+    scan_truncated: bool,
 ) -> None:
     """Uplift a render/token-budget-only confidence clamp for a CORROBORATED resolution -- never
     for a genuine misroute or a genuine ambiguity (see `_capsule_token_budget_uplift_eligible`).
@@ -1397,6 +1417,7 @@ def _apply_capsule_token_budget_confidence_uplift(
         snippets=snippets,
         consistency=consistency,
         call_site_evidence=call_site_evidence,
+        scan_truncated=scan_truncated,
     ):
         return
     uplifted = round(min(uplift_cap, confidence_cap), 3)
@@ -1429,6 +1450,27 @@ def _apply_capsule_token_budget_confidence_uplift(
             "context consistency requires confirmation",
         }
     ]
+
+
+def _capsule_scan_incomplete(payload: dict[str, Any]) -> bool:
+    """PR-1 (1D): module-local twin of ``main._scan_incomplete`` (``cli/main.py``) -- NOT imported
+    from there, since ``main`` imports THIS module and importing back would be circular.
+
+    Checks ONLY the scan-side truncation signals a repo scan can carry: ``scan_limit`` /
+    ``caller_scan_limit`` ``possibly_truncated``, and ``partial`` / ``caller_scan_truncated`` (a
+    ``--deadline`` cutoff or the caller-scan file ceiling). Deliberately does NOT check
+    ``result_incomplete`` -- that key also fires on a pure OUTPUT cap (this capsule's own
+    ``--max-tokens``/``--max-files`` snippet budget) which must stay exit 0; only a SCAN
+    truncation (the repo file list itself was capped or a parse deadline was hit) means the
+    ranking never saw the whole repository. Kept byte-for-byte equivalent to
+    ``main._scan_incomplete``'s scan-side checks; pinned by
+    ``test_capsule_scan_incomplete_matches_main_scan_incomplete``.
+    """
+    for key in ("scan_limit", "caller_scan_limit"):
+        limit = payload.get(key)
+        if isinstance(limit, dict) and limit.get("possibly_truncated"):
+            return True
+    return bool(payload.get("partial") or payload.get("caller_scan_truncated"))
 
 
 def build_agent_capsule(
@@ -1466,6 +1508,11 @@ def build_agent_capsule(
         semantic_provider=effective_semantic_provider,
         ignore=ignore,
     )
+    # PR-1 (1D): whether the underlying repo scan itself (not the capsule's own snippet/token
+    # output budget) was truncated -- gates the exit-2-on-scan-truncation contract below and
+    # disqualifies the T2 corroborated-resolution confidence uplift (a capped-scan primary may
+    # simply be the best candidate among the files that were visible, not the true best one).
+    scan_truncated = _capsule_scan_incomplete(payload)
     target = _primary_target(payload)
     all_alternatives = _alternative_targets(payload, target, limit=None)
     alternatives = all_alternatives[:4]
@@ -1539,9 +1586,28 @@ def build_agent_capsule(
             *list(consistency.get("downgrade_reasons") or []),
             *trust["downgrade_reasons"],
         ])
+    # PR-1 (1D) belt+braces: a truncated repo scan is a genuine ambiguity signal on its own --
+    # stamp it into context_consistency BEFORE `_confidence` runs, same pattern as the trust-check
+    # block above, so it survives independently of the `scan_truncated` early-return disqualifier
+    # in `_capsule_token_budget_uplift_eligible`.
+    if scan_truncated:
+        consistency["confidence_downgraded"] = True
+        consistency["downgrade_reasons"] = _dedupe([
+            *list(consistency.get("downgrade_reasons") or []),
+            _CAPSULE_SCAN_TRUNCATED_DOWNGRADE_REASON,
+        ])
 
     downgrade_reasons: list[str] = list(trust["downgrade_reasons"])
+    if scan_truncated:
+        downgrade_reasons.append(_CAPSULE_SCAN_TRUNCATED_DOWNGRADE_REASON)
     confidence = _confidence(payload, snippets, downgrade_reasons, consistency)
+    # PR-1 (1D) belt+braces: `_primary_target` seeds `target["confidence"]` from a hardcoded 0.9
+    # fallback independent of `confidence["overall"]` (the 1A seed-real-overall fix is a separate,
+    # later PR) -- without this explicit cap, a scan-truncated capsule could report
+    # `confidence.overall` correctly downgraded while `primary_target.confidence` still reads 0.9,
+    # which is exactly the "confident false zero" this fix exists to close.
+    if scan_truncated:
+        _cap_primary_target_confidence(target, float(confidence["overall"]))
     confidence_cap = float(trust["confidence_cap"])
     lsp_confidence_boost_enabled = _capsule_lsp_confidence_boost_enabled()
     primary_target_lsp_proof = _target_has_lsp_confidence_proof(target)
@@ -1673,6 +1739,13 @@ def build_agent_capsule(
         )
     if tied_alternatives:
         ask_reasons.append("alternative target confidence ties primary target")
+    # PR-1 (1D) belt+braces: this string is deliberately distinct from every ask-reason the T2
+    # uplift's reason-clearing removes ("confidence below 0.75", "primary file omitted from
+    # capsule snippets", "context consistency requires confirmation") -- see
+    # `_apply_capsule_token_budget_confidence_uplift`'s reason-clearing list -- so even if the
+    # uplift somehow ran anyway, `ask_user_before_editing.required` still forces True here.
+    if scan_truncated:
+        ask_reasons.append(_CAPSULE_SCAN_TRUNCATED_ASK_REASON)
     if not validation_commands:
         if suggested_validation_commands:
             # Confidence/tie logic never sees this — the strict field stays empty and
@@ -1732,6 +1805,7 @@ def build_agent_capsule(
         confidence_cap=confidence_cap,
         call_site_evidence=call_site_evidence,
         ask_reasons=ask_reasons,
+        scan_truncated=scan_truncated,
     )
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
     route_rationale: list[dict[str, Any]] = [
@@ -1778,7 +1852,7 @@ def build_agent_capsule(
                 "reason": str(gpu_acceleration.get("reason") or ""),
             })
 
-    return {
+    result: dict[str, Any] = {
         "version": 1,
         "schema_version": 1,
         "routing_backend": "RepoMap",
@@ -1827,6 +1901,26 @@ def build_agent_capsule(
         "context_consistency": consistency,
         "raw_context_ref": raw_context_ref,
     }
+    # PR-1 (1D): additively propagate the inner context-render payload's SCAN-side truncation
+    # signals onto the capsule -- only when present, mirroring `repo_map._copy_scan_limit` /
+    # `_copy_partial_signal`'s shapes without importing repo_map's private helpers (this module
+    # already treats `payload` -- the `repo_map.build_context_render` result -- as its own scan
+    # source of truth). `result_incomplete` is stamped ONLY on a genuine scan truncation, NEVER on
+    # the capsule's own render/token OUTPUT budget (`payload["truncated"]`/`omitted_sections`) --
+    # the output-cap-stays-0 contract `main._scan_incomplete` documents.
+    scan_limit = payload.get("scan_limit")
+    if isinstance(scan_limit, dict):
+        result["scan_limit"] = dict(scan_limit)
+        if "scan_remediation" in payload:
+            result["scan_remediation"] = payload["scan_remediation"]
+    if payload.get("partial"):
+        result["partial"] = True
+        deadline_limit = payload.get("deadline_limit")
+        if isinstance(deadline_limit, dict):
+            result["deadline_limit"] = dict(deadline_limit)
+    if scan_truncated:
+        result["result_incomplete"] = True
+    return result
 
 
 def build_agent_capsule_json(
