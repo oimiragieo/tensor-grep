@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import builtins
 import json
+import keyword
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -535,6 +538,289 @@ def _collect_capsule_call_site_evidence(
         "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
     }
     return related_call_sites, evidence
+
+
+# DAR (Dependency-Aware Retrieval, arxiv steal #4): surface the primary target's OUTBOUND
+# dependencies (imports + callees) as budget-isolated related-context, so an agent can edit
+# without extra file reads. THE TRAP: `payload["symbols"]`/`payload["imports"]` (the whole-repo
+# tables) are POPPED by compact rendering (`repo_map._COMPACT_CONTEXT_RENDER_OMITTED_KEYS`) --
+# `build_agent_capsule` always requests `render_profile="full"` + `optimize_context=True`, which
+# `repo_map._normalize_render_profile` downgrades to "compact". A naive `payload["imports"]` read
+# is therefore SILENTLY EMPTY FOREVER. The data sources below are the ones that survive compact:
+# a fresh single-file parse of the primary (`repo_map._imports_and_symbols_for_path`, cached), a
+# call-token scan of the primary's OWN rendered snippet source, and the two compact survivors
+# `file_summaries` / `candidate_edit_targets.symbols` for resolving callees to file+line.
+_CAPSULE_OUTBOUND_DEPENDENCIES_ENV = "TG_CAPSULE_OUTBOUND_DEPS"
+_CAPSULE_OUTBOUND_DEPENDENCY_TEXT_PREVIEW_CHAR_LIMIT = 240
+_CAPSULE_OUTBOUND_DEPENDENCY_CALL_TOKEN_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+_CAPSULE_OUTBOUND_DEPENDENCY_STOPWORDS = frozenset(keyword.kwlist) | frozenset(dir(builtins))
+_CAPSULE_OUTBOUND_DEPENDENCY_KIND_PRIORITY = {"call+import": 0, "call": 1, "import": 2}
+
+
+def _capsule_outbound_dependencies_enabled() -> bool:
+    """Always-ON kill-switch -- the OPPOSITE default polarity from
+    `_capsule_lsp_confidence_boost_enabled` (that one is opt-IN), but the same off-value parsing:
+    any of `{"", "0", "false", "no", "off"}` (case-insensitive) disables DAR.
+    """
+    raw = os.environ.get(_CAPSULE_OUTBOUND_DEPENDENCIES_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _outbound_dependency_import_tails(imports: list[str]) -> dict[str, str]:
+    """tail (last dotted segment) -> the qualified import string it came from.
+
+    Only DOTTED import strings corroborate a candidate: `from src.tax import compute_tax`
+    produces "src.tax.compute_tax" (tail "compute_tax") in
+    `repo_map._imports_and_symbols_for_path`'s output. A bare top-level `import module` entry
+    (no dot) is deliberately excluded here -- "drop bare third-party/stdlib module strings": a
+    bare module name alone (e.g. `import requests`) is too weak a signal and would otherwise let
+    an unrelated third-party package corroborate a same-named local call token.
+    """
+    tails: dict[str, str] = {}
+    for raw in imports:
+        text = str(raw)
+        if "." not in text:
+            continue
+        tail = text.rsplit(".", 1)[-1]
+        if tail and tail not in tails:
+            tails[tail] = text
+    return tails
+
+
+def _outbound_dependency_selected_symbol_locations(
+    payload: dict[str, Any],
+    *,
+    exclude_file: str,
+) -> dict[str, dict[str, Any]]:
+    """symbol name -> {file, line, kind, provenance} for symbols defined in OTHER selected files.
+
+    `file_summaries` and `candidate_edit_targets.symbols` are the two survivors of compact
+    rendering (see module-level DAR comment above) and both are already scoped to files the
+    ranking SELECTED -- exactly the corroboration DAR needs: a call token only counts as an
+    outbound dependency when it resolves inside a file the agent is already looking at, never an
+    arbitrary whole-repo symbol.
+    """
+    locations: dict[str, dict[str, Any]] = {}
+    for summary in _as_list_of_dicts(payload.get("file_summaries")):
+        file_path = str(summary.get("path") or "")
+        if not file_path or file_path == exclude_file:
+            continue
+        for symbol in _as_list_of_dicts(summary.get("symbols")):
+            name = str(symbol.get("name") or "")
+            if not name or name in locations:
+                continue
+            raw_line = symbol.get("line") or 1
+            try:
+                line = max(1, int(str(raw_line)))
+            except (TypeError, ValueError):
+                line = 1
+            locations[name] = {
+                "file": file_path,
+                "line": line,
+                "kind": str(symbol.get("kind") or "unknown"),
+                "provenance": "parser-backed",
+            }
+
+    candidate_targets = _as_dict(payload.get("candidate_edit_targets"))
+    for symbol in _as_list_of_dicts(candidate_targets.get("symbols")):
+        name = str(symbol.get("name") or "")
+        file_path = str(symbol.get("file") or "")
+        if not name or not file_path or file_path == exclude_file or name in locations:
+            continue
+        raw_line = symbol.get("line") or symbol.get("start_line") or 1
+        try:
+            line = max(1, int(str(raw_line)))
+        except (TypeError, ValueError):
+            line = 1
+        locations[name] = {
+            "file": file_path,
+            "line": line,
+            "kind": str(symbol.get("kind") or "unknown"),
+            "provenance": str(symbol.get("provenance") or "parser-backed"),
+        }
+    return locations
+
+
+def _outbound_dependency_call_tokens(source: str, start_line: int) -> list[tuple[str, int]]:
+    """First-use `(name, line)` pairs for `name(` call-shaped tokens in `source`, source order.
+
+    First occurrence per NAME wins -- feeds the "tie-break first-use line" selection rule.
+    """
+    seen: set[str] = set()
+    tokens: list[tuple[str, int]] = []
+    for offset, line_text in enumerate(source.splitlines()):
+        for match in _CAPSULE_OUTBOUND_DEPENDENCY_CALL_TOKEN_RE.finditer(line_text):
+            name = match.group(1)
+            if name in seen:
+                continue
+            seen.add(name)
+            tokens.append((name, start_line + offset))
+    return tokens
+
+
+def _outbound_dependency_line_preview(source: str, start_line: int, line: int) -> str:
+    lines = source.splitlines()
+    index = line - start_line
+    if 0 <= index < len(lines):
+        return lines[index].strip()
+    return ""
+
+
+def _collect_outbound_dependencies(
+    query: str,
+    path: str,
+    target: dict[str, Any],
+    payload: dict[str, Any],
+    snippets: list[dict[str, Any]],
+    related_call_sites: list[dict[str, Any]],
+    *,
+    max_files: int,
+    preview_token_budget: int | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """DAR (arxiv steal #4): the primary target's outbound dependencies, corroboration-gated.
+
+    A candidate call token is kept ONLY if it (i) resolves to a symbol defined in another
+    SELECTED file (-> file+line+provenance, `dependency_kind` "call") OR (ii) matches an import
+    tail (`dependency_kind` "import", `file` null, provenance "import-heuristic") -- or both
+    (`dependency_kind` "call+import"). This is deliberately NOT a bare-regex scan: an unresolved,
+    un-imported call token is dropped as noise (the diff-docs/DocPrism false-positive lesson).
+
+    BUDGET ISOLATION (load-bearing): this function NEVER evicts a snippet, caller, or changes any
+    omission reason -- the records it returns are metadata outside the snippet token budget, same
+    as `related_call_sites`. Only the OPTIONAL `text` preview on each record is budgeted, from the
+    caller-supplied `preview_token_budget` (upstream `max_tokens` leftover after snippets) --
+    `None` means unlimited (no `max_tokens` cap was requested at all upstream either).
+
+    FAIL-SAFE (byte-identical contract): every early return here is `([], {})` -- the caller MUST
+    treat that as "emit NEITHER `outbound_dependencies` nor `outbound_dependency_evidence`", never
+    an empty-but-present key. See `build_agent_capsule`.
+    """
+    if not _capsule_outbound_dependencies_enabled():
+        return [], {}
+    primary_file = str(target.get("file") or "")
+    primary_symbol = str(target.get("symbol") or "")
+    if not primary_file or not primary_symbol:
+        return [], {}
+    primary_snippet = next(
+        (snippet for snippet in snippets if str(snippet.get("file") or "") == primary_file),
+        None,
+    )
+    if primary_snippet is None:
+        return [], {}
+    source = str(primary_snippet.get("source") or "")
+    if not source.strip():
+        return [], {}
+    try:
+        start_line = max(1, int(str(primary_snippet.get("start_line") or 1)))
+    except (TypeError, ValueError):
+        start_line = 1
+
+    try:
+        imports, primary_symbols = repo_map._imports_and_symbols_for_path(Path(primary_file))
+    except Exception:  # pragma: no cover - defensive; DAR must never break the capsule
+        return [], {}
+
+    locally_defined = {
+        str(symbol.get("name") or "") for symbol in primary_symbols if symbol.get("name")
+    }
+    import_tails = _outbound_dependency_import_tails(imports)
+    resolved_locations = _outbound_dependency_selected_symbol_locations(
+        payload,
+        exclude_file=primary_file,
+    )
+    excluded_pairs = {
+        (str(record.get("file") or ""), str(record.get("symbol") or ""))
+        for record in related_call_sites
+    }
+
+    candidates: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for name, line in _outbound_dependency_call_tokens(source, start_line):
+        if not name or name == primary_symbol:
+            continue
+        if name in _CAPSULE_OUTBOUND_DEPENDENCY_STOPWORDS or name in locally_defined:
+            continue
+        resolution = resolved_locations.get(name)
+        import_source = import_tails.get(name)
+        if resolution is None and import_source is None:
+            continue
+        resolved_file = str(resolution["file"]) if resolution else None
+        key = (resolved_file or "", name)
+        if key in seen_keys or key in excluded_pairs:
+            continue
+        seen_keys.add(key)
+        if resolution is not None and import_source is not None:
+            dependency_kind = "call+import"
+        elif resolution is not None:
+            dependency_kind = "call"
+        else:
+            dependency_kind = "import"
+        candidates.append({
+            "file": resolved_file,
+            "line": int(resolution["line"]) if resolution else None,
+            "symbol": name,
+            "kind": str(resolution["kind"]) if resolution else "unknown",
+            "relation": "outbound-dependency",
+            "dependency_kind": dependency_kind,
+            "provenance": str(resolution["provenance"]) if resolution else "import-heuristic",
+            "reason": "primary target calls this symbol",
+            "_first_use_line": line,
+        })
+
+    if not candidates:
+        return [], {}
+
+    candidates.sort(
+        key=lambda item: (
+            _CAPSULE_OUTBOUND_DEPENDENCY_KIND_PRIORITY.get(str(item["dependency_kind"]), 3),
+            int(item["_first_use_line"]),
+        )
+    )
+    limit = max(1, min(int(max_files) * 2, 8))
+    kept = candidates[:limit]
+    omitted_count = max(0, len(candidates) - len(kept))
+
+    unlimited_preview = preview_token_budget is None
+    remaining_preview_budget: int | None = (
+        None if preview_token_budget is None else max(0, int(preview_token_budget))
+    )
+    records: list[dict[str, Any]] = []
+    for candidate in kept:
+        record = {key: value for key, value in candidate.items() if key != "_first_use_line"}
+        preview = _outbound_dependency_line_preview(
+            source,
+            start_line,
+            int(candidate["_first_use_line"]),
+        )[:_CAPSULE_OUTBOUND_DEPENDENCY_TEXT_PREVIEW_CHAR_LIMIT]
+        if preview:
+            if unlimited_preview:
+                record["text"] = preview
+            else:
+                token_cost = repo_map._estimate_tokens(preview)
+                if remaining_preview_budget is not None and token_cost <= remaining_preview_budget:
+                    record["text"] = preview
+                    remaining_preview_budget -= token_cost
+        refetch = _source_refetch_ref(
+            {"file": candidate["file"], "symbol": candidate["symbol"]},
+            query,
+            path,
+            max_files,
+        )
+        record["refetch"] = {"command": refetch["command"], "argv": refetch["argv"]}
+        records.append(record)
+
+    evidence = {
+        "status": "collected",
+        "symbol": primary_symbol,
+        "returned_dependencies": len(records),
+        "omitted_dependencies": omitted_count,
+        "max_dependencies": limit,
+        "provenance": _dedupe([str(record["provenance"]) for record in records]),
+        "preview_token_budget_remaining": (None if unlimited_preview else remaining_preview_budget),
+    }
+    return records, evidence
 
 
 def _alternative_targets(
@@ -1523,12 +1809,19 @@ def build_agent_capsule(
     # call-site evidence that would justify relief from that cap.
     primary_target_seed_confidence = _numeric_confidence(target.get("confidence"), 0.0)
     omitted_alternative_targets = max(0, len(all_alternatives) - len(alternatives))
-    snippets, omitted_sources, _used_tokens = _build_snippets(
+    snippets, omitted_sources, used_tokens = _build_snippets(
         payload,
         query=query,
         path=resolved_path,
         max_files=max_files,
         max_tokens=max_tokens,
+    )
+    # DAR budget isolation: upstream (snippets/callers) keeps 100% of `max_tokens` -- DAR records
+    # are metadata OUTSIDE that budget. Only the optional preview `text` on a DAR record is
+    # budgeted, from whatever `max_tokens` leftover remains after `_build_snippets` above. `None`
+    # (no `max_tokens` cap requested) means unlimited previews.
+    outbound_dependency_preview_budget = (
+        None if max_tokens is None else max(0, int(max_tokens) - int(used_tokens))
     )
     omitted_sections = [*(_as_list_of_dicts(payload.get("omitted_sections"))), *omitted_sources]
     follow_up_reads = _follow_up_reads(
@@ -1807,6 +2100,20 @@ def build_agent_capsule(
         ask_reasons=ask_reasons,
         scan_truncated=scan_truncated,
     )
+    # DAR (arxiv steal #4): runs AFTER call-site collection so it can dedupe against
+    # `related_call_sites`, and deliberately does NOT touch `target`/`confidence`/`consistency`/
+    # `ask_reasons` -- see `_collect_outbound_dependencies`'s fail-safe + budget-isolation
+    # contract. Never mutates confidence/consistency/trust state (1A owns those).
+    outbound_dependencies, outbound_dependency_evidence = _collect_outbound_dependencies(
+        query,
+        resolved_path,
+        target,
+        payload,
+        snippets,
+        related_call_sites,
+        max_files=max_files,
+        preview_token_budget=outbound_dependency_preview_budget,
+    )
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
     route_rationale: list[dict[str, Any]] = [
         {
@@ -1920,6 +2227,13 @@ def build_agent_capsule(
             result["deadline_limit"] = dict(deadline_limit)
     if scan_truncated:
         result["result_incomplete"] = True
+    # DAR: additive CONDITIONAL keys, same pattern as scan_limit/partial above -- zero deps (or
+    # the kill-switch, or a fail-safe early return inside `_collect_outbound_dependencies`) means
+    # `outbound_dependencies` is `[]`, and BOTH keys are omitted so the capsule stays
+    # byte-identical to a pre-DAR build. Never stamp an empty-but-present key.
+    if outbound_dependencies:
+        result["outbound_dependencies"] = outbound_dependencies
+        result["outbound_dependency_evidence"] = outbound_dependency_evidence
     return result
 
 
