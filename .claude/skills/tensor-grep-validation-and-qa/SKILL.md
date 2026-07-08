@@ -115,6 +115,26 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    an exit code you observed, a `file:line` that resolves, or a real dogfood run. This applies doubly
    to worktree-fanout branches: a worktree has no `.venv`, so a subagent's claim is *literally
    un-runnable in its own tree* until re-run in the real environment.
+10. **A security-touching change is not "done" on green tests alone — it needs a mandatory adversarial
+    review before merge.** Any PR touching `apply_policy`, `mcp_server`, `cpu_backend`/native-argv
+    construction, `index_lock`, auth, money, or a migration gets a dedicated "try to BREAK this, cite
+    `file:line`, default to FIX-FIRST if uncertain" pass — not a rubric checklist, an actual attempted
+    exploit. This is not theoretical: this exact gate caught a real symlink-follow RCE bypass
+    (`.resolve()` following the symlink before the containment check) and a lock-release TOCTOU that a
+    green test suite missed on both. Route security-review model selection through
+    `feedback-fable5-cyber-classifier-audit-on-opus` (global memory) — run vuln-hunting turns on
+    Opus/Sonnet, not Fable (its cyber classifier silently falls back mid-turn). Verdict is binary:
+    `SHIP` or `FIX-FIRST(file:line + repro + fix)`, never a rubber stamp.
+11. **A test that exercises a hang-class bug (ReDoS, deadlock, lock-race, unbounded subprocess/loop)
+    must itself be unhangable, or it just relocates the hang into your test run.** Wrap it in an outer
+    shell timeout with a kill-after grace period AND the test framework's own per-test timeout (a
+    `signal`-based timeout is a no-op on Windows/inside a GIL-held C extension — use a thread-based
+    timeout mechanism instead); treat an observed exit `124`/`137` as the failure signal, not a hang to
+    debug further. Write the fix **before** the red-phase adversarial test where possible, or run the
+    red test already wrapped — an unwrapped catastrophic-backtracking regex test against un-fixed code
+    can look indistinguishable from a genuinely stuck build/agent. Never write an unbounded
+    loop/spawn/backtrack-prone pattern into a test without an explicit bound. Full protocol: the global
+    skill `anti-hang-test-protocol`.
 
 ---
 
@@ -283,8 +303,10 @@ of drifting unnoticed:
 
 `scripts/agent_readiness.py` is a fast (3-5 minute) CI-blocking dogfood gate for agent-critical
 surfaces — separate from, and complementary to, the full local-validation gate (`AGENTS.md:323`).
-`tg dogfood` (`src/tensor_grep/cli/main.py:9651`, `dogfood()`) wraps the same check plan with a
-one-page verdict and an optional `--timeout-s` (default `170.0`) around the nested readiness process.
+`tg dogfood` (`src/tensor_grep/cli/main.py:10878` as of v1.49.3 — this line drifts every release, find
+it with `grep -n "^def dogfood" src/tensor_grep/cli/main.py` rather than trusting the number, `dogfood()`)
+wraps the same check plan with a one-page verdict and an optional `--timeout-s` (default `170.0`) around
+the nested readiness process.
 
 Run it directly:
 
@@ -348,9 +370,9 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 
 | Directory | What lives there | Run cost |
 |---|---|---|
-| `tests/unit/` (155 files as of 2026-07-02) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
+| `tests/unit/` (208 files as of 2026-07-08) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
 | `tests/e2e/` (15 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
-| `tests/integration/` (9 files) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end | slow, sometimes GPU-gated |
+| `tests/integration/` (10 files) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end | slow, sometimes GPU-gated |
 | `tests/golden/` | Committed golden-output fixtures consumed by `rust_core/tests/test_search_golden.rs`, not itself a pytest dir | n/a |
 | `tests/fixtures/`, `tests/schemas/`, `tests/helpers/` | Shared fixture data (`ast_smoke`, `retrieval`), `tg_output.schema.json`, `rg_parity.py` helper (ripgrep binary resolution + `RGContractRow`) | n/a |
 
@@ -433,17 +455,23 @@ was never observed to fail cannot be trusted to catch a regression.
       surface (routing, capsule, MCP, docs-claim strings).
 - [ ] For release/workflow/package-manager changes: `uv run python scripts/validate_release_assets.py`
       exits 0.
+- [ ] If it touches `apply_policy`/`mcp_server`/native-argv/`index_lock`/auth/money/a migration: an
+      adversarial "try to break it" security pass ran and returned `SHIP` (Part 1 point 10) — not just
+      green functional tests.
+- [ ] If the test itself exercises a hang-class bug (ReDoS/deadlock/lock-race): the test run is wrapped
+      in both an outer shell timeout and an inner thread-based per-test timeout (Part 1 point 11).
 
 ---
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**. Re-verify before relying on them:
+Volatile facts re-verified **2026-07-08, release `v1.49.3`**. Re-verify before relying on them:
 
 | Claim | Re-verify command |
 |---|---|
-| Total collected tests | `uv run pytest tests --collect-only -q` (tail line; **3184 tests collected** on 2026-07-02) |
-| Test file counts (155 unit / 15 e2e / 9 integration) | `Get-ChildItem tests/unit,tests/e2e,tests/integration -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration -name 'test_*.py' \| wc -l` |
+| Total collected tests | `uv run pytest tests --collect-only -q` (tail line; re-run to check — grows every release, do not trust a stale snapshot number here) |
+| Test file counts (208 unit / 15 e2e / 10 integration as of 2026-07-08) | `Get-ChildItem tests/unit,tests/e2e,tests/integration -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration -name 'test_*.py' \| wc -l` |
+| `dogfood()` CLI entry point (symbol anchor, not a line number) | `grep -n "^def dogfood" src/tensor_grep/cli/main.py` |
 | `CliRunner` usage count in unit tests | `grep -rc CliRunner tests/unit/*.py \| awk -F: '{s+=$2} END{print s}'` |
 | pytest markers registered | `grep -n "markers = \[" -A 10 pyproject.toml` |
 | `-x` in pytest addopts (and the `--maxfail=0` override) | `grep -n "addopts" -A5 pyproject.toml`; empirically confirm with a scratch `pytest.ini` + two dummy tests |

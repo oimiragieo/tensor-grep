@@ -6,11 +6,11 @@ description: Use when running the `tg` CLI day-to-day — exact syntax for orien
 # tensor-grep run & operate
 
 An imperative, copy-pasteable runbook for **running** `tg` (the tensor-grep CLI). Ground-truthed
-against `src/tensor_grep/cli/main.py` at **released v1.40.2** (`origin/main`, `pyproject.toml:386`),
-re-verified **2026-07-05**. Every command below is a real `@app.command` in that file — re-verify
-with the commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag
-on a newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as
-an approximate anchor: `grep` the symbol, don't trust the raw line.
+against `src/tensor_grep/cli/main.py` at **released v1.49.3** (`pyproject.toml:430`), re-verified
+**2026-07-08**. Every command below is a real `@app.command` in that file — re-verify with the
+commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag on a
+newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as an
+approximate anchor: `grep` the symbol, don't trust the raw line.
 
 ## Scope — and when to use a sibling instead
 
@@ -22,6 +22,7 @@ an approximate anchor: `grep` the symbol, don't trust the raw line.
 | WHY the front door / registration / backend contract is shaped this way | `tensor-grep-architecture-contract` |
 | Adding a `tg` command or search flag; gates before merging any tg change | `tensor-grep-change-control` |
 | A live bug you just hit while running `tg` | `tensor-grep-debugging-playbook` |
+| A hang/`--deadline` overrun on a large repo, or the unscoped-search-refusal campaign history | `tensor-grep-large-repo-scale-campaign` |
 | "Has this already been tried and lost?" before re-attempting a fix | `tensor-grep-failure-archaeology` |
 | Which commands accept `--deadline`/`--ignore`/`--max-tokens` (NOT the same set); env-var/flag axis list | `tensor-grep-config-and-flags` |
 | Building from source, Rust/Python toolchain setup | `tensor-grep-build-and-env` |
@@ -246,8 +247,9 @@ Starts a **stdio** MCP server (`FastMCP("tensor-grep")`, `mcp_server.py:64`, `an
 Call `tg_mcp_capabilities` **first** in any new client/sandbox — it reports which tools work
 without a standalone native `tg` binary versus which require one (`mcp_server.py:1433`).
 
-Representative tool names (there are ~35+; grep for the current authoritative list — see
-Provenance below): `tg_search`, `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source`,
+Representative tool names (**42** as of v1.49.3 — `grep -n "^def tg_\|^async def tg_" mcp_server.py
+| wc -l`; re-run this before trusting the count on a later version, see Provenance below):
+`tg_search`, `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source`,
 `tg_symbol_refs`, `tg_symbol_callers`, `tg_symbol_impact`, `tg_symbol_blast_radius`,
 `tg_symbol_blast_radius_render`, `tg_symbol_blast_radius_plan`, `tg_context_pack`,
 `tg_context_render`, `tg_edit_plan`, `tg_agent_capsule`, `tg_ruleset_scan`, `tg_rewrite_plan`,
@@ -331,31 +333,50 @@ do that for you.
 `sgconfig.yml` (used by `tg scan --config`) is a project-level ast-grep config file, not a
 tensor-grep cache directory — it lives wherever you point `--config`, typically the repo root.
 
-## 10. The scope-a-path workaround (whole-repo `tg search` hangs)
+## 10. Unscoped `tg search` — fail-fast/refuse, not a hang (shipped: #400/v1.40.3, #413/v1.42.0)
 
-`tg search PATTERN` with **no path** argument (or `--glob X -l` without a scoped path) walks from
-the current directory and can hit the ripgrep subprocess timeout before returning any result.
-`TG_RG_TIMEOUT_SECONDS` defaults to **60.0 seconds** (`subprocess_policy.py:44`, lowered from 600s
-in #288) — after that it fails fast with an actionable stderr hint to scope the search or raise
-the env var, rather than hanging indefinitely. It is still slow up to that point because tg's own
-index/cache dirs (`.tensor-grep/`, `.tg_semantic_index/`) and any vendored external-repo trees in
-scope are not excluded from the walk.
+`tg search PATTERN` with **no path** argument (or `--glob X -l` without a scoped path) used to walk
+the whole tree and could burn the full ripgrep-subprocess timeout before returning. That is now
+**shipped, released** fail-fast/refuse behavior, not an open hang — three layered guards catch the
+unscoped case before it reaches a slow walk, plus a wall-clock backstop if all three miss:
 
-**Workaround — always scope to a path:**
+1. **Vendored-root refusal** (`_should_refuse_unbounded_vendored_root_scan`, `main.py:3925`) — a
+   root with a top-level `node_modules`/`vendor`/`external_repos`/`third_party` dir **exits 2
+   instantly** (no scan at all) unless `--allow-broad-generated-scan` opts in.
+2. **Workspace-root refusal** (`_should_refuse_unbounded_workspace_root_scan`, `main.py:3869`) — a
+   root with >=3 sibling project directories (a monorepo/workspace parent) is refused the same way.
+3. **Large single-project-root refusal** (`_should_refuse_unbounded_large_root_scan`, `main.py:4022`,
+   `#413`, dogfood v1.42.0) — closes the remaining gap: a large but non-vendored, non-workspace
+   single-project root (matches neither guard above) refuses instantly via a **bounded scandir
+   probe** — it checks the already-collected candidate-file count against a 1500-file ceiling
+   (gated identically on `--allow-broad-generated-scan`/glob-type-depth scope) rather than falling
+   through to the slow per-file Python match loop.
+4. **Native-walk wall-clock deadline** (`compute_native_walk_deadline` /
+   `native_walk_deadline_exceeded`, `src/tensor_grep/backends/cpu_backend.py:22-37`, checked in the
+   walk around `main.py:6727-6734`) — the last-resort backstop: if none of the three refusals above
+   fire, the native per-file search walk still self-bounds and **breaks to a flagged partial**
+   (`result_incomplete` + a stderr warning) instead of running unbounded.
+
+`TG_RG_TIMEOUT_SECONDS` (default **60.0 seconds**, `subprocess_policy.py:44`, lowered from 600s in
+#288) remains the ripgrep-subprocess-level backstop for the plain rg-passthrough path, but the four
+guards above mean an unscoped *vendored* or *large* root now fails in well under a second — you
+should rarely see the 60s subprocess timeout actually fire on a repo shaped like this one anymore.
+
+**Best practice — still scope to a path** (cheaper than even the refusal-probe cost, and the only
+way to get real results instead of an instant refusal):
 
 ```powershell
 tg search "pattern" C:\repo             # ~0.4s
 tg search "pattern" --glob "*.py" C:\repo
-# Avoid: tg search "pattern" --glob "*.py" -l     (no path — can walk the whole tree)
+# Avoid: tg search "pattern" --glob "*.py" -l     (no path -- triggers a refusal or a bounded walk)
 ```
 
 Same rule for file listing — prefer a scoped root over `tg search --files . --hidden --no-ignore`
 across a large workspace; see `.claude/skills/tensor-grep/SKILL.md` for the broad-generated-scan
-guardrail (`--allow-broad-generated-scan`) that now refuses unbounded scans of build/cache/
-multi-project roots outright. This whole-repo-hang behavior is a known, currently-open issue on the
-released line — see `tensor-grep-debugging-playbook` if you are actively chasing it rather than just
-working around it. (An unmerged, unreleased fix on the in-flight `fix/unscoped-search-hang` branch
-tightens this; it is **not** in v1.40.2.)
+guardrail (`--allow-broad-generated-scan`). For the campaign history and what is genuinely still
+open on this front (task `#52` end-to-end `--deadline` honesty on a *legitimately large, in-scope*
+repo, and `#390`'s daemon-path deadline gap — neither is the unscoped-hang bug this section covers),
+see `tensor-grep-large-repo-scale-campaign`.
 
 ## 11. Exit codes — the layered contract (READ THIS before scripting `tg`)
 
@@ -562,7 +583,7 @@ tools use the 16000 pack budget. What the budget *proves* (vs. what it just boun
 
 | Mistake | Correction |
 | --- | --- |
-| Running `tg search PATTERN` with no path in a large repo | Always scope to a path (§10); the timeout default is 60s, not unlimited |
+| Running `tg search PATTERN` with no path in a large repo | Always scope to a path (§10) — a vendored/large/workspace root now refuses in <1s (shipped), and the 60s ripgrep-subprocess timeout is only the last-resort backstop, not the primary behavior |
 | Reading `tg search --json` as ripgrep JSON Lines | It is tensor-grep's own aggregate JSON object; use `--format rg --json` for rg's JSON Lines schema |
 | Passing `SYMBOL PATH` (reversed) to `defs`/`refs`/`callers`/`blast-radius` | Auto-corrected with a stderr warning, but write `PATH SYMBOL` — the canonical, documented order |
 | Reading a symbol-command **exit `2`** as "usage/argument error" | On `callers`/`refs`/`impact`/`blast-radius` it means **INCOMPLETE + EMPTY** (§11a) — retry with a bigger `--deadline`/`--max-repo-files` or narrower `PATH`, don't abort |
@@ -578,13 +599,12 @@ tools use the 16000 pack budget. What the budget *proves* (vs. what it just boun
 
 ## Provenance and maintenance
 
-Facts here were re-verified **2026-07-05** against **released v1.40.2** by reading
+Facts here were re-verified **2026-07-08** against **released v1.49.3** by reading
 `src/tensor_grep/cli/main.py`, `mcp_server.py`, `repo_map.py`, `docs_coverage.py`,
-`subprocess_policy.py`, and `docs/CONTRACTS.md` on `origin/main` (`pyproject.toml:386` = `1.40.2`).
-Line numbers are `origin/main`'s; the local working tree is on the in-flight
-`fix/unscoped-search-hang` branch (an **unmerged, unreleased** unscoped-`tg search` hang fix touching
-`cpu_backend.py` / `bootstrap.py` / `main.py` / `repo_map.py` — §10 still describes the released
-behavior). `main.py` moves ~100+ lines per release, so re-grep the symbol before trusting a cite:
+`subprocess_policy.py`, `cpu_backend.py`, and `docs/CONTRACTS.md` (`pyproject.toml:430` = `1.49.3`).
+The unscoped-`tg search` hang fix (§10) is **shipped and released** (`#400` in v1.40.3, `#413` in
+v1.42.0) — it is no longer an in-flight branch. `main.py` moves ~100+ lines per release, so re-grep
+the symbol before trusting a cite:
 
 ```powershell
 # Version currently installed / current tag
@@ -595,7 +615,11 @@ grep -n "^version" pyproject.toml
 grep -n "@app.command\|@session_app.command\|@session_daemon_app.command\|@checkpoint_app.command\|@review_bundle_app.command" src/tensor_grep/cli/main.py
 
 # Full, current MCP tool surface (compare against SS 7)
-grep -n "@mcp.tool" -A1 src/tensor_grep/cli/mcp_server.py | grep "^def "
+# NOTE: `grep -A1 "@mcp.tool" | grep "^def "` is BROKEN -- ripgrep/grep's `-A1` context lines are
+# prefixed "NNNN-", not "NNNN:", so `^def ` never matches and this silently returns 0. Count the
+# decorated function definitions directly instead (verified == the @mcp.tool decorator count, 42
+# as of v1.49.3):
+grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l
 
 # Symbol-command exit contract (SS 11) -- narrative + implementation
 grep -n "three-state agent contract\|Symbol-command exit codes" docs/CONTRACTS.md
@@ -612,8 +636,10 @@ grep -n "_DEFAULT_CONTEXT_MAX_TOKENS\|_DEFAULT_MCP_CONTEXT_MAX_TOKENS\|16000" sr
 # --ignore on orient/agent (SS 2) -- repeatable ranking glob, NOT the search boolean
 grep -n "def orient\|def agent" src/tensor_grep/cli/main.py
 
-# TG_RG_TIMEOUT_SECONDS default (compare against SS 10)
+# TG_RG_TIMEOUT_SECONDS default + the 3 unscoped-search refusal guards + the native-walk deadline (SS 10)
 grep -n "_configured_positive_float(\"TG_RG_TIMEOUT_SECONDS\"" src/tensor_grep/cli/subprocess_policy.py
+grep -n "_should_refuse_unbounded_vendored_root_scan\|_should_refuse_unbounded_workspace_root_scan\|_should_refuse_unbounded_large_root_scan" src/tensor_grep/cli/main.py
+grep -n "compute_native_walk_deadline\|native_walk_deadline_exceeded" src/tensor_grep/backends/cpu_backend.py
 
 # Artifact directory names (compare against SS 9)
 grep -n "_TG_DIRNAME\|_SESSIONS_SUBDIR\|_CHECKPOINTS_SUBDIR" src/tensor_grep/cli/session_store.py src/tensor_grep/cli/checkpoint_store.py
@@ -623,8 +649,9 @@ grep -n "^artifacts/\|^/\.tensor-grep/" .gitignore
 grep -n "KNOWN_COMMANDS\|PUBLIC_TOP_LEVEL_COMMANDS" src/tensor_grep/cli/commands.py tests/e2e/test_routing_parity.py
 ```
 
-Open uncertainties this skill does not resolve: the exact current MCP tool count (stated here as
-"~35+", enumerate with the grep above for an exact figure); whether `--symbol`/`--query` hidden
-flags have since been removed (still present and working, with a deprecation warning, at v1.40.2 —
-`main.py:7801`); and the exact set of `SEARCH_PYTHON_PASSTHROUGH_FLAGS` / `_TG_ONLY_SEARCH_FLAGS`
+Open uncertainties this skill does not resolve: the exact current MCP tool count drifts every
+release (42 as of v1.49.3 — re-run the grep above, don't trust the stamped number); whether
+`--symbol`/`--query` hidden flags have since been removed (still present and working, with a
+deprecation warning, at v1.49.3 — re-grep `main.py` for the deprecation-warning call site, the line
+number drifts); and the exact set of `SEARCH_PYTHON_PASSTHROUGH_FLAGS` / `_TG_ONLY_SEARCH_FLAGS`
 (that pairing is `tensor-grep-config-and-flags`' territory, not re-enumerated here).

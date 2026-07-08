@@ -52,9 +52,10 @@ Five corollaries, all stated in AGENTS.md:
 | context-render / edit-plan latency | `benchmarks/run_context_render_benchmarks.py` | editor-plane latency, not search speed |
 | blast-radius latency | `benchmarks/run_blast_radius_benchmarks.py` | impact-analysis latency |
 | repo-map / retrieval quality (not speed) | `benchmarks/run_repo_retrieval_benchmarks.py` | recall/precision/MRR/nDCG/F1/token-budget, a quality metric, not a timing one |
+| tokens-per-correct-answer / token-economy (the moat metric — CANDIDATE, not yet a committed script, gated on #72) | none committed yet — see "6. Token-economy" below | a task-level cost metric (tokens spent to reach a correct answer, oracle-validated), not a latency metric — do not conflate with any row above |
 
 Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (19 scripts as of
-v1.17.25 — re-verify with the command in Provenance below, the list drifts).
+v1.49.3 — re-verify with the command in Provenance below, the list drifts).
 
 If your change does not obviously map to one row, run `benchmarks/run_benchmarks.py` first (the
 broadest cold-path net) and widen from there — do not invent a new ad hoc timing script.
@@ -132,6 +133,39 @@ unreachable, and the whole artifact reports top-level `status: "SKIP"` when no o
 device is detected (`run_gpu_benchmarks.py:1525`, `benchmark_pattern`/`devices` still recorded so the
 skip is diagnosable). **GPU is experimental and currently not a promotion-ready path** — read the
 "GPU claims need a stricter bar" section below before trusting any GPU number as a win.
+
+### 6. Token-economy / tokens-per-correct-answer (CANDIDATE — gated on #72, not yet a committed benchmark)
+
+A **different metric class** from every row above: not wall-clock, but **tokens an agent must spend to
+reach a verified-correct answer** (a task-level cost proxy, oracle-validated per task rather than a raw
+F1/speed number). This is the metric the arxiv research landscape converged on as the actual moat
+measure (`tensor-grep-arxiv-research-landscape-2026-07-07`: "token-economy > F1" consensus) — it is
+what a fleet of agents actually pays for, not a lab F1 score.
+
+**First real run (2026-07-08, internal, oracle-validated, NOT YET a committed `benchmarks/` script)**:
+Sverklo `bench:primitives` (Zenodo 10.5281/zenodo.19802051) on `expressjs/express@4.21.1`, 25 tasks (10
+definition-lookup P1, 10 references P2, 5 file-deps P4). Gated tokens-per-correct-answer (F1>=0.8):
+**tg P1 = 1,243 tok vs rg = 9,328 tok -> tg 7.5x BETTER** (moat validated on definitions). **tg P4 file-deps
+= 53,631 tok vs rg = 5,367 tok -> tg ~10x WORSE** — tg has no scoped "what does file X import / who
+imports X" primitive, only whole-repo `tg map`, so every P4 query pays the whole-repo capsule cost
+regardless of the single file asked (task #74 tracks the fix: a scoped `tg imports <file>`/`tg deps
+<file>` command). Raw artifacts and scripts currently live at `scratchpad/bench/` (`results.json`,
+`run_bench.py`, `score.py`, `validate_oracle.py`) — **not yet promoted to `benchmarks/` or
+`docs/benchmarks.md`**; full memory: `tensor-grep-benchmark-proofpoint-2026-07-08`.
+
+**Why this is gated, not accepted, and what #72 covers**: (a) the run above is one repo / one language
+(JS) / 25 tasks — a real signal, not a general claim, and the full 180-task/6-repo suite (flask/fastapi
+in Python plausibly show a bigger win) has not run; (b) the harness (`run_bench.py`/`score.py`/
+`validate_oracle.py`) has not been committed to `benchmarks/`, given a `docs/benchmarks.md` Matrix row,
+or wired into `check_regression.py`-style acceptance; (c) publishing this number externally is
+CEO-gated (public positioning), separate from whether the harness itself is accepted internally. Do
+**not** cite the 1,243/9,328 or 53,631/5,367 numbers above as an accepted claim-quality artifact until
+#72 lands a committed script + `artifacts/bench_*.json` — treat them as a research finding pointing at
+real moat validation (P1) and a real gap (P4), not yet a benchmark-governed line. Follow this skill's
+same discipline once #72 ships: fair-baseline (`rg` is already the right comparator here), noise-floor
+(deterministic CLIs, no run-to-run variance in this metric class so the usual jitter rule is moot, but
+oracle correctness bugs are the equivalent failure mode — bidirectionally validate the oracle before
+trusting a score), and no doc/PAPER.md claim until the artifact is accepted.
 
 ## Noise-floor / jitter discipline
 
@@ -219,7 +253,8 @@ control-plane experiment vs. the accepted baseline — do not average them.
 
 ## GPU claims need a stricter bar (read before trusting any GPU number)
 
-State of the GPU program as of v1.17.25 (AGENTS.md "Roadmap Sequencing", `docs/gpu_crossover.md`):
+State of the GPU program as of v1.49.3 (re-verify against AGENTS.md "Roadmap Sequencing" — that section
+is itself dated and can lag; `docs/gpu_crossover.md`):
 GPU is **held at the P0 harness** (correctness taxonomy + loud non-promotional fallback +
 `doctor`/proof fields) — the P1 CUDA-PFAC kernel work is **paused**, not advancing to P2-P4
 (correctness gates, fair-bench, device/CI proof) until three CPU-only wins ship first (local hybrid
@@ -305,7 +340,7 @@ the row diagnostic (not release-gating) until it actually beats that number.
 
 ## Provenance and maintenance
 
-Facts here are pinned to tensor-grep **v1.17.25** (2026-07-02). Re-verify before trusting a stale
+Facts here re-verified at tensor-grep **v1.49.3** (2026-07-08). Re-verify before trusting a stale
 number:
 
 - Script inventory / artifact paths drift: `grep -n "| .* | \`benchmarks/run_" docs/benchmarks.md`
@@ -321,3 +356,5 @@ number:
   "Roadmap Sequencing" since that date-stamped section is the one most likely to move.
 - GPU pause/roadmap status: `grep -n "Roadmap Sequencing" -A 15 AGENTS.md`.
 - Current release tag: `grep -n "release_docs_current_tag" AGENTS.md`.
+- Token-economy harness promotion status (#72 — still uncommitted as of 2026-07-08?):
+  `ls benchmarks/ | grep -i token` and `grep -n "token" docs/benchmarks.md` (expect no hits until #72 lands).

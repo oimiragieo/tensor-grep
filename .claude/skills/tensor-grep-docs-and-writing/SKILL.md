@@ -79,10 +79,12 @@ Two mechanisms fire together inside the `Semantic Release` job's `build_command`
 2. **`scripts/stamp_release_assets.py`** (a companion script this repo wrote, run as a plain step in `build_command` before the `git add`). `version_variables`' one-line regex can't rewrite multi-clause prose or derived URLs, so this script owns everything else: the Homebrew formula body (`scripts/tensor-grep.rb`, handles both a bare `TENSOR_GREP_VERSION = "..."` constant and a raw `version "..."` line), the winget manifest's comment header + `PackageVersion:` + `InstallerUrl:` (which embeds `vX` inside a GitHub download path), and roughly 18 distinct prose regexes across two doc groups (`scripts/stamp_release_assets.py:39-114`):
    - `RELEASE_DOC_PATHS` = `AGENTS.md`, `README.md`, `SKILL.md`, `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`, `docs/CONTRACTS.md` — stamps "current tagged version is `vX`", "current `vX` (shell/version resolution|positioning|release line)", "latest complete public PyPI/release-asset distribution is also `vX`", "- Latest tagged version: `vX`", "- Current release tag: `vX`", "- GitHub release: <.../releases/tag/vX>", the PyPI pinned-install proof line, "- GitHub release assets: `vX` has uploaded", and the "Latest tagged/complete PyPI release: [`vX`](.../releases/tag/vX)" link pair.
    - `GPU_DOGFOOD_DOC_PATHS` = `README.md`, `docs/benchmarks.md`, `docs/gpu_crossover.md`, `docs/PAPER.md` — stamps every `` post-`vX` `` label.
-   - Run it yourself: `python scripts/stamp_release_assets.py` (writes) or `python scripts/stamp_release_assets.py --check` (rc `1` if any stamped doc has drifted from `pyproject.toml`'s version — this is what CI's `release-readiness` job runs).
+   - Run it yourself: `python scripts/stamp_release_assets.py` (writes) or `python scripts/stamp_release_assets.py --check` (rc `1` if any stamped doc has drifted from `pyproject.toml`'s version) — a fast **local** drift pre-check, but **not** what CI runs. CI's `release-readiness` job instead runs `uv run python scripts/validate_release_assets.py` (`.github/workflows/ci.yml:106`), a much broader validator (winget manifest, CI-workflow gate list, dependabot config, native-CLI/npm-installer contract, README/benchmarks-docs contract, Homebrew formula, uv security constraints, `RELEASE_JOB_REQUIRED_GATES` — see `grep -n "^def validate_" scripts/validate_release_assets.py`) that happens to also catch stamp drift as one check among many. Run both locally before a release-bearing push; do not assume `stamp_release_assets.py --check` alone reproduces the CI gate.
    - `build_command` finishes with `git add AGENTS.md README.md SKILL.md docs/SESSION_HANDOFF.md docs/CONTINUATION_PLAN.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md docs/PAPER.md ...` — **stamping a file on disk without adding it here means the commit never includes it.** (See Part 6 for what this means when adding a new governed doc.)
 
-**Do not hand-edit any of the stamped fragments above** (the `release_docs_current_tag:` line, "current tagged version is `vX`", the GitHub-release / PyPI-proof lines, the `` post-`vX` `` labels). They are overwritten on every release; a hand-edit just creates diff noise the next release clobbers. The one deliberate exception, already shipped (`docs/SESSION_HANDOFF.md:38`, `a78e33c fix: harden post-release docs governance`): **"Latest verified release proof" blocks and "What `vX` closed:" narrative are kept SEPARATE from the auto-stamped current-tag labels** specifically so a release commit stays locally testable without a hand-authored proof block going stale the moment the tag line moves. See `tests/unit/test_stamp_release_assets.py::test_stamp_release_assets_preserves_verified_release_proof_blocks` for the exact contract this preserves.
+**Do not hand-edit any of the stamped fragments above** (the `release_docs_current_tag:` line, "current tagged version is `vX`", the GitHub-release / PyPI-proof lines, the `` post-`vX` `` labels). They are overwritten on every release; a hand-edit just creates diff noise the next release clobbers. The one deliberate exception, already shipped (verify current line with
+`grep -n "a78e33c fix: harden post-release docs governance" docs/SESSION_HANDOFF.md` — it drifts as new
+release-line bullets are prepended above it, e.g. `:42` as of v1.49.3): **"Latest verified release proof" blocks and "What `vX` closed:" narrative are kept SEPARATE from the auto-stamped current-tag labels** specifically so a release commit stays locally testable without a hand-authored proof block going stale the moment the tag line moves. See `tests/unit/test_stamp_release_assets.py::test_stamp_release_assets_preserves_verified_release_proof_blocks` for the exact contract this preserves.
 
 ### Layer B — Content-pinning tests (pytest string containment)
 
@@ -148,8 +150,11 @@ The repo's own `CLAUDE.md` states its job explicitly: *"Claude Code auto-loads t
    uv run pytest tests/unit/test_public_docs_governance.py tests/unit/test_enterprise_docs_governance.py tests/unit/test_stamp_release_assets.py -q
    uv run pytest tests/unit/test_benchmark_scripts.py -k tensor_grep_claude_skill -q
    python scripts/agent_readiness.py --output artifacts/agent_readiness.json
+   uv run python scripts/validate_release_assets.py
    ```
-   If you touched a file in mkdocs' nav (Part 2, Layer D), also run `mkdocs build --strict`.
+   If you touched a file in mkdocs' nav (Part 2, Layer D), also run `mkdocs build --strict` — CI's `release-readiness`
+   job runs both `mkdocs build --strict` and `validate_release_assets.py` back to back (`ci.yml:100-106`), so a
+   release-bearing docs change is not proven green until both pass locally.
 4. **Never hand-edit the auto-stamped fragments** (Part 2, Layer A). If a governance test is failing only because the stamped version looks wrong locally, run `python scripts/stamp_release_assets.py` (not a hand edit) and re-check — a genuinely wrong *pyproject.toml* version is a release-mechanics problem, not a docs problem (see `tensor-grep-release-and-positioning`).
 5. **Never add a banned marketing fragment** (Part 2, Layer B negative list) to `README.md`, `docs/benchmarks.md`, `docs/gpu_crossover.md`, or `docs/PAPER.md`, and never claim `"ast-grep parity"` anywhere.
 
@@ -183,7 +188,14 @@ The resolution, encoded directly in the test file's comments (`test_public_docs_
 
 ### 7a. A new `docs/SESSION_HANDOFF.md` release-line entry
 
-Match the exact observed pattern (`docs/SESSION_HANDOFF.md:32-60`) — one bullet per release, past tense, naming the PR and the concrete behavior:
+Match the exact observed pattern (find the current block with
+`grep -n "^- Closed v" docs/SESSION_HANDOFF.md | head` — its line range shifts every release as new bullets
+are prepended, so anchor by content not a fixed range) — one bullet per release, past tense, naming the PR
+and the concrete behavior. As of v1.49.3 the top of the file also carries a denser
+**"Recent shipped milestones (the vX.Y.x line — DATE)"** paragraph summarizing a whole release cluster in
+prose (see `docs/SESSION_HANDOFF.md:13-16`) — use that paragraph style when a release-bearing PR is one of
+several closing out a themed cluster (an audit blitz, a campaign phase), and the per-release
+`- Closed vX.Y.Z ... gap: PR #NNN ...` bullet style (below) for a single standalone release:
 
 ```
 - Closed vX.Y.Z <short gap name> gap: PR #NNN <does what, concretely — name the files/flags/fields
@@ -207,7 +219,7 @@ Required fields, per `AGENTS.md:275` and pinned by `test_agent_workflow_docs_sho
 - **Date-stamp the state, not just the facts.** Governed docs open with `As of <date>, the current tagged version is \`vX\`, ...` — keep this pattern; it's what both `validate_docs_claims` and the stamping regexes match on.
 - **Never claim a speedup or "improvement" without a measured number vs the accepted baseline** — this is a docs rule too, not just a code rule (`AGENTS.md` "Performance Discipline" #4: *"Do not update docs or the paper with speed claims until the benchmark line is accepted."*). See `tensor-grep-benchmark-and-proof-toolkit` for how to produce that number.
 - **Historical notes are additive, not destructive** (Part 7c) — this is the opposite convention from `SESSION_HANDOFF.md`'s single "Current Release State" block, which IS meant to be replaced by the stamping script each release. Know which doc you're in before deciding whether to append or overwrite.
-- **A doc is stale and known to be stale is better than silently wrong.** `docs/SESSION_HANDOFF.md`'s "Last updated: 2026-06-28" header and its prose log (last entry describing `v1.13.23`) trail the auto-stamped `release_docs_current_tag: v1.17.25` line by several release lines as of this writing — the tag line is correct (auto-stamped), the prose narrative below it is not yet refreshed. This is a real, currently-open example of Part 1's point: two parts of the same doc can be governed at different granularities (one line machine-stamped, the surrounding narrative hand-maintained) — don't assume the whole file is current just because the top line is.
+- **A doc is stale and known to be stale is better than silently wrong.** Part 1's point in practice: `docs/SESSION_HANDOFF.md`'s `release_docs_current_tag:` line (Part 2, Layer A) is machine-stamped every release; the surrounding "Last updated:" header and the prose narrative below it are hand-maintained and can trail by several release lines. As of v1.49.3 (2026-07-07) this instance was caught up (`Last updated: 2026-07-07`, prose describing the current `v1.45.x` line) — do not assume it will *stay* caught up. Before trusting the narrative, compare `head -5 docs/SESSION_HANDOFF.md`'s `Last updated:`/`release_docs_current_tag:` lines against the top `- Closed vX...`/`Recent shipped milestones` entry's version; a gap between them means the tag is correct (auto-stamped) but the prose below it is not yet refreshed — don't assume the whole file is current just because the top line is.
 
 ---
 
@@ -225,18 +237,21 @@ Required fields, per `AGENTS.md:275` and pinned by `test_agent_workflow_docs_sho
 - [ ] Ran `uv run pytest tests/unit/test_public_docs_governance.py tests/unit/test_enterprise_docs_governance.py tests/unit/test_stamp_release_assets.py -q` and `tests/unit/test_benchmark_scripts.py -k tensor_grep_claude_skill -q` green.
 - [ ] Touched a mkdocs-nav'd file → `mkdocs build --strict` green.
 - [ ] Ran `python scripts/agent_readiness.py` (the `docs-claim-check` probe) as a fast pre-push smoke test.
+- [ ] Release-bearing docs change → ran `uv run python scripts/validate_release_assets.py` locally (the actual
+  CI `release-readiness` gate, `ci.yml:106` — broader than `stamp_release_assets.py --check`, see Part 2 Layer A).
 
 ---
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**. Re-verify anything below before relying on it — a wrong runbook is worse than none.
+Volatile facts re-verified **2026-07-08, release `v1.49.3`**. Re-verify anything below before relying on it — a wrong runbook is worse than none.
 
 | Claim | Re-verify command |
 |---|---|
 | Current release tag | `grep release_docs_current_tag AGENTS.md` |
 | `version_variables` full list | `sed -n '/\[tool.semantic_release\]/,/^\[/p' pyproject.toml` |
 | `stamp_release_assets.py` doc-path groups | `grep -n "RELEASE_DOC_PATHS\|GPU_DOGFOOD_DOC_PATHS" scripts/stamp_release_assets.py` |
+| CI's actual `release-readiness` gate script | `grep -n "release-readiness" -A25 .github/workflows/ci.yml` (expect `mkdocs build --strict` then `uv run python scripts/validate_release_assets.py`, NOT `stamp_release_assets.py --check`) |
 | `build_command`'s `git add` list stays in sync with the doc-path groups above | `grep -n "build_command" pyproject.toml` |
 | Root `SKILL.md` pytest variable name | `grep -n "SKILL_DOC_PATH" tests/unit/test_public_docs_governance.py` |
 | The one test pinning `.claude/skills/tensor-grep/SKILL.md` | `grep -n "skills/tensor-grep" tests/unit/test_benchmark_scripts.py` |

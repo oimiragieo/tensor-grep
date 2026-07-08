@@ -27,6 +27,8 @@ book. Reach for a sibling instead when:
 | `tg doctor` / `tg dogfood` field-by-field reference | `tensor-grep-diagnostics-and-tooling` |
 | Local validation gate command reference (ruff/mypy/pytest) as a checklist, not a debug session | `tensor-grep-validation-and-qa` |
 | Full release-and-positioning procedure, not "why didn't THIS release publish" | `tensor-grep-release-and-positioning` |
+| Writing a NEW regression test for a hang-class bug (ReDoS/deadlock/lock-race/unbounded subprocess), or deciding whether a long-silent test/agent run is genuinely hung vs. slow-but-working | global skill `anti-hang-test-protocol` |
+| The mandatory adversarial security-gate review before merging a money/auth/security/migration diff (verdict shape, Opus-as-codex-substitute) | `tensor-grep-backlog-campaign` Hard Rule 11 (cross-referenced from `tensor-grep-change-control`) |
 
 If your symptom isn't in the table below, it's probably not covered here — check
 `tensor-grep-failure-archaeology` for a prior occurrence before assuming it's novel.
@@ -64,7 +66,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A test suite is green but the real binary/extension does the wrong thing (dropped flags, dead code path) | Test mocked the boundary (a monkeypatched function, a stubbed PyO3 class) instead of exercising the compiled extension or the published binary | Run the same call through the *installed* `tg` (not `CliRunner`, not a mocked backend) and check `tg doctor --json` / `HAVE_RUST` | [§6](#6-mock-green-real-dead) |
 | A fresh Python install resolves `tensor-grep` to an old version with no error | An upper-bound dependency pin (e.g. `typer<0.26`) has no release compatible with the new Python, so the resolver silently downgrades the *whole package* | `pip index versions tensor-grep` vs what actually installed; check `pyproject.toml` for `<` pins on `typer`/`click`/`pydantic` | [§7](#7-dependency-cap-silent-downgrade) |
 | Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
-| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1755`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
+| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1783`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 
 ---
@@ -130,7 +132,9 @@ fails fast rather than hanging: the configured ripgrep timeout defaults to **60 
 from 600s specifically because ripgrep does GB/s and a >60s search means something pathological is
 being scanned (an unexcluded huge/index directory), not a legitimately slow query. On timeout, the
 child is killed and the process exits **124** with a stderr hint to scope the search or raise the
-timeout (`src/tensor_grep/cli/bootstrap.py:703-709`, `752-760`).
+timeout (`src/tensor_grep/cli/bootstrap.py:789` backward-compat shim path, `836-843` the primary
+`Popen`/`_terminate_child` path — re-verify with `grep -n "return 124" src/tensor_grep/cli/bootstrap.py`,
+line numbers drift every release).
 
 **Discriminating experiment:** check the exit code. `124` = the configured timeout fired (not a
 crash, not a hang you need to `Ctrl-C`). Compare a scoped vs. unscoped run:
@@ -200,17 +204,24 @@ Run the same probe through any code path that builds subprocess argv from a
 pattern/path/replacement value (MCP tool handlers, rewrite commands) — a value beginning with `-`
 should error or be treated as data, never silently change tg's own behavior.
 
-**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py:765-782`,
-`_build_rewrite_command` / `_build_index_search_command`): a `--` end-of-options sentinel is
-inserted before the user-controlled `pattern`/`path` positionals, with an inline comment explaining
-why.
+**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py:790`
+`_build_rewrite_command` / `:841` `_build_index_search_command` — re-verify with
+`grep -n "def _build_rewrite_command\|def _build_index_search_command" src/tensor_grep/cli/mcp_server.py`):
+a `--` end-of-options sentinel is inserted before the user-controlled `pattern`/`path` positionals,
+with an inline comment explaining why.
 
-**Known OPEN gap (round-4, tracked, not yet fixed):** `rust_core/src/rg_passthrough.rs:395-397`
-appends `paths` directly (`for path in &args.paths { command.arg(path); }`) with no `--` sentinel
-before them — a directory literally named `-l` would be parsed by `rg` as the `-l` (files-with-
-matches) flag instead of as a path. Patterns going through `-e` are not affected (`-e` consumes the
-next token as its value regardless of a leading `-`), only bare path positionals are. Do not assume
-this is fixed just because the MCP-side builders are; check the specific call site.
+**Round-4 native-passthrough gap — RESOLVED, do not reopen (verified current at v1.49.3).**
+`rust_core/src/rg_passthrough.rs` appending `paths` directly with no `--` sentinel (a directory
+literally named `-l` parsed by `rg` as the `-l`/files-with-matches flag instead of a path) was fixed
+in `#326` (v1.17.26), silently regressed by a later refactor, then restored in `#370` (v1.28.1) as
+the extracted, unit-tested `ripgrep_operand_args` helper (`rust_core/src/rg_passthrough.rs:401-421`)
+— the sentinel is now pushed unconditionally before the path loop whenever `!args.paths.is_empty()`.
+Patterns going through `-e` were never affected (`-e` consumes the next token as its value regardless
+of a leading `-`); only bare path positionals were ever at risk, and that risk is now closed. Verify
+with `grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs` before relying on this
+— do not trust the naive `grep -n "for path in &args.paths"` re-check below, it still matches (the
+loop still exists, just now *after* the unconditional sentinel push) and would misread as "still
+open" if you stop at the grep hit without reading the surrounding function.
 
 **Caveats worth knowing before you conclude a builder is safe:** `--` protects only what comes
 *after* it — a positional placed *before* `--` is still injectable; it does not gate
@@ -279,8 +290,10 @@ If a fresh install on a new Python resolves to an old `tg --version`, do not ass
 ## 8. Ranking flip
 
 The agent capsule's **primary-target candidate selection** (`score_term_overlap`,
-`src/tensor_grep/core/retrieval_lexical.py:15`, used by `repo_map.py:4899` to help pick the
-capsule's `primary_target`) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
+`src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:5946` inside
+`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:5923`
+(`_score_symbol`) / `:5934` (`_score_import_entry`) / `:5941` (`_score_file_source_terms`) that feed
+the capsule's `primary_target` selection) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
 cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
 candidate wins a near-tie, and that flip is invisible to the call graph (nothing "broke" in the
 traditional sense — the ranking function just picked a different winner). This produced a real
@@ -311,7 +324,8 @@ tg agent PATH QUERY --json > after.json                # on the post-change comm
 
 For the agent capsule specifically, check the `ambiguity` / `ask_reasons` fields
 (`src/tensor_grep/cli/agent_capsule.py`) rather than only the `primary_target` — a **degrade-to-ask
-safety floor** (`agent_capsule.py:1399-1405`) forces `ask_user`-style output whenever ranking
+safety floor** (`agent_capsule.py:2027`, the `# Degrade-to-ask safety floor:` comment — re-verify
+with `grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py`) forces `ask_user`-style output whenever ranking
 buried the real implementation behind an unrequested marker/no-op helper, so a correctly-behaving
 flip should surface as `ambiguity`/`ask_user_before_editing` metadata, not a silent wrong answer.
 If you see a confident wrong `primary_target` with no ambiguity signal, that is a regression in the
@@ -360,7 +374,7 @@ instead of `capfd.readouterr().out`; the now-unused `pytest.CaptureFixture` impo
 **Discriminating experiment:** if a `CliRunner` test that reads `capfd` starts failing right after a
 delegation/routing/gating change, first ask "does this flag/config still delegate to a real
 subprocess after my change?" — grep the refuse-tuple
-(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1755`) for the field
+(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1783`) for the field
 you touched. If it now refuses delegation (or newly allows it), the correct capture fixture flips
 too.
 
@@ -446,10 +460,12 @@ doesn't change results.
 
 ## Provenance and maintenance
 
-Facts here were verified against the live repo as of **2026-07-02, tensor-grep v1.17.25**
-(`pyproject.toml:322`) for §1–§8, and **2026-07-03, v1.19.3** (`pyproject.toml:338`) for §9–§10.
-Re-verify anything below before trusting it on a later version — this table drifts whenever the
-cited line numbers, defaults, or contracts change.
+Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
+**2026-07-03, v1.19.3** for §9–§10; drift-checked and re-anchored **2026-07-08 against v1.49.3**
+(`pyproject.toml:430`) for the §5 rg-passthrough-sentinel status, §8 `score_term_overlap`/degrade-
+to-ask citations, §3 exit-124 citations, and the §9 `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
+line number. Re-verify anything below before trusting it on a later version — this table drifts
+whenever the cited line numbers, defaults, or contracts change.
 
 Re-verification commands:
 
@@ -465,7 +481,10 @@ grep -n "BackendExecutionError" src/tensor_grep/backends/base.py
 
 # -- sentinel fix still present at both cited sites (§5)
 grep -n '"--",' src/tensor_grep/cli/mcp_server.py
-grep -n "for path in &args.paths" rust_core/src/rg_passthrough.rs   # confirm the open gap is still open
+# CAUTION: `grep -n "for path in &args.paths"` alone is a FALSE-NEGATIVE-PRONE check -- that loop
+# still exists post-fix (just after an unconditional sentinel push), so a bare grep hit does NOT
+# mean the gap reopened. Read the function instead:
+grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs   # expect an unconditional operands.push("--".to_string()) before the path loop
 
 # typer dependency cap still <0.26 with the same rationale (§7)
 grep -n "typer>=" pyproject.toml

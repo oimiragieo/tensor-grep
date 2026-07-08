@@ -7,7 +7,7 @@ description: Use when you need the load-bearing design of tensor-grep and WHY it
 
 **What this is.** A ground-truthed map of tensor-grep's load-bearing design: the invariants a change must not break, and the weak points you must not oversell. Read it to understand *why* the code is shaped this way before you touch it. It is not a how-to — for that, hand off to a sibling (routing table below).
 
-**What tensor-grep is** (as of 2026-07-02, v1.17.25, `pyproject.toml:322`): a code-intelligence CLI named `tg`. A Rust core (`rust_core/` — both a PyO3 extension *and* a standalone `tg` binary) plus a Python CLI (`src/tensor_grep/`). Apache-2.0. Ships to PyPI (package `tensor-grep`), npm, Homebrew, winget. CONTRIBUTING.md calls it a "benchmark-governed, contract-heavy codebase" — that is the whole point: the contracts below are enforced by tests and a CI gate, not by convention.
+**What tensor-grep is** (as of 2026-07-08, v1.49.3, `pyproject.toml:430`): a code-intelligence CLI named `tg`. A Rust core (`rust_core/` — both a PyO3 extension *and* a standalone `tg` binary) plus a Python CLI (`src/tensor_grep/`). Apache-2.0. Ships to PyPI (package `tensor-grep`), npm, Homebrew, winget. CONTRIBUTING.md calls it a "benchmark-governed, contract-heavy codebase" — that is the whole point: the contracts below are enforced by tests and a CI gate, not by convention.
 
 ## When to use this skill vs a sibling
 
@@ -38,12 +38,12 @@ description: Use when you need the load-bearing design of tensor-grep and WHY it
 
 ## The front door: intercept before Typer
 
-`tg` is not "a Typer app." The published entry point is `bootstrap.main_entry` (`src/tensor_grep/cli/bootstrap.py:820`). It parses `argv` itself and, for a **plain text search**, forwards to the native `tg` binary or to ripgrep *before Typer ever runs* (`bootstrap.py:852-910`). The Typer app is only reached for TG-only flags, help, or commands that require full CLI (`_requires_full_cli`, `bootstrap.py:296`).
+`tg` is not "a Typer app." The published entry point is `bootstrap.main_entry` (`src/tensor_grep/cli/bootstrap.py:926`). It parses `argv` itself and, for a **plain text search**, forwards to the native `tg` binary or to ripgrep *before Typer ever runs* (`bootstrap.py:959-984`). The Typer app is only reached for TG-only flags, help, or commands that require full CLI (`_requires_full_cli`, `bootstrap.py:298`).
 
 Why this matters, concretely:
 
 - **CliRunner cannot see routing bugs.** It invokes the Typer app directly, so any bug in `bootstrap` routing (a flag that leaks to `rg`, a fork-bomb delegation loop, a wrong native/Python choice) is **invisible** to CliRunner tests and green in CI while broken for real users. This is exactly how the `--rank` plain-text crash shipped (AGENTS.md:198-200 "Dogfood the Real Binary, Not CliRunner"). **Rule: verify front-door behavior against the REAL published binary** via `scripts/dogfood/` (Dockerfile + `dogfood_features.py`), never CliRunner alone.
-- **Two mutual-delegation fork-bomb hazards are guarded, not theoretical.** `TG_REEXEC_GUARD` (`bootstrap.py:872`) stops native→python→native search loops; `_json_aggregate_blocks_passthrough` (`bootstrap.py:359`) stops `--json` + a render-only flag (e.g. `-b`) from deadlocking the native front door; `_run_requires_ast_workflow` (`bootstrap.py:813`) keeps `tg run --selector/--strictness/--stdin/--globs` in Python so it does not ping-pong. If you touch delegation, you can re-arm a fork bomb — see `tensor-grep-failure-archaeology`.
+- **Two mutual-delegation fork-bomb hazards are guarded, not theoretical.** `TG_REEXEC_GUARD` (checked at `bootstrap.py:979`) stops native→python→native search loops; `_json_aggregate_blocks_passthrough` (`bootstrap.py:374`) stops `--json` + a render-only flag (e.g. `-b`) from deadlocking the native front door; `_run_requires_ast_workflow` (`bootstrap.py:896`) keeps `tg run --selector/--strictness/--stdin/--globs` in Python so it does not ping-pong. If you touch delegation, you can re-arm a fork bomb — see `tensor-grep-failure-archaeology`.
 
 ## Native-vs-Python routing (the decision tree)
 
@@ -64,27 +64,27 @@ Load-bearing consequences:
 - **`rg` is the normal cold-path backend when installed.** Native CPU is the default *only* for structured output (`--json`/`--ndjson`), explicit `--cpu`, warm index, AST, and GPU fallback. Do not "optimize" tg to beat rg on cold text — that is the parity tier (see Known-Weak §3).
 - **Warm-index auto-routing is gated:** pattern ≥ 3 bytes, no `-v`, `-C`, `--max-count`, `-w`, `-g`, and the cache must exist + be non-stale + index-compatible (routing_policy.md notes). JSON/NDJSON no longer bypass a warm index.
 - **Auto-GPU is conservative and effectively dormant** when rg is installed: no fresh positive calibration ⇒ stay CPU-side. GPU CPU-fallback emits `routing_gpu_device_ids = []` and must be called *CPU fallback*, never GPU acceleration (routing_policy.md §GPU).
-- **AST routing is policy vs runtime-capability split:** `tg run` policy-routes to `AstBackend`, but real execution needs `AstBackend().is_available()`, which requires `torch_geometric` **and** `tree_sitter` **and a CUDA device** — `is_available()` returns `bool(torch.cuda.is_available())` (`ast_backend.py:492-504`). So on the common **non-GPU** box the native AST path never runs; `tg run` always falls back to the `ast-grep` CLI sidecar (also for string metavar queries like `def $F($$$ARGS)`) — visibly, per the fail-closed contract below. This matches `code-search-and-retrieval-reference` §2.
+- **AST routing is policy vs runtime-capability split:** `tg run` policy-routes to `AstBackend`, but real execution needs `AstBackend().is_available()`, which requires `torch_geometric` **and** `tree_sitter` **and a CUDA device** — `is_available()` returns `bool(torch.cuda.is_available())` (`ast_backend.py:508-521`). So on the common **non-GPU** box the native AST path never runs; `tg run` always falls back to the `ast-grep` CLI sidecar (also for string metavar queries like `def $F($$$ARGS)`) — visibly, per the fail-closed contract below. This matches `code-search-and-retrieval-reference` §2.
 
 ## The registration sites (miss one → silent misroute)
 
-This is a **universal bug class**: "register in N places, miss one, fail *quietly*." The CI registration-completeness gate has been **BLOCKING since v1.17.1 / #282** (AGENTS.md:196), but you still author all sites by hand.
+This is a **universal bug class**: "register in N places, miss one, fail *quietly*." The CI registration-completeness gate has been **BLOCKING since v1.17.1 / #282** (AGENTS.md:215), but you still author all sites by hand.
 
-**A new top-level `tg COMMAND` needs four sites** (AGENTS.md:178-185):
+**A new top-level `tg COMMAND` needs four sites** (AGENTS.md "Adding a Command or Flag", starting at line 197; re-derive by grepping the header, not the line number, since AGENTS.md's line numbers shift as sections are added above it):
 
 | # | Site | File |
 |---|---|---|
 | 1 | `KNOWN_COMMANDS` set | `src/tensor_grep/cli/commands.py:9` |
-| 2 | `Commands::X` variant + dispatch arm | `rust_core/src/main.rs:838` (enum) |
+| 2 | `Commands::X` variant + dispatch arm | `rust_core/src/main.rs:860` (enum) |
 | 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity test) | `tests/e2e/test_routing_parity.py:17` |
 | 4 | `@app.command` function | `src/tensor_grep/cli/main.py` |
 
-**A new search flag needs two front doors** (AGENTS.md:187-190) or it leaks to ripgrep and crashes with `rg: unrecognized flag` for anyone on the published binary:
+**A new search flag needs two front doors** (AGENTS.md, same section, "two front doors") or it leaks to ripgrep and crashes with `rg: unrecognized flag` for anyone on the published binary:
 
 | # | Site | File |
 |---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs:160` |
-| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python front-door allowlist) | `src/tensor_grep/cli/bootstrap.py:23` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs:170` |
+| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python front-door allowlist) | `src/tensor_grep/cli/bootstrap.py:24` |
 
 **Blind spot to internalize:** `tg callers <fn>` finds *callable* registration sites in ~1s, but the call graph **cannot see set/list/decorator registrations** — `_TG_ONLY_SEARCH_FLAGS` is a set, `@app.command` is a decorator, the Rust dispatch is a match arm. Those are the sites most often missed (`--rank` lived in a *set*). So `tg callers` for the reachable ones **and** grep / `tg scan` for the declarative ones, then confirm your entry appears in *all* sites. (The actual add-a-thing procedure lives in `tensor-grep-change-control`; this skill only explains why the sites exist.)
 
@@ -104,25 +104,27 @@ Rules when a path *can* fall back (AGENTS.md "Backend Fail-Closed Contract", `ba
 
 ## Partial-results contract: suppression != absence (`SearchResult.result_incomplete`)
 
-Companion invariant to the Backend Fail-Closed Contract above, shipped in round-4 slice 3 (#341, commit `f11ce28`, v1.18.x). `SearchResult` (`src/tensor_grep/core/result.py:41-47`) carries `result_incomplete: bool = False` and `incomplete_reason: str | None = None`, deliberately **not** overloaded onto `fallback_reason` — `fallback_reason` means "the execution engine was swapped"; `result_incomplete` means "this engine ran, but a soft per-item error suppressed part of the output." Conflating them would emit a false "we fell back" signal to `doctor`/JSON consumers.
+Companion invariant to the Backend Fail-Closed Contract above, shipped in round-4 slice 3 (#341, commit `f11ce28`, v1.18.x). `SearchResult` (`src/tensor_grep/core/result.py:21+`, fields at `:54-55`) carries `result_incomplete: bool = False` and `incomplete_reason: str | None = None`, deliberately **not** overloaded onto `fallback_reason` — `fallback_reason` means "the execution engine was swapped"; `result_incomplete` means "this engine ran, but a soft per-item error suppressed part of the output." Conflating them would emit a false "we fell back" signal to `doctor`/JSON consumers.
 
 The trigger: rg exit code **2** is a *soft* per-file error (e.g. one unreadable/missing path among many) and rg still emits matches for every readable file. Before #341, tg's parser raised unconditionally on `exit > 1`, **discarding those partial matches** — and even if it hadn't, tg would have silently exited 0 while rg exits 2 (a parity break an agent scripting around exit codes would never see).
 
+**And the exit-code side of this contract has since been made STRICTER, not looser — do not describe it as "empty partial -> exit 2, non-empty partial -> exit 0."** #398 first made ANY truncated partial exit 2; #399 briefly walked that back to exit-2-only-when-empty; **#401 reverted #399** after a unanimous design council — the current, final contract is: any `result_incomplete`/`partial` result exits **2 regardless of whether matches were found**, because a truncated match/caller/blast-radius list must never be silently trusted as exhaustive. See `tensor-grep-large-repo-scale-campaign` §5 for the full exit-code table and `docs/CONTRACTS.md:109`.
+
 The 5-site fix, cite `file:line`:
 
-- **Parse-first-then-branch** — `backends/ripgrep_backend.py` (`search`, `_search_files_with_matches`, `_search_counts`): exit 2 with a non-empty parse *keeps* the results, sets `result_incomplete=True` + a stderr-derived `incomplete_reason`; exit >2, or exit 2 with nothing parsed, still raises the byte-identical `RuntimeError` (kept as a plain `RuntimeError`, not `BackendExecutionError`, specifically so it does not trip the `--pcre2` CPU-fallback engine-swap path).
-- **Monotonic merge** — `merge_runtime_routing` (`core/result.py:75-79`) OR-merges `result_incomplete` across sub-results (`aggregate.result_incomplete or result.result_incomplete`), so the CLI/MCP/sidecar aggregate inherits uniformly — any incomplete sub-result taints the whole.
-- **Exit-code parity** — `cli/main.py:6478-6535`: the terminal exits now read `sys.exit(2 if all_results.result_incomplete else …)` across the files-with/without-matches, `is_empty`, quiet, and post-format branches, closing the "tg exits 0 while rg exits 2" gap.
-- **JSON/NDJSON envelope** — `cli/formatters/json_fmt.py:111-113,173-174`: `result_incomplete`/`incomplete_reason` are emitted **only when incomplete**, so a complete result's JSON shape stays byte-identical to before #341.
-- **MCP** — `cli/mcp_server.py:2722-2723`: the structured `tg_search` response carries both fields top-level — suppression must be visible to an agent, not buried in a log line.
+- **Parse-first-then-branch** — `backends/ripgrep_backend.py` (`search`, `_search_files_with_matches`, `_search_counts`): exit 2 with a non-empty parse *keeps* the results, sets `result_incomplete=True` + a stderr-derived `incomplete_reason` (`ripgrep_backend.py:123-128,297,413`); exit >2, or exit 2 with nothing parsed, still raises the byte-identical `RuntimeError` (kept as a plain `RuntimeError`, not `BackendExecutionError`, specifically so it does not trip the `--pcre2` CPU-fallback engine-swap path — see `code-search-and-retrieval-reference` §1 and task #79 for the open item to reconcile this with the rest of the Fail-Closed Contract's normal `BackendExecutionError` convention).
+- **Monotonic merge** — `merge_runtime_routing` (`core/result.py:67+`) OR-merges `result_incomplete` across sub-results (`aggregate.result_incomplete or result.result_incomplete`), so the CLI/MCP/sidecar aggregate inherits uniformly — any incomplete sub-result taints the whole.
+- **Exit-code parity** — `cli/main.py:6918-6953`: the terminal exits now read `sys.exit(2 if all_results.result_incomplete else …)` across the files-with/without-matches, `is_empty`, quiet, and post-format branches, closing the "tg exits 0 while rg exits 2" gap.
+- **JSON/NDJSON envelope** — `cli/formatters/json_fmt.py:126-127,189-190`: `result_incomplete`/`incomplete_reason` are emitted **only when incomplete**, so a complete result's JSON shape stays byte-identical to before #341.
+- **MCP** — `cli/mcp_server.py:1645,3117,3174,3202,3261` (multiple call sites, not one): the structured `tg_search`/graph-command responses carry both fields top-level — suppression must be visible to an agent, not buried in a log line.
 
 **Rule for any new path that can drop some results due to a soft/partial failure:** set `result_incomplete` + `incomplete_reason`. Do not (a) raise and lose the good results, or (b) silently return only the good results as if they were the complete answer — that is the same "suppression reads as absence" lie the Backend Fail-Closed Contract forbids, just at the partial-result layer instead of the total-failure layer. Tests: `tests/unit/test_rg_exit2_partial.py`.
 
 ## Native-delegation forward-or-refuse contract (`_can_delegate_to_native_tg_search`)
 
-`cli/main.py:3263-3282` gates whether a Python-side `tg search` hands the **entire** search to the native `tg` subprocess (`_build_native_tg_search_command`, `cli/main.py:3285+`) and then `sys.exit()`s on its result — a delegation that runs *before* the Python-side BM25 rerank (`--rank`) and the in-backend sort (`--sort-files`) ever execute.
+`cli/main.py:3311+` gates whether a Python-side `tg search` hands the **entire** search to the native `tg` subprocess (`_build_native_tg_search_command`, `cli/main.py:3333+`) and then `sys.exit()`s on its result — a delegation that runs *before* the Python-side BM25 rerank (`--rank`) and the in-backend sort (`--sort-files`) ever execute.
 
-**The invariant:** delegation is permitted only when native execution is byte-equivalent to the Python path for the requested config. The gate enforces this mechanically, not by convention — it loops every field name in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`cli/main.py:1755-1855`) and **refuses** delegation (falls through to the Python/backend path) if *any* of those fields differs from a fresh `SearchConfig()`'s default. Every `SearchConfig` field must land in exactly one bucket:
+**The invariant:** delegation is permitted only when native execution is byte-equivalent to the Python path for the requested config. The gate enforces this mechanically, not by convention — it loops every field name in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`cli/main.py:1783-1886`) and **refuses** delegation (falls through to the Python/backend path) if *any* of those fields differs from a fresh `SearchConfig()`'s default. Every `SearchConfig` field must land in exactly one bucket:
 
 1. **Forwarded** — read by `_build_native_tg_search_command` and translated into native argv.
 2. **Refused** — listed in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, so a non-default value forces the gate closed.
@@ -172,11 +174,13 @@ These are enforced by the capsule/context contract (`docs/CONTRACTS.md` §3, "Co
 
 Encode these honestly; the dogfood report itself emits `world_class_readiness.status = "not_claimed"` (CONTRACTS.md:85). Everything unproven stays labeled candidate/experimental. Experimental, default-OFF: GPU, LSP, semantic, CyBERT/provider paths.
 
-1. **Flat, no-IDF ranking scorer.** Repo-map scoring uses flat integer term counts (`_score_text_terms`/`_score_file_path`/`_score_symbol` in `src/tensor_grep/cli/repo_map.py:4781+`), not IDF/term-rarity weighting. Ranking surfaces (`search --rank`, the agent capsule, semantic) can silently **flip** on a corpus change, and the blast radius of a ranking change is **invisible to the call graph**. A degrade-to-ask safety floor was added in #302; the flat scorer itself remains open debt. Treat any ranking-affecting change as high-risk and benchmark it.
+1. **Flat, no-IDF ranking scorer.** Repo-map scoring uses flat integer term counts (`_score_text_terms`/`_score_file_path`/`_score_symbol` in `src/tensor_grep/cli/repo_map.py:5819,5896,5923`), not IDF/term-rarity weighting. Ranking surfaces (`search --rank`, the agent capsule, semantic) can silently **flip** on a corpus change, and the blast radius of a ranking change is **invisible to the call graph**. A degrade-to-ask safety floor was added in #302; the flat scorer itself remains open debt. Treat any ranking-affecting change as high-risk and benchmark it.
 2. **GPU is slower than CPU with no promotion-ready path.** The P1 CUDA-PFAC kernel is **paused** (#319; roadmap funds the CPU moat first). The only *candidate* CUDA wedge is many-fixed-strings resident over a large corpus — **not** single-pattern cold grep, where PCIe/setup cost loses. Explicit `--gpu-device-ids` stays supported and must fail loud when unhonorable; sidecar-routed GPU output is compatibility evidence, never GPU-acceleration proof (CONTRACTS.md:79-81, 100-101).
 3. **The raw-grep parity gap is control-plane latency, not backend cleverness.** When tg trails rg on cold text it is launcher/dispatch overhead; the likely fix is a more native launcher path, not Python micro-tuning. Benchmark artifacts must record `tg_launcher_mode` + `tg_launcher_command_kind` and refuse stale in-tree binaries by default (CONTRACTS.md:82) so you never mix a `.cmd`-shim timing into a speed claim.
 4. **FFI is not the directory-scan speed path.** PyO3 FFI overhead for directory walking was measured too high and reverted to native CPython directory scanning — a settled battle. Do not re-propose "just move the dir walk into the Rust extension" without new measurements. Full story + the mock-FFI-passed-while-the-real-bridge-was-dead lesson: `tensor-grep-failure-archaeology`.
-5. **rg-parsing edge cases (round-4, open):** `rg#3364` (`--multiline --pcre2 --json` emits one match with two submatches), `rg#3131` (`rg -c` omits NUL-byte files), BOM-in-`.gitignore`. And an **open native-argv gap**: `rust_core/src/rg_passthrough.rs` forwards user *patterns* safely via `-e` (`:391`) but forwards *paths* raw with **no `--` sentinel** (`:395-397`), so a directory literally named `-l` flips rg to files-with-matches (CWE-88 flag-injection class). Tracked; do not assume it is fixed.
+5. **rg-parsing edge cases (round-4, open, narrowed):** `rg#3364` (`--multiline --pcre2 --json` emits one match with two submatches), `rg#3131` (`rg -c` omits NUL-byte files), BOM-in-`.gitignore` remain open/unverified against this repo. **The native-argv `--` sentinel gap this point used to describe is now FIXED, not open:** `rust_core/src/rg_passthrough.rs`'s `ripgrep_operand_args` (`:397-422`) forwards patterns safely via `-e` and inserts a `--` sentinel before any user paths (`:415-419`), closing the "a directory literally named `-l` flips rg to files-with-matches" CWE-88 gap; 3 unit tests pin it (`:609-648`). Do not cite this as open. See `code-search-and-retrieval-reference` §7 for the full detail.
+6. **No scoped file-dependency primitive (v1.49.x) — C14.** There is no `tg imports`/`tg importers`/`tg deps <file>` command; the only import-graph view is whole-repo `tg map`/`tg orient`. A real tokens-per-correct-answer benchmark found this made `tg` roughly 10x more expensive than `grep`/`Read` of a file's own import lines for a "what does this file import" question — the moat inverts on this specific question class. Tracked as task #74; until it ships, recommend `grep`/`Read` over `tg map` for single-file dependency questions.
+7. **B9 — ReDoS-gate bypass on `-w`/`-x`/`-C`/`--ltl` (open, in-flight fix unmerged — watch item, not a receipt).** `cpu_backend.py`'s linear-time Rust-regex routing (the fix for catastrophic-backtracking / ReDoS patterns) only engages when `rust_semantics_supported` is true, and that is false whenever `context`/`before_context`/`after_context`/`line_regexp`(`-x`)/`word_regexp`(`-w`) is set (`cpu_backend.py:343-349`); `--ltl` mode bypasses the check entirely and always runs Python's backtracking `re` (`cpu_backend.py:331-337`). A pattern combined with any of those flags is not protected the way a plain search is. A fix is in flight (audit #6+#16) but **unmerged as of this writing** — do not cite a PR number as "shipped"; treat the underlying pattern (linear-time routing must cover every flag combination, not just the default path) as durable guidance regardless of that PR's merge state, and re-check `rust_semantics_supported` before relying on either "open" or "fixed" as current.
 
 ## Domain background a mid-level engineer may lack
 
@@ -189,7 +193,7 @@ Encode these honestly; the dogfood report itself emits `world_class_readiness.st
 
 ```powershell
 # Front door + version identity
-uv run tg --version                                  # expect: tensor-grep 1.17.25 (or current)
+uv run tg --version                                  # expect: tensor-grep 1.49.3 (or current)
 # The published entry point (must be bootstrap.main_entry, not a Typer callback)
 uv run python -c "import tensor_grep.cli.bootstrap as b; print(b.main_entry)"
 # Routing / launcher observability
@@ -202,19 +206,21 @@ Never claim a speedup, a fixed weak point, or "tests pass" from a model self-rep
 
 ## Provenance and maintenance
 
-All facts verified against the live repo on 2026-07-02 at v1.17.25. Re-verify anything volatile before relying on it:
+All facts verified against the live repo on 2026-07-08 at v1.49.3. Re-verify anything volatile before relying on it:
 
-- **Version:** `grep '^version = ' pyproject.toml` (was `1.17.25`, `:322`).
-- **Front-door entry point:** read `src/tensor_grep/cli/bootstrap.py:820` (`def main_entry`) and confirm `pyproject.toml`/`packaging` still points `tg` at `tensor_grep.cli.bootstrap:main_entry`.
-- **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:838` (`enum Commands`), `tests/e2e/test_routing_parity.py:17` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`.
-- **Flag front doors (2):** `rust_core/src/main.rs:160` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`), `bootstrap.py:23` (`_TG_ONLY_SEARCH_FLAGS`).
+- **Version:** `grep '^version = ' pyproject.toml` (was `1.49.3`, `:430`).
+- **Front-door entry point:** read `src/tensor_grep/cli/bootstrap.py:926` (`def main_entry`) and confirm `pyproject.toml`/`packaging` still points `tg` at `tensor_grep.cli.bootstrap:main_entry`.
+- **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:860` (`enum Commands`), `tests/e2e/test_routing_parity.py:17` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`.
+- **Flag front doors (2):** `rust_core/src/main.rs:170` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`), `bootstrap.py:24` (`_TG_ONLY_SEARCH_FLAGS`).
 - **Fail-closed contract:** `src/tensor_grep/backends/base.py` (`BackendExecutionError`, `ComputeBackend`).
 - **Routing tree:** `docs/routing_policy.md` + `rust_core/src/routing.rs::route_search`.
 - **Capsule/context invariants:** `docs/CONTRACTS.md` §3 (search for `context_consistency`, `ambiguity.status`, `validation_alignment`).
 - **rg timeout default:** `src/tensor_grep/cli/subprocess_policy.py:44` (`TG_RG_TIMEOUT_SECONDS`, default `60.0`).
-- **Open rg-passthrough `--` gap:** `rust_core/src/rg_passthrough.rs:389-397` (patterns via `-e`, paths raw). If a `--` sentinel now precedes the path loop, mark weak-point §5 resolved.
-- **Registration CI gate BLOCKING:** confirm in `AGENTS.md` §"Adding a Command or Flag" (as of #282/v1.17.1).
-- **Partial-results contract (added 2026-07-03, #341/`f11ce28`):** `src/tensor_grep/core/result.py:41-47` (`SearchResult.result_incomplete`/`incomplete_reason`) + `:75-79` (`merge_runtime_routing` OR-merge); exit-code wiring `src/tensor_grep/cli/main.py:6478-6535`; envelope `src/tensor_grep/cli/formatters/json_fmt.py:111-113,173-174`; MCP `src/tensor_grep/cli/mcp_server.py:2722-2723`. Re-verify: `tests/unit/test_rg_exit2_partial.py` green + `git show f11ce28 --stat`.
+- **rg-passthrough `--` gap: RESOLVED, not open.** `rust_core/src/rg_passthrough.rs:397-422` (`ripgrep_operand_args`) inserts `--` before paths; 3 tests at `:609-648`. Do not re-open weak-point §5 as unresolved.
+- **Registration CI gate BLOCKING:** confirm in `AGENTS.md` §"Adding a Command or Flag" (starts at line 197 as of this writing; as of #282/v1.17.1 for when it went blocking) — grep the header text, the line number shifts as sections are added above it.
+- **Partial-results contract (added 2026-07-03, #341/`f11ce28`; exit-code side made stricter by #398/#399/#401):** `src/tensor_grep/core/result.py:54-55` (`SearchResult.result_incomplete`/`incomplete_reason`) + `:67+` (`merge_runtime_routing` OR-merge); exit-code wiring `src/tensor_grep/cli/main.py:6918-6953` (exit 2 fires regardless of found, per #401 — `docs/CONTRACTS.md:109`); envelope `src/tensor_grep/cli/formatters/json_fmt.py:126-127,189-190`; MCP `src/tensor_grep/cli/mcp_server.py:1645,3117,3174,3202,3261` (multiple sites). Re-verify: `tests/unit/test_rg_exit2_partial.py` green.
+- **C14 (no scoped file-dep primitive):** `grep -n '"imports"\|"importers"\|"deps"' src/tensor_grep/cli/commands.py` should find nothing among `KNOWN_COMMANDS` as of this writing; re-check before citing this gap as still open (tracked as task #74).
+- **B9 (ReDoS-gate bypass, merge-gated watch item):** `grep -n "rust_semantics_supported" src/tensor_grep/backends/cpu_backend.py` and confirm whether `context`/`before_context`/`after_context`/`line_regexp`/`word_regexp` still force it false; `git log --oneline origin/main | head` to check whether the in-flight fix (audit #6+#16) has merged — only mark this resolved once a `chore(release)` commit sits above it.
 - **Native-delegation forward-or-refuse contract (added 2026-07-03, #342/`5e6f780`):** gate `src/tensor_grep/cli/main.py:3263-3282` (`_can_delegate_to_native_tg_search`), refuse-tuple `:1755-1855` (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`). Re-verify: run `tests/unit/test_native_delegation_field_coverage.py` after touching `SearchConfig` — a new unclassified field turns it red immediately, which is the point.
 - **`MatchLine` hashability (added 2026-07-03, #344/`80de0b4`):** `src/tensor_grep/core/result.py:4-17` (`submatches` field uses `compare=False`). Re-verify: `python -c "from tensor_grep.core.result import MatchLine; hash(MatchLine(1,'x','f.py',submatches=({'start':0,'end':1},)))"` must not raise.
 - **ASCII-only CLI output (added 2026-07-03, #346/`6b7b518`):** fixed call site `src/tensor_grep/cli/inventory.py`. Re-verify: grep new CLI-rendered string literals for non-ASCII before shipping; no automated gate enforces this yet (a governance test is a reasonable follow-up, not yet shipped).

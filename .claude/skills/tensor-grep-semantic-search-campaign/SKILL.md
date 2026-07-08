@@ -10,10 +10,12 @@ description: >
   the retrieval-quality + editor-plane + token-economy promotion gates, the Backend
   Fail-Closed Contract for the dense leg, fenced-off wrong paths (no API-key
   embeddings, no GPU dependency, do not break `--format rg` / `--json` / `--ndjson`
-  semantics), and routing promotion through change-control. Facts verified at v1.17.25
-  (2026-07-02); re-verified UNCHANGED against v1.40.2 (2026-07-05) — this remains
-  AGENTS.md roadmap #1 but is NOT the currently-active campaign (see the STATUS note
-  and `tensor-grep-large-repo-scale-campaign`).
+  semantics), and routing promotion through change-control. STATUS as of 2026-07-08,
+  v1.49.3: the dense leg + RRF fusion described here as the target architecture
+  (Candidate 1 / the Semble pattern) SHIPPED as `tg search --semantic`
+  (`retrieval_dense.py` + `retrieval_fusion.py`, default-OFF, gated on the `semantic`
+  extra) — this skill's Phases 0-3 are now historical/reference for HOW it was built;
+  see the STATUS note below before assuming any "not built yet" claim in Sections 1-2.
 ---
 
 # tensor-grep — Local Hybrid Semantic Search Campaign
@@ -29,17 +31,30 @@ are fenced off, and how promotion routes through change-control. **You do not sh
 anything user-visible from this skill without beating the gate and doing a conscious
 flag-flip** (see Phase 5).
 
-> **STATUS (as of 2026-07-05, v1.40.2 / origin/main `8829441`):** this campaign
-> remains AGENTS.md's written roadmap item #1 (`AGENTS.md:232`, "Roadmap
-> Sequencing"), and the runbook below is still buildable exactly as specified — a
-> repo-wide grep re-confirmed on 2026-07-05 that **no dense/embedding leg, no RRF
-> fusion, and no `tg index` command exist** in `src/` (same finding as §1/§2, still
-> true ~40 minor versions later). But **no engineering effort has actually gone into
-> it**: ~130 releases' worth of work since this skill was authored (v1.17.25 →
-> v1.40.2) went instead to security-hardening rounds 5-8 and the large-repo /
-> `--deadline` scale program. For the campaign that **is** currently live, load
-> `tensor-grep-large-repo-scale-campaign`. Load **this** skill only when you are
-> actually about to pick the semantic-search build back up.
+> **STATUS UPDATE (2026-07-08, v1.49.3): SHIPPED.** The dense leg + RRF fusion this
+> skill specifies as the target architecture (Candidate 1, the Semble pattern) is now
+> live: `src/tensor_grep/core/retrieval_dense.py` (model2vec + `potion-code-16M`,
+> `DenseUnavailableError`/`BackendExecutionError` fail-closed contract exactly as §6
+> specifies) and `src/tensor_grep/core/retrieval_fusion.py`
+> (`reciprocal_rank_fusion(rankings, k=DEFAULT_K=60)` — matches §3/§5 exactly), wired
+> as `tg search --semantic` (`main.py` typer option, default `False`; bootstrap front
+> door at `bootstrap.py:44,413`) gated on the optional `semantic` extra
+> (`pyproject.toml:467`, `model2vec>=0.5`+`numpy>=1.26`). **Sections 1-2 below still
+> describe the PRE-BUILD state and are now WRONG on the "does not exist yet" claims —
+> read them as historical design intent, not current fact.** No `tg index` command
+> was added (the persisted-index building blocks in `semantic_index.py` remain
+> unwired, per the original §1 note). **Not yet re-verified: whether Phase 4's
+> promotion gate (RRF-hybrid beats BM25-only on a real corpus + editor-plane latency)
+> was actually measured before shipping, or whether `--semantic` graduated past
+> default-OFF** — re-run `grep -n "retrieval_dense\|retrieval_fusion\|--semantic"
+> AGENTS.md docs/PAPER.md` and check for a promotion PR before treating this as fully
+> closed-out; if you are extending it further (chunking, a `tg index` command, a
+> default-flip), Phases 4-5 below are still the right runbook.
+>
+> (Superseded note, kept for history: as of 2026-07-05/v1.40.2 this was still unbuilt
+> and `tensor-grep-large-repo-scale-campaign` was the live campaign instead — that is
+> no longer the case for the dense/RRF leg specifically; re-check which campaign is
+> "live" at the time you read this.)
 
 ---
 
@@ -70,6 +85,12 @@ decision (Phase 5); this skill only produces the *evidence* that decision needs.
 ---
 
 ## 1. What already exists (the BM25 lexical leg is SHIPPED)
+
+> **2026-07-08 correction: this section (and §2 below) was written when only the BM25
+> leg existed. The dense leg (`retrieval_dense.py`) and RRF fusion
+> (`retrieval_fusion.py`) have SHIPPED since — see the STATUS box above. Treat every
+> "does not exist yet" statement below as describing the pre-2026-07-0x state, not
+> current fact; re-verify with the grep in the STATUS box before relying on it.**
 
 Read these before writing a line. Every path below is verified against the repo as
 of v1.17.25.
@@ -116,9 +137,11 @@ already exist and ship default-OFF.** The campaign adds the **dense leg + RRF fu
   absent from a ranker's list contributes 0 for that ranker. RRF is rank-based, so it
   is robust to the fact that BM25 scores and cosine scores are on incomparable scales.
 
-**Verified: no dense/embedding/RRF/Model2Vec/potion code exists in `src/` today.** A
-repo-wide grep for `model2vec|potion|reciprocal_rank_fusion|StaticModel|sentence_transformers`
-finds only comments and GPU-context words — the leg is genuinely unbuilt.
+**SUPERSEDED (was true through v1.40.2, 2026-07-05; false as of v1.49.3, 2026-07-08):**
+~~no dense/embedding/RRF/Model2Vec/potion code exists in `src/` today~~ — this leg has
+since shipped as `retrieval_dense.py` + `retrieval_fusion.py`; re-run
+`grep -rin "model2vec|potion|reciprocal_rank_fusion|StaticModel" src/` yourself and
+expect real hits, not just comments.
 
 **The moat framing (do not lose it):** this is **not** "faster grep." ripgrep is the
 raw-text parity baseline. The value is agent-native retrieval quality on
@@ -396,9 +419,14 @@ Everything below is verifiable from the repo. Re-run these when a claim may have
 drifted; date-stamp any change.
 
 - **Version / date:** facts originally verified `v1.17.25` (2026-07-02); re-verified
-  UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05 — see the
-  STATUS note near the top. Re-check: `grep -m1 release_docs_current_tag AGENTS.md`
-  and `grep -m1 '"version"' npm/package.json`.
+  UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05; **spot-checked
+  again 2026-07-08 against `v1.49.3` and found the dense/RRF leg now SHIPPED** (see the
+  STATUS note near the top — this was a mechanical stamp bump plus that one correction,
+  not a full re-verification of every Phase 4/5 claim below). Re-check:
+  `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
+- **Dense leg + RRF now shipped:** `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`;
+  `grep -n "\-\-semantic" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`;
+  `grep -n "semantic = " pyproject.toml` (the optional extra).
 - **BM25 leg + defaults:** `Read src/tensor_grep/core/retrieval_bm25.py` (k1=1.5, b=0.75),
   `retrieval_chunker.py` (chunk_size=30, overlap=5, MAX_CHUNKS=100_000).
 - **`--rank` wiring + default-OFF:** `grep -n "rank_bm25" src/tensor_grep/core/config.py`
