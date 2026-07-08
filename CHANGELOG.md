@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.45.12 (2026-07-08)
+
+### Bug Fixes
+
+- **M9**: Merge_runtime_routing tracks mixed backends across a heterogeneous scan (is_mixed_routing
+  + routing_backends_seen) instead of silently reporting only the last-merged engine
+  ([#434](https://github.com/oimiragieo/tensor-grep/pull/434),
+  [`5b9ab71`](https://github.com/oimiragieo/tensor-grep/commit/5b9ab71c175d5ddfd4f2608ff8b400689fa4f7fb))
+
+- **test**: Relax the flaky _reverse_importers wall-clock bound 1.0s->10.0s (matches the sibling
+  perf test) — CI-runner jitter (observed 1.14s, no code change) was red-ing every release
+  ([#444](https://github.com/oimiragieo/tensor-grep/pull/444),
+  [`bbe77de`](https://github.com/oimiragieo/tensor-grep/commit/bbe77de7fc7be95c8435372052134589a23d1153))
+
+
 ## v1.45.11 (2026-07-07)
 
 ### Bug Fixes
