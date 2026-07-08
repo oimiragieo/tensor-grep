@@ -4372,8 +4372,14 @@ async def _stdio_server_accepting_content_length(
     if not stdout:
         stdout = anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
 
-    read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
-    write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
+    # Subscript the anyio factory so the item type is explicit: newer mypy cannot infer the generic
+    # of `create_memory_object_stream(0)` and errors "Need type annotation" (older mypy did not).
+    # read side carries a validated SessionMessage OR the JSON-decode Exception (sent at the reader);
+    # write side carries a SessionMessage.
+    read_stream_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](
+        0
+    )
+    write_stream, write_stream_reader = anyio.create_memory_object_stream[SessionMessage](0)
 
     async def stdin_reader() -> None:
         try:
