@@ -44,6 +44,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -378,10 +379,20 @@ def _download_bounded(url: str, *, max_bytes: int, timeout_s: float) -> bytes:
     the read, not after buffering the whole body, so an oversized response cannot exhaust memory
     before the cap trips.
 
-    Raises a plain ``OSError``/``ValueError`` on any failure (network error, timeout, or the byte
-    cap). The caller (:func:`fetch_late_model`) wraps ALL of this uniformly into
-    :class:`~tensor_grep.backends.base.BackendExecutionError`.
+    ALSO enforces a total wall-clock deadline across the whole streamed read
+    (``TG_RERANK_FETCH_DEADLINE_S``, default 300s -- generous for a ~65MB download on a slow
+    link). ``timeout_s`` only bounds a SINGLE ``resp.read()`` call, so a malicious/compromised
+    server that keeps every individual recv just under ``timeout_s`` (and every chunk under
+    ``max_bytes``) -- a slow-drip -- could otherwise hang the fetch indefinitely (Opus
+    security-gate nit #87). This is an ADDITIVE third bound: it does not change the per-recv
+    socket timeout or the byte cap.
+
+    Raises a plain ``OSError``/``ValueError`` on any failure (network error, timeout, the byte
+    cap, or the wall-clock deadline). The caller (:func:`fetch_late_model`) wraps ALL of this
+    uniformly into :class:`~tensor_grep.backends.base.BackendExecutionError`.
     """
+    deadline_s = float(os.environ.get("TG_RERANK_FETCH_DEADLINE_S", "300"))
+    start = time.monotonic()
     request = urllib.request.Request(url, headers={"User-Agent": "tensor-grep-rerank-fetch"})
     with urllib.request.urlopen(request, timeout=timeout_s) as resp:
         buffer = bytearray()
@@ -392,6 +403,8 @@ def _download_bounded(url: str, *, max_bytes: int, timeout_s: float) -> bytes:
             buffer.extend(chunk)
             if len(buffer) > max_bytes:
                 raise ValueError(f"{url} exceeded the {max_bytes}-byte cap")
+            if time.monotonic() - start > deadline_s:
+                raise ValueError(f"{url} exceeded the {deadline_s}s total download deadline")
         return bytes(buffer)
 
 

@@ -13,6 +13,7 @@ tests instead intentionally serve WRONG bytes against the real manifest.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import urllib.request
 from typing import Any
 
@@ -39,6 +40,32 @@ class _FakeHTTPResponse:
         return chunk
 
     def __enter__(self) -> _FakeHTTPResponse:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+class _FakeDripResponse:
+    """Duck-typed fake response that ignores the requested read size and instead yields a fixed
+    sequence of small chunks, one per `.read()` call, then EOF -- simulates a slow-drip server
+    that returns a little data on every recv (each individual read small/fast enough to dodge the
+    per-recv socket timeout and the byte cap) without ever finishing the file. Deliberately
+    FINITE, not an infinite generator: if the total-deadline check under test were missing or
+    broken, this response still drains normally and the test fails fast on an assertion mismatch
+    instead of hanging the suite (anti-hang-test-protocol).
+    """
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = [*chunks, b""]  # trailing b"" = EOF once the scripted chunks run out
+        self._idx = 0
+
+    def read(self, n: int = -1) -> bytes:
+        chunk = self._chunks[self._idx] if self._idx < len(self._chunks) else b""
+        self._idx += 1
+        return chunk
+
+    def __enter__(self) -> _FakeDripResponse:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -136,6 +163,37 @@ def test_fetch_download_exceeding_byte_cap_is_rejected(
     with pytest.raises(BackendExecutionError, match="byte cap"):
         retrieval_late.fetch_late_model(dest)
 
+    assert not dest.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_exceeds_total_deadline_raises(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    # H-new (Opus security-gate nit #87): `_download_bounded` must bound the TOTAL wall-clock
+    # time of a download, not just the per-recv socket timeout and the total byte cap. A
+    # malicious/compromised HF server could slow-drip bytes forever -- each individual recv small
+    # and fast enough to dodge both existing bounds -- and hang the fetch indefinitely.
+    #
+    # No real sleep: the fake response drips 2 small chunks (well under the byte cap) and
+    # `time.monotonic` is monkeypatched to jump past a shrunk 1s deadline on the SECOND deadline
+    # check, so the total-deadline path trips deterministically and fast.
+    def fake_urlopen(request: urllib.request.Request, timeout: float | None = None) -> Any:
+        return _FakeDripResponse([b"a" * 8, b"b" * 8])
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("TG_RERANK_FETCH_DEADLINE_S", "1")
+
+    # `_download_bounded`'s `time.monotonic()` call order: (1) `start`; (2) the deadline check
+    # after the 1st chunk read (must NOT trip yet -- only "0.5s" elapsed); (3) the deadline check
+    # after the 2nd chunk read (must trip -- "5.0s" elapsed, past the shrunk 1s deadline). The
+    # schedule then repeats "5.0" forever so any incidental extra call never raises StopIteration.
+    monotonic_values = itertools.chain([0.0, 0.5], itertools.repeat(5.0))
+    monkeypatch.setattr(retrieval_late.time, "monotonic", lambda: next(monotonic_values))
+
+    dest = tmp_path / "model-dest"
+    with pytest.raises(BackendExecutionError, match="deadline"):
+        retrieval_late.fetch_late_model(dest)
+
+    # Fail-closed: no files land, no partial state left behind anywhere under tmp_path.
     assert not dest.exists()
     assert list(tmp_path.iterdir()) == []
 
