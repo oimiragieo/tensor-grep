@@ -5,11 +5,11 @@ import os
 import re
 import time
 import warnings
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from pathlib import Path
 from typing import ClassVar
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -340,91 +340,126 @@ class CPUBackend(ComputeBackend):
         # Instead of using Python's standard `re` module (which uses backtracking and is vulnerable
         # to ReDoS attacks), we route complex pure-python CPU requests to the native Rust `regex` crate.
         # Rust's regex engine uses Finite Automata which mathematically guarantees O(m) linear time execution.
-        rust_semantics_supported = not (
+        #
+        # Audit #6 (ReDoS gate bypass): -C/-A/-B/-w/-x used to disable this Rust attempt entirely
+        # (the old `rust_semantics_supported` gate below) and drop straight to the unbounded
+        # backtracking Python loop further down -- e.g. `(a+)+$` via `-w`/`-C` could hang
+        # forever, even though the SAME pattern via a plain (no -C/-w/-x) search is safe. These
+        # flags now route through `_search_word_line_context_via_rust`, which resolves the
+        # MATCH-SET via the linear Rust engine and assembles context windows / applies -w/-x
+        # wrapping in pure Python (no regex evaluation at all on that side) -- see that method's
+        # docstring for the full rationale, including why it fails closed instead of falling
+        # open to Python `re` on its residual (Rust absent / --pcre2).
+        needs_word_or_context_rust_routing = bool(
             getattr(config, "context", False)
             or getattr(config, "before_context", False)
             or getattr(config, "after_context", False)
             or getattr(config, "line_regexp", False)
             or getattr(config, "word_regexp", False)
         )
-        if rust_semantics_supported:
+        if needs_word_or_context_rust_routing:
+            return self._search_word_line_context_via_rust(path, file_path, pattern, config)
+
+        # Every request reaching this point is the "simple" pattern case (no -C/-A/-B/-w/-x --
+        # those already returned above via `_search_word_line_context_via_rust`, and --ltl
+        # returned even earlier); always attempt the linear-time Rust engine first.
+        try:
+            from tensor_grep.rust_core import RustBackend
+
+            rust_backend = RustBackend()
             try:
-                from tensor_grep.rust_core import RustBackend
+                rust_results = rust_backend.search(
+                    pattern=pattern,
+                    path=file_path,
+                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
+                    fixed_strings=config.fixed_strings,
+                    invert_match=config.invert_match,
+                )
+            except TypeError:
+                rust_results = rust_backend.search(
+                    pattern=pattern,
+                    path=file_path,
+                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
+                    fixed_strings=config.fixed_strings,
+                )
 
-                rust_backend = RustBackend()
+            # If Rust returns no matches on a file that is not valid UTF-8, fall back to Python
+            # decoding path (latin-1/replace) for compatibility.
+            if not rust_results:
                 try:
-                    rust_results = rust_backend.search(
-                        pattern=pattern,
-                        path=file_path,
-                        ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                        fixed_strings=config.fixed_strings,
-                        invert_match=config.invert_match,
-                    )
-                except TypeError:
-                    rust_results = rust_backend.search(
-                        pattern=pattern,
-                        path=file_path,
-                        ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                        fixed_strings=config.fixed_strings,
-                    )
-
-                # If Rust returns no matches on a file that is not valid UTF-8, fall back to Python
-                # decoding path (latin-1/replace) for compatibility.
-                if not rust_results:
-                    try:
-                        Path(file_path).read_text(encoding="utf-8")
-                    except UnicodeDecodeError as exc:
-                        raise _RustUtf8DecodeMismatch(
-                            "Rust backend UTF-8 decode mismatch, using Python fallback"
-                        ) from exc
-
-                if config.max_count is not None:
-                    rust_results = rust_results[: config.max_count]
-
-                matches = [
-                    MatchLine(line_number=r[0], text=str(r[1]).rstrip("\n\r"), file=file_path)
-                    for r in rust_results
-                ]
-
-                return SearchResult(
-                    matches=matches,
-                    total_files=1 if matches else 0,
-                    total_matches=len(matches),
-                    routing_backend="CPUBackend",
-                    routing_reason="cpu_rust_regex",
-                    routing_distributed=False,
-                    routing_worker_count=1,
-                )
-
-            except _RustUtf8DecodeMismatch as exc:
-                # Non-UTF-8 file: Rust already compiled + ran the pattern in O(n) (ReDoS-safe).
-                # Fall through to the Python latin-1/replace decode path for compatibility.
-                logger.debug(
-                    "Rust UTF-8 decode mismatch for %s, using Python decode: %s", file_path, exc
-                )
-            except (ImportError, ModuleNotFoundError) as exc:
-                # Native extension genuinely absent: Python `re` is the ONLY available engine.
-                # Availability over ReDoS-strictness for this environment condition (expected).
-                logger.debug("rust_core unavailable for %s, using Python regex: %s", file_path, exc)
-            except Exception as exc:
-                # Lazy import avoids a circular import (rust_backend imports InvalidRegexError from
-                # this module); by call time both modules are fully loaded. Single source of truth.
-                from tensor_grep.backends.rust_backend import _is_invalid_regex_error
-
-                if _is_invalid_regex_error(exc) and not getattr(config, "pcre2", False):
-                    # Rust rejected the pattern's SYNTAX (backreference / look-around) — the
-                    # canonical ReDoS class. Refuse to run it through the backtracking Python
-                    # engine; direct the user to the explicit --pcre2 opt-in (mirrors ripgrep -P).
-                    raise InvalidRegexError(
-                        "pattern needs backreference/look-around syntax the linear-time engine "
-                        f"rejects; pass --pcre2 to opt into the backtracking engine explicitly ({exc})"
+                    Path(file_path).read_text(encoding="utf-8")
+                except UnicodeDecodeError as exc:
+                    raise _RustUtf8DecodeMismatch(
+                        "Rust backend UTF-8 decode mismatch, using Python fallback"
                     ) from exc
-                # Rust ACCEPTED the syntax then failed at runtime (native panic / IO / version
-                # skew): the pattern provably contains no catastrophic-backtracking construct, so
-                # the Python fallback is ReDoS-safe and preserves correctness. Keep falling open.
-                logger.warning(
-                    "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
-                )
+
+            if config.max_count is not None:
+                rust_results = rust_results[: config.max_count]
+
+            matches = [
+                MatchLine(line_number=r[0], text=str(r[1]).rstrip("\n\r"), file=file_path)
+                for r in rust_results
+            ]
+
+            return SearchResult(
+                matches=matches,
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
+                routing_backend="CPUBackend",
+                routing_reason="cpu_rust_regex",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+        except _RustUtf8DecodeMismatch as exc:
+            # Non-UTF-8 file: Rust already compiled + ran the pattern in O(n) (ReDoS-safe).
+            # Fall through to the Python latin-1/replace decode path for compatibility.
+            logger.debug(
+                "Rust UTF-8 decode mismatch for %s, using Python decode: %s", file_path, exc
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            # Native extension genuinely absent: Python `re` is the ONLY available engine.
+            # Availability over ReDoS-strictness for this environment condition (expected).
+            logger.debug("rust_core unavailable for %s, using Python regex: %s", file_path, exc)
+        except Exception as exc:
+            # Lazy import avoids a circular import (rust_backend imports InvalidRegexError from
+            # this module); by call time both modules are fully loaded. Single source of truth.
+            from tensor_grep.backends.rust_backend import _is_invalid_regex_error
+
+            if _is_invalid_regex_error(exc) and not getattr(config, "pcre2", False):
+                # Rust rejected the pattern's SYNTAX (backreference / look-around) — the
+                # canonical ReDoS class. Refuse to run it through the backtracking Python
+                # engine; direct the user to the explicit --pcre2 opt-in (mirrors ripgrep -P).
+                raise InvalidRegexError(
+                    "pattern needs backreference/look-around syntax the linear-time engine "
+                    f"rejects; pass --pcre2 to opt into the backtracking engine explicitly ({exc})"
+                ) from exc
+            if getattr(config, "pcre2", False):
+                # Audit #16: --pcre2 is a "Python-re-is-unavoidable" residual -- CPUBackend
+                # has no real PCRE2 engine, only Python `re` as an approximation, and Python
+                # `re` is backtracking (ReDoS-hazardous) regardless of WHY Rust could not
+                # service the request. Previously this fell open silently on the premise
+                # that "Rust accepted the syntax, so the pattern provably contains no
+                # catastrophic-backtracking construct" -- that premise is FALSE (nested
+                # quantifiers like `(a+)+$` are valid Rust syntax that Rust's automata engine
+                # runs in guaranteed O(n), but the exact construct that blows up Python's
+                # backtracking engine). Fail closed (Backend Fail-Closed Contract) instead of
+                # silently swapping to a ReDoS-hazardous engine; direct users who need real
+                # PCRE2 semantics to ripgrep itself (which has a genuine PCRE2 engine).
+                raise BackendExecutionError(
+                    "cannot safely evaluate this pattern through CPUBackend's --pcre2 "
+                    f"approximation ({type(exc).__name__}: {exc}); use ripgrep for real "
+                    "PCRE2 support or drop --pcre2"
+                ) from exc
+            # Rust failed at runtime for a reason unrelated to pattern syntax (native panic /
+            # IO / version skew) and the caller did NOT request the backtracking-only
+            # --pcre2 escape hatch: the pattern is not one that requires backreference/
+            # look-around syntax, so falling back to Python `re` here preserves the
+            # backend's existing robustness (e.g. a transient native-extension fault must
+            # not hard-fail an ordinary search). Keep falling open for this narrower case.
+            logger.warning(
+                "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
+            )
 
         matches = []
         flags = 0
@@ -641,6 +676,187 @@ class CPUBackend(ComputeBackend):
                 return line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
 
     @staticmethod
+    def _build_rust_query(pattern: str, config: SearchConfig) -> tuple[str, bool]:
+        """Mirror `_compile_regexes`'s exact wrapping precedence (fixed_strings takes priority
+        over -w/-x wrapping, matching that method's existing behavior) so the match-set the
+        Rust engine computes is equivalent to what the Python regex path would have matched for
+        the same flag combination. Returns ``(pattern_to_send_to_rust, fixed_strings_flag)``.
+        """
+        if config.fixed_strings:
+            return pattern, True
+        if config.line_regexp:
+            # The Rust engine splits on '\n' and keeps a trailing '\r' on CRLF files, whereas
+            # the old Python path stripped '\r' before applying '^pat$'. To preserve -x's
+            # "whole line equals pattern" semantics on BOTH LF and CRLF inputs (byte-identical
+            # to the pre-fix Python behavior on benign LF files, and non-regressive on Windows
+            # CRLF files), allow an optional trailing '\r'. `\r?` is a single-atom, non-nested
+            # quantifier -- it cannot itself introduce catastrophic backtracking, and the user
+            # pattern is evaluated only by the linear-time Rust engine regardless.
+            return f"^(?:{pattern})\\r?$", False
+        if config.word_regexp:
+            return f"\\b{pattern}\\b", False
+        return pattern, False
+
+    def _rust_match_set(
+        self,
+        file_path: str,
+        rust_pattern: str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> list[tuple[int, str]]:
+        """Run ONE pattern through the linear-time Rust engine and return its raw
+        ``(line_number, text)`` matches (Rust applies ``invert_match`` itself, so the returned
+        set is already the correct one either way). Raises on ANY failure (Rust genuinely
+        absent, syntax rejection, or a runtime fault) -- callers decide the fail-closed
+        response; this helper never falls open to Python `re` itself (that is exactly the
+        audit #6/#16 hazard).
+        """
+        from tensor_grep.rust_core import RustBackend
+
+        rust_backend = RustBackend()
+        try:
+            results: list[tuple[int, str]] = rust_backend.search(
+                pattern=rust_pattern,
+                path=file_path,
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+                invert_match=invert_match,
+            )
+        except TypeError:
+            # Older rust_core builds without the `invert_match` kwarg (matches the same
+            # defensive fallback the primary Rust-attempt block above uses).
+            results = rust_backend.search(
+                pattern=rust_pattern,
+                path=file_path,
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+            )
+        return results
+
+    def _search_word_line_context_via_rust(
+        self, path: Path, file_path: str, pattern: str, config: SearchConfig
+    ) -> SearchResult:
+        """Route the -w/-x/-C/-A/-B match-set through the linear-time Rust engine, then
+        assemble context windows (or apply -w/-x wrapping) purely in Python -- no backtracking
+        regex is ever evaluated on this path.
+
+        Audit #6 (ReDoS gate bypass): -C/-A/-B/-w/-x previously disabled the Rust attempt
+        entirely and routed straight to Python's backtracking `re` with NO deadline --
+        `(a+)+$` via `-w`/`-C` could hang forever even though nested quantifiers are valid Rust
+        syntax that Rust's automata engine runs in guaranteed O(n) (the "Rust accepted syntax
+        so it's safe" reasoning that justified skipping Rust here was false). When Rust is
+        present (the common case) this eliminates the Python-re hazard entirely: no residual,
+        no subprocess, no possibility of hanging.
+
+        THE RESIDUAL (audit #16, "robustness over completeness"): if Rust is genuinely absent,
+        or Rust cannot service the request for any reason (syntax rejection, --pcre2 needing an
+        engine CPUBackend does not have, or a runtime fault), we FAIL CLOSED -- raise
+        `BackendExecutionError` -- rather than silently falling open to backtracking Python
+        `re` with no bound. A visible refusal cannot hang and is fully compliant with the
+        Backend Fail-Closed Contract; callers can install ripgrep (which has a real, separate
+        engine) or drop the -C/-A/-B/-w/-x/--pcre2 flag combination.
+        """
+        rust_query_pattern, rust_query_fixed_strings = self._build_rust_query(pattern, config)
+        ignore_case = bool(config.ignore_case or (config.smart_case and pattern.islower()))
+
+        try:
+            rust_results = self._rust_match_set(
+                file_path,
+                rust_query_pattern,
+                ignore_case,
+                rust_query_fixed_strings,
+                config.invert_match,
+            )
+        except Exception as exc:
+            raise BackendExecutionError(
+                "cannot safely evaluate this pattern through CPUBackend's -C/-A/-B/-w/-x path "
+                f"without the linear-time Rust engine ({type(exc).__name__}: {exc}); install "
+                "ripgrep, or drop the -C/-A/-B/-w/-x/--pcre2 flag combination"
+            ) from exc
+
+        needs_context = bool(
+            getattr(config, "context", False)
+            or getattr(config, "before_context", False)
+            or getattr(config, "after_context", False)
+        )
+
+        if not needs_context:
+            if config.max_count is not None:
+                rust_results = rust_results[: config.max_count]
+            matches = [
+                MatchLine(line_number=r[0], text=str(r[1]).rstrip("\n\r"), file=file_path)
+                for r in rust_results
+            ]
+            return SearchResult(
+                matches=matches,
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
+                routing_backend="CPUBackend",
+                routing_reason="cpu_rust_regex",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+        matched_line_numbers = {int(r[0]) for r in rust_results}
+        return self._assemble_context_matches(path, file_path, config, matched_line_numbers)
+
+    def _assemble_context_matches(
+        self,
+        path: Path,
+        file_path: str,
+        config: SearchConfig,
+        matched_line_numbers: set[int],
+    ) -> SearchResult:
+        """Build -A/-B/-C context windows around a PRECOMPUTED match-line-number set (produced
+        by the linear-time Rust engine, already reflecting -w/-x wrapping and invert_match).
+        This is pure line-number bookkeeping -- no regex is evaluated here at all, so it cannot
+        ReDoS regardless of how hostile the underlying pattern or file content is.
+        """
+        before_lines = getattr(config, "before_context", 0) or 0
+        after_lines = getattr(config, "after_context", 0) or 0
+        if getattr(config, "context", None):
+            before_lines = config.context
+            after_lines = config.context
+
+        matches: list[MatchLine] = []
+        total_matches_count = 0
+        before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
+        context_after_remaining = 0
+
+        with open(path, "rb") as file_obj:
+            for line_idx, line_bytes in enumerate(file_obj, 1):
+                line_text = self._decode_line(line_bytes)
+                matched = line_idx in matched_line_numbers
+
+                if matched:
+                    while before_queue:
+                        b_idx, b_text = before_queue.popleft()
+                        matches.append(MatchLine(line_number=b_idx, text=b_text, file=file_path))
+                    matches.append(MatchLine(line_number=line_idx, text=line_text, file=file_path))
+                    total_matches_count += 1
+                    context_after_remaining = after_lines
+
+                    if config.max_count and total_matches_count >= config.max_count:
+                        break
+                elif context_after_remaining > 0:
+                    matches.append(MatchLine(line_number=line_idx, text=line_text, file=file_path))
+                    context_after_remaining -= 1
+                else:
+                    if before_lines > 0:
+                        before_queue.append((line_idx, line_text))
+
+        return SearchResult(
+            matches=matches,
+            total_files=1 if total_matches_count > 0 else 0,
+            total_matches=total_matches_count,
+            routing_backend="CPUBackend",
+            routing_reason="cpu_rust_regex_context",
+            routing_distributed=False,
+            routing_worker_count=1,
+        )
+
+    @staticmethod
     def _compile_ltl(pattern: str, flags: int) -> tuple[re.Pattern[str], re.Pattern[str]]:
         # Supported grammar (minimal v1): A -> eventually B
         ltl_match = re.match(r"^\s*(.+?)\s*->\s*eventually\s+(.+?)\s*$", pattern, re.IGNORECASE)
@@ -654,7 +870,41 @@ class CPUBackend(ComputeBackend):
         if config.ignore_case or (config.smart_case and pattern.islower()):
             flags |= re.IGNORECASE
 
+        # `_compile_ltl` is preserved as the sole grammar parser (tests monkeypatch it) and
+        # still gives us the two sub-expression strings via `.pattern`; we no longer evaluate
+        # these compiled objects with `.search()` against untrusted file content, though --
+        # audit #6/#16 (ReDoS gate bypass): --ltl unconditionally used Python's backtracking
+        # `re.search()` per line with NO deadline, so e.g. `(a+)+$ -> eventually X` could hang
+        # forever. Both sub-expressions are now resolved to a MATCH-SET via the linear-time
+        # Rust engine; the existing O(n) two-pointer sequence assembly below is unchanged, just
+        # driven by set-membership instead of a live regex call.
         left_regex, right_regex = self._compile_ltl(pattern, flags)
+        ignore_case = bool(flags & re.IGNORECASE)
+
+        try:
+            left_match_lines = {
+                int(r[0])
+                for r in self._rust_match_set(
+                    str(path), left_regex.pattern, ignore_case, False, False
+                )
+            }
+            right_match_lines = {
+                int(r[0])
+                for r in self._rust_match_set(
+                    str(path), right_regex.pattern, ignore_case, False, False
+                )
+            }
+        except Exception as exc:
+            # THE RESIDUAL (rust-absent or any Rust-side failure): Python `re` is the only other
+            # engine, but running it unbounded on --ltl sub-expressions is exactly the hazard
+            # this fix closes. FAIL CLOSED (Backend Fail-Closed Contract) rather than silently
+            # falling open -- a visible refusal cannot hang.
+            raise BackendExecutionError(
+                "cannot safely evaluate this --ltl query through CPUBackend without the "
+                f"linear-time Rust engine ({type(exc).__name__}: {exc}); install ripgrep or "
+                "drop --ltl"
+            ) from exc
+
         lines: list[tuple[int, str]] = []
         with open(path, "rb") as file_obj:
             for line_idx, line_bytes in enumerate(file_obj, 1):
@@ -673,12 +923,12 @@ class CPUBackend(ComputeBackend):
         next_right_at_or_after: list[int | None] = [None] * (total_lines + 1)
         nearest_right: int | None = None
         for probe in range(total_lines - 1, -1, -1):
-            if right_regex.search(lines[probe][1]) is not None:
+            if lines[probe][0] in right_match_lines:
                 nearest_right = probe
             next_right_at_or_after[probe] = nearest_right
 
         for idx, (left_line_no, left_text) in enumerate(lines):
-            if left_regex.search(left_text) is None:
+            if left_line_no not in left_match_lines:
                 continue
             right_match_idx = next_right_at_or_after[idx + 1]  # first right STRICTLY after idx
             if right_match_idx is None:
