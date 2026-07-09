@@ -3548,8 +3548,23 @@ def _set_semantic_rank_fallback_reason(all_results: "SearchResult") -> None:
         sys.stderr.write(f"tg: {unavailable_reason}\n")
 
 
+def _note_late_rerank_degraded(all_results: "SearchResult", reason: str) -> None:
+    """Append (or set) ``rank_fallback_reason`` for a RECOVERABLE late-rerank degrade (the
+    ``rerank`` extra absent, or the model not fetched) and echo the same ``tg:``-prefixed stderr
+    line the dense leg uses (T6, design doc "Fail-closed contract"). Appends rather than
+    overwrites so a simultaneous dense-leg degrade is never clobbered -- both signals must survive
+    on the returned envelope.
+    """
+    if all_results.rank_fallback_reason:
+        all_results.rank_fallback_reason = f"{all_results.rank_fallback_reason}; {reason}"
+    else:
+        all_results.rank_fallback_reason = reason
+    sys.stderr.write(f"tg: {reason}\n")
+
+
 def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "SearchResult":
-    """Apply the `--semantic` hybrid (BM25 + dense RRF) rerank, fail-closed to BM25-only.
+    """Apply the `--semantic` hybrid (BM25 + dense RRF [+ late MaxSim]) rerank, fail-closed to
+    BM25-only.
 
     The dense leg is best-effort: when the `semantic` extra is absent, the model has not been
     fetched, the model produces a malformed/mismatched embedding, or a query-time dense fault
@@ -3560,6 +3575,16 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
     raises ``BackendExecutionError`` instead of degrading, per the Backend Fail-Closed Contract --
     that is NOT caught here; the caller (the `search` command) must catch it and exit cleanly
     (F4).
+
+    T5/T6 (design doc "The seam" + "Fail-closed contract"): when ``TG_LATE_RERANK=1`` is set, a
+    late-interaction (MaxSim) reranker is built here (``late_available()`` probe, then
+    ``load_late_reranker()``) and passed into the PRIMARY ``rerank_hybrid`` call only -- never
+    into any of the BM25-only degrade retries below, since those already mean the whole hybrid
+    stage bypassed the late stage too (each appends "; late rerank skipped" to its
+    ``rank_fallback_reason`` when late rerank was requested). A RECOVERABLE late-leg failure
+    (extra absent, model not fetched) degrades here exactly like the dense leg; an UNRECOVERABLE
+    ``BackendExecutionError`` (e.g. a corrupt model directory) deliberately propagates, same as
+    the dense leg's.
     """
     from tensor_grep.core.reranker import rerank_hybrid
     from tensor_grep.core.retrieval_bm25 import Bm25Index
@@ -3571,6 +3596,15 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
         dense_available,
         load_dense_model,
     )
+
+    late_rerank_requested = os.environ.get("TG_LATE_RERANK") == "1"
+
+    def _maybe_append_late_skip(reason: str) -> str:
+        """The 3 upstream degrade paths below all BYPASS the late stage entirely (it is only ever
+        wired into the PRIMARY rerank_hybrid call further down) -- when late rerank was
+        requested, say so explicitly rather than leaving the envelope silently ambiguous about
+        why no late reorder happened (T6)."""
+        return f"{reason}; late rerank skipped" if late_rerank_requested else reason
 
     dense_index = None
     available, unavailable_reason = dense_available()
@@ -3592,7 +3626,7 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
             # can still trip it on its own even before the corpus-wide cap below is reached. Either
             # way, degrade to BM25-only (using whatever we already have -- discard the corpus, let
             # rerank_hybrid rebuild its own BM25-only chunks) rather than crash the whole search.
-            all_results.rank_fallback_reason = str(exc)
+            all_results.rank_fallback_reason = _maybe_append_late_skip(str(exc))
             sys.stderr.write(f"tg: {exc}\n")
             return rerank_hybrid(
                 all_results, pattern, all_results.matched_file_paths, dense_index=None
@@ -3604,7 +3638,7 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
                 f"({_SEMANTIC_CORPUS_CHUNK_CAP}) exceeded across the matched file set -- narrow "
                 "the search to fewer files for a semantic rerank"
             )
-            all_results.rank_fallback_reason = reason
+            all_results.rank_fallback_reason = _maybe_append_late_skip(reason)
             sys.stderr.write(f"tg: {reason}\n")
             return rerank_hybrid(
                 all_results, pattern, all_results.matched_file_paths, dense_index=None
@@ -3622,6 +3656,26 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
         # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates: that is
         # an unrecoverable fault the CLI boundary must catch and exit on (F4), not degrade here.
 
+    late_reranker = None
+    if late_rerank_requested:
+        from tensor_grep.core.retrieval_late import (
+            LateRerankUnavailableError,
+            late_available,
+            load_late_reranker,
+        )
+
+        late_ok, late_reason = late_available()
+        if not late_ok:
+            _note_late_rerank_degraded(all_results, late_reason or "late rerank unavailable")
+        else:
+            try:
+                late_reranker = load_late_reranker()
+            except LateRerankUnavailableError as exc:
+                _note_late_rerank_degraded(all_results, str(exc))
+            # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates: an
+            # unrecoverable fault the CLI boundary must catch and exit on, not degrade here --
+            # mirrors the dense leg immediately above.
+
     try:
         return rerank_hybrid(
             all_results,
@@ -3629,13 +3683,15 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
             all_results.matched_file_paths,
             bm25_index=bm25_index,
             dense_index=dense_index,
+            late_reranker=late_reranker,
         )
     except DenseUnavailableError as exc:
         # F1: a query-time dense fault (e.g. a dim mismatch) is raised from INSIDE rerank_hybrid's
         # call to `DenseIndex.query`, outside the try/except above (which only guards index
         # construction). Degrade to BM25-only here too -- reuse the SAME bm25_index (no second
-        # chunk pass) rather than let it traceback.
-        all_results.rank_fallback_reason = str(exc)
+        # chunk pass) rather than let it traceback. This also BYPASSES the late stage (it is only
+        # ever wired into the primary call above, never into this retry).
+        all_results.rank_fallback_reason = _maybe_append_late_skip(str(exc))
         sys.stderr.write(f"tg: {exc}\n")
         return rerank_hybrid(
             all_results,
