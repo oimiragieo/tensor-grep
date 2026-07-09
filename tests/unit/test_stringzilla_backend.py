@@ -270,6 +270,33 @@ def test_stringzilla_honors_max_count_non_indexed_path(backend, tmp_path, monkey
     assert [m.line_number for m in result.matches] == [1, 2]
 
 
+def test_stringzilla_native_fault_raises_backend_execution_error(tmp_path, monkeypatch):
+    """audit #10: search() previously had no try/except, so a native StringZilla panic
+    (e.g. from ``sz.Str()`` construction) escaped raw instead of surfacing as
+    BackendExecutionError per the Backend Fail-Closed Contract (base.py). A caller's
+    `except BackendExecutionError` handler (main.py's per-file CPU-fallback retry,
+    cli/main.py:6756-6761) must catch it instead of the search crashing outright."""
+    import stringzilla
+
+    from tensor_grep.backends.base import BackendExecutionError
+
+    log_file = tmp_path / "sys.log"
+    log_file.write_text("ERROR failure\n", encoding="utf-8")
+
+    def _raise_native_panic(*_args, **_kwargs):
+        raise RuntimeError("native stringzilla panic: kaboom")
+
+    monkeypatch.setattr(stringzilla, "Str", _raise_native_panic)
+
+    backend = StringZillaBackend()
+    # fixed_strings=False bypasses the pure-Python trigram-index fast path
+    # (_search_with_index) so the native sz.Str() construction is actually exercised.
+    with pytest.raises(BackendExecutionError) as exc_info:
+        backend.search(str(log_file), "ERROR", config=SearchConfig(fixed_strings=False))
+    assert isinstance(exc_info.value, RuntimeError)  # broader `except RuntimeError` still works
+    assert "kaboom" in str(exc_info.value)
+
+
 def test_stringzilla_in_memory_index_cache_obeys_entry_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES", "2")

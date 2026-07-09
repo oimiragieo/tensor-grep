@@ -102,11 +102,22 @@ def test_ast_to_graph_deep_tree_does_not_raise_recursion_error() -> None:
 
 # ---------------------------------------------------------------------------
 # D3 — StringZillaBackend: traceback is not swallowed by bare re-raise
+# audit #10 (supersedes D3's "propagate the raw type" stance): base.py's Backend
+# Fail-Closed Contract explicitly names "encoding/IO errors" as faults backends MUST
+# raise as BackendExecutionError instead of letting escape raw -- D3 predates that
+# contract clause and left search() with no try/except at all, so an IO fault (like a
+# TOCTOU-deleted file) fell into main.py's per-file loop's broad `except Exception`
+# and crashed the whole search instead of being retried on the CPU fallback (`except
+# BackendExecutionError`). The original exception is NOT swallowed: it is chained via
+# `raise ... from e`, so its type and traceback stay inspectable as __cause__.
 # ---------------------------------------------------------------------------
 
 
 def test_stringzilla_search_propagates_real_exception(tmp_path: Any) -> None:
-    """Errors from underlying I/O must propagate with their original type, not wrapped."""
+    """An IO fault (missing file) must raise BackendExecutionError, per the Backend
+    Fail-Closed Contract (base.py) -- not escape raw as D3 originally required, and not
+    be swallowed either: the original FileNotFoundError is preserved as __cause__."""
+    from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.backends.stringzilla_backend import StringZillaBackend
     from tensor_grep.core.config import SearchConfig
 
@@ -115,12 +126,15 @@ def test_stringzilla_search_propagates_real_exception(tmp_path: Any) -> None:
 
     try:
         backend.search(missing, "anything", config=SearchConfig(fixed_strings=True))
-    except FileNotFoundError:
-        pass  # correct — original exception type preserved
+    except BackendExecutionError as exc:
+        assert isinstance(exc.__cause__, FileNotFoundError)  # original type preserved as cause
     except Exception as exc:
         raise AssertionError(
-            f"Expected FileNotFoundError but got {type(exc).__name__}: {exc}"
+            f"Expected BackendExecutionError (caused by FileNotFoundError) but got "
+            f"{type(exc).__name__}: {exc}"
         ) from exc
+    else:
+        raise AssertionError("Expected BackendExecutionError, but search() returned normally")
 
 
 def test_stringzilla_search_returns_result_without_wrapper(tmp_path: Any) -> None:

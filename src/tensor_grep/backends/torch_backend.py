@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceDetector
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -169,7 +169,7 @@ class TorchBackend(ComputeBackend):
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         if not self.is_available():
-            raise RuntimeError("TorchBackend requires CUDA-enabled PyTorch.")
+            raise BackendExecutionError("TorchBackend requires CUDA-enabled PyTorch.")
 
         cfg = config or SearchConfig()
 
@@ -205,7 +205,7 @@ class TorchBackend(ComputeBackend):
                 else:
                     resolved_device_ids = []
         if not resolved_device_ids:
-            raise RuntimeError(
+            raise BackendExecutionError(
                 "TorchBackend requires concrete CUDA device IDs for routing; "
                 "detector returned no routable devices."
             )
@@ -213,92 +213,104 @@ class TorchBackend(ComputeBackend):
             list(resolved_device_ids),
             self.chunk_sizes_mb,
         )
-        devices = [torch.device(f"cuda:{device_id}") for device_id in resolved_device_ids]
+        # audit #10: the CUDA/tensor compute region below (device tensor allocation, file
+        # read, unfold/compare kernels, and the multi-GPU thread-pool fan-out) is wrapped so a
+        # native CUDA fault (OOM, device fault, driver error) or an IO/encoding fault never
+        # escapes raw -- it must surface as BackendExecutionError per the Backend Fail-Closed
+        # Contract (base.py) so main.py's per-file loop retries on the CPU fallback (`except
+        # BackendExecutionError`) instead of an unwrapped error falling into the broad `except
+        # Exception` there and re-raising uncaught.
+        try:
+            devices = [torch.device(f"cuda:{device_id}") for device_id in resolved_device_ids]
 
-        with open(file_path, encoding="utf-8", errors="replace") as handle:
-            lines = handle.read().splitlines()
+            with open(file_path, encoding="utf-8", errors="replace") as handle:
+                lines = handle.read().splitlines()
 
-        matches: list[MatchLine] = []
-        query = (
-            pattern.lower()
-            if cfg.ignore_case or (cfg.smart_case and pattern.islower())
-            else pattern
-        )
-
-        pattern_bytes = query.encode("utf-8", errors="replace")
-        routing_chunk_plan_mb: list[tuple[int, int]] = []
-        if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
-            routing_chunk_plan_mb = list(
-                zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
+            matches: list[MatchLine] = []
+            query = (
+                pattern.lower()
+                if cfg.ignore_case or (cfg.smart_case and pattern.islower())
+                else pattern
             )
-        if not pattern_bytes:
-            return SearchResult(
-                matches=[],
-                total_files=0,
-                total_matches=0,
-                routing_backend="TorchBackend",
-                routing_reason=(
-                    "torch_multi_gpu_fanout" if len(devices) > 1 else "torch_single_gpu"
-                ),
-                routing_gpu_device_ids=list(resolved_device_ids),
-                routing_gpu_chunk_plan_mb=routing_chunk_plan_mb,
-                routing_distributed=len(devices) > 1,
-                routing_worker_count=len(devices),
-            )
-        pattern_len = len(pattern_bytes)
-        pattern_tensors = [
-            torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=device)
-            for device in devices
-        ]
 
-        numbered_lines = list(enumerate(lines, 1))
-        if len(devices) > 1:
-            if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(devices):
-                shards = self._build_weighted_shards(numbered_lines, normalized_chunk_sizes)
-            else:
-                shards = self._build_round_robin_shards(numbered_lines, len(devices))
-
-            with ThreadPoolExecutor(max_workers=len(devices)) as executor:
-                futures = []
-                for slot, device in enumerate(devices):
-                    futures.append(
-                        executor.submit(
-                            self._search_lines_on_device,
-                            torch=torch,
-                            numbered_lines=shards[slot],
-                            query=query,
-                            cfg=cfg,
-                            file_path=file_path,
-                            pattern_tensor=pattern_tensors[slot],
-                            pattern_len=pattern_len,
-                            device=device,
-                        )
-                    )
-                for future in futures:
-                    matches.extend(future.result())
-            matches.sort(key=lambda item: item.line_number)
-            if cfg.max_count:
-                matches = matches[: cfg.max_count]
-        else:
-            for line_number, line in numbered_lines:
-                is_match = self._contains_literal_torch(
-                    torch=torch,
-                    line=(
-                        line.lower()
-                        if cfg.ignore_case or (cfg.smart_case and query.islower())
-                        else line
-                    ),
-                    pattern_tensor=pattern_tensors[0],
-                    pattern_len=pattern_len,
-                    device=devices[0],
+            pattern_bytes = query.encode("utf-8", errors="replace")
+            routing_chunk_plan_mb: list[tuple[int, int]] = []
+            if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
+                routing_chunk_plan_mb = list(
+                    zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
                 )
-                if cfg.invert_match:
-                    is_match = not is_match
+            if not pattern_bytes:
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="TorchBackend",
+                    routing_reason=(
+                        "torch_multi_gpu_fanout" if len(devices) > 1 else "torch_single_gpu"
+                    ),
+                    routing_gpu_device_ids=list(resolved_device_ids),
+                    routing_gpu_chunk_plan_mb=routing_chunk_plan_mb,
+                    routing_distributed=len(devices) > 1,
+                    routing_worker_count=len(devices),
+                )
+            pattern_len = len(pattern_bytes)
+            pattern_tensors = [
+                torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=device)
+                for device in devices
+            ]
 
-                if is_match:
-                    matches.append(MatchLine(line_number=line_number, text=line, file=file_path))
-                if cfg.max_count and len(matches) >= cfg.max_count:
-                    break
+            numbered_lines = list(enumerate(lines, 1))
+            if len(devices) > 1:
+                if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(devices):
+                    shards = self._build_weighted_shards(numbered_lines, normalized_chunk_sizes)
+                else:
+                    shards = self._build_round_robin_shards(numbered_lines, len(devices))
+
+                with ThreadPoolExecutor(max_workers=len(devices)) as executor:
+                    futures = []
+                    for slot, device in enumerate(devices):
+                        futures.append(
+                            executor.submit(
+                                self._search_lines_on_device,
+                                torch=torch,
+                                numbered_lines=shards[slot],
+                                query=query,
+                                cfg=cfg,
+                                file_path=file_path,
+                                pattern_tensor=pattern_tensors[slot],
+                                pattern_len=pattern_len,
+                                device=device,
+                            )
+                        )
+                    for future in futures:
+                        matches.extend(future.result())
+                matches.sort(key=lambda item: item.line_number)
+                if cfg.max_count:
+                    matches = matches[: cfg.max_count]
+            else:
+                for line_number, line in numbered_lines:
+                    is_match = self._contains_literal_torch(
+                        torch=torch,
+                        line=(
+                            line.lower()
+                            if cfg.ignore_case or (cfg.smart_case and query.islower())
+                            else line
+                        ),
+                        pattern_tensor=pattern_tensors[0],
+                        pattern_len=pattern_len,
+                        device=devices[0],
+                    )
+                    if cfg.invert_match:
+                        is_match = not is_match
+
+                    if is_match:
+                        matches.append(
+                            MatchLine(line_number=line_number, text=line, file=file_path)
+                        )
+                    if cfg.max_count and len(matches) >= cfg.max_count:
+                        break
+        except Exception as e:
+            raise BackendExecutionError(f"TorchBackend compute failed: {e}") from e
 
         return SearchResult(
             matches=matches,

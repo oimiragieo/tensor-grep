@@ -126,14 +126,15 @@ class RustCoreBackend(ComputeBackend):
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         if not self.inner:
-            return SearchResult(
-                matches=[],
-                total_files=0,
-                total_matches=0,
-                routing_backend="RustCoreBackend",
-                routing_reason="rust_unavailable",
-                routing_distributed=False,
-                routing_worker_count=1,
+            # audit #14: is_available() (HAVE_RUST) gates pipeline selection of this backend,
+            # so this is normally unreachable -- but a direct caller that skips the
+            # is_available() gate must not get a silent empty-but-success SearchResult for
+            # what is actually a missing native extension. Per the Backend Fail-Closed
+            # Contract (base.py), a backend must raise BackendExecutionError instead of
+            # returning an empty result that is indistinguishable from a genuine no-match.
+            raise BackendExecutionError(
+                "RustCoreBackend requires the native tensor_grep.rust_core extension, "
+                "which is not available (HAVE_RUST is False)."
             )
 
         ignore_case = False
