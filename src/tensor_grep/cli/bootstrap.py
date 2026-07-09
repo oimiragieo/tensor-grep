@@ -45,6 +45,16 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--replace",
     "--stats",
     "--type-list",
+    # --type/-t, --type-not/-T, and --iglob narrow WHICH files match but do NOT bound the walk, so
+    # a bare `tg search PAT -t py` / `--iglob '*.py'` (no PATH) on a large root is the same
+    # unbounded-walk DoS as bare --glob (audit #88 siblings; the guard's own scope condition is
+    # glob|iglob|file_type|type_not). Force them to the full CLI where _should_refuse_unbounded_*
+    # guards fire, rather than the unguarded rg passthrough.
+    "--type",
+    "--type-not",
+    "--iglob",
+    "-t",
+    "-T",
     "-l",
     "-g",
     "-r",
@@ -55,8 +65,11 @@ _TG_ONLY_SEARCH_FLAG_PREFIXES = (
     "--generate=",
     "--glob=",
     "--gpu-device-ids=",
+    "--iglob=",
     "--lang=",
     "--replace=",
+    "--type=",
+    "--type-not=",
 )
 
 _SCAN_FULL_CLI_FLAGS = {
@@ -307,6 +320,22 @@ def _requires_full_cli(search_args: list[str]) -> bool:
             return True
         if arg.startswith(_TG_ONLY_SEARCH_FLAG_PREFIXES):
             return True
+        # Bundled/attached short-flag value form of the walk-scope filters: rg accepts
+        # `-g*.py` == `-g *.py`, `-tpy` == `-t py`, `-Tpy` == `-T py`, and mid-bundle
+        # `-itpy` == `-i -t py`. The exact-token / `--x=` checks above miss these, so a bare
+        # bundled filter would slip into the unguarded rg passthrough (bundled sibling of the
+        # -g/-t/--type walk-DoS, bug #88). The walk-scope short flags are -g (glob), -t (type),
+        # -T (type-not); --iglob has no short form. Walk the short cluster: the first
+        # VALUE-CONSUMING short flag swallows the remainder, so if that flag is -g/-t/-T it
+        # carries an attached walk-scope value -> route to the full CLI (where the walk guard
+        # fires). A value-consuming flag that is NOT one of those (e.g. -f<file>, -C3) swallows
+        # the rest as its value, so any later g/t is data, not a flag -> stop scanning this token.
+        if len(arg) > 2 and arg.startswith("-") and not arg.startswith("--"):
+            for ch in arg[1:]:
+                if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+                    if ch in ("g", "t", "T"):
+                        return True
+                    break
     return False
 
 

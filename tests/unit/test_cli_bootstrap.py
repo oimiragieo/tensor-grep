@@ -307,10 +307,15 @@ def test_main_entry_should_passthrough_raw_rg_style_invocation(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["-i", "ERROR", "."]}
 
 
+# NOTE: `-t js` (and the other walk-scope filters -g/-T/--type/--glob/--iglob) used to be
+# listed here as an rg-passthrough case, but they now route to the full CLI so the unbounded
+# implicit-path walk guard can fire on a bare (no-PATH) filter (bug #88 walk-DoS). `-g`/`--glob`
+# already routed to the full CLI on main; `-t`/`-T`/`--type`/`--type-not` were made consistent
+# with them. The routing is now pinned directly at test_requires_full_cli_routes_every_walk_scope_filter_form.
+# This test keeps a NON-walk-scope option-first shortcut (`--count-matches`) that still passes through.
 @pytest.mark.parametrize(
     ("argv", "expected_search_args"),
     [
-        (["tg", "-t", "js", "ERROR", "."], ["-t", "js", "ERROR", "."]),
         (
             ["tg", "--count-matches", "ERROR", "."],
             ["--count-matches", "ERROR", "."],
@@ -457,6 +462,54 @@ def test_requires_full_cli_ignoring_rg_json_only_exempts_json() -> None:
         "ERROR",
         ".",
     ])
+
+
+def test_requires_full_cli_routes_every_walk_scope_filter_form() -> None:
+    """DIRECT bootstrap-routing guard for the bug #88 walk-DoS class (re-gate BLOCK #2/#3).
+
+    Every form of a walk-scope filter (-g/--glob/--iglob/-t/--type/-T/--type-not) that narrows
+    WHICH files match but not the WALK must route to the full CLI, where the unbounded-walk
+    guard fires. This exercises ``_requires_full_cli`` DIRECTLY -- the parametrized cases in
+    test_cli_modes use ``CliRunner().invoke(app, ...)``, which enters the Typer app past the
+    bootstrap front door (the CliRunner trap in AGENTS.md) and would stay green even if this
+    routing were reverted; they do NOT guard the fix. This does.
+    """
+    must_route = [
+        ["-t", "py"],
+        ["--type", "py"],
+        ["-T", "py"],
+        ["--type-not", "py"],
+        ["-g", "*.py"],
+        ["--glob", "*.py"],
+        ["--iglob", "*.py"],
+        ["--type=py"],
+        ["--type-not=py"],
+        ["--glob=*.py"],
+        ["--iglob=*.py"],
+        ["-tpy"],  # bundled attached-value short forms (rg idiom)
+        ["-Tpy"],
+        ["-g*.py"],
+        ["-gsrc/**/*.py"],
+        ["-itpy"],  # mid-bundle: -i then -t py
+        ["-ig*.py"],  # mid-bundle: -i then -g *.py
+    ]
+    for args in must_route:
+        assert bootstrap._requires_full_cli(args), f"walk-scope form not routed to full CLI: {args}"
+
+    # NON-walk-scope value-consuming short flags must NOT be over-routed: their leading
+    # value-consumer swallows the remainder, so a g/t inside the value is data, not a flag.
+    must_not_route = [
+        ["-C3"],
+        ["-m5"],
+        ["-A2"],
+        ["-fpat.txt"],
+        ["-jtpy"],  # -j (threads) consumes "tpy" -- not a type filter
+        ["-ftpy"],  # -f (file) consumes "tpy"
+        ["-in"],  # pure boolean cluster
+        ["TODO", "src"],  # plain pattern + path
+    ]
+    for args in must_not_route:
+        assert not bootstrap._requires_full_cli(args), f"non-scope search over-routed: {args}"
 
 
 def test_main_entry_should_strip_noop_rg_format_and_keep_sort_for_rg_passthrough(monkeypatch):

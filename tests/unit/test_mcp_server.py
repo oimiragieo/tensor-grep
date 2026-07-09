@@ -875,6 +875,38 @@ def test_tg_search_refuses_large_root_scan_for_non_ripgrep_backend():
     assert "1500" in payload["error"]["message"]
 
 
+def test_tg_search_refuses_glob_with_default_path_on_large_root():
+    """Bug #88 (dogfood v1.54.0): a `glob` filter narrows WHICH files match, it does not
+    bound how much of the tree must be walked to find them. The MCP `path` parameter defaults
+    to "." at the Python level, indistinguishable from an omitted argument, so `glob` alone
+    must not exempt a `path="."` call from the large-root refusal -- otherwise a bare
+    `tg_search(pattern=..., glob=...)` MCP call walks/searches an oversized root unbounded,
+    the same shape as the CLI's bare `tg search --glob ... PATTERN` hang."""
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    many_files = [f"file_{i}.py" for i in range(2000)]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = many_files
+
+        out = mcp_server.tg_search("ERROR", ".", glob="*.py")
+
+    fake_backend.search.assert_not_called()
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "broad_scan_refused"
+    assert "1500" in payload["error"]["message"]
+
+
 def test_tg_ast_search_backend_execution_error_skips_file_and_keeps_partial_results():
     from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.cli import mcp_server

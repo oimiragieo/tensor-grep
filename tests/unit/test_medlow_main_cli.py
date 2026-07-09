@@ -242,6 +242,7 @@ def test_m15_detector_keys_on_child_project_markers(tmp_path: Path) -> None:
         [str(workspace)],
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
     assert refuse is True
     assert dirs == ["a", "b", "c"]
