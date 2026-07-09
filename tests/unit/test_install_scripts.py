@@ -280,6 +280,7 @@ def test_install_ps1_should_create_git_bash_shims_without_pathext():
 
     assert "$frontdoorBashPath" in content
     assert "$msysInstallDir" in content
+    assert 'if [ -f "$msysInstallDir/.venv/Scripts/python.exe" ]; then' in content
     assert 'TG_NATIVE="$msysInstallDir/bin/tg.exe"' in content
     assert 'TG_PYTHON="$msysInstallDir/.venv/Scripts/python.exe"' in content
     assert 'export TG_SIDECAR_PYTHON="`$TG_PYTHON"' in content
@@ -287,8 +288,6 @@ def test_install_ps1_should_create_git_bash_shims_without_pathext():
     assert 'if [ -f "`$TG_NATIVE" ]; then' in content
     assert '    exec "`$TG_NATIVE" "`$@"' in content
     assert 'exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"' in content
-    assert 'TG_FRONTDOOR="$msysFrontdoorPath"' in content
-    assert 'exec "`$TG_FRONTDOOR" "`$@"' in content
 
 
 def test_install_ps1_should_create_wsl_aware_bash_shims():
@@ -296,11 +295,41 @@ def test_install_ps1_should_create_wsl_aware_bash_shims():
 
     assert "function Convert-ToWslPath" in content
     assert "$wslInstallDir = Convert-ToWslPath $installDir" in content
-    assert "$wslFrontdoorPath = Convert-ToWslPath $frontdoorBashPath" in content
-    assert "grep -qi microsoft /proc/version" in content
     assert 'TG_NATIVE="$wslInstallDir/bin/tg.exe"' in content
     assert 'TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"' in content
-    assert 'TG_FRONTDOOR="$wslFrontdoorPath"' in content
+    # The MSYS-native-path existence check (git-bash/MSYS: "/c/..." resolves) is tried FIRST;
+    # only a miss falls through to the WSL-style "/mnt/c/..." paths in the else branch, since on
+    # real WSL "/c/..." does not exist so the builtin `[ -f ]` test correctly fails closed to WSL.
+    msys_check_index = content.index('if [ -f "$msysInstallDir/.venv/Scripts/python.exe" ]; then')
+    wsl_branch_index = content.index('TG_NATIVE="$wslInstallDir/bin/tg.exe"')
+    assert msys_check_index < wsl_branch_index
+
+
+def test_install_ps1_bash_shim_is_single_hop_with_no_grep_wsl_probe():
+    """Audit #94 Part B: the compat-shim bash files (~/bin/tg, ~/.local/bin/tg) must embed the
+    front door's own MSYS-vs-WSL detection + native-or-python exec logic directly instead of
+    exec-chaining to a second script, and that detection must be a builtin `[ -f ... ]` test, never
+    a `grep` subprocess fork. Both were a per-invocation process-spawn tax paid on every bash `tg`
+    call from git-bash/MSYS (~90-110ms for the extra hop, ~64-66ms/hop for the grep fork)."""
+    content = _read_script("scripts/install.ps1")
+
+    # No grep-based /proc/version probe anywhere in the generated shim/front-door content.
+    assert "grep -qi microsoft" not in content
+    assert "/proc/version" not in content
+
+    # No exec-chain from the compat shim to a separately-templated front-door script. The old
+    # 2-hop shape used a dedicated TG_FRONTDOOR variable + a second $bashShimContent template to
+    # `exec` from the shim into $frontdoorBashPath; both are gone.
+    assert "TG_FRONTDOOR" not in content
+    assert "$bashShimContent" not in content
+    assert "$wslFrontdoorPath" not in content
+    assert "$msysFrontdoorPath" not in content
+
+    # The compat-shim write reuses the SAME content variable as the staged front-door write, so
+    # both files carry identical single-hop logic by construction (a shared source, not a
+    # duplicated template that could drift out of sync).
+    assert "Write-BashFile -Path $stagingFrontdoorBashPath -Value $frontdoorBashContent" in content
+    assert "Write-BashFile -Path $bashShimPath -Value $frontdoorBashContent" in content
 
 
 def test_install_ps1_should_write_bash_shims_without_windows_newline_append():
@@ -314,7 +343,21 @@ def test_install_ps1_should_write_bash_shims_without_windows_newline_append():
     assert "Set-Content -Path $frontdoorBashPath" not in content
     assert "Set-Content -Path $bashShimPath" not in content
     assert "Write-BashFile -Path $stagingFrontdoorBashPath -Value $frontdoorBashContent" in content
-    assert "Write-BashFile -Path $bashShimPath -Value $bashShimContent" in content
+    assert "Write-BashFile -Path $bashShimPath -Value $frontdoorBashContent" in content
+
+
+def test_install_sh_bash_shim_is_single_hop_copy_of_frontdoor():
+    """Audit #94 Part B (symmetry check): install.sh's compat shims ($HOME/.local/bin/tg,
+    $HOME/bin/tg) never had install.ps1's grep-based WSL probe (Linux/macOS have one canonical
+    path convention, so there is no MSYS-vs-WSL branch to replace), but they DID re-exec the
+    already-committed front door as a second bash process. The shim must instead be a
+    byte-identical copy of the committed front door: 1 bash hop per invocation, not 2."""
+    content = _read_script("scripts/install.sh")
+
+    assert 'cp "$INSTALL_DIR/bin/tg" "$SHIM_PATH"' in content
+    # The old wrapper-shim heredoc (a second bash process re-invoking the committed front door)
+    # must be gone.
+    assert '"$INSTALL_DIR/bin/tg" "\\$@"' not in content
 
 
 def test_install_ps1_should_place_extras_before_pinned_version_specifier():
