@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.51.5 (2026-07-09)
+
+### Bug Fixes
+
+- **mcp**: Confine every read-path param via a shared _confine_read_path chokepoint + bound the
+  classify read + gate signing_key — close MCP arbitrary-file-read exfil (audit #81 #1/#2/#12, #76)
+  ([#464](https://github.com/oimiragieo/tensor-grep/pull/464),
+  [`5ef0fd9`](https://github.com/oimiragieo/tensor-grep/commit/5ef0fd95781901f38be53a83bed319c1a2e43b10))
+
+* fix(mcp): confine read-path params (tg_classify_logs file_path, tg_ruleset_scan
+  baseline/suppressions) via a shared _confine_read_path chokepoint + bound the classify read + gate
+  signing_key (audit #81 #1/#2/#12, closes #76 read-path exfil)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(mcp): skipif-guard the Windows-only UNC confinement tests (CI-green on POSIX) + confine
+  tg_file_imports/importers/session-importers file + tg_rewrite_apply policy read-paths + coverage
+  (Opus gate on #81 #1/#2/#12)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.4 (2026-07-09)
 
 ### Bug Fixes
