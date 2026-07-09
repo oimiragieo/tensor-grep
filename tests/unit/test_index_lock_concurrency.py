@@ -274,9 +274,15 @@ def test_open_session_uncontended_hot_path_unaffected(tmp_path: Path) -> None:
 
     # An uncontended lock acquire/release is a single os.open/os.close pair (microseconds).
     # Guard against the lock adding material overhead: total open_session time (repo scan +
-    # payload write + the now-LOCKED index RMW) stays within a small, generous multiple of
-    # the unlocked repo-scan-only baseline -- not blown out toward the 5s acquire timeout.
-    assert elapsed < max(baseline_elapsed * 3.0, 0.05) + 1.0
+    # payload write + the now-LOCKED index RMW) stays within a generous multiple of the
+    # unlocked repo-scan-only baseline OR a flat 4.0s floor -- not blown out toward the 5s
+    # acquire timeout. The flat floor (mirroring the sibling checkpoint hot-path test at 4.0s)
+    # replaces a fragile `baseline*3 + 1.0` bound: when the fixture scan is fast (tiny baseline)
+    # but the runner is loaded DURING open_session (payload write + lock RMW), the pure ratio
+    # false-failed on windows CI (flake #64). max(ratio, 4.0) keeps the ratio signal for a
+    # slow-scan runner while staying tolerant of a loaded one, and 4.0 < 5.0 still catches a
+    # genuinely-contended lock drifting toward the acquire timeout.
+    assert elapsed < max(baseline_elapsed * 3.0, 4.0)
     indexed = {rec.session_id for rec in session_store._load_index(root)}
     assert result.session_id in indexed
 
