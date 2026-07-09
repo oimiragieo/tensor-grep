@@ -1272,6 +1272,15 @@ def execute_rewrite_apply_json(
         # anchor). Forward the RESOLVED path so load_apply_policy reads the same
         # anchor-validated location this check validated.
         policy_anchor = Path(path).expanduser().resolve()
+        # `path` may be a single FILE (a targeted rewrite), not a directory. A file has no
+        # descendants, so confining the policy under the file itself fail-closed-REJECTS a
+        # legitimately co-located policy (e.g. path=src/foo.py, policy=src/policy.json). Anchor
+        # to the target's parent directory when path is not a directory, so a co-located policy
+        # is allowed while a traversal escape (policy=../../etc/passwd) is still rejected -- the
+        # confinement scope is the apply target's own directory subtree, which the caller is
+        # already rewriting (audit #76 Opus-gate nit; the directory case is unchanged).
+        if not policy_anchor.is_dir():
+            policy_anchor = policy_anchor.parent
         try:
             policy = str(_confine_read_path(policy, policy_anchor, label="policy"))
         except ValueError as exc:

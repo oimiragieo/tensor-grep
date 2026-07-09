@@ -3635,6 +3635,70 @@ def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path):
     assert any(detail["field"] == "on_failure" for detail in parsed["error"]["details"])
 
 
+def test_tg_rewrite_apply_accepts_co_located_policy_for_single_file_target(tmp_path):
+    """audit #76 (Opus-gate nit on #464): when `path` is a single FILE (a targeted rewrite),
+    a policy co-located in the file's directory must reach load_apply_policy's schema
+    validation (code="invalid_policy"), NOT be fail-closed-refused by confinement
+    (code="invalid_input"). Pre-fix the policy anchor was the file itself, which has no
+    descendants, so any co-located policy was rejected."""
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    target = proj / "sample.py"
+    target.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+    policy_path = proj / "apply-policy.json"
+    policy_path.write_text(
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+            # omit on_failure: pins the failure to load_apply_policy's schema validation,
+            # proving execution got PAST the path-confinement check with path=a single file.
+        }),
+        encoding="utf-8",
+    )
+
+    out = mcp_server.tg_rewrite_apply(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path=str(target),  # a FILE, not a directory
+        policy=str(policy_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "invalid_policy"
+    assert any(detail["field"] == "on_failure" for detail in parsed["error"]["details"])
+
+
+def test_tg_rewrite_apply_still_rejects_policy_outside_single_file_target_dir(tmp_path):
+    """audit #76: anchoring the policy to the target FILE's parent directory (so a co-located
+    policy works) must NOT widen confinement -- a policy OUTSIDE the target's directory is still
+    fail-closed refused (code="invalid_input"), preserving the #464 exfil guard."""
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    target = proj / "sample.py"
+    target.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+    # sibling of proj/, i.e. OUTSIDE the target file's parent directory
+    escape = tmp_path / "outside-policy.json"
+    escape.write_text(json.dumps({"version": 1}), encoding="utf-8")
+
+    out = mcp_server.tg_rewrite_apply(
+        pattern="x",
+        replacement="y",
+        lang="python",
+        path=str(target),
+        policy=str(escape),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "invalid_input"
+
+
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
     from tensor_grep.cli import mcp_server
 
