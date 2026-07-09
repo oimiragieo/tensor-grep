@@ -1602,6 +1602,14 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
 # (never a full-tree enumeration -- that would just be the unbounded work this guard exists to avoid)
 # and the caller resumes iterating from those SAME already-pulled entries via the returned iterator,
 # so nothing is scanned twice.
+#
+# Bug #88 (dogfood v1.54.0): the guards below now require a `paths_defaulted` bool (a `--glob`/
+# `--type` filter no longer bypasses them when PATH was left to default -- see
+# `cli/main.py::_has_walk_scope_bound`). The MCP `path` parameter has a Python-level default
+# (`path: str = "."`) rather than the CLI's argv-shape signal, so an explicit `path="."` and an
+# omitted `path` are indistinguishable here -- treat the literal default value "." as
+# "defaulted" (the conservative, safe reading) so a bare `tg_search(pattern=..., glob=...)` MCP
+# call gets the same protection as the CLI's bare `tg search --glob ... PATTERN`.
 def _mcp_broad_root_scan_refusal(
     path: str,
     config: "SearchConfig",
@@ -1619,9 +1627,13 @@ def _mcp_broad_root_scan_refusal(
     """
     scanner = DirectoryScanner(config)
     walker: Iterator[str] = iter(scanner.walk(path))
+    paths_defaulted = path == "."
 
     refuse_vendored, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
-        [path], config, allow_broad_generated_scan=False
+        [path],
+        config,
+        allow_broad_generated_scan=False,
+        paths_defaulted=paths_defaulted,
     )
     if refuse_vendored:
         return _format_unbounded_vendored_root_scan_error(vendored_dirs), scanner, walker
@@ -1637,7 +1649,10 @@ def _mcp_broad_root_scan_refusal(
         except StopIteration:
             break
     if _should_refuse_unbounded_large_root_scan(
-        len(probe_files), config, allow_broad_generated_scan=False
+        len(probe_files),
+        config,
+        allow_broad_generated_scan=False,
+        paths_defaulted=paths_defaulted,
     ):
         return (
             _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),

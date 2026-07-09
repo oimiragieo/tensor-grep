@@ -690,6 +690,7 @@ def test_workspace_root_guard_allows_bounded_workspace_scan(tmp_path: Path):
         [str(workspace)],
         SearchConfig(glob=["*.py"]),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is False
@@ -708,6 +709,7 @@ def test_workspace_root_guard_allows_explicit_workspace_scan(tmp_path: Path):
         [str(workspace)],
         SearchConfig(),
         allow_broad_generated_scan=True,
+        paths_defaulted=False,
     )
 
     assert refused is False
@@ -727,6 +729,53 @@ def test_workspace_root_guard_allows_real_repo_root(tmp_path: Path):
         [str(repo)],
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
+    )
+
+    assert refused is False
+    assert project_dirs == []
+
+
+def test_workspace_root_guard_refuses_glob_with_implicit_path(tmp_path: Path):
+    """Bug #88 (dogfood v1.54.0): `--glob` narrows WHICH files match, it does not bound how
+    much of the tree must be walked to find them. When PATH was left to default (no explicit
+    PATH typed -- `paths_defaulted=True`), `--glob` alone must NOT exempt a workspace-shaped
+    root from this refusal, or a bare `tg search --glob X PATTERN` from a workspace root walks
+    every sibling project unbounded (the reported hang)."""
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    for project_name in ("alpha", "beta", "gamma"):
+        project = workspace / project_name
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(workspace)],
+        SearchConfig(glob=["*.py"]),
+        allow_broad_generated_scan=False,
+        paths_defaulted=True,
+    )
+
+    assert refused is True
+    assert project_dirs == ["alpha", "beta", "gamma"]
+
+
+def test_workspace_root_guard_allows_max_depth_with_implicit_path(tmp_path: Path):
+    """`--max-depth` genuinely bounds the WALK itself (unlike `--glob`/`--type`, which only
+    filter already-encountered files), so it remains a valid escape hatch even when PATH was
+    left to default -- this is not the bug #88 shape."""
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    for project_name in ("alpha", "beta", "gamma"):
+        project = workspace / project_name
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(workspace)],
+        SearchConfig(max_depth=1),
+        allow_broad_generated_scan=False,
+        paths_defaulted=True,
     )
 
     assert refused is False
@@ -758,6 +807,7 @@ def test_vendored_root_guard_refuses_single_project_root_with_top_level_vendor_d
         [str(repo)],
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is True
@@ -781,6 +831,7 @@ def test_vendored_root_guard_excludes_walker_skipped_node_modules(tmp_path: Path
         [str(repo)],
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is False
@@ -797,10 +848,31 @@ def test_vendored_root_guard_allows_bounded_scan(tmp_path: Path):
         [str(repo)],
         SearchConfig(glob=["*.py"]),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is False
     assert vendored_dirs == []
+
+
+def test_vendored_root_guard_refuses_glob_with_implicit_path(tmp_path: Path):
+    """Bug #88 (dogfood v1.54.0): same gap as the workspace-root guard above, but for a
+    vendored-named top-level dir -- `--glob` must not exempt an implicit-path (defaulted)
+    scan from the vendored-root refusal."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (repo / "vendor").mkdir()
+
+    refused, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
+        [str(repo)],
+        SearchConfig(glob=["*.py"]),
+        allow_broad_generated_scan=False,
+        paths_defaulted=True,
+    )
+
+    assert refused is True
+    assert vendored_dirs == ["vendor"]
 
 
 def test_vendored_root_guard_allows_normal_small_repo(tmp_path: Path):
@@ -814,6 +886,7 @@ def test_vendored_root_guard_allows_normal_small_repo(tmp_path: Path):
         [str(repo)],
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is False
@@ -887,16 +960,48 @@ def test_large_root_guard_refuses_over_ceiling_candidate_count():
         2000,
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is True
 
 
 def test_large_root_guard_allows_scoped_glob_over_ceiling():
+    """An explicit PATH combined with `--glob` is a deliberate, scoped request -- must still
+    run, not be refused (Trap #3, unchanged by bug #88's fix)."""
     refused = _should_refuse_unbounded_large_root_scan(
         2000,
         SearchConfig(glob=["*.py"]),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
+    )
+
+    assert refused is False
+
+
+def test_large_root_guard_refuses_glob_with_implicit_path_over_ceiling():
+    """Bug #88 (dogfood v1.54.0): with NO explicit PATH (`paths_defaulted=True`), `--glob`
+    alone must not exempt an over-ceiling candidate count from refusal -- the ceiling is
+    evaluated on the ACTUAL post-glob-filter count, so this never under-refuses a genuinely
+    scoped-down glob (see the ceiling docstring)."""
+    refused = _should_refuse_unbounded_large_root_scan(
+        2000,
+        SearchConfig(glob=["*.py"]),
+        allow_broad_generated_scan=False,
+        paths_defaulted=True,
+    )
+
+    assert refused is True
+
+
+def test_large_root_guard_allows_max_depth_with_implicit_path_over_ceiling():
+    """`--max-depth` genuinely bounds the walk, so it remains a valid escape hatch even with
+    an implicit (defaulted) PATH -- this is not the bug #88 shape."""
+    refused = _should_refuse_unbounded_large_root_scan(
+        2000,
+        SearchConfig(max_depth=2),
+        allow_broad_generated_scan=False,
+        paths_defaulted=True,
     )
 
     assert refused is False
@@ -907,6 +1012,7 @@ def test_large_root_guard_allows_explicit_opt_in():
         2000,
         SearchConfig(),
         allow_broad_generated_scan=True,
+        paths_defaulted=True,
     )
 
     assert refused is False
@@ -917,6 +1023,7 @@ def test_large_root_guard_allows_count_under_ceiling():
         50,
         SearchConfig(),
         allow_broad_generated_scan=False,
+        paths_defaulted=False,
     )
 
     assert refused is False
@@ -962,6 +1069,54 @@ def test_plain_search_scoped_glob_still_runs_on_large_root(monkeypatch, tmp_path
 
     assert result.exit_code == 0, result.output
     assert "broad root scan refused" not in result.output
+
+
+def test_plain_search_refuses_glob_with_implicit_path_on_large_root(monkeypatch, tmp_path: Path):
+    """Bug #88 (dogfood v1.54.0): `tg search --glob X PATTERN` with NO positional PATH used to
+    walk/search a large single-project root unbounded, because `--glob` was (wrongly) treated
+    as sufficient scoping for the large-root-ceiling guard regardless of whether PATH was
+    explicit. Reproduce the exact reported shape: no PATH argument at all (cwd supplies it),
+    `--glob` present, over the file-count ceiling. Force native+rg off (F6 precondition,
+    matching the sibling unscoped test above) and assert the guard now refuses instantly."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+    repo = tmp_path / "repo"
+    _make_stub_file_repo(repo, 2000)
+    monkeypatch.chdir(repo)
+
+    start = time.perf_counter()
+    result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*.py"])
+    elapsed = time.perf_counter() - start
+
+    assert result.exit_code == 2, result.output
+    assert "broad root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+
+
+def test_plain_search_refuses_glob_with_implicit_path_on_workspace_root(
+    monkeypatch, tmp_path: Path
+):
+    """Bug #88 companion: the workspace-shaped root variant of the same gap (the actual shape
+    hit in the field -- a multi-project workspace directory, not a single oversized repo).
+    Deliberately does NOT force native/rg off: the workspace-root guard must fire BEFORE the
+    rg-passthrough fast path is ever considered, so this proves the fix closes the gap in the
+    realistic "rg is available" default configuration too."""
+    for project_name in ("alpha", "beta", "gamma"):
+        project = tmp_path / project_name
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    start = time.perf_counter()
+    result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*.py"])
+    elapsed = time.perf_counter() - start
+
+    assert result.exit_code == 2, result.output
+    assert "broad workspace-root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
 
 
 def test_plain_search_unscoped_still_runs_on_small_repo(monkeypatch, tmp_path: Path):

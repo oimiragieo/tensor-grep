@@ -3889,6 +3889,27 @@ def _has_generated_scan_bound(config: "SearchConfig") -> bool:
     )
 
 
+# Bug #88 (dogfood v1.54.0): `_has_generated_scan_bound` above answers "does this query have
+# ANY scope-narrowing flag" -- correct for `_should_refuse_unbounded_generated_scan` (its own
+# purpose: is a `--no-ignore` scan of a generated dir intentional), but WRONG when reused as
+# the escape hatch for the workspace-root / vendored-root / large-root-ceiling guards below.
+# `--glob`/`--iglob`/`--type`/`--type-not` only filter WHICH already-encountered files count
+# as candidates -- they do not reduce how much of the tree must be walked to find them, unlike
+# `--max-depth`, which genuinely bounds the walk itself. Treating a bare `--glob` as "already
+# bounded" let a `tg search --glob X PATTERN` with NO explicit PATH auto-scope to an entire
+# workspace/vendored/oversized root with all three refusal guards silently disabled -- exactly
+# the shape reported in bug #88. The fix: `--glob`/`--iglob`/`--type`/`--type-not` remain a
+# valid escape hatch ONLY when the caller also typed an explicit PATH (a deliberate, scoped
+# root deliberately narrowed further by a file filter); when PATH was left to default, only
+# `--max-depth` (or `--allow-broad-generated-scan`) may bypass these three guards.
+def _has_walk_scope_bound(config: "SearchConfig", *, paths_defaulted: bool) -> bool:
+    if config.max_depth is not None:
+        return True
+    if paths_defaulted:
+        return False
+    return bool(config.glob or config.iglob or config.file_type or config.type_not)
+
+
 def _path_has_project_marker(path: Path) -> bool:
     for marker in _BROAD_WORKSPACE_PROJECT_MARKERS:
         try:
@@ -3927,8 +3948,9 @@ def _should_refuse_unbounded_workspace_root_scan(
     config: "SearchConfig",
     *,
     allow_broad_generated_scan: bool,
+    paths_defaulted: bool,
 ) -> tuple[bool, list[str]]:
-    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+    if allow_broad_generated_scan or _has_walk_scope_bound(config, paths_defaulted=paths_defaulted):
         return False, []
     project_dirs = _workspace_project_child_names(paths)
     return bool(project_dirs), project_dirs
@@ -3983,8 +4005,9 @@ def _should_refuse_unbounded_vendored_root_scan(
     config: "SearchConfig",
     *,
     allow_broad_generated_scan: bool,
+    paths_defaulted: bool,
 ) -> tuple[bool, list[str]]:
-    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+    if allow_broad_generated_scan or _has_walk_scope_bound(config, paths_defaulted=paths_defaulted):
         return False, []
     vendored_dirs = _root_top_level_vendored_dir_names(paths)
     return bool(vendored_dirs), vendored_dirs
@@ -4072,6 +4095,13 @@ def _format_unbounded_vendored_root_scan_error(vendored_dirs: list[str]) -> str:
 # This guard is checked using the candidate count the real search ALREADY collected (never
 # a second scan of its own -- that would just be the unbounded work this guard exists to
 # avoid), and fires BEFORE the slow per-file loop starts.
+#
+# Bug #88 (dogfood v1.54.0): this ceiling is evaluated on the ACTUAL post-filter candidate
+# count, so a `--glob`/`--type`/`--iglob` filter is already fully reflected in
+# `candidate_file_count` -- it never needs its own bypass here (unlike the workspace/vendored
+# guards, which are cheap top-level probes that never see the real count). Bypassing on
+# `--glob` alone (the pre-fix `_has_generated_scan_bound` check) defeated this guard for
+# exactly the bare-`--glob`-no-PATH shape it exists to catch; see `_has_walk_scope_bound`.
 _LARGE_ROOT_SCAN_FILE_CEILING = 1500
 
 
@@ -4080,8 +4110,9 @@ def _should_refuse_unbounded_large_root_scan(
     config: "SearchConfig",
     *,
     allow_broad_generated_scan: bool,
+    paths_defaulted: bool,
 ) -> bool:
-    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+    if allow_broad_generated_scan or _has_walk_scope_bound(config, paths_defaulted=paths_defaulted):
         return False
     return candidate_file_count > _LARGE_ROOT_SCAN_FILE_CEILING
 
@@ -4089,11 +4120,11 @@ def _should_refuse_unbounded_large_root_scan(
 def _format_unbounded_large_root_scan_error(file_count_floor: int) -> str:
     return (
         "Error: broad root scan refused as a safety guard, not a zero-match result: "
-        f"path is a large single-project root (over {file_count_floor} files) with no "
-        "--glob/--type/--max-depth scope and no fast native/rg engine available for this "
-        "query -- an unscoped scan here would burn the search deadline instead of failing "
-        "fast. Scope the path, add --glob, --type, or --max-depth, or pass "
-        "--allow-broad-generated-scan to opt in.\n"
+        f"path is a large single-project root (over {file_count_floor} files); --glob/--type/"
+        "--iglob narrow WHICH files match but do not bound how much of the tree must be "
+        "walked to find them, and no fast native/rg engine is available for this query -- an "
+        "unscoped scan here would burn the search deadline instead of failing fast. Scope the "
+        "path explicitly, add --max-depth, or pass --allow-broad-generated-scan to opt in.\n"
         "For bounded output:\n"
         'tg search <pattern> <root> --glob "*.py"\n'
         "tg search <pattern> <root> --max-depth <N>\n"
@@ -6521,6 +6552,7 @@ def search_command(
         paths_to_search,
         config,
         allow_broad_generated_scan=allow_broad_generated_scan,
+        paths_defaulted=paths_defaulted,
     )
     if refuse_workspace_scan:
         typer.echo(_format_broad_workspace_scan_error(workspace_project_dirs), err=True)
@@ -6529,6 +6561,7 @@ def search_command(
         paths_to_search,
         config,
         allow_broad_generated_scan=allow_broad_generated_scan,
+        paths_defaulted=paths_defaulted,
     )
     if refuse_vendored_scan:
         typer.echo(_format_unbounded_vendored_root_scan_error(vendored_root_dirs), err=True)
@@ -6664,6 +6697,7 @@ def search_command(
         len(candidate_files_ordered),
         config,
         allow_broad_generated_scan=allow_broad_generated_scan,
+        paths_defaulted=paths_defaulted,
     ):
         typer.echo(
             _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
