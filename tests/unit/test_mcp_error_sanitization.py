@@ -154,9 +154,12 @@ def test_tg_ast_search_exception_path_sanitizes_plain_text(capsys):
     assert _SECRET_PATH in captured.err
 
 
-def test_tg_classify_logs_exception_path_does_not_leak_path_or_traceback(tmp_path, capsys):
+def test_tg_classify_logs_exception_path_does_not_leak_path_or_traceback(
+    tmp_path, capsys, monkeypatch
+):
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #81 #1)
     log_path = tmp_path / "app.log"
     log_path.write_text("INFO startup ok\nERROR database failed\n", encoding="utf-8")
 
@@ -176,9 +179,10 @@ def test_tg_classify_logs_exception_path_does_not_leak_path_or_traceback(tmp_pat
     assert _SECRET_PATH in captured.err
 
 
-def test_tg_classify_logs_exception_path_sanitizes_plain_text(tmp_path, capsys):
+def test_tg_classify_logs_exception_path_sanitizes_plain_text(tmp_path, capsys, monkeypatch):
     from tensor_grep.cli import mcp_server
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #81 #1)
     log_path = tmp_path / "app.log"
     log_path.write_text("INFO startup ok\nERROR database failed\n", encoding="utf-8")
 
