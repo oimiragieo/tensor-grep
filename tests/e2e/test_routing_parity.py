@@ -272,6 +272,44 @@ def test_native_top_level_pcre2_version_matches_public_contract(parity_env) -> N
     assert result.stderr.strip() == ""
 
 
+def test_native_pcre2_without_ripgrep_fails_closed(parity_env) -> None:
+    """Audit #81 finding #9: `--pcre2` must fail closed (exit 2) when rg is unavailable rather
+    than silently swapping to the native regex engine, which does not support PCRE2 syntax."""
+    _skip_if_native_binary_missing("native")
+
+    env = dict(**os.environ, TG_DISABLE_RG="1")
+    result = _run_native_front_door(
+        ["search", "--pcre2", "apple", "target.txt"], cwd=parity_env, env=env
+    )
+
+    assert result.returncode == 2, (
+        f"expected exit 2 (backend unavailable), got {result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "--pcre2" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_native_search_required_passthrough_flag_without_ripgrep_exits_2_not_1(
+    parity_env,
+) -> None:
+    """Audit #81 finding #7: a passthrough-required flag (e.g. --max-depth) with rg unavailable
+    must exit 2 (backend unavailable), not the masked exit 1 ("no match") that bubbling the
+    `execute_ripgrep_search` error through `?` to main()'s default Result termination used to
+    produce."""
+    _skip_if_native_binary_missing("native")
+
+    env = dict(**os.environ, TG_DISABLE_RG="1")
+    result = _run_native_front_door(
+        ["search", "--max-depth", "2", "apple", "target.txt"], cwd=parity_env, env=env
+    )
+
+    assert result.returncode == 2, (
+        "expected exit 2 (backend unavailable), not 1 (no-match-shaped); got "
+        f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
 def test_native_scan_ruleset_json_uses_python_full_contract_without_sgconfig(
     parity_env,
 ) -> None:
