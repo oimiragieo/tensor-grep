@@ -3686,7 +3686,13 @@ def _discover_validation_tests_for_primary_file(
             str(resolved)
         ):
             continue
-        if current.suffix.lower() not in _JS_TS_SUFFIXES:
+        # F84 Fix B: discovery used to be JS/TS-only -- every non-JS/TS candidate (including a
+        # `.py` test file that already passed the `_is_test_file` gate above) was silently
+        # dropped here, so a scoped python primary never got a targeted per-file validation
+        # step even once Fix A let the walk reach the real root. `.py` test files now fall
+        # through to the language-neutral scoring below; the JS/TS node:test gate above is
+        # unchanged, and every other language is still excluded.
+        if current.suffix.lower() not in _JS_TS_SUFFIXES and current.suffix.lower() != ".py":
             continue
         current_path = str(resolved)
         score = _score_file_path(current_path, terms)
@@ -8285,7 +8291,16 @@ def _validation_repo_root(repo_root: str | Path) -> Path:
             break
         if any((current / marker).exists() for marker in markers):
             return current
-        if any((current / marker).exists() for marker in boundary_markers):
+        # F84 Fix A: a directory is only a STRONG boundary -- and thus allowed to trap the
+        # walk-up before its parent is examined -- when it has `.git` (dir or file, the
+        # definitive repo-root signal every other tool uses) OR carries >=2 distinct boundary
+        # markers. A LONE README.md/.gitignore/LICENSE/AGENTS.md living in a scoped
+        # subdirectory used to trap the walk one level too early (the boundary-README trap),
+        # so a single marker is no longer sufficient on its own.
+        matched_boundary_markers = sum(
+            1 for marker in boundary_markers if (current / marker).exists()
+        )
+        if (current / ".git").exists() or matched_boundary_markers >= 2:
             boundary_candidate = current
         if current.parent == current:
             break
