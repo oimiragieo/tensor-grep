@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v1.51.3 (2026-07-09)
+
+### Bug Fixes
+
+- **repo_map**: Recall from-dot-import in the callers/blast-radius path + honest Go reverse-import
+  gap + platform-gated module case-folding (audit #81 #3/#4/#11)
+  ([#463](https://github.com/oimiragieo/tensor-grep/pull/463),
+  [`744be8b`](https://github.com/oimiragieo/tensor-grep/commit/744be8b3b17f91edbbfa27652c0eeaa667c9939c))
+
+#3: _python_file_imports_symbol_from_definition / _python_import_update_target used to
+  `continue`/return-None whenever `node.module` was falsy, silently skipping every bare relative
+  import (`from . import helpers`, where ast.ImportFrom.module is None). Both now branch on
+  `node.level` for that shape and match the imported alias name against the definition's in-package
+  submodule (module-only match, no symbol-name filter -- mirrors how `ast.Import` already treats a
+  plain `import pkg.helpers` as binding the module object itself), the same approach #460 used to
+  fix this exact gap for `_python_imports_and_symbols` / `_python_imports_with_lines` (the tg
+  imports/tg importers primitive). tg callers / tg blast-radius no longer silently miss a sibling
+  `from . import helpers` consumer.
+
+#4: Go's LanguageSpec has import_update_target=None, so _build_import_graph_consumers_from_map can
+  never produce a reverse-import edge for Go -- but _language_coverage_gaps_for_universe only ever
+  flagged a grammar-MISSING gap, so a Go repo with the grammar installed reported an empty
+  resolution_gaps, indistinguishable from "Go has full capability". Chose the honesty-signal over
+  implementing a real Go import-path resolver (out of scope for this batch; would require editing
+  lang_go.py, owned by another lane). _language_coverage_gaps_for_universe now flags a registered +
+  parseable language whose import_update_target is None as its own partial-capability gap, and
+  _language_coverage_gap_remediation gained a matching import_resolution_only message. Updated the
+  one test_lang_go.py assertion that pinned the old silent-empty behavior.
+
+#11: _definition_module_parts / _normalized_module_parts lowercased every path/module segment
+  unconditionally, so on a case-SENSITIVE filesystem (Linux CI/prod) `Foo.py` could match `foo.py`
+  -> wrong-file attribution in a reverse-import edge. Both now gate the fold on os.name == "nt",
+  mirroring _definition_file_dedupe_key's existing platform gate; the __init__/index/mod magic-name
+  strip stays case-insensitive on every platform since those are real on-disk names that are always
+  already lowercase by language convention.
+
+TDD: tests/unit/test_cross_lang_resolution.py (from-.-import callers/blast-radius recall, Go
+  resolution_gaps honesty), tests/unit/test_repo_map_graph.py (case-fold platform gate, using an
+  os.name proxy object so the test doesn't also flip pathlib's own Path-flavor selection on a real
+  Windows box), tests/unit/test_lang_go.py (updated pin).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.2 (2026-07-09)
 
 ### Bug Fixes
