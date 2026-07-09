@@ -1,6 +1,142 @@
 # CHANGELOG
 
 
+## v1.51.8 (2026-07-09)
+
+### Bug Fixes
+
+- **daemon**: Create the token file owner-restricted BEFORE writing the HMAC secret (close the
+  Windows write-then-ACL disclosure window) — icacls kept as defense-in-depth (audit #81 #13)
+  ([#466](https://github.com/oimiragieo/tensor-grep/pull/466),
+  [`3cbea6f`](https://github.com/oimiragieo/tensor-grep/commit/3cbea6f1a1f85d3c6a33f8e7d352d39bf87089a7))
+
+The old _write_daemon_metadata wrote daemon.json (the per-daemon HMAC token) via the shared,
+  POSIX-oriented _write_json_atomic and only ran icacls afterward, on the already-published path. On
+  Windows, os.chmod/the os.open `mode=` bits grant no real per-user access control (only the DOS
+  read-only attribute), so the token file carried the sessions directory's default/inherited
+  permissions for the entire write+rename+icacls duration -- any other local account able to read
+  that directory could read the HMAC secret in that window.
+
+Fix: on Windows, create the temp file empty, lock its ACL to the current user via icacls WHILE still
+  holding the same open file descriptor (verified empirically that Windows os.open() defaults to
+  DENY_NONE sharing, so a concurrent icacls process can set the DACL with no sharing violation),
+  THEN write the token payload, THEN atomically rename into place. The rename stays within the same
+  directory, so the explicit (non-inherited) DACL travels with the file instead of being recomputed.
+  icacls is still called again on the published path afterward as defense-in-depth, per the existing
+  fail-open contract (a failed icacls must never break daemon startup).
+
+POSIX is unchanged: _write_json_atomic already creates the temp file AT mode 0600 via
+  os.open(O_CREAT|O_EXCL, mode), applied atomically at creation, not via a post-write chmod.
+
+TDD: added 3 new tests that assert directly against on-disk state (not just mock call order) -- the
+  first confirms the file is still empty bytes at the moment the pre-publish ACL lock fires
+  (reproduces the bug against the old code: FAILED, ordering fixed: PASSED), the second confirms the
+  lock targets the pre-publish temp rather than the already-renamed daemon.json, and the third
+  confirms no partial/unlocked temp is left behind if the lock step ever raises. Also manually
+  verified end-to-end against real (non-mocked) icacls on this Windows box: the published
+  daemon.json ends up with exactly one ACE (the current user, Full control), no inherited entries.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
+## v1.51.7 (2026-07-09)
+
+### Bug Fixes
+
+- **rust**: Exit 2 (not 1) when rg is required-but-unavailable + fail closed on --pcre2 without a
+  PCRE2-capable rg, instead of a silent native-regex swap (audit #81 #7/#9)
+  ([#465](https://github.com/oimiragieo/tensor-grep/pull/465),
+  [`06a0a6d`](https://github.com/oimiragieo/tensor-grep/commit/06a0a6d461d4ad26d0e46a239334c538ac2f9f43))
+
+Finding #7 (MED): execute_ripgrep_search/execute_ripgrep_pcre2_version/ execute_ripgrep_type_list
+  return Err when rg is unavailable, which bubbled via `?` to main()'s default Result termination ->
+  exit 1, indistinguishable from a genuine no-match. Repro: TG_DISABLE_RG=1 tg search P --cpu
+  --max-depth 2 (--max-depth forces search_requires_ripgrep_passthrough regardless of rg_available).
+
+Finding #9 (LOW, pairs with #7): search_requires_ripgrep_passthrough lists pcre2_unicode but not
+  plain --pcre2, so route_search's `config.pcre2 && config.rg_available` gate silently fell through
+  to NativeCpu/"rg_unavailable" -- running the native regex engine (not PCRE2) for a --pcre2 request
+  with no signal that PCRE2 semantics were dropped.
+
+Fix: a shared require_ripgrep_or_exit(rg_available, context) helper -- eprintln! a
+
+clear message and std::process::exit(2), matching the "backend unavailable" exit-2 convention
+  handle_calibrate_command already uses -- called before every rg-required call site that previously
+  lacked an availability check: the top-level and search-level --pcre2-version/--type-list fast
+  paths, the search_prefers_ripgrep_ passthrough branch in handle_ripgrep_search, and a new explicit
+  --pcre2 guard in both handle_ripgrep_search and run_positional_cli (the root/positional shortcut
+  also threads --pcre2 into route_search).
+
+Only rg-ABSENT paths change. Every route_search branch that already required rg_available==true to
+  select Ripgrep (positional/search dispatch, the rg-fallback path in
+  run_native_search_with_optional_rg_fallback) is untouched, and a new regression-guard test pins
+  that --pcre2 with rg available still routes to RipgrepBackend/"pcre2-required" exactly as before.
+
+Verified against the real compiled binary (not just CliRunner): TG_DISABLE_RG=1 tg search hello
+  --cpu --max-depth 2 <dir> -> exit 2 (was 1) TG_DISABLE_RG=1 tg search --pcre2 hello <dir> -> exit
+  2, empty stdout (was a silent native regex match)
+
+Adds 7 Rust integration tests (rust_core/tests/test_routing.rs) and 2 Python native-front-door
+  parity tests (tests/e2e/test_routing_parity.py) pinning both the new fail-closed behavior and the
+  unchanged rg-available contract.
+
+
+## v1.51.6 (2026-07-09)
+
+### Bug Fixes
+
+- **lock**: Make the index lock ownership-aware (uuid4 token + mtime heartbeat) so a stale-reclaimed
+  holder can't delete the new owner's live lock (audit #14)
+  ([#457](https://github.com/oimiragieo/tensor-grep/pull/457),
+  [`abf73eb`](https://github.com/oimiragieo/tensor-grep/commit/abf73ebd2ccbd06e8ea3f0a261b517edfd00cfc1))
+
+* fix(lock): make the index lock ownership-aware (uuid4 token verified on release + mtime heartbeat)
+  so a stale-reclaimed holder can't delete the new owner's live lock -- Windows delete-pending +
+  double-reclaim defenses preserved (audit #14)
+
+* test(index-lock): widen the heartbeat-freshness timing bounds to stop the macos-CI flake
+
+test_heartbeat_keeps_mtime_fresh_during_long_hold asserted max_observed_age < 0.15s while the
+  heartbeat fired every 0.03s. On loaded 2-core CI runners the heartbeat thread can be GIL-starved
+  past 150ms (observed 0.152s > 0.15s on macos-latest, py3.11 + py3.12), false-failing a test whose
+  property (heartbeat keeps mtime younger than stale_after_s) was actually holding. Scale the
+  absolute values up (stale_after_s 0.15->0.6, hold 0.6->1.5, heartbeat 0.03->0.05) so stale_after_s
+  is 12x the heartbeat interval and realistic scheduling jitter stays well clear of the bound. Same
+  property, no flake.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(index-lock): set heartbeat_interval to 0.05 so the 12x stale-ratio matches the comment
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
+## v1.51.5 (2026-07-09)
+
+### Bug Fixes
+
+- **mcp**: Confine every read-path param via a shared _confine_read_path chokepoint + bound the
+  classify read + gate signing_key — close MCP arbitrary-file-read exfil (audit #81 #1/#2/#12, #76)
+  ([#464](https://github.com/oimiragieo/tensor-grep/pull/464),
+  [`5ef0fd9`](https://github.com/oimiragieo/tensor-grep/commit/5ef0fd95781901f38be53a83bed319c1a2e43b10))
+
+* fix(mcp): confine read-path params (tg_classify_logs file_path, tg_ruleset_scan
+  baseline/suppressions) via a shared _confine_read_path chokepoint + bound the classify read + gate
+  signing_key (audit #81 #1/#2/#12, closes #76 read-path exfil)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(mcp): skipif-guard the Windows-only UNC confinement tests (CI-green on POSIX) + confine
+  tg_file_imports/importers/session-importers file + tg_rewrite_apply policy read-paths + coverage
+  (Opus gate on #81 #1/#2/#12)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.4 (2026-07-09)
 
 ### Bug Fixes

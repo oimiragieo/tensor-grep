@@ -194,6 +194,107 @@ def test_write_daemon_metadata_locks_down_token_file_on_windows(
     assert "/inheritance:r" in argv and "/grant:r" in argv and "testuser:F" in argv
 
 
+def test_write_daemon_metadata_locks_acl_before_token_bytes_are_written(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """audit #81 #13: icacls must run BEFORE the token reaches disk, not after.
+
+    The previous ordering wrote the full token payload via the shared ``_write_json_atomic``
+    helper and only ran ``icacls`` afterward, on the already-published ``daemon.json`` -- so the
+    file carried the sessions directory's default/inherited (broadly readable) permissions for
+    the entire write+rename+icacls duration, and any other local account able to read that
+    directory could read the HMAC token in that window.
+
+    Assert directly against on-disk state rather than call order: at the moment the FIRST icacls
+    call runs (the pre-publish lock that closes the disclosure window), the file it targets must
+    contain zero bytes -- the secret must never already be sitting on disk when that lock is
+    applied. A later defense-in-depth re-lock of the already-published, already-secret-bearing
+    ``daemon.json`` is expected and fine -- by then the file is already owner-restricted, so it
+    is not a new disclosure window; only the FIRST (pre-publish) lock is load-bearing here.
+    """
+    snapshots: list[bytes] = []
+
+    def _fake_run(argv, **_kwargs):
+        target = Path(argv[1])
+        snapshots.append(target.read_bytes() if target.exists() else b"<missing>")
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(session_daemon.subprocess, "run", _fake_run)
+    monkeypatch.setattr(session_daemon.sys, "platform", "win32")
+    monkeypatch.setenv("USERNAME", "testuser")
+
+    root = tmp_path.resolve()
+    session_daemon._write_daemon_metadata(root, {"token": "top-secret-hmac", "version": 1})
+
+    assert snapshots, "icacls was never invoked"
+    assert snapshots[0] in (b"", b"<missing>"), (
+        f"the FIRST (pre-publish) icacls lock ran while the token file already had content on "
+        f"disk: {snapshots[0]!r}"
+    )
+
+    # The write must still actually land -- the reordering must not break the daemon.json
+    # contract (shape, token value) it is required to preserve.
+    metadata_path = session_daemon._daemon_metadata_path(root)
+    assert metadata_path.exists()
+    published = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert published["token"] == "top-secret-hmac"
+
+
+def test_write_daemon_metadata_acl_targets_temp_file_before_publish(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The FIRST icacls call -- the one that closes the disclosure window -- must target the
+    # pre-publish temp file, never the already-renamed daemon.json (that would just reproduce
+    # the old write-then-restrict bug under a different name).
+    calls: list[str] = []
+
+    def _fake_run(argv, **_kwargs):
+        calls.append(str(argv[1]))
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(session_daemon.subprocess, "run", _fake_run)
+    monkeypatch.setattr(session_daemon.sys, "platform", "win32")
+    monkeypatch.setenv("USERNAME", "testuser")
+
+    root = tmp_path.resolve()
+    session_daemon._write_daemon_metadata(root, {"token": "t", "version": 1})
+
+    metadata_path = session_daemon._daemon_metadata_path(root)
+    assert calls, "icacls was never invoked"
+    assert calls[0] != str(metadata_path), "first ACL lock must target the temp, not the publish"
+    assert calls[0].endswith(".tmp"), f"expected a .tmp temp path, got {calls[0]!r}"
+
+
+def test_write_daemon_metadata_windows_cleans_up_temp_on_lock_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # _restrict_windows_file_to_current_user swallows its own errors by design (a failed icacls
+    # must never break daemon startup), but the write path must still fail closed defensively:
+    # if the lock step somehow raises, no partial/unlocked temp may be left behind and the
+    # original error must propagate rather than being swallowed.
+    def _boom(_path: Path) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(session_daemon, "_restrict_windows_file_to_current_user", _boom)
+    monkeypatch.setattr(session_daemon.sys, "platform", "win32")
+
+    root = tmp_path.resolve()
+    with pytest.raises(RuntimeError, match="boom"):
+        session_daemon._write_daemon_metadata(root, {"token": "t", "version": 1})
+
+    sessions_dir = session_daemon._sessions_dir(root)
+    leftover = list(sessions_dir.glob("*.tmp")) if sessions_dir.exists() else []
+    assert leftover == [], f"a partial/unlocked temp file was left behind: {leftover}"
+
+
 def test_restrict_windows_file_is_noop_off_windows(tmp_path: Path, monkeypatch) -> None:
     called: list[object] = []
     monkeypatch.setattr(session_daemon.subprocess, "run", lambda *a, **k: called.append(a))
