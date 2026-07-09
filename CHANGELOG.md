@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.51.10 (2026-07-09)
+
+### Bug Fixes
+
+- **mcp**: Anchor rewrite policy confinement to the target's parent dir for single-file targets
+  ([#469](https://github.com/oimiragieo/tensor-grep/pull/469),
+  [`f7eda05`](https://github.com/oimiragieo/tensor-grep/commit/f7eda0505ab77c5b39a9531d6c21802f565b71d1))
+
+Opus-gate nit on #464 (audit #76): tg_rewrite_apply confines the caller-named `policy` file under
+  `policy_anchor = Path(path).resolve()`. When `path` is a single FILE (a targeted rewrite, not a
+  directory), the file has no descendants, so a legitimately co-located policy (path=src/foo.py,
+  policy=src/policy.json) was fail-closed REJECTED with code="invalid_input". The directory case
+  (default path=".") was unaffected.
+
+Fix: when `path` is not a directory, anchor the confinement to its parent directory, so a co-located
+  policy is allowed while a traversal escape (policy=../../etc/passwd) is still rejected -- the
+  confinement scope becomes the apply target's own directory subtree, which the caller is already
+  rewriting. This matches the directory case's semantics.
+
+TDD (real venv, 18 pass): a single-file target + co-located policy now reaches load_apply_policy's
+  schema validation (code="invalid_policy") instead of confinement refusal; a policy OUTSIDE the
+  target's directory is still refused (code="invalid_input"), and the full 14-case read-path
+  exfil-coverage suite still passes.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.9 (2026-07-09)
 
 ### Bug Fixes
