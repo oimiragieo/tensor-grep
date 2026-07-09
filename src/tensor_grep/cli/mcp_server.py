@@ -1260,6 +1260,22 @@ def execute_rewrite_apply_json(
 
     loaded_policy = None
     if policy is not None:
+        # round-7 security (audit #81 Opus gate #2/#12 follow-up): policy is a caller-named
+        # JSON file path read by load_apply_policy below -- unconfined it is a file-existence +
+        # JSON-schema read-oracle over any path reachable from any MCP client
+        # (PolicyValidationError.details echoes back which required fields are missing/
+        # malformed, and a non-JSON file's json.JSONDecodeError message), same class as
+        # tg_classify_logs.file_path / tg_ruleset_scan's baseline_path/suppressions_path.
+        # Anchor to the REWRITE SCAN ROOT (path), not cwd: a policy file for THIS apply
+        # operation legitimately lives under the scanned tree (mirrors baseline_path/
+        # suppressions_path's scan_root anchor on tg_ruleset_scan, not audit_manifest's cwd
+        # anchor). Forward the RESOLVED path so load_apply_policy reads the same
+        # anchor-validated location this check validated.
+        policy_anchor = Path(path).expanduser().resolve()
+        try:
+            policy = str(_confine_read_path(policy, policy_anchor, label="policy"))
+        except ValueError as exc:
+            return _rewrite_error(str(exc), code="invalid_input"), 1
         try:
             loaded_policy = load_apply_policy(
                 policy,
@@ -2397,10 +2413,33 @@ def tg_session_file_importers(
 
     Args:
         session_id: Session ID to query.
-        file: File to find importers of.
+        file: File to find importers of. Confined to the session root (``path``); a file
+            that legitimately lives outside it must be copied in first (fail-closed, not a
+            silent drop).
         path: File or directory rooted at the session scope.
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_file_importers
+
+    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the session root
+    # (path) before any read, same class/rationale as tg_file_imports/tg_file_importers above.
+    # Anchored to the session root rather than cwd because that is what session_file_importers
+    # itself resolves a relative `file` against (build_file_importers_from_map joins it onto
+    # the session's own repo_map root, not the MCP server process cwd) -- confining to cwd
+    # here would refuse a legitimate relative `file` whenever the session root differs from cwd.
+    session_root = Path(path).expanduser().resolve()
+    if not session_root.is_dir():
+        session_root = session_root.parent
+    try:
+        file = str(_confine_read_path(file, session_root, label="file"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"file": file},
+            file=file,
+        )
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
@@ -2962,8 +3001,27 @@ def tg_file_imports(file: str) -> str:
     repo scan. Far cheaper than a whole-repo `tg_map` for a single file's dependency edges.
 
     Args:
-        file: File to inspect for its own imports.
+        file: File to inspect for its own imports. Confined to the project root (cwd); a
+            file that legitimately lives outside the project must be copied in first
+            (fail-closed, not a silent drop).
     """
+    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
+    # (cwd) before any read -- unconfined it is a file-existence + import-string read-oracle
+    # over any path reachable from any MCP client (build_file_imports below stats the file and
+    # echoes its resolved path / import list back in the JSON result), same class as
+    # tg_classify_logs.file_path above. Forward the RESOLVED path so build_file_imports sees
+    # the same anchor-validated location this check validated.
+    try:
+        file = str(_confine_read_path(file, Path.cwd(), label="file"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-imports",
+            include_schema_version=False,
+        )
+        payload["file"] = file
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
     try:
         return _inject_mcp_contract_fields(json.dumps(build_file_imports(file), indent=2))
     except FileNotFoundError:
@@ -3002,10 +3060,26 @@ def tg_file_importers(
     CONFIRMS each candidate against FILE before reporting it as an edge.
 
     Args:
-        file: File to find importers of.
+        file: File to find importers of. Confined to the project root (cwd); a file that
+            legitimately lives outside the project must be copied in first (fail-closed,
+            not a silent drop).
         path: Root to scan for importers.
         max_repo_files: Maximum repository files to scan before resolving importers.
     """
+    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
+    # (cwd) before any read, same class/rationale as tg_file_imports above.
+    try:
+        file = str(_confine_read_path(file, Path.cwd(), label="file"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-importers",
+            include_schema_version=False,
+        )
+        payload["file"] = file
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -3997,6 +4071,9 @@ def tg_rewrite_apply(
         test_cmd: Optional command to run after apply/verify for structured test validation.
             Gated identically to lint_cmd via TG_MCP_ALLOW_VALIDATION_COMMANDS.
         policy: Optional path to an apply policy JSON file for post-apply checks and rollback.
+            Confined to the rewrite scan root (``path``); a policy file that legitimately
+            lives outside the scan root must be copied in first (fail-closed, not a silent
+            drop).
         expected_plan_digest: Optional plan_digest from a prior tg_rewrite_plan. When
             supplied, the apply is refused with code="plan_drift" if the recomputed
             digest no longer matches the current tree.

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import os
 import sys
 import types
 from importlib.metadata import version
@@ -3044,10 +3045,18 @@ def test_confine_read_path_refuses_escape(tmp_path):
     assert ok == (anchor.resolve() / "app.log")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="UNC paths are absolute only on Windows")
 def test_confine_read_path_refuses_unc_path(tmp_path):
     """A UNC path is absolute (outside any local anchor) and must be refused like any other
     out-of-root absolute path. Uses \\\\localhost\\... (loopback, resolves in milliseconds,
-    no real network I/O) rather than an unreachable host, per anti-hang-test-protocol."""
+    no real network I/O) rather than an unreachable host, per anti-hang-test-protocol.
+
+    Windows-only (skipif-guarded): a UNC path (``Path(r"\\\\localhost\\...").is_absolute()``)
+    is absolute ONLY on Windows. On POSIX it is NOT absolute, so `_confine_write_path` joins it
+    UNDER the anchor instead of refusing it -- the confinement CODE is correct on both
+    platforms (a UNC string can't escape the anchor on POSIX either way), this test's
+    ASSERTION (raises ValueError) is just Windows-specific, so it must not run on
+    ubuntu-latest/macos-latest CI legs (audit #81 fix-council item #1)."""
     from tensor_grep.cli import mcp_server
 
     anchor = tmp_path / "proj"
@@ -3104,7 +3113,12 @@ def test_tg_classify_logs_refuses_file_path_symlink_escape(tmp_path, monkeypatch
     _assert_audit7_refused_no_leak(out)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="UNC paths are absolute only on Windows")
 def test_tg_classify_logs_refuses_file_path_unc_escape(tmp_path, monkeypatch):
+    """Windows-only (skipif-guarded): passes accidentally on POSIX (a UNC string is not
+    `.is_absolute()` there, so it never hits the refusal path the assertion checks for) --
+    see test_confine_read_path_refuses_unc_path above for the full rationale. Skipped here too
+    for honesty, not just to stop a failure (audit #81 fix-council item #1)."""
     from tensor_grep.cli import mcp_server
 
     proj = tmp_path / "proj"
@@ -3432,6 +3446,61 @@ def _read_path_case_review_bundle_verify_bundle(
     return mcp_server.tg_review_bundle_verify(str(escape))
 
 
+# --- round-7 coverage gap (Opus adversarial gate on #81, fix-council item #2): the #74 file-
+# dependency primitives (tg_file_imports/tg_file_importers/tg_session_file_importers) and
+# tg_rewrite_apply's `policy` param were missed by the original round-7 sweep above -- same
+# class (a caller-named read path forwarded unconfined, echoing file existence / import
+# strings / policy-schema details back to the caller). Closed the same way: confine-then-
+# forward through `_confine_read_path`, structured invalid_input on reject.
+
+
+def _read_path_case_file_imports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    escape = tmp_path / "secret.py"
+    escape.write_text(f"# {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+    return mcp_server.tg_file_imports(str(escape))
+
+
+def _read_path_case_file_importers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    escape = tmp_path / "secret.py"
+    escape.write_text(f"# {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+    return mcp_server.tg_file_importers(str(escape), path=str(proj))
+
+
+def _read_path_case_session_file_importers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("x = 1\n", encoding="utf-8")
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+    escape = tmp_path / "secret.py"
+    escape.write_text(f"# {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+    return mcp_server.tg_session_file_importers(session_id, str(escape), str(project))
+
+
+def _read_path_case_rewrite_apply_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    escape = tmp_path / "policy.json"
+    _write_audit7_secret(escape, field="version")
+    return mcp_server.tg_rewrite_apply(
+        pattern="x", replacement="y", lang="python", path=str(proj), policy=str(escape)
+    )
+
+
 _READ_PATH_COVERAGE_CASES = [
     pytest.param(_read_path_case_classify_logs, id="tg_classify_logs.file_path"),
     pytest.param(_read_path_case_ruleset_scan_baseline, id="tg_ruleset_scan.baseline_path"),
@@ -3458,6 +3527,10 @@ _READ_PATH_COVERAGE_CASES = [
     pytest.param(
         _read_path_case_review_bundle_verify_bundle, id="tg_review_bundle_verify.bundle_path"
     ),
+    pytest.param(_read_path_case_file_imports, id="tg_file_imports.file"),
+    pytest.param(_read_path_case_file_importers, id="tg_file_importers.file"),
+    pytest.param(_read_path_case_session_file_importers, id="tg_session_file_importers.file"),
+    pytest.param(_read_path_case_rewrite_apply_policy, id="tg_rewrite_apply.policy"),
 ]
 
 
@@ -3466,6 +3539,100 @@ def test_read_path_param_coverage_rejects_out_of_root(tmp_path, monkeypatch, cas
     out = case(tmp_path, monkeypatch)
 
     _assert_audit7_refused_no_leak(out)
+
+
+# --- positive-path regression guards: confining the four params above must not break a
+# legitimate in-root call (Opus adversarial gate on #81, fix-council item #2).
+
+
+def test_tg_file_imports_accepts_in_root_path(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "util.js").write_text("export function foo() {}\n", encoding="utf-8")
+    consumer = tmp_path / "consumer.js"
+    consumer.write_text('import { foo } from "./util";\n', encoding="utf-8")
+
+    out = mcp_server.tg_file_imports("consumer.js")
+
+    parsed = json.loads(out)
+    assert parsed.get("error") is None
+    assert parsed["imports"][0]["module"] == "./util"
+    assert parsed["imports"][0]["resolved"] == str((tmp_path / "util.js").resolve())
+
+
+def test_tg_file_importers_accepts_in_root_path(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "util.js"
+    target.write_text("export function foo() {}\n", encoding="utf-8")
+    consumer = project / "consumer.js"
+    consumer.write_text('import { foo } from "./util";\n', encoding="utf-8")
+    monkeypatch.chdir(project)
+
+    out = mcp_server.tg_file_importers("util.js", path=str(project))
+
+    parsed = json.loads(out)
+    assert parsed.get("error") is None
+    assert parsed["importer_files"] == [str(consumer.resolve())]
+
+
+def test_tg_session_file_importers_accepts_in_root_path(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "util.js"
+    target.write_text("export function foo() {}\n", encoding="utf-8")
+    consumer = project / "consumer.js"
+    consumer.write_text('import { foo } from "./util";\n', encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    out = mcp_server.tg_session_file_importers(session_id, "util.js", str(project))
+
+    parsed = json.loads(out)
+    assert parsed.get("error") is None
+    assert parsed["importer_files"] == [str(consumer.resolve())]
+
+
+def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path):
+    """VERIFY confining `policy` (round-7 fix, Opus gate item #2) does not regress a
+    legitimate in-root policy: a policy file inside the scan root must reach
+    load_apply_policy's OWN schema validation (code="invalid_policy") rather than being
+    refused by the new confinement check (which would instead surface code="invalid_input"
+    with a "must stay within" message)."""
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    policy_path = proj / "apply-policy.json"
+    policy_path.write_text(
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+            # deliberately omit on_failure: pins the failure to load_apply_policy's schema
+            # validation, proving execution got PAST the new path-confinement check below.
+        }),
+        encoding="utf-8",
+    )
+
+    out = mcp_server.tg_rewrite_apply(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path=str(proj),
+        policy=str(policy_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "invalid_policy"
+    assert any(detail["field"] == "on_failure" for detail in parsed["error"]["details"])
 
 
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
