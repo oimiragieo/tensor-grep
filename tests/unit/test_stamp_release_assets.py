@@ -268,7 +268,16 @@ def test_stamp_release_assets_preserves_verified_release_proof_blocks(tmp_path):
     assert "GitHub release assets for `v1.9.12`" not in readme
 
 
-def test_stamp_release_assets_syncs_gpu_dogfood_labels(tmp_path):
+def test_stamp_release_assets_syncs_gpu_dogfood_live_pointers_only(tmp_path):
+    # Regression test for audit #71/#73: the old unanchored `post-`vX`` sweep rewrote EVERY
+    # occurrence of the phrase on every release, including dated historical notes in
+    # docs/PAPER.md and dated audit entries in docs/gpu_crossover.md, silently marching a frozen
+    # historical version forward release after release (e.g. a 2026-05-14 note ending up stamped
+    # `post-`v1.51.4``, a much later release). The fix anchors the sweep to the small number of
+    # genuine "current state" live-pointer line shapes (verified against real doc history to be
+    # periodically hand-refreshed, not frozen) that `scripts/agent_readiness.py`'s
+    # `gpu_fragments` check depends on -- those still advance -- while a dated historical note
+    # never matches any anchor and is left alone.
     root = tmp_path
     (root / "scripts").mkdir()
     (root / "docs").mkdir()
@@ -300,6 +309,23 @@ def test_stamp_release_assets_syncs_gpu_dogfood_labels(tmp_path):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("release_docs_current_tag: v1.9.12\n", encoding="utf-8")
+
+    live_pointer_lines = "\n".join([
+        "## Current post-`v1.9.10` GPU dogfood Read",
+        "",
+        "The post-`v1.9.10` dogfood keeps public GPU not promotion-ready.",
+        "",
+        "- Latest post-`v1.9.10` dogfood tool comparison medians (3 samples): "
+        "standard corpus `rg 0.087s`, `tg 0.097s`.",
+        "",
+        "`benchmarks/run_agent_workflow_benchmarks.py` is the canonical workflow benchmark for "
+        "the post-`v1.9.10` dogfood wedge: agent capsule routing plus safe edit-loop execution.",
+    ])
+    historical_note = (
+        "> post-`v1.2.3` dogfood GPU performance note (2020-01-01): this dated historical note "
+        "must never be rewritten by a later release stamp."
+    )
+    gpu_doc_content = f"{live_pointer_lines}\n\n{historical_note}\n"
     for relative in (
         "README.md",
         "docs/benchmarks.md",
@@ -308,7 +334,7 @@ def test_stamp_release_assets_syncs_gpu_dogfood_labels(tmp_path):
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("The post-`v1.9.10` GPU dogfood read.\n", encoding="utf-8")
+        path.write_text(gpu_doc_content, encoding="utf-8")
 
     module = _load_module(Path(__file__).resolve().parents[2])
     module.ROOT = root
@@ -322,5 +348,78 @@ def test_stamp_release_assets_syncs_gpu_dogfood_labels(tmp_path):
         "docs/PAPER.md",
     ):
         content = (root / relative).read_text(encoding="utf-8")
-        assert "post-`v1.9.12`" in content
-        assert "post-`v1.9.10`" not in content
+        # The four anchored live-pointer shapes advance to the current tag.
+        assert "## Current post-`v1.9.12` GPU dogfood Read" in content
+        assert "The post-`v1.9.12` dogfood keeps public GPU not promotion-ready." in content
+        assert "- Latest post-`v1.9.12` dogfood tool comparison medians" in content
+        assert "canonical workflow benchmark for the post-`v1.9.12` dogfood wedge:" in content
+        assert "v1.9.10" not in content
+        # The dated historical note is untouched: it keeps its own frozen version and date
+        # instead of being silently marched forward to the new release tag.
+        assert historical_note in content
+        assert "post-`v1.9.12` dogfood GPU performance note" not in content
+
+
+def test_stamp_release_assets_does_not_touch_undated_prose_without_a_live_pointer_shape(
+    tmp_path,
+):
+    # A doc with a `post-`vX`` occurrence that matches none of the four anchored live-pointer
+    # shapes (e.g. a plain narrative sentence, not the canonical GPU dogfood header/bullet
+    # forms) must be left alone rather than rewritten by a broad/unanchored fallback.
+    root = tmp_path
+    (root / "scripts").mkdir()
+    (root / "docs").mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "tensor-grep"\nversion = "1.9.12"\n', encoding="utf-8"
+    )
+    (root / "scripts" / "tensor-grep.rb").write_text(
+        (
+            "class TensorGrep < Formula\n"
+            '  TENSOR_GREP_VERSION = "1.9.12"\n'
+            "  version TENSOR_GREP_VERSION\n"
+            "end\n"
+        ),
+        encoding="utf-8",
+    )
+    (root / "scripts" / "oimiragieo.tensor-grep.yaml").write_text(
+        "# Winget Manifest for tensor-grep v1.9.12\n"
+        "PackageVersion: 1.9.12\n"
+        "InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.9.12/tg-windows-amd64-cpu.exe\n",
+        encoding="utf-8",
+    )
+    for relative in (
+        "AGENTS.md",
+        "SKILL.md",
+        "docs/SESSION_HANDOFF.md",
+        "docs/CONTINUATION_PLAN.md",
+        "docs/CONTRACTS.md",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("release_docs_current_tag: v1.9.12\n", encoding="utf-8")
+    unanchored_sentence = (
+        "The active post-`v1.2.3` branch moves stable script installs toward a release-native "
+        "public front door.\n"
+    )
+    for relative in (
+        "README.md",
+        "docs/benchmarks.md",
+        "docs/gpu_crossover.md",
+        "docs/PAPER.md",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(unanchored_sentence, encoding="utf-8")
+
+    module = _load_module(Path(__file__).resolve().parents[2])
+    module.ROOT = root
+    module.stamp_assets(check_only=False)
+
+    for relative in (
+        "README.md",
+        "docs/benchmarks.md",
+        "docs/gpu_crossover.md",
+        "docs/PAPER.md",
+    ):
+        content = (root / relative).read_text(encoding="utf-8")
+        assert content == unanchored_sentence

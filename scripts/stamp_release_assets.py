@@ -103,9 +103,32 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
             r"(?m)^(- GitHub release assets: `)v\d+\.\d+\.\d+(` has uploaded)",
             rf"\g<1>{tag}\2",
         ),
+        # The four patterns below replace one former unanchored `post-`vX`` sweep that rewrote
+        # EVERY occurrence of the phrase on every release, including dated historical notes in
+        # docs/PAPER.md and dated audit entries in docs/gpu_crossover.md (e.g. "dogfood note
+        # (2026-05-14):"), silently marching their frozen version forward release after release
+        # (audit #71/#73). Each pattern below is anchored with `(?m)^` to one of the small number
+        # of genuine "current state" live-pointer shapes (verified via `git log -L` to be
+        # periodically hand-refreshed, not frozen) in docs/gpu_crossover.md and docs/benchmarks.md
+        # -- the ones `scripts/agent_readiness.py`'s `gpu_fragments` check depends on. A dated note
+        # such as `> post-`vX` ... note (YYYY-MM-DD): ...` never matches any of these anchors and is
+        # left alone.
         (
-            r"post-`v\d+\.\d+\.\d+`",
-            f"post-`{tag}`",
+            r"(?m)^(## Current post-)`v\d+\.\d+\.\d+`( GPU dogfood Read)",
+            rf"\g<1>`{tag}`\2",
+        ),
+        (
+            r"(?m)^(The post-)`v\d+\.\d+\.\d+`( )",
+            rf"\g<1>`{tag}`\2",
+        ),
+        (
+            r"(?m)^(- Latest post-)`v\d+\.\d+\.\d+`( )",
+            rf"\g<1>`{tag}`\2",
+        ),
+        (
+            r"(?m)^(`benchmarks/run_agent_workflow_benchmarks\.py` is the canonical workflow "
+            r"benchmark for the post-)`v\d+\.\d+\.\d+`( dogfood wedge:)",
+            rf"\g<1>`{tag}`\2",
         ),
     ]
     stamped = content
