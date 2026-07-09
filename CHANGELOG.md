@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.52.0 (2026-07-09)
+
+### Documentation
+
+- **backlog**: Refresh the canonical ledger to the v1.51.x deep-dive #81 drain + dogfood #84
+  ([#470](https://github.com/oimiragieo/tensor-grep/pull/470),
+  [`53ed958`](https://github.com/oimiragieo/tensor-grep/commit/53ed9581c06924526cf325089b91131d624aa1dc))
+
+The ledger had drifted to the 2026-07-07 v1.45.x campaign (#424-436). Bring it current: SHIPPING =
+  only #469 draining; add the deep-dive #81 audit drain (all 14 findings shipped as #455-468, every
+  security PR adversarial-Opus-gated); add the CURRENT LIVE BACKLOG (dogfood #84 agent
+  validation-plan parity, imports/importers dynamic-import awareness, #72 benchmark reconcile,
+  tg-ledger CEO-gated); flag the stale v1.45.x P0/P1 sections for re-verification against current
+  code.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **rerank**: Late-interaction rerank foundation — MaxSim math + LateReranker contract + rerank
+  extra (T0-T2) ([#471](https://github.com/oimiragieo/tensor-grep/pull/471),
+  [`8db70b5`](https://github.com/oimiragieo/tensor-grep/commit/8db70b5a3692e69dc1470ecdc7cee38e4ea03801))
+
+* feat(rerank): late-interaction rerank foundation -- maxsim math + LateReranker contract + rerank
+  extra (T0-T2, design docs/plans/...-late-rerank)
+
+* chore(deps): regenerate uv.lock for the rerank extra (onnxruntime + tokenizers)
+
+The rerank optional-extra added to pyproject.toml made uv.lock stale, so the audit job's `uv export
+  --locked` (audit.yml:51) failed with exit 2 before pip-audit ran. Re-locked: resolves onnxruntime
+  1.27.0 + flatbuffers + tokenizers transitives. Verified the exact CI export command now succeeds.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.10 (2026-07-09)
 
 ### Bug Fixes
