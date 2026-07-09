@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.51.2 (2026-07-09)
+
+### Bug Fixes
+
+- **backends**: Raise BackendExecutionError instead of bare RuntimeError / empty-return / unwrapped
+  native fault, per the Backend Fail-Closed Contract (audit #79/#10/#14)
+  ([#462](https://github.com/oimiragieo/tensor-grep/pull/462),
+  [`73ce5e9`](https://github.com/oimiragieo/tensor-grep/commit/73ce5e9decb6f9489a1160d3adaed5e5722f53de))
+
+- ripgrep_backend.py: 7 bare `raise RuntimeError(...)` sites (search, _search_files_with_matches,
+  _search_counts, _build_cmd) now raise BackendExecutionError, so main.py's per-file `except
+  BackendExecutionError` CPU-fallback retry (cli/main.py:6756-6761) actually catches them instead of
+  falling into the broad `except Exception` and crashing the whole search. - torch_backend.py: same
+  fix for the 2 bare RuntimeError guards (CUDA unavailable, no routable device IDs), plus the
+  CUDA/tensor compute region (device tensor allocation, file read, unfold/compare kernels, multi-GPU
+  thread-pool fan-out) is now wrapped so a native CUDA fault (OOM, device fault, driver error)
+  surfaces as BackendExecutionError instead of escaping raw. - stringzilla_backend.py: search() had
+  no try/except at all (removed by a prior "audit D3" cleanup that predates the Backend Fail-Closed
+  Contract's IO-error clause in base.py). Wrapped the whole method so a native StringZilla fault or
+  IO error raises BackendExecutionError (chaining the original exception via `from e`) instead of
+  escaping raw. - rust_backend.py: `search()` returned an empty-but-success SearchResult when
+  `self.inner is None` (fail-open) instead of raising; now raises BackendExecutionError. Currently
+  unreachable via the pipeline (is_available() gates it) but was a latent fail-closed violation for
+  any direct caller.
+
+BackendExecutionError subclasses RuntimeError, so existing `except RuntimeError`/ `except Exception`
+  handlers are unaffected; only `except BackendExecutionError` handlers newly catch these sites.
+
+Updated the one pre-existing test that pinned the superseded behavior
+  (test_backend_bug_fixes.py::test_stringzilla_search_propagates_real_exception, audit D3) to assert
+  the new contract instead, and updated test_rust_core.py's `inner is None` routing-metadata test to
+  expect BackendExecutionError. Added new BackendExecutionError-raising tests across all 4 backends'
+  test files (ripgrep subprocess failure/missing binary, torch
+  CUDA-unavailable/no-device-ids/compute fault, stringzilla native fault, rust_backend inner=None)
+  -- torch's native-CUDA-fault path is covered via a fake torch module injected through sys.modules
+  (no real GPU needed, matching the existing test file's pattern); a live-hardware CUDA-OOM path was
+  not exercised (no GPU in this env).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.1 (2026-07-09)
 
 ### Bug Fixes
