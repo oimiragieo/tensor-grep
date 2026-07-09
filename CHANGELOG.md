@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v1.53.0 (2026-07-09)
+
+### Features
+
+- **rerank**: Onnx encoder + checksum-pinned LateOn-Code-edge fetch (T3-T4)
+  ([#472](https://github.com/oimiragieo/tensor-grep/pull/472),
+  [`5067460`](https://github.com/oimiragieo/tensor-grep/commit/5067460cd94422c8514a25da91d9cb72f334819a))
+
+* feat(rerank): ONNX encoder + checksum-pinned LateOn-Code-edge fetch (T3-T4)
+
+T3: real ONNX encoder behind the `rerank` extra -- late_available() (import probe, mirrors
+  dense_available), load_late_model() with the two-tier fail-closed split (missing dir ->
+  recoverable LateRerankUnavailableError; corrupt/load-fail -> BackendExecutionError),
+  build_late_encoder() (a real, non-stub encode callable matching LateReranker's injected signature,
+  reading onnx_config.json for per-role prefixes + max lengths, tokenizing via tokenizers, running
+  the int8 ONNX session, L2-normalizing per token row), and load_late_reranker() (a ready-to-use
+  LateReranker wired with it). Hard 512-token truncation guard independent of the configured
+  onnx_config.json lengths.
+
+T4: checksum-pinned model fetch -- fetch_late_model() + `python -m tensor_grep.core.retrieval_late
+  --fetch` download exactly 3 files (model_int8.onnx, tokenizer.json, onnx_config.json) for
+  lightonai/LateOn-Code-edge from a PINNED HF revision (resolve/<sha>/, not main). SHA-256 pinned
+  per file, fail-closed on mismatch; byte-capped + timeout-bounded streaming download (stdlib urllib
+  only); atomic download-to-temp-then-verify-then-rename install. Also fixes the ghost `tg index
+  --fetch-model` message at retrieval_dense.py:95 (no such command exists) with an accurate manual
+  fetch procedure.
+
+Real end-to-end verification this session: fetched the actual 3 pinned files from Hugging Face,
+  independently hashed with two tools, ran the real ONNX model through the new encoder (real
+  tokenizer + onnxruntime session), and ran the real `--fetch` CLI against the live network -- all
+  confirmed working. Unit tests use monkeypatched imports / duck-typed fakes / a monkeypatched
+  urlopen (no network in CI); a real-model smoke test class is skipif-guarded for local-only use
+  after `--fetch`.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(rerank): stub onnxruntime present in the tokenizers-missing probe test
+
+The dev venv installs NEITHER onnxruntime nor tokenizers (both are [rerank]-extra only), so
+  late_available() short-circuits on the onnxruntime check and the tokenizers-missing branch was
+  never reached -- the test asserted the wrong branch and failed in the real venv (the build agent's
+  ad-hoc Py3.14 happened to have both deps, hiding it). Stub onnxruntime present so the probe
+  reaches the tokenizers check.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.52.0 (2026-07-09)
 
 ### Documentation
