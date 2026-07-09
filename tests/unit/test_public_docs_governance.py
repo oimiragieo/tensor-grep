@@ -292,10 +292,17 @@ def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
     gpu_doc = GPU_CROSSOVER_DOC_PATH.read_text(encoding="utf-8")
     paper = PAPER_DOC_PATH.read_text(encoding="utf-8")
 
-    for doc in (benchmarks, gpu_doc, paper):
+    # PAPER.md is an append-only historical log (never rewritten -- see the
+    # tensor-grep-docs-and-writing skill), so it cannot carry a perpetually-current
+    # post-`vX` freshness marker; that marker is governed only against the live GPU docs.
+    # Pre-fix, PAPER.md only satisfied this because the buggy unanchored release stamp
+    # re-injected a fresh version into its dated historical notes every release (audit #71/#73).
+    for doc in (benchmarks, gpu_doc):
         assert (
             f"post-`{CURRENT_RELEASE_TAG}`" in doc or f"post-`{CURRENT_RELEASE_TAG}` dogfood" in doc
         )
+
+    for doc in (benchmarks, gpu_doc, paper):
         assert "1GB and 5GB correctness" in doc
         assert "RTX 4070" in doc
         assert "RTX 5070" in doc

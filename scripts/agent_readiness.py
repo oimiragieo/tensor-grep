@@ -643,6 +643,15 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         content = path.read_text(encoding="utf-8")
         lower_content = content.lower()
         for fragment in gpu_fragments:
+            # docs/PAPER.md is an append-only historical log (never rewritten -- see the
+            # tensor-grep-docs-and-writing skill). It structurally cannot carry a
+            # perpetually-current `post-`vX`` freshness marker, so exempt it from the
+            # version-freshness fragment ONLY; all other required + banned GPU-honesty
+            # fragments below still apply to it. (audit #71/#73: pre-fix this gate only
+            # passed because the buggy unanchored release stamp re-injected a fresh version
+            # into PAPER.md's dated historical notes every release.)
+            if path.name == "PAPER.md" and fragment == f"post-`v{expected_version}`":
+                continue
             haystack = lower_content if fragment == "no crossover" else content
             needle = fragment if fragment != "no crossover" else fragment.lower()
             if needle not in haystack:

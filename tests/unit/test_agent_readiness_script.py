@@ -230,6 +230,40 @@ def test_agent_readiness_docs_claims_cover_gpu_taxonomy(tmp_path) -> None:
     module.validate_docs_claims("", tmp_path, "1.9.6")
 
 
+def test_agent_readiness_docs_claims_exempt_paper_md_from_version_freshness(tmp_path) -> None:
+    """audit #71/#73: docs/PAPER.md is an append-only historical log (never rewritten), so it
+    cannot carry a perpetually-current post-`vX` freshness marker. validate_docs_claims must
+    exempt PAPER.md from that fragment ONLY -- while still requiring it in the other GPU docs.
+    Pre-fix, PAPER.md only satisfied this check because a buggy unanchored release stamp
+    re-injected a fresh version into its dated historical notes every release."""
+    module = _load_script_module()
+    _write_docs_claim_fixture(tmp_path)
+
+    # Strip the freshness marker from PAPER.md only (mirrors the de-anachronized real doc).
+    paper_path = tmp_path / "docs" / "PAPER.md"
+    paper_path.write_text(
+        paper_path.read_text(encoding="utf-8").replace("post-`v1.9.6`", ""),
+        encoding="utf-8",
+    )
+    # Must NOT raise: PAPER.md is exempt from the version-freshness fragment (all its other
+    # required GPU-honesty fragments are still present and still checked).
+    module.validate_docs_claims("", tmp_path, "1.9.6")
+
+    # The exemption is PAPER.md-specific: gpu_crossover.md still requires the marker.
+    crossover_path = tmp_path / "docs" / "gpu_crossover.md"
+    crossover_path.write_text(
+        crossover_path.read_text(encoding="utf-8").replace("post-`v1.9.6`", ""),
+        encoding="utf-8",
+    )
+    try:
+        module.validate_docs_claims("", tmp_path, "1.9.6")
+    except module.ReadinessError as exc:
+        assert "gpu_crossover.md" in str(exc)
+        assert "post-`v1.9.6`" in str(exc)
+    else:
+        raise AssertionError("expected gpu_crossover.md to still require the post-`vX` marker")
+
+
 def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> None:
     module = _load_script_module()
     _write_docs_claim_fixture(tmp_path)
