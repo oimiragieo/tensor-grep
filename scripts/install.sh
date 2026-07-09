@@ -389,13 +389,13 @@ fi
 
 SHIM_DIRS=("$HOME/.local/bin" "$HOME/bin")
 INSTALLED_SHIMS=()
+# The shim is a byte-identical copy of the already-committed front-door script (same
+# native-or-python exec logic) rather than a wrapper that re-execs the front door as a second
+# bash process: 1 bash hop per invocation, not 2.
 for SHIM_DIR in "${SHIM_DIRS[@]}"; do
     mkdir -p "$SHIM_DIR"
     SHIM_PATH="$SHIM_DIR/tg"
-    cat > "$SHIM_PATH" << EOF
-#!/usr/bin/env bash
-"$INSTALL_DIR/bin/tg" "\$@"
-EOF
+    cp "$INSTALL_DIR/bin/tg" "$SHIM_PATH"
     chmod +x "$SHIM_PATH"
     INSTALLED_SHIMS+=("$SHIM_PATH")
 done

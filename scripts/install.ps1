@@ -652,8 +652,6 @@ try {
     $msysInstallDir = Convert-ToMsysPath $installDir
     $frontdoorArgBridgePath = Join-Path $frontdoorDir "tg-cmd-bridge.py"
     $wslInstallDir = Convert-ToWslPath $installDir
-    $msysFrontdoorPath = Convert-ToMsysPath $frontdoorBashPath
-    $wslFrontdoorPath = Convert-ToWslPath $frontdoorBashPath
     $stagingFrontdoorCmdPath = Join-Path $stagingFrontdoorDir "tg.cmd"
     $stagingFrontdoorPs1Path = Join-Path $stagingFrontdoorDir "tg.ps1"
     $stagingFrontdoorBashPath = Join-Path $stagingFrontdoorDir "tg"
@@ -732,12 +730,12 @@ runpy.run_module("tensor_grep", run_name="__main__")
 '@
     $frontdoorBashContent = @"
 #!/usr/bin/env bash
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    TG_NATIVE="$wslInstallDir/bin/tg.exe"
-    TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"
-else
+if [ -f "$msysInstallDir/.venv/Scripts/python.exe" ]; then
     TG_NATIVE="$msysInstallDir/bin/tg.exe"
     TG_PYTHON="$msysInstallDir/.venv/Scripts/python.exe"
+else
+    TG_NATIVE="$wslInstallDir/bin/tg.exe"
+    TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"
 fi
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
@@ -802,15 +800,9 @@ exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
 & "$frontdoorPs1Path" @args
 exit `$LASTEXITCODE
 "@
-    $bashShimContent = @"
-#!/usr/bin/env bash
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    TG_FRONTDOOR="$wslFrontdoorPath"
-else
-    TG_FRONTDOOR="$msysFrontdoorPath"
-fi
-exec "`$TG_FRONTDOOR" "`$@"
-"@
+    # Bash shims carry the front-door's own MSYS/WSL-detection + native-or-python exec logic
+    # directly (identical to $frontdoorBashContent) instead of exec-chaining to the front-door
+    # script. This collapses the compat-shim invocation from 2 bash-process hops to 1.
     $installedShimPaths = @()
     foreach ($shimDir in $shimDirs) {
         if (!(Test-Path $shimDir)) {
@@ -857,7 +849,7 @@ exec "`$TG_FRONTDOOR" "`$@"
             Write-Warning "Python subprocess tg.exe bridge was not installed because a foreign tg.exe already exists: $exeShimPath"
         }
         Write-AsciiFile -Path $ps1ShimPath -Value $ps1ShimContent
-        Write-BashFile -Path $bashShimPath -Value $bashShimContent
+        Write-BashFile -Path $bashShimPath -Value $frontdoorBashContent
         $installedShimPaths += $cmdShimPath
         $installedShimPaths += $ps1ShimPath
         $installedShimPaths += $bashShimPath
