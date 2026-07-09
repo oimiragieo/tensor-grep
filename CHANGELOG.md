@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.51.1 (2026-07-09)
+
+### Bug Fixes
+
+- **ast**: Insert -- sentinel before user paths in ast-grep argv to close CWE-88 flag injection (a
+  --update-all path could turn a read scan into a file rewrite) (audit #5)
+  ([#461](https://github.com/oimiragieo/tensor-grep/pull/461),
+  [`20713d9`](https://github.com/oimiragieo/tensor-grep/commit/20713d9fa7feaa4c8901ddd02b3304181bb601af))
+
+
 ## v1.51.0 (2026-07-08)
 
 ### Chores
