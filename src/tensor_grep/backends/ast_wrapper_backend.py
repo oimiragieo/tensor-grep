@@ -129,6 +129,12 @@ class AstGrepWrapperBackend(ComputeBackend):
             if stdin_enabled:
                 cmd.append("--stdin")
             else:
+                # CWE-88 / native-argv flag injection: a user-supplied path that
+                # looks like a flag (e.g. "-U" / "--update-all") would otherwise
+                # be parsed by ast-grep's clap CLI as its auto-fix flag, turning
+                # a read-only scan into a file rewrite. The "--" sentinel forces
+                # everything after it to be treated as a positional path.
+                cmd.append("--")
                 cmd.extend(paths)
             return cmd, nullcontext()
 
@@ -147,7 +153,9 @@ class AstGrepWrapperBackend(ComputeBackend):
             ]),
             encoding="utf-8",
         )
-        cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), *paths]
+        # CWE-88: "--" sentinel prevents a user path like "-U" / "--update-all"
+        # from being interpreted as ast-grep's auto-fix flag (see comment above).
+        cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), "--", *paths]
         return cmd, context
 
     def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> None:
@@ -305,6 +313,10 @@ class AstGrepWrapperBackend(ComputeBackend):
                 "--json",
                 "--config",
                 config_path,
+                # CWE-88: "--" sentinel prevents a user-supplied root_path like
+                # "-U" / "--update-all" from being interpreted as ast-grep's
+                # auto-fix flag (see comment on the run-command path above).
+                "--",
                 root_path,
             ])
         except BackendExecutionError:

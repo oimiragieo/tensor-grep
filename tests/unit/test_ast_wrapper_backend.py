@@ -247,6 +247,7 @@ def test_ast_wrapper_backend_should_forward_ast_grep_run_semantic_options():
         "*.py",
         "--globs",
         "!generated/**",
+        "--",
         "src",
     ]
 
@@ -462,6 +463,132 @@ def test_ast_wrapper_backend_should_tolerate_non_mapping_range_payload():
     assert result.matches[0].range is None
 
 
+def test_ast_wrapper_backend_should_sentinel_guard_flag_like_paths_on_run(monkeypatch):
+    """CWE-88 / audit #5: a user-supplied path that looks like an ast-grep flag
+    (e.g. "-U" / "--update-all") must not be parsed by ast-grep's clap CLI as
+    its auto-fix flag -- a "--" sentinel must precede every user path on the
+    ``sg run`` argv (site: _build_command, non-multiline branch)."""
+    backend = AstGrepWrapperBackend()
+    monkeypatch.delenv("TG_AST_GREP_TIMEOUT_SECONDS", raising=False)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search_many(
+            ["-U", "--update-all", "src"],
+            "print($A)",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    cmd = run.call_args.args[0]
+    assert cmd.count("--") == 1
+    sentinel_index = cmd.index("--")
+    assert cmd[sentinel_index + 1 :] == ["-U", "--update-all", "src"]
+
+
+def test_ast_wrapper_backend_should_sentinel_guard_flag_like_path_on_single_search(monkeypatch):
+    """Same site as above (_build_command, non-multiline branch), exercised via
+    the single-file ``search`` entry point rather than ``search_many``."""
+    backend = AstGrepWrapperBackend()
+    monkeypatch.delenv("TG_AST_GREP_TIMEOUT_SECONDS", raising=False)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search(
+            "--rewrite",
+            "print($A)",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    cmd = run.call_args.args[0]
+    assert cmd.count("--") == 1
+    sentinel_index = cmd.index("--")
+    assert cmd[sentinel_index + 1 :] == ["--rewrite"]
+
+
+def test_ast_wrapper_backend_should_sentinel_guard_flag_like_path_on_multiline_rule_scan(
+    monkeypatch,
+):
+    """Multiline patterns route through the ``sg scan --rule`` argv (site:
+    _build_command, rule-file branch) -- must also sentinel-guard the path."""
+    backend = AstGrepWrapperBackend()
+    monkeypatch.delenv("TG_AST_GREP_TIMEOUT_SECONDS", raising=False)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search(
+            "-U",
+            "def $FUNC():\n    $$$BODY",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    cmd = run.call_args.args[0]
+    assert cmd[:4] == ["sg", "scan", "--json", "--rule"]
+    assert cmd.count("--") == 1
+    sentinel_index = cmd.index("--")
+    assert cmd[sentinel_index + 1 :] == ["-U"]
+
+
+def test_ast_wrapper_backend_should_sentinel_guard_flag_like_root_path_on_project_scan():
+    """search_project (site: search_project's sg scan --config argv) must also
+    sentinel-guard its root_path."""
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search_project("--update-all", "sgconfig.yml")
+
+    cmd = run.call_args.args[0]
+    assert cmd == [
+        "sg",
+        "scan",
+        "--json",
+        "--config",
+        "sgconfig.yml",
+        "--",
+        "--update-all",
+    ]
+
+
 def test_ast_wrapper_backend_should_group_project_scan_results_by_rule_id():
     backend = AstGrepWrapperBackend()
 
@@ -481,7 +608,15 @@ def test_ast_wrapper_backend_should_group_project_scan_results_by_rule_id():
     ):
         results = backend.search_project("project", "sgconfig.yml")
 
-    assert run.call_args.args[0] == ["sg", "scan", "--json", "--config", "sgconfig.yml", "project"]
+    assert run.call_args.args[0] == [
+        "sg",
+        "scan",
+        "--json",
+        "--config",
+        "sgconfig.yml",
+        "--",
+        "project",
+    ]
     assert results["rule-a"].total_matches == 2
     assert results["rule-a"].matched_file_paths == ["a.py"]
     assert results["rule-b"].total_matches == 1
