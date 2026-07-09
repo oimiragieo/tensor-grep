@@ -18,8 +18,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
+from uuid import uuid4
 
-from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock
+from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
@@ -189,8 +190,75 @@ def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
 
     # audit S3: daemon.json carries the IPC token; write it 0600 so the secret is not exposed.
     metadata_path = _daemon_metadata_path(root)
-    _write_json_atomic(metadata_path, payload, mode=_DAEMON_METADATA_MODE)
+    if sys.platform == "win32":
+        # audit #81 #13: on Windows, os.chmod/the os.open `mode=` bits grant NO real per-user
+        # access control (see _restrict_windows_file_to_current_user below), so writing the
+        # token via the shared, POSIX-oriented _write_json_atomic and only running icacls
+        # AFTERWARD (the old sequence) left the token file world-readable-under-the-parent's-
+        # default-ACL for the whole write+rename+icacls duration. Lock the ACL down before any
+        # secret byte is written instead -- see _write_daemon_metadata_windows.
+        _write_daemon_metadata_windows(metadata_path, payload)
+    else:
+        # POSIX: _write_json_atomic already creates the temp file AT mode 0600 via
+        # os.open(O_CREAT|O_EXCL, mode) -- the kernel applies the mode atomically at creation,
+        # so the file is never briefly world-readable between creation and the rename.
+        _write_json_atomic(metadata_path, payload, mode=_DAEMON_METADATA_MODE)
+    # Defense-in-depth re-assertion on the *published* path. On the Windows path above this is
+    # redundant with the temp-file lock (a same-directory rename carries the explicit DACL we
+    # just set forward, it is not recomputed from the parent), but it is cheap insurance against
+    # any future change to the publish step; on POSIX it is a no-op (sys.platform guard below).
     _restrict_windows_file_to_current_user(metadata_path)
+
+
+def _write_daemon_metadata_windows(path: Path, payload: dict[str, Any]) -> None:
+    """Windows: lock the temp file's ACL down BEFORE the HMAC token is written into it (audit #81 #13).
+
+    Mirrors ``session_store._write_json_atomic``'s create-temp/write/fsync/atomic-rename shape,
+    but inserts the ACL lockdown between temp-file *creation* (0 bytes, no secret yet) and the
+    write of the token payload, instead of applying it only after the fact on the already-
+    published path. The create-then-lock-then-write ordering keeps the same file descriptor open
+    across the ``icacls`` subprocess call -- ``os.open()`` on Windows defaults to DENY_NONE
+    sharing, so a concurrent process can set the DACL without a sharing violation (verified
+    empirically against this repo's CI Windows image) -- so there is no close/reopen gap either.
+    The rename stays within the same directory, so the explicit (non-inherited) DACL travels with
+    the file rather than being recomputed from the parent.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    data = json.dumps(payload, indent=2)
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _DAEMON_METADATA_MODE)
+    try:
+        # The lock call is INSIDE the fdopen `with` so that if it ever raised (it shouldn't --
+        # _restrict_windows_file_to_current_user swallows its own errors -- but this must stay
+        # correct even if that changes), the `with` block closes the underlying fd before the
+        # `except` below tries to unlink: Windows refuses to delete a file that is still open
+        # under this process (WinError 32).
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            # ACL-lock BEFORE any token bytes are written -- the file is still 0 bytes here, so
+            # there is nothing for another local account to read even if it wins the race to
+            # open the (randomly named) temp file before icacls completes.
+            _restrict_windows_file_to_current_user(tmp_path)
+            handle.write(data)
+            handle.flush()
+            # M6: fsync the data before the rename so a crash can never publish a truncated
+            # token file (mirrors _write_json_atomic, audit I5).
+            os.fsync(handle.fileno())
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)  # don't leave a partial/unlocked temp behind
+        raise
+    replace_with_retry(tmp_path, path)
+    # Best-effort directory-durability fsync, mirroring _write_json_atomic; a no-op/unsupported
+    # on Windows so failures here are expected and non-fatal.
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
 
 
 def _restrict_windows_file_to_current_user(path: Path) -> None:
@@ -201,6 +269,10 @@ def _restrict_windows_file_to_current_user(path: Path) -> None:
     can reach the session root could read the IPC token. Remove inherited ACLs and grant only the
     current user. The HMAC compare_digest gate remains the ENFORCED control; this is defense in
     depth and fails OPEN (a failed icacls must never break daemon startup).
+
+    Called both BEFORE the token is written (on the pre-publish temp, the real fix for audit
+    #81 #13) and again afterward on the published path (defense-in-depth) -- safe either way
+    since it only ever tightens the ACL of whatever path it is given.
     """
     if sys.platform != "win32":
         return
