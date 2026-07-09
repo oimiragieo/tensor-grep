@@ -439,9 +439,10 @@ version_variables = [
 
 
 
+
 [project]
 name = "tensor-grep"
-version = "1.53.0"
+version = "1.54.0"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"

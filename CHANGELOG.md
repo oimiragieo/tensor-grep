@@ -1,6 +1,61 @@
 # CHANGELOG
 
 
+## v1.54.0 (2026-07-09)
+
+### Features
+
+- **rerank**: Wire the late-interaction stage into --semantic behind TG_LATE_RERANK (T5-T6 seam +
+  fail-closed) ([#473](https://github.com/oimiragieo/tensor-grep/pull/473),
+  [`00b3402`](https://github.com/oimiragieo/tensor-grep/commit/00b34026c9dd0122d28a51b94e3f53a062776282))
+
+T5 (the seam): rerank_hybrid() gains an optional late_reranker: LateReranker | None = None kwarg,
+  mirroring dense_index exactly. After RRF produces fused_order and before the positional-proxy
+  scores are frozen, an active late_reranker MaxSim-reorders the head (TG_RERANK_POOL_K, default 50,
+  capped at 100) and leaves the tail in RRF order -- order-only over chunk indices, same
+  matches/membership/JSON shape. _apply_semantic_rerank (cli/main.py) gates this behind
+  TG_LATE_RERANK=1 (mirrors the shipped TG_RRF_CHANNELS=1 pattern), probes late_available(), loads
+  via load_late_reranker(), and passes it into the PRIMARY rerank_hybrid call only -- never into any
+  BM25-only degrade retry.
+
+T6 (fail-closed contract): the 3 upstream degrade paths that bypass the stage (per-file MAX_CHUNKS,
+  corpus-cap, query-time dense fault) append "; late rerank skipped" to rank_fallback_reason when
+  late rerank was requested. Late-stage recoverable failures (extra absent, model not fetched,
+  TG_RERANK_BUDGET_MS default 2000 exceeded, malformed embedding shape) degrade to the RRF order,
+  append rank_fallback_reason, and write a tg: stderr line. BackendExecutionError (corrupt model,
+  encode crash) is deliberately left uncaught and propagates to the existing CLI boundary (exit 2).
+  The bidirectional invariant -- order provably changed XOR rank_fallback_reason set, no third state
+  -- is enforced by construction and pinned by test_rerank_ran_xor_fallback_reason_set.
+
+Corrected against the real code during implementation: the design's shorthand `[chunks[i] for i in
+  head]` would have passed Chunk objects (not strings) into LateReranker.rerank(); fixed to
+  `[chunks[i].text for i in head]`. Also added a defensive _int_env() helper so a malformed
+  TG_RERANK_POOL_K/TG_RERANK_BUDGET_MS value degrades to the default instead of crashing the search.
+
+Tests: tests/unit/test_reranker.py gains 6 rerank_hybrid-level tests (byte-identical on
+  late_reranker=None, head-only reorder with a stable tail, same-match-membership, shape-mismatch
+  degrade, budget-exceeded degrade, fallback-reason append-not-clobber) using a real injected
+  LateReranker with a deterministic stub encoder -- no ONNX model needed. New
+  tests/unit/test_search_semantic_rerank.py adds 5 CLI-level tests (env-off is a true no-op --
+  late_available() spied to prove it is never called; budget-exceeded degrade with a sleeping stub;
+  corrupt-model exit 2 in JSON and text mode; the bidirectional invariant across both branches
+  against the same baseline).
+
+Verified (ad-hoc bare Python 3.14 + numpy/pytest/mypy/ruff present, NOT the project's pinned uv venv
+  -- caught and fixed one real bug, a missing tg: stderr line, via actual execution): pytest on the
+  6 directly-relevant suites (63 passed), mypy --strict on the full src tree (77 files, clean), ruff
+  check + ruff format --check --preview clean, and a ~2500-test sweep of tests/unit/ with only 2
+  pre-existing environment gaps unrelated to this change (missing compiled Rust extension; a Go
+  tree-sitter resolution test). Re-run in the real uv venv is still required before merge per house
+  process.
+
+Touches only reranker.py, cli/main.py, and the 2 named test files -- no T9 registration files
+  (bootstrap.py, main.rs, config.py, .tg-registration.toml), no changes to retrieval_late.py (T0-T4,
+  untouched), pyproject.toml, or uv.lock.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.53.0 (2026-07-09)
 
 ### Features
