@@ -45,6 +45,16 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--replace",
     "--stats",
     "--type-list",
+    # --type/-t, --type-not/-T, and --iglob narrow WHICH files match but do NOT bound the walk, so
+    # a bare `tg search PAT -t py` / `--iglob '*.py'` (no PATH) on a large root is the same
+    # unbounded-walk DoS as bare --glob (audit #88 siblings; the guard's own scope condition is
+    # glob|iglob|file_type|type_not). Force them to the full CLI where _should_refuse_unbounded_*
+    # guards fire, rather than the unguarded rg passthrough.
+    "--type",
+    "--type-not",
+    "--iglob",
+    "-t",
+    "-T",
     "-l",
     "-g",
     "-r",
@@ -55,8 +65,11 @@ _TG_ONLY_SEARCH_FLAG_PREFIXES = (
     "--generate=",
     "--glob=",
     "--gpu-device-ids=",
+    "--iglob=",
     "--lang=",
     "--replace=",
+    "--type=",
+    "--type-not=",
 )
 
 _SCAN_FULL_CLI_FLAGS = {

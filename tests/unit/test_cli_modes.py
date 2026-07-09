@@ -1095,6 +1095,40 @@ def test_plain_search_refuses_glob_with_implicit_path_on_large_root(monkeypatch,
     assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
 
 
+@pytest.mark.parametrize(
+    "scope_args",
+    [
+        ["-t", "py"],
+        ["--type", "py"],
+        ["-T", "py"],
+        ["--iglob", "*.py"],
+    ],
+)
+def test_plain_search_refuses_type_and_iglob_with_implicit_path_on_large_root(
+    monkeypatch, tmp_path: Path, scope_args: list[str]
+):
+    """Bug #88 SIBLINGS (adversarial-gate BLOCK on #480): --type/-t, --type-not/-T and --iglob
+    narrow WHICH files match but do NOT bound the walk -- the guard's own scope condition is
+    glob|iglob|file_type|type_not. Before the fix, a bare `tg search PAT -t py` (no PATH) on a
+    large root skipped the ceiling probe (native trigger only checked globs; bootstrap routed
+    bare --type/--iglob to the unguarded rg passthrough) and walked the whole tree. Same repro
+    shape as the --glob test above; must refuse instantly for every walk-scope flag."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+    repo = tmp_path / "repo"
+    _make_stub_file_repo(repo, 2000)
+    monkeypatch.chdir(repo)
+
+    start = time.perf_counter()
+    result = CliRunner().invoke(app, ["search", "TODO", *scope_args])
+    elapsed = time.perf_counter() - start
+
+    assert result.exit_code == 2, result.output
+    assert "broad root scan refused" in result.output
+    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+
+
 def test_plain_search_refuses_glob_with_implicit_path_on_workspace_root(
     monkeypatch, tmp_path: Path
 ):

@@ -5485,9 +5485,10 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         // `request.paths` is EMPTY (not `["."]`) whenever stdin is readable
         // (`grep_cli::is_readable_stdin()` -> `implicit_search_paths`); rg then still walks the
         // cwd, so normalize the implicit root to `["."]` before probing (mirrors the Python CLI,
-        // which always guards `["."]`). Only probe when a glob is present: that is the flag combo
-        // that routes an unscoped implicit-path search into the unbounded rg passthrough.
-        if request.path_was_implicit && !args.globs.is_empty() {
+        // which always guards `["."]`). Probe when a glob OR a --type filter is present: BOTH
+        // narrow WHICH files match without bounding the walk, so either routes an unscoped
+        // implicit-path search into the unbounded rg passthrough (bug #88 + its --type sibling).
+        if request.path_was_implicit && (!args.globs.is_empty() || !args.file_type.is_empty()) {
             let dot_root = [".".to_string()];
             let probe_roots: &[String] = if request.paths.is_empty() {
                 &dot_root
