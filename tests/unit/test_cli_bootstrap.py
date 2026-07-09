@@ -307,10 +307,15 @@ def test_main_entry_should_passthrough_raw_rg_style_invocation(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["-i", "ERROR", "."]}
 
 
+# NOTE: `-t js` (and the other walk-scope filters -g/-T/--type/--glob/--iglob) used to be
+# listed here as an rg-passthrough case, but they now route to the full CLI so the unbounded
+# implicit-path walk guard can fire on a bare (no-PATH) filter (bug #88 walk-DoS). `-g`/`--glob`
+# already routed to the full CLI on main; `-t`/`-T`/`--type`/`--type-not` were made consistent
+# with them. The routing is now pinned directly at test_requires_full_cli_routes_every_walk_scope_filter_form.
+# This test keeps a NON-walk-scope option-first shortcut (`--count-matches`) that still passes through.
 @pytest.mark.parametrize(
     ("argv", "expected_search_args"),
     [
-        (["tg", "-t", "js", "ERROR", "."], ["-t", "js", "ERROR", "."]),
         (
             ["tg", "--count-matches", "ERROR", "."],
             ["--count-matches", "ERROR", "."],
