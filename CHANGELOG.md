@@ -1,6 +1,96 @@
 # CHANGELOG
 
 
+## v1.54.3 (2026-07-09)
+
+### Bug Fixes
+
+- **repo_map**: Make --deadline a hard wall-clock bound on the graph commands (#52)
+  ([#478](https://github.com/oimiragieo/tensor-grep/pull/478),
+  [`67f9779`](https://github.com/oimiragieo/tensor-grep/commit/67f97798d8b4bdd549befdaa0b7a1a7179932f8f))
+
+* fix(repo_map): bound the 4 remaining unbounded loops behind --deadline (#52)
+
+Closes the residual --deadline overrun on a high-fan-out symbol shape (e.g. "main": many
+  definitions, ~0 import edges), confirmed 3x as the #1 recurring P0. #396/#440 (task #61) bounded
+  the caller-scan re-parse and two sibling loops on callers/refs; this closes the four loops a
+  verify-plan-against-code pass found still unbounded:
+
+- Loop A: _iter_repo_files' file-tree walk had no wall-clock bound, only a max_files COUNT bound --
+  build_repo_map called it before its own parse-loop deadline check, and build_inventory computed
+  its deadline var AFTER the walk. Both branches (bucket-interleave and the plain-list path) now
+  take deadline_monotonic + deadline_hit (default None -> byte-identical no-op) and fold an early
+  break into the caller's existing deadline_hit local.
+
+- Loop B: _relevant_tests_for_symbol had no deadline params at all -- two unguarded loops over the
+  full tests list. This is the dominant cause of the 23x overrun: _preferred_definition_files falls
+  back to the FULL unfiltered definition_files list when every import-score is 0 (true for
+  "main"-shaped symbols), flooding this function's O(definitions x tests) any() loops unbounded.
+  Both loops now break on the shared deadline; build_symbol_callers_from_map folds the new flag into
+  its existing 3-way (now 4-way) partial OR.
+
+- Loop C: build_symbol_impact_from_map took no deadline parameter whatsoever, so its internal
+  _preferred_definition_files and _relevant_tests_for_symbol calls always ran unconstrained
+  regardless of the caller's budget, and it had no partial/ deadline_limit block to report it. Added
+  the parameter, threaded it into both calls, added the new partial block, and wired it through
+  build_symbol_impact and build_symbol_blast_radius_from_map (which also widens its own partial
+  fold-in to include impact_payload's new partial signal, since it reads impact_payload's
+  file_matches/tests/imports/symbols directly).
+
+- Loop D: build_symbol_refs_from_map's second (string_refs) pass over bounded_files ran after the
+  deadline-checked main scan with no bound of its own; folded into the same refs_scan_deadline_hit
+  local the main loop already declares. Also bundled _string_literal_references' raw path.read_text
+  into the shared _read_source_text_cached helper, mirroring the size-guard/caching its siblings
+  already use.
+
+No new type or field -- reuses the existing _DeadlineBreakFlag / deadline_monotonic / partial /
+  deadline_limit machinery throughout. Every new check is guarded `if deadline_monotonic is not
+  None`, verified via a None-sibling test per mechanism, so a caller that never passes --deadline
+  sees byte-identical behavior.
+
+Reuse check: no #88 bounding-helper fix has landed on origin/main (git log confirmed); this reuses
+  the existing task #61 machinery instead.
+
+TDD: RED confirmed by stashing this commit's production-code changes and running the new tests
+  against origin/main's repo_map.py/inventory.py (13 genuine failures, including a mid-walk
+  clock-hook design that initially produced a false-pass and was tightened); GREEN confirmed after
+  unstashing. Broad regression sweep (731 tests across
+  repo_map/inventory/symbol-graph/docs_coverage/session_store) plus the full unit suite (3813
+  passed, 2 pre-existing failures unrelated to this change -- missing optional `model2vec` package,
+  not installed by this venv's [dev,ast] extras) both green.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(plans): #52 deadline hard-bound design (4 unbounded loops A/B/C/D + inventory reorder)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **skills**: Reconcile BACKLOG to v1.55.0 + 1.54.0 WSL dogfood triage + skill accuracy fixes
+  ([#476](https://github.com/oimiragieo/tensor-grep/pull/476),
+  [`05f5137`](https://github.com/oimiragieo/tensor-grep/commit/05f513756de307aa86ff27f5fdc0c6f32cc0c81f))
+
+* docs(backlog): reconcile ledger to v1.55.0 (deep-dive #81 100% + rerank T0-T6 shipped; #84
+  draining as #475; #76 done) + track the late-rerank design doc
+
+* docs(skills): 1.54.0 WSL dogfood triage — accuracy-fix skills (imports/importers shipped #74, C14
+  resolved, v1.54.0 stamps) + new tensor-grep-workspace-dogfood skill + BACKLOG P0/P1 findings (#52
+  deadline, #89 WSL-path, #90 ast-grep, #91 type-json, #92 classify-stdin)
+
+* docs(agents): fix DEFAULT_AGENT_REPO_MAP_LIMIT doc-drift (512 -> 2000; note the separate
+  CALLER_SCAN_FILE_CEILING=512) -- audit doc-accuracy find
+
+### Testing
+
+- **index-lock**: Harden the open_session hot-path flake (#64) — flat 4.0s floor mirroring the
+  sibling checkpoint test, replacing the fragile baseline*3+1.0 ratio that false-failed on loaded
+  windows CI ([#477](https://github.com/oimiragieo/tensor-grep/pull/477),
+  [`9a43ea7`](https://github.com/oimiragieo/tensor-grep/commit/9a43ea7cd352ddbb592fe82b188b666c113bb797))
+
+
 ## v1.54.2 (2026-07-09)
 
 ### Bug Fixes
