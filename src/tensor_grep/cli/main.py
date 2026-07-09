@@ -4133,6 +4133,44 @@ def _format_unbounded_large_root_scan_error(file_count_floor: int) -> str:
     )
 
 
+# Bug #88 (dogfood v1.54.1 re-harvest): the native-binary front door's implicit-`--glob`-no-PATH
+# WALK guard (`implicit_search_walk_exceeds_ceiling`, rust_core/src/main.rs) needs a Python-CLI
+# mirror, because the full CLI reaches this bug through a DIFFERENT door: `--glob` is a
+# `_TG_ONLY_SEARCH_FLAG`, so `cli/bootstrap.py`'s launcher routes a bare `tg search --glob X
+# PATTERN` to `_run_full_cli()`, which then hands the whole implicit-`.` walk to the rg
+# passthrough (`RipgrepBackend.search_passthrough`) BEFORE `_should_refuse_unbounded_large_root_scan`
+# (that guard only runs on the slow per-file Python loop, never on the rg-passthrough fast path).
+# On a large single-project root whose top level carries a project marker (e.g. a workspace dir
+# with a `package.json`), the workspace-root guard SKIPS it and the vendored-root guard finds no
+# top-level vendored dir, so the search sailed straight into an unbounded rg walk (dogfood repro:
+# `tg search "function" --glob "*"` on `C:/dev/projects` streamed 487k lines past 60s).
+#
+# Like the native probe this counts files the walker VISITS -- NOT post-glob matches: a file glob
+# does not prune the walk, so a SELECTIVE glob (`*.rs` in a huge JS tree) would sail under a
+# match-count ceiling yet still force the full unbounded walk. The glob/type filters are stripped
+# from the probe config so `DirectoryScanner.walk` yields every walked file; `--max-depth` /
+# ignore / hidden are kept because they genuinely bound how much of the tree is walked. The pull
+# is bounded to `ceiling + 1` files (never a full-tree enumeration).
+def _implicit_glob_search_walk_exceeds_ceiling(
+    paths: list[str],
+    config: "SearchConfig",
+    ceiling: int,
+) -> bool:
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    probe_config = dataclasses.replace(config, glob=None, iglob=None, file_type=None, type_not=None)
+    count = 0
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        scanner = DirectoryScanner(probe_config)
+        for _ in scanner.walk(raw_path):
+            count += 1
+            if count > ceiling:
+                return True
+    return False
+
+
 def _sum_total_bytes(paths: list[str]) -> int:
     total = 0
     for p in paths:
@@ -6565,6 +6603,29 @@ def search_command(
     )
     if refuse_vendored_scan:
         typer.echo(_format_unbounded_vendored_root_scan_error(vendored_root_dirs), err=True)
+        raise typer.Exit(2)
+
+    # Bug #88 (dogfood v1.54.1 re-harvest): an implicit-path `--glob`/`--type` search that the
+    # workspace/vendored guards above did not catch (a large single-project root whose top level
+    # carries a project marker, e.g. a workspace dir with a package.json) would otherwise hand the
+    # whole unbounded `.` walk to the rg passthrough / native delegation below. Mirror the native
+    # binary's WALK-ceiling guard here so the full CLI refuses fast too. Gated on `paths_defaulted`
+    # (an explicit, deliberately-scoped PATH still runs uninhibited -- Trap #3) and on a glob/type
+    # filter being present (the flag combo that routes an unscoped search into the rg passthrough);
+    # `--max-depth` and `--allow-broad-generated-scan` bypass it (a genuinely bounded walk / opt-in).
+    if (
+        paths_defaulted
+        and not allow_broad_generated_scan
+        and config.max_depth is None
+        and (config.glob or config.iglob or config.file_type or config.type_not)
+        and _implicit_glob_search_walk_exceeds_ceiling(
+            paths_to_search, config, _LARGE_ROOT_SCAN_FILE_CEILING
+        )
+    ):
+        typer.echo(
+            _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
+            err=True,
+        )
         raise typer.Exit(2)
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)

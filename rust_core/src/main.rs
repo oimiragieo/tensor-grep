@@ -3,10 +3,12 @@ use anyhow::Context;
 use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
 use hmac::{Hmac, Mac};
-// Bug #88 (dogfood v1.54.0): unconditional now -- `implicit_glob_scan_exceeds_ceiling` (the
-// bare-`--glob`-no-PATH ceiling probe) needs these on every build, not just `cuda`. Previously
-// only `count_search_corpus_bytes` (cuda-gated) used them.
-use ignore::{overrides::OverrideBuilder, WalkBuilder};
+// Bug #88 (dogfood v1.54.0): `WalkBuilder` is unconditional now -- `implicit_search_walk_
+// exceeds_ceiling` (the bare-`--glob`-no-PATH WALK-ceiling probe) needs it on every build, not
+// just `cuda`. `OverrideBuilder` stays cuda-gated: only `count_search_corpus_bytes` uses it.
+#[cfg(feature = "cuda")]
+use ignore::overrides::OverrideBuilder;
+use ignore::WalkBuilder;
 use process_control::{ChildExt, Control};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1825,27 +1827,41 @@ For intentional broad scans:\n\
     )
 }
 
-// Bug #88 (dogfood v1.54.0): a bare `tg search --glob X PATTERN` with NO explicit PATH used to
-// hand the walk straight to real `rg` via `execute_ripgrep_search` (`search_prefers_ripgrep_
-// passthrough`'s `!args.globs.is_empty()` branch in `handle_ripgrep_search`) with no ceiling
-// check at all -- `--glob` narrows WHICH files match, it does not bound how much of the tree
-// must be walked to find them. On a large/workspace/vendored cwd this ran effectively
+// Bug #88 (dogfood v1.54.0 -> v1.54.1 follow-up): a bare `tg search --glob X PATTERN` with NO
+// explicit PATH used to hand the walk straight to real `rg` via `execute_ripgrep_search`
+// (`search_prefers_ripgrep_passthrough`'s `!args.globs.is_empty()` branch in
+// `handle_ripgrep_search`) with no ceiling check at all. `--glob`/`--type` narrow WHICH files
+// MATCH, they do NOT bound how much of the tree is WALKED to find them -- only `--max-depth`
+// (and gitignore/hidden pruning) do. On a large/workspace/vendored cwd this ran effectively
 // unbounded (only the 60s `TG_RG_TIMEOUT_SECONDS` rg-subprocess timeout eventually killed it).
-// Mirrors the Python CLI's `_LARGE_ROOT_SCAN_FILE_CEILING` (`cli/main.py`) -- same threshold
-// value, same "count real post-filter candidates, refuse before the real search runs" design.
-const IMPLICIT_GLOB_SCAN_FILE_CEILING: usize = 1500;
+//
+// The first fix attempt (296cc92) had two gaps the dogfood re-harvest caught:
+//   (1) it counted post-GLOB matches, so a SELECTIVE glob (`*.rs` in a huge JS tree) counts
+//       few matches, sails under the ceiling, and proceeds into the unbounded WALK; and worse,
+//       a glob matching everything but slowly (`**/*`) made the probe itself walk the whole
+//       tree. The hang is TREE-WALK cost, independent of match count -- so this probe now
+//       counts every FILE the walker VISITS (ignoring the glob filter entirely) and early-exits
+//       the instant the WALK exceeds the ceiling. That is both robust to glob selectivity and
+//       self-bounded (never more than `ceiling + 1` files walked).
+//   (2) `request.paths` is EMPTY (not `["."]`) whenever `grep_cli::is_readable_stdin()` is true
+//       (`implicit_search_paths`), so the probe saw no root and skipped -- yet rg still walked
+//       the cwd unbounded. The caller now normalizes an implicit empty-paths search to `["."]`
+//       before probing (mirroring the Python CLI, which always guards `["."]`).
+const IMPLICIT_SEARCH_WALK_FILE_CEILING: usize = 1500;
 
-/// Bounded probe: walks `paths` honoring the SAME glob/max-depth/no-ignore settings the real
-/// search would use, counting files, and returns `true` the instant the ceiling is exceeded --
-/// never a full-tree enumeration (that would just be the unbounded work this guard exists to
-/// avoid). Only meaningful when the caller has already confirmed `path_was_implicit` (no
-/// explicit PATH argument): an explicit, deliberately-scoped PATH combined with `--glob` must
-/// still run uninhibited (mirrors the CLI's `paths_defaulted`-gated guard).
-fn implicit_glob_scan_exceeds_ceiling(
+/// Bounded WALK probe: walks `paths` honoring the SAME max-depth / no-ignore / hidden traversal
+/// settings the real search would use, counting every FILE the walker VISITS (NOT filtered by
+/// the search glob -- a file glob does not prune the walk, so walk cost is glob-independent),
+/// and returns `true` the instant the WALK exceeds the ceiling. Never enumerates more than
+/// `ceiling + 1` files (that would just be the unbounded work this guard exists to avoid).
+/// Only meaningful when the caller has confirmed `path_was_implicit` (no explicit PATH): an
+/// explicit, deliberately-scoped PATH must still run uninhibited (the CLI's `paths_defaulted`
+/// gate / Trap #3).
+fn implicit_search_walk_exceeds_ceiling(
     paths: &[String],
-    globs: &[String],
     max_depth: Option<usize>,
     no_ignore: bool,
+    hidden: bool,
     ceiling: usize,
 ) -> bool {
     let roots: Vec<PathBuf> = paths
@@ -1864,27 +1880,15 @@ fn implicit_glob_scan_exceeds_ceiling(
     if let Some(depth) = max_depth {
         builder.max_depth(Some(depth));
     }
+    // `hidden(true)` = SKIP hidden entries (ripgrep's default). Only descend hidden when the
+    // real search was asked to (`--hidden`), so the probe's walk cost matches rg's.
+    builder.hidden(!hidden);
     if no_ignore {
         builder.ignore(false);
         builder.git_ignore(false);
         builder.git_global(false);
         builder.git_exclude(false);
         builder.parents(false);
-    }
-    if !globs.is_empty() {
-        let mut overrides = OverrideBuilder::new(first_root);
-        let mut overrides_valid = true;
-        for glob in globs {
-            if overrides.add(glob).is_err() {
-                overrides_valid = false;
-                break;
-            }
-        }
-        if overrides_valid {
-            if let Ok(built) = overrides.build() {
-                builder.overrides(built);
-            }
-        }
     }
 
     let mut file_count = 0usize;
@@ -1904,13 +1908,13 @@ fn implicit_glob_scan_exceeds_ceiling(
     false
 }
 
-fn format_unbounded_implicit_glob_scan_error(ceiling: usize) -> String {
+fn format_unbounded_implicit_search_walk_error(ceiling: usize) -> String {
     format!(
         "Error: broad root scan refused as a safety guard, not a zero-match result: \
 no PATH was given, so the search defaulted to the current directory, which is a large root \
-(over {ceiling} files); --glob only filters WHICH files match, it does not bound how much of \
-the tree must be walked to find them. Scope the search to an explicit PATH, add --max-depth, \
-or pass --allow-broad-generated-scan to opt in.\n\
+(over {ceiling} files walked); --glob/--type only filter WHICH files match, they do not bound \
+how much of the tree must be walked to find them. Scope the search to an explicit PATH, add \
+--max-depth, or pass --allow-broad-generated-scan to opt in.\n\
 For bounded output:\n\
 tg search <pattern> <root> --glob \"*.py\"\n\
 tg search <pattern> <root> --max-depth <N>\n\
@@ -3534,86 +3538,84 @@ mod tests {
     }
 
     #[test]
-    fn implicit_glob_scan_refuses_over_ceiling_candidate_count() {
-        // Bug #88 (dogfood v1.54.0): a bare `--glob` search with NO explicit PATH on a root
-        // over the ceiling must be flagged for refusal by the probe -- this is the exact gap
-        // that let a bare `tg search --glob X PATTERN` from a large/unscoped cwd walk/search
-        // unbounded via `execute_ripgrep_search`.
+    fn implicit_search_walk_refuses_over_ceiling_file_count() {
+        // Bug #88: a bare `--glob` search with NO explicit PATH on a root whose WALK exceeds the
+        // ceiling must be refused -- the exact gap that let a bare `tg search --glob X PATTERN`
+        // from a large/unscoped cwd walk/search unbounded via `execute_ripgrep_search`.
         let dir = tempfile::tempdir().unwrap();
         _make_stub_file_dir(dir.path(), 1600);
 
-        let exceeds = implicit_glob_scan_exceeds_ceiling(
+        let exceeds = implicit_search_walk_exceeds_ceiling(
             &[dir.path().to_string_lossy().to_string()],
-            &["*.py".to_string()],
             None,
             false,
-            IMPLICIT_GLOB_SCAN_FILE_CEILING,
+            false,
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
         );
 
         assert!(
             exceeds,
-            "expected the 1600-file root to exceed the 1500 ceiling"
+            "expected the 1600-file root's WALK to exceed the 1500 ceiling"
         );
     }
 
     #[test]
-    fn implicit_glob_scan_allows_count_under_ceiling() {
+    fn implicit_search_walk_allows_count_under_ceiling() {
         let dir = tempfile::tempdir().unwrap();
         _make_stub_file_dir(dir.path(), 50);
 
-        let exceeds = implicit_glob_scan_exceeds_ceiling(
+        let exceeds = implicit_search_walk_exceeds_ceiling(
             &[dir.path().to_string_lossy().to_string()],
-            &["*.py".to_string()],
             None,
             false,
-            IMPLICIT_GLOB_SCAN_FILE_CEILING,
+            false,
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
         );
 
         assert!(!exceeds, "a 50-file root must not be refused");
     }
 
     #[test]
-    fn implicit_glob_scan_respects_glob_filter_when_counting() {
-        // The ceiling is evaluated on the ACTUAL post-glob-filter candidate count: 1600 `.py`
-        // files plus 1600 `.txt` files exist, but a `--glob '*.txt'` search only ever counts
-        // the `.txt` files, so a glob that genuinely narrows below the ceiling must not be
-        // refused (mirrors the CLI's `test_large_root_guard_allows_scoped_glob_over_ceiling`
-        // sibling intent for the case where the filter actually narrows the walk).
+    fn implicit_search_walk_counts_the_walk_not_a_selective_glob_match() {
+        // The dogfood re-harvest's core finding (hypothesis 3): the hang is TREE-WALK cost, NOT
+        // post-glob MATCH count. This probe counts every FILE the walker VISITS (glob-independent),
+        // so a huge tree that a SELECTIVE glob would narrow to a few matches is STILL refused --
+        // because the real search must still WALK the whole tree to find those few matches. Here
+        // 1600 `.py` files exist but the search glob is `*.txt` (0 matches); the walk is still
+        // 1600 files, which must exceed the ceiling. (The old match-count probe returned false
+        // here -> proceeded -> hung; this is the RED-before case for the walk-count fix.)
         let dir = tempfile::tempdir().unwrap();
         _make_stub_file_dir(dir.path(), 1600);
-        for index in 0..50 {
-            std::fs::write(dir.path().join(format!("keep_{index}.txt")), "keep\n").unwrap();
-        }
 
-        let exceeds = implicit_glob_scan_exceeds_ceiling(
+        let exceeds = implicit_search_walk_exceeds_ceiling(
             &[dir.path().to_string_lossy().to_string()],
-            &["*.txt".to_string()],
             None,
             false,
-            IMPLICIT_GLOB_SCAN_FILE_CEILING,
+            false,
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
         );
 
         assert!(
-            !exceeds,
-            "a glob narrowing to 50 matches must not be refused"
+            exceeds,
+            "walk cost (1600 files) must be refused regardless of how selective the glob is"
         );
     }
 
     #[test]
-    fn implicit_glob_scan_respects_max_depth_when_counting() {
-        // `--max-depth` genuinely bounds the walk: nest the 1600 stub files two levels deep
-        // and confirm `--max-depth 1` (which never reaches them) is not refused.
+    fn implicit_search_walk_respects_max_depth() {
+        // `--max-depth` genuinely bounds the WALK (unlike a file glob): nest 1600 files one dir
+        // deep and confirm `--max-depth 1` (which never descends into them) is not refused.
         let dir = tempfile::tempdir().unwrap();
         let nested = dir.path().join("nested");
         std::fs::create_dir(&nested).unwrap();
         _make_stub_file_dir(&nested, 1600);
 
-        let exceeds = implicit_glob_scan_exceeds_ceiling(
+        let exceeds = implicit_search_walk_exceeds_ceiling(
             &[dir.path().to_string_lossy().to_string()],
-            &["*.py".to_string()],
             Some(1),
             false,
-            IMPLICIT_GLOB_SCAN_FILE_CEILING,
+            false,
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
         );
 
         assert!(
@@ -3623,11 +3625,30 @@ mod tests {
     }
 
     #[test]
-    fn handle_ripgrep_search_glob_ceiling_check_only_fires_when_path_implicit() {
-        // Non-regression (Trap #3 parity): an EXPLICIT path combined with --glob over the
-        // ceiling must not be affected by the new probe -- callers gate it on
-        // `request.path_was_implicit`, verified directly here since `handle_ripgrep_search`
-        // itself spawns a real rg subprocess and is not unit-testable in-process.
+    fn implicit_search_walk_empty_paths_probe_is_self_bounded_no_root() {
+        // Regression for the SECOND gap the re-harvest caught: `request.paths` is EMPTY (not
+        // `["."]`) when stdin is readable, so the probe saw no root and skipped. The probe itself
+        // returns false on genuinely-empty roots (nothing to walk); the FIX lives at the call
+        // site, which normalizes an implicit empty-paths search to `["."]` before calling this.
+        // This test pins the probe's empty-roots contract so a future refactor cannot make it
+        // panic or scan the process cwd unexpectedly.
+        let exceeds = implicit_search_walk_exceeds_ceiling(
+            &[],
+            None,
+            false,
+            false,
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
+        );
+        assert!(!exceeds, "no roots -> nothing to walk -> not refused");
+    }
+
+    #[test]
+    fn implicit_search_walk_only_fires_when_path_implicit() {
+        // Non-regression (Trap #3 parity): an EXPLICIT path combined with --glob over the ceiling
+        // must NOT be refused -- callers gate the probe on `request.path_was_implicit`. Verified
+        // directly here since `handle_ripgrep_search` spawns a real rg subprocess and is not
+        // unit-testable in-process. The probe WOULD flag this root; the `path_was_implicit` gate
+        // at the call site is the only thing that lets an explicit-path glob search proceed.
         let dir = tempfile::tempdir().unwrap();
         _make_stub_file_dir(dir.path(), 1600);
         let path_str = dir.path().to_string_lossy().to_string();
@@ -3639,19 +3660,16 @@ mod tests {
         };
         assert!(!request.path_was_implicit);
 
-        // Directly exercising the probe with the same over-ceiling root proves the underlying
-        // check WOULD flag it -- so the only thing standing between an explicit-path glob
-        // search and a false refusal is the `path_was_implicit` gate at the call site.
-        let exceeds = implicit_glob_scan_exceeds_ceiling(
+        let exceeds = implicit_search_walk_exceeds_ceiling(
             &request.paths,
-            &["*.py".to_string()],
             None,
             false,
-            IMPLICIT_GLOB_SCAN_FILE_CEILING,
+            false,
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
         );
         assert!(
             exceeds,
-            "sanity: the fixture itself must exceed the ceiling"
+            "sanity: the fixture itself exceeds the ceiling, so only the path_was_implicit gate protects it"
         );
     }
 
@@ -5459,25 +5477,36 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         // guard execute_ripgrep_search's Err bubbles via `?` to main()'s default Result
         // termination, which exits 1 -- indistinguishable from a genuine no-match (audit #81 #7).
         require_ripgrep_or_exit(rg_available, "this search's flag combination");
-        // Bug #88 (dogfood v1.54.0): with no explicit PATH, `--glob` alone must not exempt this
-        // call from a ceiling check -- see `implicit_glob_scan_exceeds_ceiling` above. Gated on
-        // `path_was_implicit` so an explicit, deliberately-scoped PATH + `--glob` still runs
-        // uninhibited (Trap #3 parity with the CLI's guard).
-        if request.path_was_implicit
-            && !args.globs.is_empty()
-            && implicit_glob_scan_exceeds_ceiling(
-                &request.paths,
-                &args.globs,
+        // Bug #88 (dogfood v1.54.0 -> v1.54.1 follow-up): with no explicit PATH, `--glob` alone
+        // must not exempt this rg-passthrough call from a WALK ceiling check -- see
+        // `implicit_search_walk_exceeds_ceiling` above. Gated on `path_was_implicit` so an
+        // explicit, deliberately-scoped PATH + `--glob` still runs uninhibited (Trap #3 parity).
+        //
+        // `request.paths` is EMPTY (not `["."]`) whenever stdin is readable
+        // (`grep_cli::is_readable_stdin()` -> `implicit_search_paths`); rg then still walks the
+        // cwd, so normalize the implicit root to `["."]` before probing (mirrors the Python CLI,
+        // which always guards `["."]`). Only probe when a glob is present: that is the flag combo
+        // that routes an unscoped implicit-path search into the unbounded rg passthrough.
+        if request.path_was_implicit && !args.globs.is_empty() {
+            let dot_root = [".".to_string()];
+            let probe_roots: &[String] = if request.paths.is_empty() {
+                &dot_root
+            } else {
+                &request.paths
+            };
+            if implicit_search_walk_exceeds_ceiling(
+                probe_roots,
                 args.max_depth,
                 args.no_ignore,
-                IMPLICIT_GLOB_SCAN_FILE_CEILING,
-            )
-        {
-            eprintln!(
-                "{}",
-                format_unbounded_implicit_glob_scan_error(IMPLICIT_GLOB_SCAN_FILE_CEILING)
-            );
-            std::process::exit(2);
+                args.hidden,
+                IMPLICIT_SEARCH_WALK_FILE_CEILING,
+            ) {
+                eprintln!(
+                    "{}",
+                    format_unbounded_implicit_search_walk_error(IMPLICIT_SEARCH_WALK_FILE_CEILING)
+                );
+                std::process::exit(2);
+            }
         }
         if args.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());

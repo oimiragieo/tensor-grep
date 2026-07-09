@@ -1119,6 +1119,96 @@ def test_plain_search_refuses_glob_with_implicit_path_on_workspace_root(
     assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
 
 
+def test_implicit_glob_walk_probe_counts_walk_not_glob_matches(tmp_path: Path):
+    """Bug #88 (v1.54.1 re-harvest): the WALK-count probe must count files the walker VISITS,
+    NOT post-glob matches -- a huge tree with a SELECTIVE glob (0 matches here) must still be
+    flagged, because the real search must WALK the whole tree to find those matches. 1600 `.py`
+    files exist; probing with a `*.nomatch` glob (0 matches) must still exceed the ceiling."""
+    from tensor_grep.cli.main import (
+        _LARGE_ROOT_SCAN_FILE_CEILING,
+        _implicit_glob_search_walk_exceeds_ceiling,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir()
+    for index in range(1600):
+        (src / f"stub_{index}.py").write_text("x\n", encoding="utf-8")
+
+    exceeds = _implicit_glob_search_walk_exceeds_ceiling(
+        [str(tmp_path)],
+        SearchConfig(glob=["*.nomatch"]),
+        _LARGE_ROOT_SCAN_FILE_CEILING,
+    )
+    assert exceeds is True
+
+
+def test_implicit_glob_walk_probe_allows_small_and_max_depth(tmp_path: Path):
+    """The probe must NOT flag a small tree, and `--max-depth` (kept in the probe config) must
+    genuinely bound the walk so a deep-but-shallow-scoped search is allowed."""
+    from tensor_grep.cli.main import (
+        _LARGE_ROOT_SCAN_FILE_CEILING,
+        _implicit_glob_search_walk_exceeds_ceiling,
+    )
+
+    small = tmp_path / "small"
+    small.mkdir()
+    for index in range(50):
+        (small / f"f_{index}.py").write_text("x\n", encoding="utf-8")
+    assert not _implicit_glob_search_walk_exceeds_ceiling(
+        [str(tmp_path)], SearchConfig(glob=["*.py"]), _LARGE_ROOT_SCAN_FILE_CEILING
+    )
+
+    nested = tmp_path / "deep" / "nested"
+    nested.mkdir(parents=True)
+    for index in range(1600):
+        (nested / f"f_{index}.py").write_text("x\n", encoding="utf-8")
+    assert not _implicit_glob_search_walk_exceeds_ceiling(
+        [str(tmp_path / "deep")],
+        SearchConfig(glob=["*.py"], max_depth=1),
+        _LARGE_ROOT_SCAN_FILE_CEILING,
+    )
+
+
+def test_plain_search_refuses_glob_implicit_path_on_marked_single_root(monkeypatch, tmp_path: Path):
+    """Bug #88 (v1.54.1 re-harvest, the ACTUAL dogfood repro shape): a large single root whose TOP
+    LEVEL carries a project marker (here a `package.json`, like the real `C:/dev/projects`) is
+    SKIPPED by the workspace-root guard (`_path_has_project_marker` short-circuits it) and has no
+    top-level vendored dir, so a bare `tg search PATTERN --glob '*'` from it used to sail straight
+    into an unbounded rg passthrough (487k lines past 60s in the field). The new implicit-glob WALK
+    guard must refuse it fast. Does NOT force rg off -- proves the guard fires BEFORE the
+    rg-passthrough / native-delegation fast paths."""
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    for index in range(1600):
+        (src / f"stub_{index}.py").write_text("TODO placeholder\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    start = time.perf_counter()
+    result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*"])
+    elapsed = time.perf_counter() - start
+
+    assert result.exit_code == 2, result.output
+    assert "broad root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+    assert elapsed < 3.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+
+
+def test_plain_search_glob_explicit_path_still_runs_on_marked_root(monkeypatch, tmp_path: Path):
+    """Trap #3 parity for the new guard: the SAME marked large root with an EXPLICIT path + glob
+    must still RUN (the implicit-glob walk guard is gated on `paths_defaulted`)."""
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    for index in range(1600):
+        (src / f"stub_{index}.py").write_text("TODO placeholder\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "TODO", str(tmp_path), "--glob", "*.py"])
+
+    assert result.exit_code == 0, result.output
+    assert "broad root scan refused" not in result.output
+
+
 def test_plain_search_unscoped_still_runs_on_small_repo(monkeypatch, tmp_path: Path):
     """A small repo (below the file-count ceiling) unscoped must still run normally."""
     monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
