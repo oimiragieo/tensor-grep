@@ -22,14 +22,23 @@ Always run the common-sense gate before pending a question to the CEO.
 ## SHIPPING — open PRs (drain one-per-publish)
 | PR | Fix | Files | Verified |
 |----|-----|-------|----------|
-| #431 | F15/F23 — reranker RRF-tie docstring + Go `go.work use (` header/comment parse | reranker/lang_go | verified |
-| #432 | PERF — parse-product cache (one parse per path,mtime); ~-25% cold / -45% parse, byte-identical | repo_map | 172t golden |
-| #433 | 1D — `tg agent` honors exit-2-on-scan-truncation + a truncated scan disqualifies the T2 uplift | agent_capsule/main | 188+116t |
-| #434 | M9 — `merge_runtime_routing` surfaces mixed-backend routing (was last-write-wins) | result | 52t |
-| #435 | L7 — `rg --count`/`-l` recover partial results on timeout (was hard-crash) | ripgrep_backend | 7+202t |
-| #436 | docs — SESSION_HANDOFF v1.45.x milestone + the competitive/caller-precision finding | docs | mkdocs |
+| #469 | audit #76 — anchor rewrite policy confinement to the target's parent dir for single-file targets (Opus-gate PASSED) | mcp_server | 18t real-venv |
 
-**Merged this drain (v1.45.x):** #424 H1 · #425 T2 · #426 backends · #427 reliability · #428 MCP · #429 backlog-tracker · #430 R1 FFI.
+**Deep-dive #81 audit drain (v1.51.x, 2026-07-08/09) — MERGED:** #461 ast CWE-88 · #462 backend fail-closed contract (#10/#14/#79) · #463 repo_map from-dot-import recall (#3/#4/#11) · #460 scoped file-dep primitives `tg imports`/`importers` (#74 moat) · #455 cpu ReDoS-gate bypass (#6/#16) · #464 mcp read-path confine (#1/#2/#12) · #457 index-lock ownership token (#14) · #465 rust exit-2 + pcre2 fail-closed (#7/#9) · #466 daemon token-ACL (#13) · #467 docs/architecture rewrite vs real code · #468 release-stamp anchor + de-anachronize 5 docs + fix 2 masked governance gates. **All 14 deep-dive findings (#81) shipped; every security PR passed the mandatory adversarial Opus gate; #468 needed an 11-conflict merge resolution (verified 104 governance tests + real validate_docs_claims).** Only #469 (last) draining.
+
+---
+
+## CURRENT LIVE BACKLOG (2026-07-09, post-#81-drain) — action after #469 drains
+- `[P1, ready]` **Agent validation-plan parity** (dogfood #84, gotcontext-saddle 2026-07-09): scoped `tg agent` resolves the target @ 0.9 but ships `validation_plan: []` + `ask_user_before_editing: required` (root agent DOES detect the nearest `tests/` neighbor — give scoped agent + edit-plan the same). + root-agent confidence downgrades over-fire (0.55 despite a good target + populated plan). Feature/tuning — design + TDD.
+- `[P2, ready]` **imports/importers dynamic-import awareness** (dogfood #84): `tg imports` misses `sys.path.insert` + sibling `from X import` (hook-repo idiom, shows only stdlib); `tg importers` returns 0. Known #74 limitation (skill P7) — add awareness OR emit a `resolution_gaps` honesty signal on the envelope.
+- `[P2, ready]` **orient suggested_scope/suggested_ignore auto-hints** (dogfood #84): root orient without `--ignore` ranks `seo/scripts/*` central; auto-hint so agents don't manually apply `--ignore` on harness repos.
+- `[P3, ready]` unscoped-search immediate-refuse (detect missing PATH/--glob before the scan, not exit-124 after); blast-radius proceed/stop rubric when confidence=moderate + parser_backed>0 + callers<5.
+- `[P1, research/CEO-gated]` **#72 benchmark reconcile** — re-run bench (tokens-per-correct) now that #74 imports/importers shipped, to reconcile docs/benchmarks.md P1 numbers; needs external Sverklo harness + bidirectional-oracle setup (fresh context). CEO-gated: public benchmark publish.
+- `[blocked/CEO-gated]` **tg-ledger / A2A local coordination** (#77) — document-now-build-later; go/no-go on the 2-week demand receipt from #456's instrumentation.
+- `[P3]` flaky-test hardening: #83 `test_public_help_falls_back...` (windows, needs timeout-mechanism investigation, not blind-widen), #64 index_lock_concurrency, #37 test-ordering pollution.
+- `[re-verify]` #78 ReDoS simple-path residual (Rust-less install still falls to Python re on unflagged patterns), #76-pt2 islice giant-line bound (batch into one gated mcp/cpu follow-up).
+
+> **NOTE (2026-07-09):** the P0/P1 sections below are from the 2026-07-07 v1.45.x campaign — MANY releases have shipped since (now v1.51.9). Re-verify each against current code before actioning; several (PERF parse-cache #432, the repo_map cluster) likely shipped in the v1.46-1.51 line. `gh pr list --state merged` + `git log` are authoritative.
 
 ---
 
