@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 
 from tensor_grep.cli import repo_map
@@ -231,3 +232,81 @@ def test_edit_plan_blast_radius_uses_bounded_repo_map_for_large_cached_maps(
     assert seen_file_counts
     assert max(seen_file_counts) <= 12
     assert payload["edit_plan_seed"]["blast_radius_scope"]["scoped_file_count"] <= 12
+
+
+# ---------------------------------------------------------------------------------------------
+# audit #81 #11: _definition_module_parts / _normalized_module_parts lowercased every path
+# segment unconditionally, so on a case-SENSITIVE filesystem (Linux CI/prod) `Foo.py` matched
+# `foo.py` -> wrong-file attribution in reverse-import edges. The fold must be gated on
+# os.name == "nt" (Windows only), mirroring _definition_file_dedupe_key's existing platform gate.
+# ---------------------------------------------------------------------------------------------
+
+
+class _OSNameOverride:
+    """Delegates every attribute to the real `os` module except `.name`, which is overridden.
+
+    Lets a test simulate `os.name` on the OPPOSITE platform for repo_map's own case-fold gate
+    without also flipping `pathlib.Path`'s internal flavor selection, which reads the real,
+    global `os` module directly (a separate binding pathlib owns itself). Monkeypatching
+    `os.name` directly (e.g. `monkeypatch.setattr(repo_map.os, "name", "posix")`) mutates that
+    SAME shared `os` module object process-wide, so `Path(...)` then tries to instantiate
+    `PosixPath` on a real Windows box and raises `NotImplementedError: cannot instantiate
+    'PosixPath' on your system` before repo_map's own logic is ever reached. Rebinding just the
+    module-level name `os` inside `repo_map`'s own namespace (`monkeypatch.setattr(repo_map,
+    "os", _OSNameOverride(...))`) avoids that: `Path` construction still goes through the real,
+    untouched `os` module, while `repo_map`'s own `os.name` reads see the simulated value.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __getattr__(self, attr: str):
+        return getattr(os, attr)
+
+
+def test_definition_module_parts_case_folds_only_on_windows(monkeypatch) -> None:
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("posix"))
+    assert repo_map._definition_module_parts("pkg/Foo.py") == ["pkg", "Foo"]
+    assert repo_map._definition_module_parts("pkg/foo.py") == ["pkg", "foo"]
+
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("nt"))
+    assert repo_map._definition_module_parts("pkg/Foo.py") == ["pkg", "foo"]
+    assert repo_map._definition_module_parts("pkg/foo.py") == ["pkg", "foo"]
+
+
+def test_definition_module_parts_init_stripping_stays_case_insensitive(monkeypatch) -> None:
+    """The __init__/index/mod magic-name strip is unaffected by the platform gate on either
+    platform -- these are real on-disk filenames that are always already lowercase by language
+    convention (CPython only ever treats a literal __init__.py as a package initializer)."""
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("posix"))
+    assert repo_map._definition_module_parts("pkg/__init__.py") == ["pkg"]
+
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("nt"))
+    assert repo_map._definition_module_parts("pkg/__init__.py") == ["pkg"]
+
+
+def test_normalized_module_parts_case_folds_only_on_windows(monkeypatch) -> None:
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("posix"))
+    assert repo_map._normalized_module_parts("pkg.Foo") == ["pkg", "Foo"]
+
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("nt"))
+    assert repo_map._normalized_module_parts("pkg.Foo") == ["pkg", "foo"]
+
+
+def test_module_path_matches_definition_no_cross_case_false_edge_on_posix(monkeypatch) -> None:
+    """The end-to-end regression this finding is about: on a case-SENSITIVE filesystem, a
+    module named `foo` must NOT match a definition file `Foo.py` (that cross-case pairing would
+    be a wrong-file attribution in a reverse-import edge) -- only an exact-case match may
+    succeed."""
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("posix"))
+
+    assert repo_map._module_path_matches_definition("foo", "pkg/Foo.py") is False
+    assert repo_map._module_path_matches_definition("Foo", "pkg/Foo.py") is True
+    assert repo_map._module_path_matches_definition("foo", "pkg/foo.py") is True
+
+
+def test_module_path_matches_definition_case_insensitive_on_windows(monkeypatch) -> None:
+    """Preserves the pre-existing Windows behavior (case-insensitive match) unchanged."""
+    monkeypatch.setattr(repo_map, "os", _OSNameOverride("nt"))
+
+    assert repo_map._module_path_matches_definition("foo", "pkg/Foo.py") is True

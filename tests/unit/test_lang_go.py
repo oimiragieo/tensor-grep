@@ -197,7 +197,19 @@ def test_refs_cross_package_call_has_call_ref_kind_and_import_resolution(
 
     payload = repo_map.build_symbol_refs("Helper", tmp_path)
 
-    assert payload["resolution_gaps"] == []
+    # audit #81 #4 fix: Go's LanguageSpec sets import_update_target=None (no reverse-import
+    # resolver wired), so _language_coverage_gaps_for_universe now flags that as an honest
+    # partial-capability gap even though the grammar IS installed and every other Go capability
+    # exercised by this test (cross-package call resolution, below) works fine. Before the fix
+    # this silently read as resolution_gaps == [] -- indistinguishable from "Go has full
+    # capability", which was exactly the audit finding (a zero import-graph-consumer count must
+    # read as UNKNOWN, not proven-zero).
+    resolution_gaps = payload["resolution_gaps"]
+    go_gaps = [gap for gap in resolution_gaps if gap["language"] == "go"]
+    assert len(go_gaps) == 1
+    assert go_gaps[0]["files_affected"] >= 1
+    assert "reverse-import" in go_gaps[0]["reason"]
+    assert "fail-closed" not in go_gaps[0]["reason"]
     cross_package_refs = [
         ref
         for ref in payload["references"]

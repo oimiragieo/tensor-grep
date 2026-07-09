@@ -2900,17 +2900,29 @@ def _rust_resolve_use_binding(
 
 
 def _definition_module_parts(path: str) -> list[str]:
-    raw_parts = [part.lower() for part in Path(path).with_suffix("").parts if part]
+    # audit #81 #11: case-folding every path segment made `Foo.py` match `foo.py` on a
+    # case-SENSITIVE filesystem (Linux CI/prod) -> wrong-file attribution in reverse-import
+    # edges. Gate the fold on Windows only, mirroring `_definition_file_dedupe_key` (below),
+    # which already conditions its case-handling on `os.name == "nt"` for the same reason.
+    raw_parts = [part for part in Path(path).with_suffix("").parts if part]
+    if os.name == "nt":
+        raw_parts = [part.lower() for part in raw_parts]
     parts = [part for part in raw_parts if part not in {".", ".."} and not part.endswith(":\\")]
     if not parts:
         return []
-    if parts[-1] in {"__init__", "index", "mod"} and len(parts) > 1:
+    # The __init__/index/mod magic-name check stays case-insensitive on every platform: these
+    # are real on-disk filenames that are always already lowercase by language convention
+    # (CPython only ever treats a literal `__init__.py` as a package initializer), so comparing
+    # case-insensitively here does not reintroduce the false-edge risk the fold above removed.
+    if parts[-1].lower() in {"__init__", "index", "mod"} and len(parts) > 1:
         parts = parts[:-1]
     return parts
 
 
 def _normalized_module_parts(module_name: str) -> list[str]:
-    parts = [part.lower() for part in re.split(r"[^A-Za-z0-9_]+", module_name) if part]
+    # audit #81 #11: see _definition_module_parts above -- same Windows-only case-fold gate.
+    raw_parts = [part for part in re.split(r"[^A-Za-z0-9_]+", module_name) if part]
+    parts = [part.lower() for part in raw_parts] if os.name == "nt" else raw_parts
     while parts and parts[0] in {"crate", "self", "super"}:
         parts = parts[1:]
     return parts
@@ -2986,10 +2998,29 @@ def _python_file_imports_symbol_from_definition(
             ):
                 return True
         elif isinstance(node, ast.ImportFrom):
-            if not node.module or not _module_path_matches_definition(node.module, definition_path):
-                continue
-            if any(alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names):
-                return True
+            if node.module:
+                if not _module_path_matches_definition(node.module, definition_path):
+                    continue
+                if any(
+                    alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names
+                ):
+                    return True
+            elif node.level:
+                # `from . import helpers` / `from .. import helpers` -- no dotted `node.module`
+                # text, only relative dots plus the imported name(s). This bare form BINDS THE
+                # SUBMODULE ITSELF (like `ast.Import`, not a `from X import symbol` name
+                # binding), so match on module path alone -- mirrors #460's fix for the forward
+                # `_python_imports_and_symbols`/`_python_imports_with_lines` extractors (the `tg
+                # imports`/`tg importers` primitive), applied here to the callers/blast-radius
+                # consumer path, which was still silently dropping this shape (audit #81 #3): the
+                # old `if not node.module: continue` guard skipped every bare relative import, so
+                # a sibling `from . import helpers` consumer was invisible to `tg callers`/`tg
+                # blast-radius` even though `tg importers` already found it.
+                if any(
+                    _module_path_matches_definition(alias.name, definition_path)
+                    for alias in node.names
+                ):
+                    return True
     return False
 
 
@@ -3166,15 +3197,30 @@ def _python_import_update_target(
                         "provenance": "parser-backed",
                     }
         elif isinstance(node, ast.ImportFrom):
-            if not node.module or not _module_path_matches_definition(node.module, definition_path):
-                continue
-            if any(alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names):
-                return {
-                    "start_line": int(node.lineno),
-                    "end_line": int(getattr(node, "end_lineno", node.lineno)),
-                    "module": node.module,
-                    "provenance": "parser-backed",
-                }
+            if node.module:
+                if not _module_path_matches_definition(node.module, definition_path):
+                    continue
+                if any(
+                    alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names
+                ):
+                    return {
+                        "start_line": int(node.lineno),
+                        "end_line": int(getattr(node, "end_lineno", node.lineno)),
+                        "module": node.module,
+                        "provenance": "parser-backed",
+                    }
+            elif node.level:
+                # Mirror the sibling fix in _python_file_imports_symbol_from_definition above
+                # (audit #81 #3): `from . import helpers` has no dotted `node.module`, only
+                # relative dots + the imported name(s), which bind the SUBMODULE itself.
+                for alias in node.names:
+                    if _module_path_matches_definition(alias.name, definition_path):
+                        return {
+                            "start_line": int(node.lineno),
+                            "end_line": int(getattr(node, "end_lineno", node.lineno)),
+                            "module": alias.name,
+                            "provenance": "parser-backed",
+                        }
     return None
 
 
@@ -6436,7 +6482,9 @@ def _graph_trust_summary(
     }
 
 
-def _language_coverage_gap_remediation(language: str, *, fail_closed: bool = False) -> str:
+def _language_coverage_gap_remediation(
+    language: str, *, fail_closed: bool = False, import_resolution_only: bool = False
+) -> str:
     """F12 fix: the remediation text must match what ACTUALLY happens for this gap.
 
     An unregistered-language file (``fail_closed=False``, no ``LanguageSpec`` at all) really does
@@ -6444,6 +6492,11 @@ def _language_coverage_gap_remediation(language: str, *, fail_closed: bool = Fal
     refs/callers scan loops. A registered-but-grammar-missing language with no regex fallback
     (``fail_closed=True``, e.g. Go when ``tree_sitter_go`` is not installed) produces ZERO rows
     for its files instead -- claiming a regex fallback there was simply false.
+
+    ``import_resolution_only`` (audit #81 #4): a registered language whose grammar IS installed
+    but whose ``LanguageSpec.import_update_target`` is ``None`` (Go today) -- defs/refs/callers
+    all work normally, but the reverse-import-graph edge (``import_graph_consumers``) can never
+    be computed for this language, so a zero count there must read as UNKNOWN, not proven-zero.
     """
     if fail_closed:
         return (
@@ -6452,6 +6505,16 @@ def _language_coverage_gap_remediation(language: str, *, fail_closed: bool = Fal
             f"{language} file currently produce NO rows for those files ('{language}' has no "
             "plain-text/regex fallback, unlike python/javascript/typescript/rust). Install the "
             f"missing '{language}' tree-sitter grammar package to restore coverage."
+        )
+    if import_resolution_only:
+        return (
+            f"tg has a '{language}' extractor registered and its parser/grammar is installed, "
+            f"but no reverse-import resolver is wired for '{language}' yet -- `tg callers`/`tg "
+            f"blast-radius` cannot discover a {language} file that consumes a symbol purely via "
+            "an import statement (`import_graph_consumers` is always empty for this language). "
+            "Direct-reference/call matches inside scanned files are unaffected. Treat a zero "
+            f"import-graph-consumer count for a {language} definition as UNKNOWN, not "
+            "proven-zero, until native reverse-import resolution ships."
         )
     return (
         f"tg has no parser-backed extractor registered for '{language}' files yet -- refs/"
@@ -6468,11 +6531,22 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
     Zero behavior change for python/javascript/typescript/rust today -- every file with one of
     those suffixes always resolves a spec, so this only ever fires for a language tensor-grep's
     symbol graph does not yet cover (e.g. .go, .java) that happens to sit in the scan universe.
+
+    Also covers a NARROWER partial-capability gap (audit #81 #4): a language can be fully
+    registered with a working parser (defs/refs/callers all resolve normally) yet still have
+    ``LanguageSpec.import_update_target is None`` -- Go today. Before this fix, that combination
+    fell through the two branches above straight to ``continue``, so a Go-only repo with the
+    grammar installed reported an EMPTY ``resolution_gaps`` even though
+    ``_build_import_graph_consumers_from_map`` can never produce a single reverse-import edge for
+    it -- indistinguishable from "genuinely has zero import-graph consumers". The third branch
+    below flags that combination explicitly so `tg callers`/`tg blast-radius` stay honest about
+    it instead of reading as a proven-zero.
     """
     gaps_by_language: dict[str, dict[str, Any]] = {}
     for current in bounded_files:
         spec = lang_registry.spec_for_path(current)
         fail_closed = False
+        import_resolution_only = False
         if spec is None:
             language = _provider_language_for_path(current) or (
                 current.suffix.lstrip(".").lower() or "unknown"
@@ -6492,6 +6566,13 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
                 fail_closed = True
             else:
                 continue
+        elif spec.import_update_target is None:
+            language = spec.language_id
+            reason = (
+                "registered language extractor has no reverse-import resolver -- "
+                "import_graph_consumers can never be computed for this language"
+            )
+            import_resolution_only = True
         else:
             continue
         entry = gaps_by_language.setdefault(
@@ -6501,7 +6582,9 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
                 "reason": reason,
                 "files_affected": 0,
                 "remediation": _language_coverage_gap_remediation(
-                    language, fail_closed=fail_closed
+                    language,
+                    fail_closed=fail_closed,
+                    import_resolution_only=import_resolution_only,
                 ),
             },
         )
