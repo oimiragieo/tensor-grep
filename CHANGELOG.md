@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.51.7 (2026-07-09)
+
+### Bug Fixes
+
+- **rust**: Exit 2 (not 1) when rg is required-but-unavailable + fail closed on --pcre2 without a
+  PCRE2-capable rg, instead of a silent native-regex swap (audit #81 #7/#9)
+  ([#465](https://github.com/oimiragieo/tensor-grep/pull/465),
+  [`06a0a6d`](https://github.com/oimiragieo/tensor-grep/commit/06a0a6d461d4ad26d0e46a239334c538ac2f9f43))
+
+Finding #7 (MED): execute_ripgrep_search/execute_ripgrep_pcre2_version/ execute_ripgrep_type_list
+  return Err when rg is unavailable, which bubbled via `?` to main()'s default Result termination ->
+  exit 1, indistinguishable from a genuine no-match. Repro: TG_DISABLE_RG=1 tg search P --cpu
+  --max-depth 2 (--max-depth forces search_requires_ripgrep_passthrough regardless of rg_available).
+
+Finding #9 (LOW, pairs with #7): search_requires_ripgrep_passthrough lists pcre2_unicode but not
+  plain --pcre2, so route_search's `config.pcre2 && config.rg_available` gate silently fell through
+  to NativeCpu/"rg_unavailable" -- running the native regex engine (not PCRE2) for a --pcre2 request
+  with no signal that PCRE2 semantics were dropped.
+
+Fix: a shared require_ripgrep_or_exit(rg_available, context) helper -- eprintln! a
+
+clear message and std::process::exit(2), matching the "backend unavailable" exit-2 convention
+  handle_calibrate_command already uses -- called before every rg-required call site that previously
+  lacked an availability check: the top-level and search-level --pcre2-version/--type-list fast
+  paths, the search_prefers_ripgrep_ passthrough branch in handle_ripgrep_search, and a new explicit
+  --pcre2 guard in both handle_ripgrep_search and run_positional_cli (the root/positional shortcut
+  also threads --pcre2 into route_search).
+
+Only rg-ABSENT paths change. Every route_search branch that already required rg_available==true to
+  select Ripgrep (positional/search dispatch, the rg-fallback path in
+  run_native_search_with_optional_rg_fallback) is untouched, and a new regression-guard test pins
+  that --pcre2 with rg available still routes to RipgrepBackend/"pcre2-required" exactly as before.
+
+Verified against the real compiled binary (not just CliRunner): TG_DISABLE_RG=1 tg search hello
+  --cpu --max-depth 2 <dir> -> exit 2 (was 1) TG_DISABLE_RG=1 tg search --pcre2 hello <dir> -> exit
+  2, empty stdout (was a silent native regex match)
+
+Adds 7 Rust integration tests (rust_core/tests/test_routing.rs) and 2 Python native-front-door
+  parity tests (tests/e2e/test_routing_parity.py) pinning both the new fail-closed behavior and the
+  unchanged rg-available contract.
+
+
 ## v1.51.6 (2026-07-09)
 
 ### Bug Fixes
