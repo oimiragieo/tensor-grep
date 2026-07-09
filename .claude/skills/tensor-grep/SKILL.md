@@ -33,21 +33,25 @@ prefer the canonical path-first form.
    Returns central files (by import in-degree), entry points, symbol map, and AST snippets in one call.
    - `tg inventory REPO_PATH --json` for a fast first-contact manifest (file/byte counts by language and by
      category, largest files, binary split) — walk-only, no AST parse, so it is cheap on a large repo.
-2. Start with direct source lookup:
+2. For a **single file's import edges** (cheap — no repo scan):
+   - `tg imports FILE` — what FILE imports, resolved to target files where possible
+   - `tg importers FILE [ROOT]` — who imports FILE (bounded reverse lookup; use `--deadline` on large roots)
+   Prefer these over `tg map`/`tg orient` for one-file dependency questions.
+3. Start with direct source lookup:
    - `tg source REPO_PATH SYMBOL`
-2a. If the symbol name is unknown, find it by content first:
+3a. If the symbol name is unknown, find it by content first:
    - `tg search PATTERN REPO_PATH --rank`
    BM25 re-ranks results by per-chunk relevance — no API key, no GPU required.
    Then feed the top hit into `tg source`.
-3. If you need symbol navigation:
+4. If you need symbol navigation:
    - `tg defs REPO_PATH SYMBOL`
    - `tg refs REPO_PATH SYMBOL`
-4. If you need edit planning:
+5. If you need edit planning:
    - `tg blast-radius REPO_PATH SYMBOL`
    - `tg blast-radius-plan REPO_PATH SYMBOL`
-5. Use the returned file/span candidates to make the smallest correct edit.
-6. Run only the most relevant validation commands after the edit.
-7. For repeated-edit loops or memory-backed work across sessions, open a cached session first:
+6. Use the returned file/span candidates to make the smallest correct edit.
+7. Run only the most relevant validation commands after the edit.
+8. For repeated-edit loops or memory-backed work across sessions, open a cached session first:
    - `tg session open --json REPO_PATH` returns a `session_id` — capture it.
    Then pass that `session_id` as the required first argument to the session-scoped variants
    (instead of the equivalent top-level commands):
@@ -91,7 +95,13 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 **Unscoped search on a vendored root refuses instantly; it no longer just "hangs then times out."** `tg search PATTERN` with no path against a root whose top level contains a vendored dir (`node_modules`, `vendor`, `external_repos`, `third_party`) is refused in **under 1 second** (exit 2) by a top-level-only directory probe that never starts a walk (`_should_refuse_unbounded_vendored_root_scan`). When the root has no such top-level dir but is still large/unscoped, the native per-file search walk carries its own wall-clock bound and returns a flagged partial (`result_incomplete` + a stderr warning) instead of hanging; the rg-passthrough path is separately bounded by `TG_RG_TIMEOUT_SECONDS` (default 60 s, lowered from 600 s in #288). These bounds fire *before* the 60 s timeout on the common case, so don't present "fails fast after ~60 s" as the primary behavior. WORKAROUND (still the right default habit): always scope to a path — `tg search PATTERN C:\repo` completes in ~0.4 s and skips all of the above entirely.
 
-**No scoped file-dependency primitive yet (v1.49.x).** There is no `tg imports` / `tg importers` / `tg deps <file>` command — the only import-graph view is whole-repo `tg map`/`tg orient`. On a real tokens-per-correct-answer benchmark, that made `tg` roughly **10x more expensive than a plain grep/read of the file's own import lines** for a "what does this file import" question (P4-class task) — the opposite of tg's win on definition-lookup. Until a scoped primitive ships, prefer `grep`/`Read` of `X`'s own import statements over `tg map` for a single-file dependency question; reserve `tg map`/`tg orient` for whole-repo architecture questions.
+**Scoped file dependencies (`tg imports` / `tg importers`, shipped #74).** Use `tg imports FILE` for forward edges (O(1) — parses one file) and `tg importers FILE [ROOT]` for reverse edges (bounded repo scan). Do **not** pay for whole-repo `tg map`/`tg orient` when the question is "what does this file import?" or "who imports this file?".
+
+**`--deadline` is best-effort, not a hard SLA (v1.54.x dogfood).** On tensor-grep itself (~800 mapped files), `tg callers … --deadline 5` can still take ~100s and `tg callers … --deadline 15` took ~6 minutes in WSL. Treat `partial`/`result_incomplete` in JSON as the honesty signal; branch on exit `2` for incomplete symbol scans. Narrow `PATH` to a subdirectory or warm `tg session daemon start` before trusting caller graphs on large trees.
+
+**WSL + `/mnt/c/` path quirks.** Some native-backend searches report `path_not_found` for absolute `/mnt/c/dev/...` paths even when the directory exists; relative paths from the repo cwd often work. If `tg search` returns `path_not_found`, `cd` into the parent and pass a relative path.
+
+**AST scan on WSL when ast-grep is a Windows npm shim.** `tg scan` may fail with exit 127 if `doctor` resolves `ast-grep` to a Windows path (`/mnt/c/Users/.../npm/ast-grep`) whose shebang cannot execute under WSL. Install a Linux-native `ast-grep` on PATH or run scan from Windows.
 
 ## Provider Modes
 

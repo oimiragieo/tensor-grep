@@ -16,6 +16,8 @@ tg callers REPO_PATH SYMBOL
 tg blast-radius REPO_PATH SYMBOL
 tg blast-radius-plan REPO_PATH SYMBOL
 tg blast-radius-render REPO_PATH SYMBOL
+tg imports FILE
+tg importers FILE [ROOT]
 tg session open REPO_PATH
 tg search PATTERN PATH
 tg search PATTERN PATH --rank

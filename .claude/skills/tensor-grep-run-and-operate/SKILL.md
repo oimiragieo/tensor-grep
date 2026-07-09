@@ -6,8 +6,8 @@ description: Use when running the `tg` CLI day-to-day — exact syntax for orien
 # tensor-grep run & operate
 
 An imperative, copy-pasteable runbook for **running** `tg` (the tensor-grep CLI). Ground-truthed
-against `src/tensor_grep/cli/main.py` at **released v1.49.3** (`pyproject.toml:430`), re-verified
-**2026-07-08**. Every command below is a real `@app.command` in that file — re-verify with the
+against `src/tensor_grep/cli/main.py` at **released v1.54.0**, re-verified
+**2026-07-09** (workspace dogfood on `/mnt/c/dev/projects`). Every command below is a real `@app.command` in that file — re-verify with the
 commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag on a
 newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as an
 approximate anchor: `grep` the symbol, don't trust the raw line.
@@ -64,6 +64,8 @@ command name).
 | `tg refs PATH SYMBOL` | `PATH SYMBOL` | References to a symbol |
 | `tg callers PATH SYMBOL` | `PATH SYMBOL` | Call sites + likely impacted tests |
 | `tg blast-radius PATH SYMBOL` | `PATH SYMBOL` | Callers + transitive file/test impact |
+| `tg imports FILE` | `FILE` | Forward file-dependency edges (#74; O(1), no repo scan) |
+| `tg importers FILE [ROOT]` | `FILE [ROOT]` | Reverse file-dependency edges (bounded scan; `--deadline` on large roots) |
 | `tg agent PATH "query"` | `PATH QUERY` | Actionable Context Capsule: primary file/span, validation commands, edit order, confidence |
 | `tg session open PATH` | `PATH` | Create a cached repo-map session (returns `session_id`) |
 | `tg scan --ruleset NAME` | (flag-driven) | Run a built-in security/compliance AST rule pack |
