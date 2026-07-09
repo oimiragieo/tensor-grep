@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.51.4 (2026-07-09)
+
+### Bug Fixes
+
+- **cpu**: Route -w/-x/-C/LTL match-set through the linear Rust engine + fail-closed the residual
+  Python-re hazard path (ReDoS gate, no multiprocessing/no-hang) -- -m 0 guard + decode path
+  preserved (audit #6+#16) ([#455](https://github.com/oimiragieo/tensor-grep/pull/455),
+  [`178f425`](https://github.com/oimiragieo/tensor-grep/commit/178f425ffb04906b030bc6833ae04b3508cbdb60))
+
+Audit #6 (ReDoS gate bypass): -C/-A/-B/-w/-x set rust_semantics_supported=False and routed straight
+  to Python's backtracking `re` with NO deadline, so `(a+)+$` via --ltl/-w/-C could hang unbounded
+  (nested quantifiers are valid Rust syntax that the linear automata engine runs in O(n), but the
+  exact construct that blows up Python re).
+
+Primary fix (no multiprocessing): -w/-x/-C/-A/-B and --ltl now resolve their MATCH-SET via the
+  linear-time Rust engine (_rust_match_set / _build_rust_query), then assemble context windows / the
+  LTL two-pointer purely in Python (line-number bookkeeping, no regex evaluation). When Rust is
+  present (common case) the Python-re hazard is eliminated entirely -- no residual, no subprocess,
+  cannot hang.
+
+Residual (Rust absent, or --pcre2 where Python-re is unavoidable): FAIL CLOSED with
+  BackendExecutionError instead of silently swapping to the ReDoS-hazardous backtracking engine
+  (Backend Fail-Closed Contract; a visible refusal cannot hang). Chosen over a bounded subprocess
+  because the prior attempt hung on a multiprocessing spawn (task #43).
+
+Audit #16: the `except Exception` fall-open now fails closed for --pcre2 too (the old "Rust accepted
+  the syntax so it is safe" premise is false). The ImportError/decode (_RustUtf8DecodeMismatch)
+  branches and the -m 0 guard are preserved unchanged; the non-pcre2 runtime-fault path still falls
+  open (narrow robustness case).
+
+-x anchoring tolerates a trailing \r (^(?:pat)\r?$) so CRLF files keep matching (\r? is a single
+  non-nested atom, backtracking-safe). Tests: (a+)+$ via -w/-x/-C/--ltl/--pcre2 each run bounded on
+  Rust or raise BackendExecutionError, wall-clock-asserted, never hang; no multiprocessing in the
+  fix or the tests.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.3 (2026-07-09)
 
 ### Bug Fixes
