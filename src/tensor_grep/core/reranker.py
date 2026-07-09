@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import sys
+import time
 from collections import defaultdict
 
 from tensor_grep.core.result import SearchResult
@@ -19,6 +21,7 @@ from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
 from tensor_grep.core.retrieval_dense import DenseIndex
 from tensor_grep.core.retrieval_fusion import DEFAULT_K, reciprocal_rank_fusion
+from tensor_grep.core.retrieval_late import LateReranker, LateRerankUnavailableError
 from tensor_grep.core.retrieval_lexical import split_terms
 
 # PR-S2 (channelized RRF, sverklo steal-list #2): a third, opt-in fusion leg that ranks chunks by
@@ -33,6 +36,34 @@ PATH_CHANNEL_WEIGHT: float = 1.5
 
 def _rrf_channels_enabled() -> bool:
     return os.environ.get(_RRF_CHANNELS_ENV) == "1"
+
+
+# T5/T6 (design doc "The seam" + "Fail-closed contract",
+# docs/plans/design-tensor-grep-late-rerank-2026-07-09.md): a 4th, opt-in, ORDER-ONLY stage that
+# MaxSim-reranks the head of the RRF-fused pool via an injected `LateReranker`
+# (core/retrieval_late.py, T0-T4, not modified here). The caller (`_apply_semantic_rerank` in
+# cli/main.py) owns the `TG_LATE_RERANK=1` gate, late-leg availability, and model load; this
+# module only needs the pool size and the latency budget, both read directly from the
+# environment right where they are used (mirrors `_RRF_CHANNELS_ENV` above) so `rerank_hybrid`'s
+# signature gains a single new `late_reranker` kwarg and nothing else has to be threaded through.
+_RERANK_POOL_K_ENV: str = "TG_RERANK_POOL_K"
+_RERANK_BUDGET_MS_ENV: str = "TG_RERANK_BUDGET_MS"
+_DEFAULT_RERANK_POOL_K: int = 50
+_MAX_RERANK_POOL_K: int = 100
+_DEFAULT_RERANK_BUDGET_MS: int = 2000
+
+
+def _int_env(name: str, default: int) -> int:
+    """Parse a numeric ``TG_*`` env var, falling back to ``default`` on any missing or
+    non-numeric value -- a malformed override must degrade gracefully, never crash the whole
+    search (the same fail-closed spirit as the rest of the late-rerank contract)."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def _path_channel_ranking(chunks: list[Chunk], query: str) -> list[int]:
@@ -108,6 +139,7 @@ def rerank_hybrid(
     k: int = DEFAULT_K,
     bm25_index: Bm25Index | None = None,
     dense_index: DenseIndex | None = None,
+    late_reranker: LateReranker | None = None,
 ) -> SearchResult:
     """Return a copy of ``result`` re-sorted by best RRF-fused (BM25 + dense) chunk score (desc).
 
@@ -123,6 +155,20 @@ def rerank_hybrid(
     ``weights=None`` exactly as before -- a byte-identical no-op (see
     :func:`~tensor_grep.core.retrieval_fusion.reciprocal_rank_fusion`) -- so this is a zero-risk
     additive change pending a golden-set default-flip in a separate PR.
+
+    ``late_reranker`` (optional, T5, design doc "The seam"): a 4th, ORDER-ONLY stage layered on
+    top of the fused ranking above -- it MaxSim-reranks the head of ``fused_order`` (size
+    ``TG_RERANK_POOL_K``, default 50, hard-capped at 100) and leaves the tail untouched in its RRF
+    order. Same matches, same membership, same JSON shape -- only a permutation of the head.
+    ``late_reranker=None`` (the default) skips this stage entirely: a byte-identical no-op,
+    mirroring ``dense_index=None`` and the ``TG_RRF_CHANNELS`` pattern above. The caller
+    (``_apply_semantic_rerank`` in ``cli/main.py``) owns late-leg availability and model load; a
+    RECOVERABLE failure at rerank time (a malformed embedding shape, or the
+    ``TG_RERANK_BUDGET_MS`` latency budget -- default 2000ms -- exceeded) degrades in-place here
+    to the plain RRF order for that pool and is reported via the returned result's
+    ``rank_fallback_reason`` (appended, never clobbering an existing reason); an UNRECOVERABLE
+    ``BackendExecutionError`` from the injected encoder is NOT caught here and propagates to the
+    CLI boundary, per the Backend Fail-Closed Contract.
 
     NOTE (F15): a BM25-only RRF degrade is NOT byte-identical to :func:`rerank_by_bm25` on a BM25
     SCORE TIE -- RRF breaks ties by ascending chunk index, whereas ``rerank_by_bm25``'s stable sort
@@ -155,6 +201,38 @@ def rerank_hybrid(
             weights.append(PATH_CHANNEL_WEIGHT)
 
     fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights)
+
+    # T5/T6: the late-interaction splice. Order-only over `fused_order`'s chunk indices -- same
+    # matches, same membership, same JSON shape (design doc "The seam"). `late_reranker=None`
+    # (the default) skips this block entirely: byte-identical to the pre-T5 fused order.
+    late_rank_fallback_reason: str | None = None
+    if late_reranker is not None:
+        pool_k = max(
+            0, min(_int_env(_RERANK_POOL_K_ENV, _DEFAULT_RERANK_POOL_K), _MAX_RERANK_POOL_K)
+        )
+        budget_ms = _int_env(_RERANK_BUDGET_MS_ENV, _DEFAULT_RERANK_BUDGET_MS)
+        head = fused_order[:pool_k]
+        late_rerank_start = time.perf_counter()
+        try:
+            reranked_head = late_reranker.rerank(query, [chunks[i].text for i in head], head)
+        except LateRerankUnavailableError as exc:
+            # RECOVERABLE (e.g. a malformed embedding shape from the injected encoder): degrade
+            # to the plain RRF order for this pool, never crash. A genuine BackendExecutionError
+            # (a real encode-time fault) is deliberately NOT caught here -- it propagates to the
+            # CLI boundary (cli/main.py ~:6804-6813) per the Backend Fail-Closed Contract.
+            late_rank_fallback_reason = str(exc)
+            sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
+        else:
+            elapsed_ms = (time.perf_counter() - late_rerank_start) * 1000.0
+            if elapsed_ms > budget_ms:
+                late_rank_fallback_reason = (
+                    "late rerank unavailable: budget exceeded "
+                    f"({elapsed_ms:.0f}ms > {budget_ms}ms at pool_k={pool_k})"
+                )
+                sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
+            else:
+                fused_order = reranked_head + fused_order[pool_k:]
+
     # Position in the fused order is a monotonic proxy for the underlying RRF score: RRF ties are
     # already broken by ascending chunk index before this list is built, so using position
     # preserves the exact fused ordering while giving `match_score` below a single comparable
@@ -177,4 +255,15 @@ def rerank_hybrid(
 
     # Stable sort by descending fused score (Python's sort is stable -> ties keep grep order).
     reranked = sorted(result.matches, key=match_score, reverse=True)
+    if late_rank_fallback_reason is not None:
+        # Append rather than overwrite: an earlier (e.g. dense-leg) fallback reason must survive
+        # alongside the late-stage one -- see T6's bidirectional invariant (exactly one of "order
+        # provably changed, reason untouched" / "reason non-None" holds; this is the "reason
+        # non-None" side for the late stage specifically).
+        combined_reason = (
+            f"{result.rank_fallback_reason}; {late_rank_fallback_reason}"
+            if result.rank_fallback_reason
+            else late_rank_fallback_reason
+        )
+        return dataclasses.replace(result, matches=reranked, rank_fallback_reason=combined_reason)
     return dataclasses.replace(result, matches=reranked)
