@@ -190,7 +190,7 @@ def test_heartbeat_keeps_mtime_fresh_during_long_hold(tmp_path: Path) -> None:
             max_observed_age = max(max_observed_age, age)
 
     observer = threading.Thread(target=observe)
-    with _index_lock.index_lock(index_path, stale_after_s=stale_after_s, heartbeat_interval_s=0.03):
+    with _index_lock.index_lock(index_path, stale_after_s=stale_after_s, heartbeat_interval_s=0.05):
         observer.start()
         time.sleep(hold_s)
         stop_observer.set()
