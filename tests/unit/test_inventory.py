@@ -225,6 +225,54 @@ class TestDeadline:
         assert inv["scan_limit"]["truncation_cause"] is None
         assert inv["totals"]["files"] == 3
 
+    def test_walk_phase_itself_is_deadline_bounded(self, tmp_path, monkeypatch):
+        # #52 fix (loop A): previously ONLY the per-file stat()+_looks_like_binary_file loop below
+        # was deadline-bounded -- the WALK itself (_iter_repo_files) had no time bound at all, only
+        # a max_files COUNT bound (default 50_000), so a slow/huge walk alone could burn the whole
+        # --deadline budget before the per-file loop ever got a chance to run (the 76s dogfood gap
+        # on `tg inventory --deadline 30`).
+        #
+        # An "already expired" deadline does NOT distinguish old from new here (a 10-tiny-file walk
+        # is fast enough that the OLD code's pre-existing per-file-loop check alone already caught
+        # it, producing the same zero-processed outcome either way) -- this needs a clock that
+        # advances on every monotonic() call so the WALK's own new per-file check has something
+        # real to consume before the per-file loop even starts.
+        for i in range(10):
+            _write(tmp_path, f"f{i}.py", "x=1\n")
+        base = 1000.0
+        clock = {"t": base, "calls": 0}
+
+        def _fake_monotonic():
+            clock["calls"] += 1
+            clock["t"] = base + (clock["calls"] - 1)
+            return clock["t"]
+
+        monkeypatch.setattr(inventory_module.time, "monotonic", _fake_monotonic)
+
+        # Call #1 is the `deadline = time.monotonic() + 2.0` line itself (base+0 -> deadline
+        # base+2). Before this fix, the WALK made zero monotonic() calls, so the per-file loop's
+        # OWN first check (call #2, base+1) would still be under budget and process one file
+        # before call #3 (base+2) trips it -- totals.files == 1 pre-fix. After this fix, the
+        # walk's OWN per-file check also consumes ticks, pushing the clock past the deadline
+        # before the per-file loop gets a single call of its own -- totals.files == 0 post-fix.
+        inv = build_inventory(str(tmp_path), deadline_seconds=2.0)
+
+        assert inv["scan_limit"]["possibly_truncated"] is True
+        assert inv["scan_limit"]["truncation_cause"] == "deadline"
+        assert inv["totals"]["files"] == 0
+
+    def test_walk_phase_deadline_none_is_unaffected(self, tmp_path):
+        # Golden-parity guard for the reordered deadline computation: no deadline_seconds means
+        # walk_deadline_hit.hit is never set and behavior is byte-identical to before this fix.
+        for i in range(10):
+            _write(tmp_path, f"f{i}.py", "x=1\n")
+
+        inv = build_inventory(str(tmp_path))
+
+        assert inv["scan_limit"]["possibly_truncated"] is False
+        assert inv["scan_limit"]["truncation_cause"] is None
+        assert inv["totals"]["files"] == 10
+
 
 class TestRegistration:
     def test_cli_default_max_files_matches_module_constant(self):

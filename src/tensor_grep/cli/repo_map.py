@@ -944,8 +944,16 @@ def _iter_repo_files(
     root: Path,
     *,
     max_files: int | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> list[Path]:
+    """Walk *root* for repo files, optionally bounded by a file-count cap AND/OR a wall-clock
+    ``deadline_monotonic`` (task #52, loop A). ``deadline_hit`` is the mutable out-signal (mirrors
+    ``_DeadlineBreakFlag`` sibling seams in this module) so a caller whose own local is declared
+    AFTER this call can still learn "did the walk itself break early on --deadline" and fold that
+    into its partial/deadline_limit stamp. Both new params default to None -> byte-identical to the
+    pre-fix walk for every one of the ~12 existing call sites that do not pass them."""
     with _profiling_phase(_profiling_collector, "file_walk"):
         if root.is_file():
             return [root.resolve()]
@@ -988,11 +996,21 @@ def _iter_repo_files(
             bucket_groups: dict[int, list[tuple[tuple[int, str], Iterator[Path]]]] = {}
             for key, iterator in buckets:
                 bucket_groups.setdefault(key[0], []).append((key, iterator))
+            walk_deadline_exceeded = False
             for group in sorted(bucket_groups):
                 active_buckets = sorted(bucket_groups[group], key=lambda item: item[0])
                 while active_buckets and len(selected) < limit:
                     next_buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
                     for key, iterator in active_buckets:
+                        # task #52 loop A: one deadline check per next() = the file-granularity
+                        # this walk otherwise has no time bound at all (only the max_files COUNT
+                        # bound above), so a huge bucket could burn the whole --deadline budget.
+                        if (
+                            deadline_monotonic is not None
+                            and time.monotonic() >= deadline_monotonic
+                        ):
+                            walk_deadline_exceeded = True
+                            break
                         try:
                             selected.append(next(iterator))
                         except StopIteration:
@@ -1000,12 +1018,23 @@ def _iter_repo_files(
                         if len(selected) >= limit:
                             break
                         next_buckets.append((key, iterator))
+                    if walk_deadline_exceeded:
+                        break
                     active_buckets = next_buckets
-                if len(selected) >= limit:
+                if len(selected) >= limit or walk_deadline_exceeded:
                     break
+            if walk_deadline_exceeded and deadline_hit is not None:
+                deadline_hit.hit = True
             return selected
 
-        files = list(_iter_repo_bucket_files(normalized_root, gitignore))
+        walk_deadline_exceeded = False
+        for current in _iter_repo_bucket_files(normalized_root, gitignore):
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                walk_deadline_exceeded = True
+                break
+            files.append(current)
+        if walk_deadline_exceeded and deadline_hit is not None:
+            deadline_hit.hit = True
         files.sort(key=lambda path: _repo_walk_path_sort_key(path, normalized_root))
         return files
 
@@ -3514,6 +3543,8 @@ def _relevant_tests_for_symbol(
     *,
     caller_files: list[str] | None = None,
     fallback_tests: list[str] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> list[str]:
     repo_root = Path(str(repo_map["path"])).resolve()
@@ -3583,6 +3614,13 @@ def _relevant_tests_for_symbol(
         )
         direct_definition_tests = []
         for current in tests:
+            # #52 fix (loop B): this loop re-walks the FULL tests list with no deadline check --
+            # unbounded even when the caller-scan/impact seams that feed it are correctly bounded
+            # (dominant cause of the 23x --deadline overrun on a high-fan-out symbol like "main").
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                break
             path = Path(current)
             if any(
                 _file_imports_symbol_from_definition(
@@ -3607,6 +3645,13 @@ def _relevant_tests_for_symbol(
             return ordered
     related: list[str] = []
     for current in tests:
+        # #52 fix (loop B): same unbounded-full-tests-list hazard as the direct_definition_tests
+        # loop above (this branch runs whenever `caller_files` is falsy, or the ranked/direct
+        # branch above found nothing) -- guard it identically.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         if current in caller_set:
             related.append(current)
             continue
@@ -5795,12 +5840,24 @@ def build_repo_map(
         context_root = root if root.is_dir() else root.parent
         _prime_all_language_repo_contexts(context_root)
         payload = _envelope(root)
+        # #52 fix (loop A): the file WALK itself had no time bound (only max_repo_files COUNT),
+        # so a huge/slow tree could burn the whole --deadline budget before the parse loop below
+        # ever got a chance to run. Share the same absolute deadline + fold the walk's own
+        # early-break signal into the parse loop's `deadline_hit` local just below.
+        repo_walk_deadline_hit = _DeadlineBreakFlag()
         if _profiling_collector is None:
-            all_files = _iter_repo_files(root, max_files=normalized_max_repo_files)
+            all_files = _iter_repo_files(
+                root,
+                max_files=normalized_max_repo_files,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=repo_walk_deadline_hit,
+            )
         else:
             all_files = _iter_repo_files(
                 root,
                 max_files=normalized_max_repo_files,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=repo_walk_deadline_hit,
                 _profiling_collector=_profiling_collector,
             )
         capped_file_count = len(all_files)
@@ -5827,7 +5884,11 @@ def build_repo_map(
         # unbounded, so a huge repo degrades gracefully instead of the caller's hard timeout
         # discarding all work. The file LIST above is already walked cheaply; only symbol/import
         # PARSING is bounded here. Break + keep what we have -- never raise, never zero the results.
-        deadline_hit = False
+        # #52 fix (loop A): seed from the walk's OWN early-break flag -- a deadline-truncated file
+        # LIST is itself a reason this whole result is partial, even if the parse loop that follows
+        # never gets to run (or completes trivially over a truncated list without tripping its own
+        # check).
+        deadline_hit = repo_walk_deadline_hit.hit
         files_scanned = 0
         for current in context_files:
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -13558,6 +13619,7 @@ def build_symbol_impact(
         payload,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     _copy_partial_signal(
@@ -13571,6 +13633,7 @@ def build_symbol_impact_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -13606,7 +13669,17 @@ def build_symbol_impact_from_map(
         symbol,
         _profiling_collector=_profiling_collector,
     )
-    preferred_definition_files = _preferred_definition_files(repo_map, symbol)
+    # #52 fix (loop C): build_symbol_impact_from_map previously threaded NO deadline at all into
+    # either of its two sibling scans below, even when a caller (build_symbol_impact,
+    # build_symbol_blast_radius_from_map) already had one in scope -- both loops mirror the
+    # equivalent callers-scan seams (task #61) which already guard the same helpers.
+    preferred_definition_deadline_hit = _DeadlineBreakFlag()
+    preferred_definition_files = _preferred_definition_files(
+        repo_map,
+        symbol,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=preferred_definition_deadline_hit,
+    )
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
         dict(current)
@@ -13628,11 +13701,14 @@ def build_symbol_impact_from_map(
         if current not in impacted_files:
             impacted_files.append(current)
 
+    related_tests_deadline_hit = _DeadlineBreakFlag()
     related_tests = _relevant_tests_for_symbol(
         repo_map,
         symbol,
         definition_files,
         fallback_tests=list(context_payload.get("tests", [])),
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=related_tests_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
 
@@ -13725,6 +13801,13 @@ def build_symbol_impact_from_map(
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
     _copy_lsp_evidence_status(payload, defs_payload)
+    # #52 fix (loop C): fold THIS function's own sibling-loop deadline signals (preferred-
+    # definition scoring + related-test matching, both unbounded before this fix) into partial --
+    # mirrors the callers/blast-radius fold-in pattern (task #61) so a --deadline-truncated impact
+    # result is never silently reported as complete.
+    if preferred_definition_deadline_hit.hit or related_tests_deadline_hit.hit:
+        payload["partial"] = True
+        payload["deadline_limit"] = {"deadline_exceeded": True}
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
@@ -13797,12 +13880,18 @@ def _string_literal_references(path: Path, symbol: str) -> list[dict[str, Any]]:
     as ``@patch("pkg.mod.Symbol")`` decorator arguments,
     ``routing_backend="Symbol"`` assignments, and ``__all__`` entries. Those are
     surfaced here so they are not silently dropped from rename planning.
+
+    #52 fix (loop D): read via ``_read_source_text_cached`` instead of a raw uncached
+    ``path.read_text`` -- bundles the SAME ``_SYMBOL_LITERAL_SEED_MAX_BYTES`` size guard its
+    siblings (``_file_may_contain_literal_symbol`` et al.) already use: normal files are read
+    once per (path, mtime, size) and shared across repeated calls in a session; oversize files
+    still get read directly, uncached, exactly like before (no behavior change for them).
     """
 
     if not symbol:
         return []
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -14049,6 +14138,12 @@ def build_symbol_refs_from_map(
     # the precise AST ``references`` so rename-aware agents do not miss them.
     string_refs: list[dict[str, Any]] = []
     for current in bounded_files:
+        # #52 fix (loop D): this second pass over bounded_files ran AFTER the deadline-checked
+        # main scan above with no bound of its own -- fold into the SAME refs_scan_deadline_hit
+        # local the main loop already declares and the payload assembly below already reads.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            refs_scan_deadline_hit = True
+            break
         string_refs.extend(_string_literal_references(current, symbol))
     string_refs.sort(
         key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
@@ -14820,12 +14915,20 @@ def build_symbol_callers_from_map(
         symbol,
         _profiling_collector=_profiling_collector,
     )
+    # #52 fix (loop B): this sibling loop used to be unbounded even though it feeds the
+    # deadline-aware caller scan above -- share the SAME deadline_monotonic and fold its
+    # early-break signal into the 4-way partial fold-in below (dominant cause of the 23x overrun
+    # on a high-fan-out symbol: _preferred_definition_files falls back to the FULL unfiltered
+    # definition_files when all import-scores are 0, flooding this loop unbounded).
+    related_tests_deadline_hit = _DeadlineBreakFlag()
     related_tests = _relevant_tests_for_symbol(
         repo_map,
         symbol,
         definition_files,
         caller_files=caller_files,
         fallback_tests=list(context_payload.get("tests", [])),
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=related_tests_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
 
@@ -14853,14 +14956,16 @@ def build_symbol_callers_from_map(
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
-    # task #61: fold BOTH sibling loops' early-break signal in alongside the main caller-scan loop's
-    # own flag -- a central symbol can finish the bounded main scan inside budget while either
-    # sibling loop (import-graph-consumers, preferred-definition-file scoring) pushes wall-clock
-    # well past --deadline. Any one of the three breaking early makes this result partial.
+    # task #61 / #52 fix (loop B): fold ALL sibling loops' early-break signal in alongside the main
+    # caller-scan loop's own flag -- a central symbol can finish the bounded main scan inside budget
+    # while any sibling loop (import-graph-consumers, preferred-definition-file scoring,
+    # related-test matching) pushes wall-clock well past --deadline. Any one of the four breaking
+    # early makes this result partial.
     if (
         caller_scan_deadline_hit
         or import_graph_consumers_deadline_hit.hit
         or preferred_definition_deadline_hit.hit
+        or related_tests_deadline_hit.hit
     ):
         # moat P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
         # holds what was found before the budget). graph_completeness downgrades so an agent does not
@@ -15186,10 +15291,15 @@ def build_symbol_blast_radius_from_map(
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
+    # #52 fix (loop C): forward the shared deadline into the impact call too -- previously
+    # unbounded (build_symbol_impact_from_map had no deadline param at all), so blast-radius
+    # inherited an unbounded internal preferred-definition/related-tests scan via this call even
+    # though every other seam in this function is deadline-aware.
     impact_payload = build_symbol_impact_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     # task #61: this blast-radius-local call feeds the same sibling loop as the callers seam above
@@ -15512,7 +15622,15 @@ def build_symbol_blast_radius_from_map(
     # task #61: OR in this function's OWN preferred-definition-files call (a second, redundant call
     # separate from the one build_symbol_callers_from_map already made internally) -- it can still
     # push wall-clock past the shared deadline even when callers_payload came back complete.
-    if callers_payload.get("partial") or preferred_definition_deadline_hit_blast.hit:
+    # #52 fix (loop C): ALSO OR in impact_payload's own partial signal -- this function reads
+    # impact_payload["file_matches"]/["tests"]/["imports"]/["symbols"] directly (below), so a
+    # deadline-truncated impact scan makes THIS result incomplete too, even when callers_payload
+    # and this function's own direct preferred-definition-files call both finished inside budget.
+    if (
+        callers_payload.get("partial")
+        or preferred_definition_deadline_hit_blast.hit
+        or impact_payload.get("partial")
+    ):
         payload["partial"] = True
         payload["graph_completeness"] = "partial"
         caller_deadline_limit = callers_payload.get("deadline_limit")
@@ -15520,6 +15638,8 @@ def build_symbol_blast_radius_from_map(
             payload["deadline_limit"] = dict(caller_deadline_limit)
         elif preferred_definition_deadline_hit_blast.hit:
             payload["deadline_limit"] = {"deadline_exceeded": True}
+        elif isinstance(impact_payload.get("deadline_limit"), dict):
+            payload["deadline_limit"] = dict(impact_payload["deadline_limit"])
     if callers_payload.get("result_incomplete"):
         # backlog #1 chokepoint: the direct-caller scan's internal ceiling (CALLER_SCAN_FILE_CEILING)
         # dropped files the map covers -> the blast radius built on top of it is not exhaustive
