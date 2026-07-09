@@ -1,6 +1,59 @@
 # CHANGELOG
 
 
+## v1.54.2 (2026-07-09)
+
+### Bug Fixes
+
+- **agent**: Scoped-agent + edit-plan validation-plan parity + budget-corroborated confidence
+  (dogfood #84) ([#475](https://github.com/oimiragieo/tensor-grep/pull/475),
+  [`ae3ec6d`](https://github.com/oimiragieo/tensor-grep/commit/ae3ec6dc5914c0430bf964b9f148cb0d5d045deb))
+
+* fix(agent): scoped-agent + edit-plan validation-plan parity (README boundary-trap + python
+  discovery) + budget-corroborated confidence uplift (dogfood #84)
+
+Two root-cause bugs, both live-reproduced on a real repo, converge on a single shared seed builder
+  (repo_map.py's _build_edit_plan_seed / _attach_edit_plan_metadata), so a scoped `tg agent <dir>`
+  and `tg edit-plan` (and the session/daemon/MCP surface that wraps it) all healed from the same two
+  fixes:
+
+Fix A (repo_map.py:_validation_repo_root): the walk-up used to trap at the FIRST directory carrying
+  even a single boundary marker (README.md/.gitignore/LICENSE/ AGENTS.md) before ever examining that
+  directory's parent, so a scoped subdirectory with its own README.md never reached the real project
+  root and validation discovery silently early-returned []. Now a directory only becomes a strong
+  boundary_candidate when it has .git (dir/file) OR >=2 distinct boundary markers;
+  project-marker-wins-first and the tempdir guard are unchanged.
+
+Fix B (repo_map.py:_discover_validation_tests_for_primary_file): discovery was JS/TS-only -- every
+  non-JS/TS candidate, including a .py test file that had already passed the _is_test_file gate, was
+  silently dropped. .py test files now fall through to the language-neutral scoring; the JS/TS
+  node:test gate is untouched.
+
+Confidence fix (agent_capsule.py): _capsule_token_budget_uplift_eligible gains a second
+  corroboration channel alongside verified call-site evidence -- non-empty
+  targeted_validation_evidence (a validation step scoped to symbol/file, non-empty target,
+  confidence>=0.7) with an aligned/mismatch-filtered-with-kept alignment. Every genuine-ambiguity
+  disqualifier (scan-truncation, no-snippets, genuine misroute, alternative-target tie,
+  marker-helper demotion, any non-budget downgrade reason, query-overlap) gates both channels
+  identically and is retained verbatim. The new channel is capped at the lower, previously-unused
+  _CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP (0.75), below the call-site channel's
+  graph-corroborated 0.8 ceiling, with its own channel-distinct downgrade reason.
+
+TDD: 12 new tests (4 boundary-trap unit + companions, 2 discovery unit, 2 E2E headline/mirror, 3
+  confidence uplift/guard/misroute), each verified RED before its fix and GREEN after. 966 tests
+  across every file referencing the shared builder/validation/confidence machinery pass with zero
+  regressions; mypy and ruff clean on both touched source files.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(plans): #84 validation-plan-parity design (boundary-trap + python-discovery + capped
+  confidence channel)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.54.1 (2026-07-09)
 
 ### Bug Fixes
