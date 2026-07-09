@@ -224,3 +224,111 @@ def test_build_symbol_impact_excludes_unrelated_tests(tmp_path: Path) -> None:
 
     assert payload["tests"][0] == str(integration_test_path.resolve())
     assert str(unrelated_test_path.resolve()) not in payload["tests"]
+
+
+# ---------------------------------------------------------------------------------------------
+# audit #81 #3: `from . import x` -- invisible in the callers/blast-radius import-graph-consumer
+# path (recall gap; #460 already fixed the sibling `tg imports`/`tg importers` primitive for the
+# exact same import shape).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_symbol_callers_recalls_python_bare_relative_import_consumer(
+    tmp_path: Path,
+) -> None:
+    """`from . import helpers` has no dotted `node.module` text -- `main.py` never references
+    "foo" anywhere in its own source, so the ONLY way it can appear here is via the
+    import-graph-consumer path (`_python_file_imports_symbol_from_definition` /
+    `_python_import_update_target`), not the direct call-site scan. Before the fix, the
+    `if not node.module: continue` guard in both functions silently dropped this shape."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    main_path = pkg / "main.py"
+    main_path.write_text("from . import helpers\n", encoding="utf-8")
+
+    payload = repo_map.build_symbol_callers("foo", project)
+
+    caller_files = {caller["file"] for caller in payload["callers"]}
+    assert str(main_path.resolve()) not in caller_files
+
+    consumer_files = set(payload["import_graph_consumer_files"])
+    assert str(main_path.resolve()) in consumer_files
+    consumer = next(
+        current
+        for current in payload["import_graph_consumers"]
+        if current["file"] == str(main_path.resolve())
+    )
+    assert consumer["module"] == "helpers"
+    assert consumer["definition_file"] == str(helpers_path.resolve())
+    assert consumer["kind"] == "import-consumer"
+    assert consumer["edge_kind"] == "reverse-import"
+
+
+def test_build_symbol_blast_radius_recalls_python_bare_relative_import_consumer(
+    tmp_path: Path,
+) -> None:
+    """Same shape as the callers test above, through the blast-radius payload (which wraps
+    `build_symbol_callers_from_map` internally, so both consume the same fix)."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    main_path = pkg / "main.py"
+    main_path.write_text("from . import helpers\n", encoding="utf-8")
+
+    payload = repo_map.build_symbol_blast_radius("foo", project)
+
+    assert str(main_path.resolve()) in set(payload["import_graph_consumer_files"])
+
+
+# ---------------------------------------------------------------------------------------------
+# audit #81 #4: Go's LanguageSpec has import_update_target=None -> import_graph_consumers can
+# never be populated for Go, and (with the grammar installed) resolution_gaps stayed silently
+# empty about it -- an honesty-floor gap, not a recall gap: the reverse-import edge is a real,
+# permanent capability hole, so it must be SURFACED, not silently read as "proven zero".
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_symbol_callers_flags_go_import_graph_gap_not_silent_empty(
+    tmp_path: Path,
+) -> None:
+    """The direct package-qualified call-site scan (independent of import_update_target) still
+    finds the real cross-package call, proving Go support otherwise works -- only the
+    reverse-import-graph edge is missing, and that absence must be an honest resolution_gaps
+    entry rather than a silent empty list."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "go.mod").write_text("module example.com/app\n\ngo 1.22\n", encoding="utf-8")
+    util_dir = project / "util"
+    util_dir.mkdir()
+    util_go = util_dir / "util.go"
+    util_go.write_text(
+        "package util\n\nfunc Foo() int {\n\treturn 1\n}\n",
+        encoding="utf-8",
+    )
+    main_go = project / "main.go"
+    main_go.write_text(
+        'package main\n\nimport "example.com/app/util"\n\nfunc main() {\n\tutil.Foo()\n}\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_callers("Foo", project)
+
+    caller_files = {caller["file"] for caller in payload["callers"]}
+    assert str(main_go.resolve()) in caller_files, "Go direct call-site resolution must still work"
+
+    assert payload["import_graph_consumer_count"] == 0
+
+    go_gaps = [gap for gap in payload["resolution_gaps"] if gap["language"] == "go"]
+    assert len(go_gaps) == 1, (
+        f"expected exactly one honest 'go' resolution_gaps entry: {payload['resolution_gaps']}"
+    )
+    assert go_gaps[0]["files_affected"] >= 1
+    assert "reverse-import" in go_gaps[0]["reason"]
+    assert "fail-closed" not in go_gaps[0]["reason"]
