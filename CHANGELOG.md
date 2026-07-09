@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.54.1 (2026-07-09)
+
+### Bug Fixes
+
+- **rerank**: Add a total wall-clock deadline to the model-fetch download (close the slow-drip hang,
+  Opus-gate nit #87) ([#474](https://github.com/oimiragieo/tensor-grep/pull/474),
+  [`fe3b367`](https://github.com/oimiragieo/tensor-grep/commit/fe3b3675cdeb4b4aa47336e04eaffda514cfae97))
+
+_download_bounded() had a per-recv socket timeout (~60s) and a total byte cap (~64MB) but no total
+  wall-clock deadline. The byte-cap check only runs after resp.read(1MB) returns, so a
+  malicious/compromised HF server could slow-drip bytes -- each recv under the socket timeout, total
+  under the byte cap -- and hang the fetch indefinitely. Availability-only (the checksum gate is
+  never bypassed), on the manual --fetch command, but worth closing.
+
+Adds a third, additive bound: record start = time.monotonic() before the read loop, and after each
+  chunk, raise the same ValueError style the byte-cap check already uses if the elapsed time exceeds
+  deadline_s. Configurable via TG_RERANK_FETCH_DEADLINE_S (default 300s). Does not change the
+  per-recv timeout or the byte cap.
+
+Adds test_download_exceeds_total_deadline_raises, which monkeypatches time.monotonic to jump past a
+  shrunk 1s deadline on the second check (no real sleep), using a new finite _FakeDripResponse that
+  returns small chunks across multiple .read() calls so a missing fix fails fast instead of hanging.
+
+
 ## v1.54.0 (2026-07-09)
 
 ### Features
