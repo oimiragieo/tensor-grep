@@ -1256,6 +1256,7 @@ fn main_inner() -> anyhow::Result<()> {
     if is_top_level_pcre2_version_invocation(&raw_args)
         || is_search_pcre2_version_invocation(&raw_args)
     {
+        require_ripgrep_or_exit(ripgrep_is_available(), "--pcre2-version");
         let exit_code = execute_ripgrep_pcre2_version()?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -1263,6 +1264,7 @@ fn main_inner() -> anyhow::Result<()> {
         return Ok(());
     }
     if is_top_level_type_list_invocation(&raw_args) || is_search_type_list_invocation(&raw_args) {
+        require_ripgrep_or_exit(ripgrep_is_available(), "--type-list");
         let exit_code = execute_ripgrep_type_list()?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -1365,6 +1367,21 @@ fn env_flag_enabled(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Fail closed (exit 2, the "backend unavailable / incomplete" convention `handle_calibrate_command`
+/// already uses) instead of letting a passthrough-required rg invocation bubble an `Err` through `?`
+/// to `main()`'s default `Result` termination, which exits 1 -- indistinguishable from a genuine
+/// "no match" (audit #81 #7). Also used to refuse a `--pcre2` request when no rg is present rather
+/// than silently swapping to the native regex engine, which does not support PCRE2 syntax (#9).
+fn require_ripgrep_or_exit(rg_available: bool, context: &str) {
+    if !rg_available {
+        eprintln!(
+            "error: {context} requires the ripgrep (`rg`) backend, but rg is unavailable. \
+             Install `rg`, set TG_RG_PATH, or place a bundled ripgrep binary next to `tg`."
+        );
+        std::process::exit(2);
+    }
 }
 
 fn is_top_level_version_invocation(raw_args: &[OsString]) -> bool {
@@ -4120,6 +4137,9 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     let primary_path = paths.first().map(String::as_str).unwrap_or(".");
 
     let rg_available = ripgrep_is_available();
+    if cli.pcre2 {
+        require_ripgrep_or_exit(rg_available, "--pcre2");
+    }
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
     let structured_output = cli.json || cli.ndjson;
     let explicit_gpu = !cli.gpu_device_ids.is_empty();
@@ -5163,6 +5183,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     if args.pcre2_version {
+        require_ripgrep_or_exit(ripgrep_is_available(), "--pcre2-version");
         let exit_code = execute_ripgrep_pcre2_version()?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -5170,6 +5191,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     if args.type_list {
+        require_ripgrep_or_exit(ripgrep_is_available(), "--type-list");
         let exit_code = execute_ripgrep_type_list()?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -5191,6 +5213,14 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     let structured_output = args.json || args.ndjson;
     let auto_gpu_ids: [i32; 0] = [];
 
+    // Fail closed instead of silently swapping --pcre2 to the native regex engine (which does not
+    // support PCRE2 syntax) when no rg is present. Checked before route_search, whose `config.pcre2
+    // && config.rg_available` gate otherwise falls through to NativeCpu/"rg_unavailable" with no
+    // signal that PCRE2 semantics were dropped (audit #81 #9).
+    if args.pcre2 {
+        require_ripgrep_or_exit(rg_available, "--pcre2");
+    }
+
     if search_args_need_broad_generated_guard(&args) {
         let generated_dirs = generated_scan_dir_names(&request.paths, false);
         if !generated_dirs.is_empty() {
@@ -5200,6 +5230,11 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     }
 
     if search_prefers_ripgrep_passthrough(&args, &request, rg_available) {
+        // search_requires_ripgrep_passthrough (checked first inside the call above) can return
+        // true regardless of rg_available -- e.g. --max-depth with TG_DISABLE_RG=1. Without this
+        // guard execute_ripgrep_search's Err bubbles via `?` to main()'s default Result
+        // termination, which exits 1 -- indistinguishable from a genuine no-match (audit #81 #7).
+        require_ripgrep_or_exit(rg_available, "this search's flag combination");
         if args.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());
         }

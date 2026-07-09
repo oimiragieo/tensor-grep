@@ -1420,6 +1420,205 @@ fn test_default_frontdoor_falls_back_to_native_when_ripgrep_is_unavailable() {
     assert!(stdout.contains("hello world"), "stdout={stdout}");
 }
 
+// --- audit #81 #7/#9: rg-unavailable must fail closed with exit 2, never a masked exit 1 or a
+// silent engine swap. See rust_core/src/main.rs::require_ripgrep_or_exit and its call sites. ---
+
+#[test]
+fn test_search_required_passthrough_flag_without_ripgrep_exits_2_not_1() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    // --max-depth is in search_requires_ripgrep_passthrough's unconditional flag list, so
+    // search_prefers_ripgrep_passthrough returns true regardless of rg_available. Before the fix,
+    // execute_ripgrep_search's Err bubbled via `?` to main()'s default Result termination, which
+    // exits 1 -- indistinguishable from a genuine no-match. It must now exit 2.
+    let output = tg()
+        .arg("search")
+        .arg("--max-depth")
+        .arg("2")
+        .arg("hello")
+        .arg(dir.path())
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "expected exit 2 (backend unavailable), not 1 (no-match-shaped); status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.to_lowercase().contains("rg"), "stderr={stderr}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn test_search_pcre2_without_ripgrep_fails_closed_instead_of_native_swap() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    // Before the fix: search_requires_ripgrep_passthrough does not list plain `pcre2`, so
+    // search_prefers_ripgrep_passthrough returns false and route_search's
+    // `config.pcre2 && config.rg_available` gate silently falls through to
+    // NativeCpu/"rg_unavailable" -- running the NATIVE regex engine (not PCRE2) for a `--pcre2`
+    // request with no signal that PCRE2 semantics were dropped. It must now fail closed (exit 2).
+    let output = tg()
+        .arg("search")
+        .arg("--pcre2")
+        .arg("hello")
+        .arg(dir.path())
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--pcre2"), "stderr={stderr}");
+    assert!(stderr.to_lowercase().contains("rg"), "stderr={stderr}");
+    // Must NOT have silently run a native-regex search and printed matches.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn test_positional_pcre2_without_ripgrep_fails_closed() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    // The root/positional shortcut (`tg PATTERN PATH`) threads --pcre2 into the same route_search
+    // call as `tg search --pcre2`; it must fail the same way.
+    let output = tg()
+        .arg("--pcre2")
+        .arg("hello")
+        .arg(dir.path())
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--pcre2"), "stderr={stderr}");
+}
+
+#[test]
+fn test_routing_pcre2_still_routes_to_ripgrep_when_available() {
+    // Regression guard: rg-PRESENT behavior for --pcre2 must be unchanged by the audit #81 #9
+    // fail-closed fix -- still routes to RipgrepBackend with reason "pcre2-required".
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--pcre2")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "pcre2-required", false);
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
+fn test_pcre2_version_without_ripgrep_exits_2_not_1() {
+    let output = tg()
+        .arg("--pcre2-version")
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_search_pcre2_version_without_ripgrep_exits_2_not_1() {
+    let output = tg()
+        .arg("search")
+        .arg("--pcre2-version")
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_search_type_list_without_ripgrep_exits_2_not_1() {
+    let output = tg()
+        .arg("search")
+        .arg("--type-list")
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn test_search_json_and_ndjson_are_mutually_exclusive() {
     let dir = tempdir().unwrap();
