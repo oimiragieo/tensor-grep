@@ -1,22 +1,28 @@
 import tomllib
 from pathlib import Path
 
-README_PATH = Path("README.md")
-ROUTING_DOC_PATH = Path("docs/routing_policy.md")
-WORLD_CLASS_PLAN_PATH = Path("docs/world_class_plan.md")
-BENCHMARKS_DOC_PATH = Path("docs/benchmarks.md")
-TOOL_COMPARISON_DOC_PATH = Path("docs/tool_comparison.md")
-GPU_CROSSOVER_DOC_PATH = Path("docs/gpu_crossover.md")
-PAPER_DOC_PATH = Path("docs/PAPER.md")
-AGENTS_DOC_PATH = Path("AGENTS.md")
-SKILL_DOC_PATH = Path("SKILL.md")
-SESSION_HANDOFF_PATH = Path("docs/SESSION_HANDOFF.md")
-CONTINUATION_PLAN_PATH = Path("docs/CONTINUATION_PLAN.md")
-CONTRACTS_DOC_PATH = Path("docs/CONTRACTS.md")
+# Anchor every doc path to the repo root (this file is tests/unit/X -> parents[2]) rather than
+# the process cwd. A cwd-relative Path("docs/...") read is order-fragile: any test that leaves
+# the cwd changed makes these governance reads resolve against the wrong tree (flake #37,
+# "test-ordering pollution"). __file__-anchoring is cwd-independent and cannot be polluted.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+README_PATH = _REPO_ROOT / "README.md"
+ROUTING_DOC_PATH = _REPO_ROOT / "docs/routing_policy.md"
+WORLD_CLASS_PLAN_PATH = _REPO_ROOT / "docs/world_class_plan.md"
+BENCHMARKS_DOC_PATH = _REPO_ROOT / "docs/benchmarks.md"
+TOOL_COMPARISON_DOC_PATH = _REPO_ROOT / "docs/tool_comparison.md"
+GPU_CROSSOVER_DOC_PATH = _REPO_ROOT / "docs/gpu_crossover.md"
+PAPER_DOC_PATH = _REPO_ROOT / "docs/PAPER.md"
+AGENTS_DOC_PATH = _REPO_ROOT / "AGENTS.md"
+SKILL_DOC_PATH = _REPO_ROOT / "SKILL.md"
+SESSION_HANDOFF_PATH = _REPO_ROOT / "docs/SESSION_HANDOFF.md"
+CONTINUATION_PLAN_PATH = _REPO_ROOT / "docs/CONTINUATION_PLAN.md"
+CONTRACTS_DOC_PATH = _REPO_ROOT / "docs/CONTRACTS.md"
 
 
 def _project_release_tag() -> str:
-    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     return f"v{pyproject['project']['version']}"
 
 
@@ -268,10 +274,10 @@ def test_public_ast_positioning_should_not_claim_ast_grep_parity() -> None:
         "README.md": README_PATH.read_text(encoding="utf-8"),
         "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
-        "src/tensor_grep/cli/main.py": Path("src/tensor_grep/cli/main.py").read_text(
+        "src/tensor_grep/cli/main.py": (_REPO_ROOT / "src/tensor_grep/cli/main.py").read_text(
             encoding="utf-8"
         ),
-        "rust_core/src/main.rs": Path("rust_core/src/main.rs").read_text(encoding="utf-8"),
+        "rust_core/src/main.rs": (_REPO_ROOT / "rust_core/src/main.rs").read_text(encoding="utf-8"),
     }
 
     for path, text in public_surfaces.items():
@@ -913,7 +919,7 @@ def test_skill_current_release_proof_should_match_project_version() -> None:
 def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags() -> None:
     agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
-    contracts = Path("docs/CONTRACTS.md").read_text(encoding="utf-8")
+    contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
     handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
 
     for doc in (agents, skill, contracts, handoff):
