@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v1.51.6 (2026-07-09)
+
+### Bug Fixes
+
+- **lock**: Make the index lock ownership-aware (uuid4 token + mtime heartbeat) so a stale-reclaimed
+  holder can't delete the new owner's live lock (audit #14)
+  ([#457](https://github.com/oimiragieo/tensor-grep/pull/457),
+  [`abf73eb`](https://github.com/oimiragieo/tensor-grep/commit/abf73ebd2ccbd06e8ea3f0a261b517edfd00cfc1))
+
+* fix(lock): make the index lock ownership-aware (uuid4 token verified on release + mtime heartbeat)
+  so a stale-reclaimed holder can't delete the new owner's live lock -- Windows delete-pending +
+  double-reclaim defenses preserved (audit #14)
+
+* test(index-lock): widen the heartbeat-freshness timing bounds to stop the macos-CI flake
+
+test_heartbeat_keeps_mtime_fresh_during_long_hold asserted max_observed_age < 0.15s while the
+  heartbeat fired every 0.03s. On loaded 2-core CI runners the heartbeat thread can be GIL-starved
+  past 150ms (observed 0.152s > 0.15s on macos-latest, py3.11 + py3.12), false-failing a test whose
+  property (heartbeat keeps mtime younger than stale_after_s) was actually holding. Scale the
+  absolute values up (stale_after_s 0.15->0.6, hold 0.6->1.5, heartbeat 0.03->0.05) so stale_after_s
+  is 12x the heartbeat interval and realistic scheduling jitter stays well clear of the bound. Same
+  property, no flake.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(index-lock): set heartbeat_interval to 0.05 so the 12x stale-ratio matches the comment
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.5 (2026-07-09)
 
 ### Bug Fixes
