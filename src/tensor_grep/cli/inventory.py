@@ -26,7 +26,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.cli.repo_map import _iter_repo_files, _looks_like_binary_file
+from tensor_grep.cli.repo_map import (
+    _DeadlineBreakFlag,
+    _iter_repo_files,
+    _looks_like_binary_file,
+)
 
 INVENTORY_SCHEMA_VERSION = 1
 # Walk-only inventory is O(files) with only a stat()+8KB-read per file, orders of
@@ -190,13 +194,24 @@ def build_inventory(
     if not root.exists():
         raise FileNotFoundError(f"inventory path does not exist: {path}")
 
+    # #52 fix (loop A): compute the absolute deadline BEFORE the walk (not after) and thread it
+    # into _iter_repo_files -- previously the walk below had no time bound at all, only a
+    # max_files COUNT bound (default 50_000), so a slow/huge walk could burn the entire
+    # --deadline budget before the per-file loop further down even started (the 76s dogfood gap
+    # on `tg inventory --deadline 30`). walk_deadline_hit folds into the per-file loop's own
+    # deadline_hit local below, just like build_repo_map folds in its own walk-phase flag.
+    deadline = time.monotonic() + deadline_seconds if deadline_seconds is not None else None
+    walk_deadline_hit = _DeadlineBreakFlag()
+
     # Probe one file past the cap: _iter_repo_files' bucketed early-stop (repo_map.py)
     # can honor a real max_files bound and stop walking once it has enough, so we thread
     # the cap straight into the iterator instead of walking the whole tree and slicing
     # afterward. Asking for max_files + 1 (not max_files) lets us still tell "exactly
     # max_files files exist" apart from "more files exist" for the truncation notice,
     # without ever walking further than one file past the cap.
-    walked = _iter_repo_files(root, max_files=max_files + 1)
+    walked = _iter_repo_files(
+        root, max_files=max_files + 1, deadline_monotonic=deadline, deadline_hit=walk_deadline_hit
+    )
     possibly_truncated = False
     truncation_cause: str | None = None
     if len(walked) > max_files:
@@ -218,8 +233,7 @@ def build_inventory(
     dir_files: dict[str, int] = {}
     largest: list[tuple[int, str]] = []
 
-    deadline = time.monotonic() + deadline_seconds if deadline_seconds is not None else None
-    deadline_hit = False
+    deadline_hit = walk_deadline_hit.hit
 
     for file_path in walked:
         if deadline is not None and time.monotonic() >= deadline:
