@@ -1011,6 +1011,7 @@ def test_tg_classify_logs_defaults_to_local_heuristics(monkeypatch, tmp_path):
         def __init__(self) -> None:
             raise AssertionError("MCP classify should not probe CyBERT by default")
 
+    monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #81 #1)
     log_path = tmp_path / "app.log"
     log_path.write_text("INFO startup ok\nERROR database failed\n", encoding="utf-8")
     monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
@@ -2437,6 +2438,8 @@ def test_tg_audit_manifest_verify_supports_signed_manifests(tmp_path, monkeypatc
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)  # cwd = the read-path confinement anchor (audit #7)
+    # signing_key read is gated behind an explicit opt-in (audit #81 #12).
+    monkeypatch.setenv("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ", "1")
     manifest_path = tmp_path / "rewrite-audit.json"
     signing_key_path = tmp_path / "audit.key"
     signing_key = b"top-secret"
@@ -3009,6 +3012,458 @@ def test_tg_review_bundle_verify_refuses_bundle_path_symlink_escape(tmp_path, mo
         pytest.skip("symlink creation not permitted in this environment")
 
     out = mcp_server.tg_review_bundle_verify(str(link))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+# round-7 security (audit #81 #1/#2/#12): MCP read-path exfil cluster ---------------------
+#
+# tg_classify_logs (file_path) and tg_ruleset_scan (baseline_path/suppressions_path) forwarded
+# LLM-supplied read paths straight to a reader/loader with ZERO confinement -- an
+# arbitrary-file-read/exfil primitive reachable from any MCP client. tg_classify_logs also
+# fully materialized the target file into memory (`list(reader.read_lines(file_path))`)
+# BEFORE applying its DEFAULT_CLASSIFY_MAX_LINES budget -- an unbounded-memory DoS on a large
+# (or attacker-influenceable) file. tg_audit_manifest_verify's signing_key (HMAC key material)
+# was read unrestricted while its twin audit_signing_key on tg_rewrite_apply was already gated
+# behind an explicit opt-in (round-5) -- this closes that inconsistency too.
+# `_confine_read_path` is the new read-labeled chokepoint (a thin wrapper on
+# `_confine_write_path`, which round-6/audit #7 already generalized to reads) so a new
+# read-path param has an obvious place to route through instead of being forwarded raw.
+
+
+def test_confine_read_path_refuses_escape(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    anchor = tmp_path / "proj"
+    anchor.mkdir()
+    with pytest.raises(ValueError):
+        mcp_server._confine_read_path("../evil.log", anchor, label="file_path")
+    with pytest.raises(ValueError):
+        mcp_server._confine_read_path(str(tmp_path / "evil.log"), anchor, label="file_path")
+    ok = mcp_server._confine_read_path("app.log", anchor, label="file_path")
+    assert ok == (anchor.resolve() / "app.log")
+
+
+def test_confine_read_path_refuses_unc_path(tmp_path):
+    """A UNC path is absolute (outside any local anchor) and must be refused like any other
+    out-of-root absolute path. Uses \\\\localhost\\... (loopback, resolves in milliseconds,
+    no real network I/O) rather than an unreachable host, per anti-hang-test-protocol."""
+    from tensor_grep.cli import mcp_server
+
+    anchor = tmp_path / "proj"
+    anchor.mkdir()
+    unc = r"\\localhost\C$\Windows\System32\drivers\etc\hosts"
+    with pytest.raises(ValueError):
+        mcp_server._confine_read_path(unc, anchor, label="file_path")
+
+
+def test_tg_classify_logs_refuses_file_path_outside_root(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.log"
+    secret.write_text(f"ERROR {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+
+    out = mcp_server.tg_classify_logs(str(secret))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_classify_logs_refuses_file_path_dotdot_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.log"
+    secret.write_text(f"ERROR {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+
+    out = mcp_server.tg_classify_logs("../secret.log")
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_classify_logs_refuses_file_path_symlink_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    secret = tmp_path / "secret.log"
+    secret.write_text(f"ERROR {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+    link = proj / "app.log"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_classify_logs(str(link))
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_classify_logs_refuses_file_path_unc_escape(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+
+    out = mcp_server.tg_classify_logs(r"\\localhost\C$\Windows\System32\drivers\etc\hosts")
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "invalid_input"
+
+
+def test_tg_classify_logs_accepts_relative_in_root_path(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+    (tmp_path / "app.log").write_text("INFO ok\nERROR boom\n", encoding="utf-8")
+
+    out = mcp_server.tg_classify_logs("app.log")
+
+    parsed = json.loads(out)
+    assert parsed.get("error") is None
+    assert parsed["provider"] == "heuristic"
+
+
+def test_tg_classify_logs_bounds_read_before_materializing(tmp_path, monkeypatch):
+    """FAILS pre-fix (`list(reader.read_lines(file_path))` drains the whole generator before
+    the DEFAULT_CLASSIFY_MAX_LINES budget is applied -- unbounded-memory DoS on a large file);
+    PASSES post-fix (only DEFAULT_CLASSIFY_MAX_LINES + 1 lines are ever pulled from the
+    reader). The fake reader below yields a large-but-FINITE number of lines (not an
+    unbounded/infinite generator), so a still-broken implementation fails the assertion below
+    instead of hanging the test runner (anti-hang-test-protocol)."""
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.io.reader_fallback import FallbackReader
+    from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    (proj / "huge.log").write_text("placeholder\n", encoding="utf-8")
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    consumed = {"count": 0}
+    fake_total_lines = DEFAULT_CLASSIFY_MAX_LINES * 50  # large but finite
+
+    def _fake_read_lines(self, file_path):
+        for _ in range(fake_total_lines):
+            consumed["count"] += 1
+            yield "INFO line\n"
+
+    monkeypatch.setattr(FallbackReader, "read_lines", _fake_read_lines)
+
+    out = mcp_server.tg_classify_logs("huge.log")
+
+    parsed = json.loads(out)
+    assert parsed.get("error") is None
+    # the reader must be capped one line past the budget, never drained anywhere near in full.
+    assert consumed["count"] == DEFAULT_CLASSIFY_MAX_LINES + 1
+    assert consumed["count"] < fake_total_lines
+    assert parsed["sample_lines"] == DEFAULT_CLASSIFY_MAX_LINES
+    assert parsed["total_lines"] == DEFAULT_CLASSIFY_MAX_LINES + 1
+
+
+def test_ruleset_scan_refuses_baseline_path_outside_root(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    escape = tmp_path / "evil_baseline.json"
+    _write_audit7_secret(escape)
+
+    out = mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), baseline_path=str(escape)
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_ruleset_scan_refuses_baseline_path_dotdot_escape(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    escape = tmp_path / "evil_baseline.json"
+    _write_audit7_secret(escape)
+
+    out = mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), baseline_path="../evil_baseline.json"
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_ruleset_scan_refuses_baseline_path_symlink_escape(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    outside_target = tmp_path / "outside-baseline.json"
+    _write_audit7_secret(outside_target)
+    link_path = scan_root / "baseline.json"
+    try:
+        link_path.symlink_to(outside_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    out = mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), baseline_path="baseline.json"
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_ruleset_scan_refuses_suppressions_path_outside_root(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    escape = tmp_path / "evil_suppressions.json"
+    _write_audit7_secret(escape)
+
+    out = mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), suppressions_path=str(escape)
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_ruleset_scan_refuses_suppressions_path_dotdot_escape(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "proj"
+    scan_root.mkdir()
+    escape = tmp_path / "evil_suppressions.json"
+    _write_audit7_secret(escape)
+
+    out = mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic",
+        path=str(scan_root),
+        suppressions_path="../evil_suppressions.json",
+    )
+
+    _assert_audit7_refused_no_leak(out)
+
+
+def test_tg_audit_manifest_verify_refuses_signing_key_without_opt_in(tmp_path, monkeypatch):
+    """FAILS pre-fix (signing_key forwarded to verify_audit_manifest_json unconditionally, an
+    arbitrary-file-read-as-HMAC-key primitive); PASSES post-fix (refused with
+    code="unsupported_option" unless TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1, mirroring
+    tg_rewrite_apply's audit_signing_key gate)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ", raising=False)
+    manifest_path = tmp_path / "rewrite-audit.json"
+    signing_key_path = tmp_path / "audit.key"
+    signing_key = b"top-secret"
+    signing_key_path.write_bytes(signing_key)
+    _write_audit_manifest(manifest_path, signing_key=signing_key)
+
+    out = mcp_server.tg_audit_manifest_verify(
+        str(manifest_path),
+        signing_key=str(signing_key_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "unsupported_option"
+
+
+# --- round-7 coverage: enumerate every MCP read-path tool param and assert each rejects an
+# out-of-root candidate (audit #81's "coverage test" recommendation). Covers both the
+# round-6 (audit #7) params and the round-7 (audit #81) params added above -- if a future
+# read-path param is added without confinement, add a case here too.
+
+
+def _read_path_case_classify_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    escape = tmp_path / "secret.log"
+    escape.write_text(f"ERROR {_AUDIT7_SECRET_MARKER}\n", encoding="utf-8")
+    return mcp_server.tg_classify_logs(str(escape))
+
+
+def _read_path_case_ruleset_scan_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "scan"
+    scan_root.mkdir()
+    escape = tmp_path / "baseline.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), baseline_path=str(escape)
+    )
+
+
+def _read_path_case_ruleset_scan_suppressions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    scan_root = tmp_path / "scan"
+    scan_root.mkdir()
+    escape = tmp_path / "suppressions.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_ruleset_scan(
+        ruleset="secrets-basic", path=str(scan_root), suppressions_path=str(escape)
+    )
+
+
+def _read_path_case_audit_manifest_verify_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    escape = tmp_path / "manifest.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_audit_manifest_verify(str(escape))
+
+
+def _read_path_case_audit_manifest_verify_previous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "manifest.json"
+    _write_audit_manifest(manifest_path)
+    escape = tmp_path / "previous.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_audit_manifest_verify(str(manifest_path), previous_manifest=str(escape))
+
+
+def _read_path_case_audit_diff_previous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    current_path = proj / "current.json"
+    _write_audit_manifest(current_path)
+    escape = tmp_path / "previous.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_audit_diff(str(escape), str(current_path))
+
+
+def _read_path_case_audit_diff_current(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    previous_path = proj / "previous.json"
+    _write_audit_manifest(previous_path)
+    escape = tmp_path / "current.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_audit_diff(str(previous_path), str(escape))
+
+
+def _read_path_case_review_bundle_create_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    escape = tmp_path / "manifest.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_review_bundle_create(manifest_path=str(escape))
+
+
+def _read_path_case_review_bundle_create_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "manifest.json"
+    _write_audit_manifest(manifest_path)
+    escape = tmp_path / "scan.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_review_bundle_create(
+        manifest_path=str(manifest_path), scan_path=str(escape)
+    )
+
+
+def _read_path_case_review_bundle_create_previous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    manifest_path = proj / "manifest.json"
+    _write_audit_manifest(manifest_path)
+    escape = tmp_path / "previous.json"
+    _write_audit7_secret(escape)
+    return mcp_server.tg_review_bundle_create(
+        manifest_path=str(manifest_path), previous_manifest=str(escape)
+    )
+
+
+def _read_path_case_review_bundle_verify_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    from tensor_grep.cli import mcp_server
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    escape = tmp_path / "bundle.json"
+    _write_audit7_secret(escape, field="bundle_sha256")
+    return mcp_server.tg_review_bundle_verify(str(escape))
+
+
+_READ_PATH_COVERAGE_CASES = [
+    pytest.param(_read_path_case_classify_logs, id="tg_classify_logs.file_path"),
+    pytest.param(_read_path_case_ruleset_scan_baseline, id="tg_ruleset_scan.baseline_path"),
+    pytest.param(_read_path_case_ruleset_scan_suppressions, id="tg_ruleset_scan.suppressions_path"),
+    pytest.param(
+        _read_path_case_audit_manifest_verify_manifest,
+        id="tg_audit_manifest_verify.manifest_path",
+    ),
+    pytest.param(
+        _read_path_case_audit_manifest_verify_previous,
+        id="tg_audit_manifest_verify.previous_manifest",
+    ),
+    pytest.param(_read_path_case_audit_diff_previous, id="tg_audit_diff.previous_manifest"),
+    pytest.param(_read_path_case_audit_diff_current, id="tg_audit_diff.current_manifest"),
+    pytest.param(
+        _read_path_case_review_bundle_create_manifest,
+        id="tg_review_bundle_create.manifest_path",
+    ),
+    pytest.param(_read_path_case_review_bundle_create_scan, id="tg_review_bundle_create.scan_path"),
+    pytest.param(
+        _read_path_case_review_bundle_create_previous,
+        id="tg_review_bundle_create.previous_manifest",
+    ),
+    pytest.param(
+        _read_path_case_review_bundle_verify_bundle, id="tg_review_bundle_verify.bundle_path"
+    ),
+]
+
+
+@pytest.mark.parametrize("case", _READ_PATH_COVERAGE_CASES)
+def test_read_path_param_coverage_rejects_out_of_root(tmp_path, monkeypatch, case):
+    out = case(tmp_path, monkeypatch)
 
     _assert_audit7_refused_no_leak(out)
 

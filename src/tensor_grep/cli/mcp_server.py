@@ -1693,6 +1693,23 @@ def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
     return resolved
 
 
+def _confine_read_path(candidate: str, anchor: Path, *, label: str) -> Path:
+    """Resolve an MCP-supplied READ path and refuse anything outside ``anchor`` (round-7,
+    audit #81 #1/#2).
+
+    Read-labeled chokepoint for read-path MCP tool params. Round-6 (audit #7) already
+    generalized ``_confine_write_path`` to cover read confinement for the audit-manifest /
+    review-bundle family, because the confinement mechanism (resolve, then require the
+    result to be the anchor or a descendant) is identical for reads and writes; this wrapper
+    just gives the read side its own name so a NEW read-path param has an obvious, greppable
+    chokepoint to route through -- so this class (an unconfined read-path param forwarded raw
+    to a loader/reader = arbitrary-file-read/exfil primitive) can't recur one tool at a time.
+    See ``_confine_write_path``'s docstring for the confinement semantics (symlink-following
+    resolve, fail-closed ValueError, callers MUST forward the resolved ``Path`` this returns).
+    """
+    return _confine_write_path(candidate, anchor, label=label)
+
+
 @mcp.tool()  # type: ignore
 def tg_ruleset_scan(
     ruleset: str,
@@ -1728,11 +1745,14 @@ def tg_ruleset_scan(
         allow_broad_generated_scan: Explicit opt-in for broad temp/cache/system roots.
         baseline_path: Optional path to an existing baseline JSON file. Read-only:
             findings present in the baseline are marked as known so only new
-            findings are reported.
+            findings are reported. Confined to the scan root (``path``); a baseline that
+            legitimately lives outside the scan root must be copied in first (fail-closed,
+            not a silent drop).
         write_baseline: Optional path to write a fresh baseline JSON snapshot of the
             current findings. SIDE EFFECT: creates or overwrites this file on disk.
         suppressions_path: Optional path to an existing suppressions JSON file. Read-only:
-            matching findings are suppressed from the reported results.
+            matching findings are suppressed from the reported results. Confined to the
+            scan root (``path``) like ``baseline_path``.
         write_suppressions: Optional path to write a suppressions JSON file derived from
             the current findings. SIDE EFFECT: creates or overwrites this file on disk;
             requires ``justification``.
@@ -1776,6 +1796,17 @@ def tg_ruleset_scan(
         if write_suppressions is not None:
             write_suppressions = str(
                 _confine_write_path(write_suppressions, scan_root, label="write_suppressions")
+            )
+        # round-7 security (audit #81 #2): baseline_path/suppressions_path are READS that were
+        # forwarded to the loader unconfined -- a file-existence + JSON-schema read-oracle over
+        # any path reachable from any MCP client, even though the two WRITE siblings just above
+        # were already confined (round-4/5). Anchor to the same scan_root so a legitimate
+        # baseline/suppressions file for THIS scan (relative or in-root absolute) keeps working.
+        if baseline_path is not None:
+            baseline_path = str(_confine_read_path(baseline_path, scan_root, label="baseline_path"))
+        if suppressions_path is not None:
+            suppressions_path = str(
+                _confine_read_path(suppressions_path, scan_root, label="suppressions_path")
             )
     except ValueError as exc:
         return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
@@ -3736,10 +3767,30 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     CyBERT/Triton provider when TENSOR_GREP_CLASSIFY_PROVIDER=cybert is set.
 
     Args:
-        file_path: The absolute path to the log file to classify.
+        file_path: The absolute path to the log file to classify. Confined to the
+            project root (cwd); a log file that legitimately lives outside the project
+            must be copied in first (fail-closed, not a silent drop).
         structured_json: Return bounded structured JSON (default true). Set to false for
             plain-text output.
     """
+    # round-7 security (audit #81 #1): confine file_path to the project root (cwd) before any
+    # read -- unconfined it is an arbitrary-file-read/exfil primitive (FallbackReader will
+    # happily read .env/keys/anything locally readable, and up to 20 heuristic-flagged lines
+    # are echoed back verbatim in anomalies[].text below). Forward the RESOLVED path so the
+    # downstream read below sees the same anchor-validated location this check validated.
+    try:
+        file_path = str(_confine_read_path(file_path, Path.cwd(), label="file_path"))
+    except ValueError as exc:
+        if structured_json:
+            return json.dumps(
+                {
+                    "file_path": file_path,
+                    "error": {"code": "invalid_input", "message": str(exc)},
+                },
+                indent=2,
+            )
+        return f"Error: {exc}"
+
     try:
         from tensor_grep.io.reader_fallback import FallbackReader
         from tensor_grep.sidecar import (
@@ -3749,7 +3800,13 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
         )
 
         reader = FallbackReader()
-        lines = list(reader.read_lines(file_path))
+        # round-7 security (audit #81 #1): bound the read BEFORE materializing. read_lines()
+        # is a generator; previously `list(reader.read_lines(file_path))` fully materialized
+        # the entire file into memory before the DEFAULT_CLASSIFY_MAX_LINES budget was applied
+        # below -- an unbounded-memory DoS on a large (or attacker-influenceable) file. Cap the
+        # read one line past the budget via itertools.islice so `_apply_classify_line_budget`
+        # can still report `truncated=True` accurately without reading the rest of the file.
+        lines = list(itertools.islice(reader.read_lines(file_path), DEFAULT_CLASSIFY_MAX_LINES + 1))
         if not lines:
             if structured_json:
                 return json.dumps(
@@ -3994,8 +4051,10 @@ def tg_audit_manifest_verify(
         manifest_path: Path to the rewrite audit manifest JSON file. Confined to the
             project root (cwd); a manifest that legitimately lives outside the project
             must be copied in first (fail-closed, not a silent drop).
-        signing_key: Optional HMAC signing key path for signed manifests. Not confined
-            (operators legitimately keep HMAC keys outside the repo, e.g. ~/.config).
+        signing_key: Optional HMAC signing key path for signed manifests. A READ of
+            secret HMAC material; disabled on the MCP surface by default -- set
+            TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1 in the server environment to opt in
+            (mirrors tg_rewrite_apply's audit_signing_key gate, round-5).
         previous_manifest: Optional previous manifest path for validating manifest
             chaining. Confined to the project root (cwd) like manifest_path.
     """
@@ -4003,6 +4062,18 @@ def tg_audit_manifest_verify(
 
     if not manifest_path.strip():
         return _audit_manifest_error("manifest_path must not be empty.", code="invalid_input")
+
+    # round-7 security (audit #81 #12): signing_key is a READ of secret HMAC key material.
+    # Gate it default-OFF behind the same opt-in as tg_rewrite_apply's audit_signing_key
+    # (round-5) for consistency -- unrestricted, it lets any MCP client point verification at
+    # HMAC material anywhere locally readable. The key bytes themselves are never echoed back,
+    # so an env-var opt-in gate is the right control here (not path confinement -- operators
+    # legitimately keep HMAC keys outside the repo, e.g. ~/.config).
+    if signing_key is not None and os.environ.get("TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ") != "1":
+        return _audit_manifest_error(
+            "signing_key read requires TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1",
+            code="unsupported_option",
+        )
 
     # round-6 security (audit #7): confine the read-path params to the project root (cwd) --
     # unconfined they are an arbitrary-file-read/exfil primitive reachable from any MCP
