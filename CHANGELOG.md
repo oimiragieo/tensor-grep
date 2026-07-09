@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v1.51.9 (2026-07-09)
+
+### Bug Fixes
+
+- **release-stamp**: Stop the unanchored post-vX pattern re-stamping historical notes every release
+  + de-anachronize 5 docs + fix the 2 governance layers it was masking (#71/#73)
+  ([#468](https://github.com/oimiragieo/tensor-grep/pull/468),
+  [`f3b7e79`](https://github.com/oimiragieo/tensor-grep/commit/f3b7e794c470b0690e3faf4b04cb9997ff8719e6))
+
+* fix(release-stamp): stop the unanchored post-vX pattern re-stamping historical notes on every
+  release + de-anachronize the 5 corrupted docs (#71/#73)
+
+The 4th replacement in `_stamp_release_doc` matched `post-`v\d+\.\d+\.\d+`` anywhere in each stamped
+  doc, so every release silently marched every occurrence of the phrase forward to the new tag --
+  including dated historical notes in docs/PAPER.md and docs/gpu_crossover.md, and stale ledger
+  headers in docs/SESSION_HANDOFF.md and AGENTS.md, producing anachronisms like a 2026-05-14 note
+  stamped `post-`v1.51.4`` (a July-2026 version).
+
+Verified via `git log -L` per occurrence: docs/gpu_crossover.md's "## Current post-`vX` GPU dogfood
+  Read" header/paragraph and docs/benchmarks.md's 5 "Latest ..." status lines are genuine live
+  pointers (periodically hand-refreshed release over release, never carry a contradicting date) --
+  these still auto-stamp via 4 newly anchored patterns. Every docs/PAPER.md occurrence (9/9), 2
+  dated docs/gpu_crossover.md audit notes, and the stale docs/SESSION_HANDOFF.md / AGENTS.md ledger
+  headers were confirmed historical (frozen content since ~v1.10-1.13, marching label) and
+  de-anachronized by dropping the false version prefix.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(governance): exempt append-only PAPER.md from the post-vX freshness gate
+
+De-anachronizing PAPER.md (previous commit) surfaced that TWO governance layers required a
+  perpetually-current `post-`vX`` marker in PAPER.md -- and only passed before because the buggy
+  unanchored release stamp re-injected a fresh version into PAPER.md's dated historical notes every
+  release. PAPER.md is append-only (never rewritten) and structurally cannot carry a current-version
+  marker, so both layers now exempt it from the freshness fragment ONLY (all other required + banned
+  GPU-honesty fragments still apply to it):
+
+- scripts/agent_readiness.py validate_docs_claims: skip the `post-`v{version}`` fragment for
+  PAPER.md; + a test proving the exemption is PAPER.md-specific (gpu_crossover.md still requires the
+  marker). - test_public_docs_governance.py: move the post-vX assertion into a
+  benchmarks+gpu_crossover-only loop; PAPER.md keeps all content assertions. -
+  tensor-grep-docs-and-writing SKILL.md: correct the now-inaccurate "stamps every post-vX label"
+  description to the 4 anchored shapes.
+
+Verified in the real venv: 104 tests pass (stamp + agent-readiness + public/ enterprise governance)
+  AND validate_docs_claims runs clean against the actual de-anachronized repo docs at v1.51.4 -> the
+  CI agent-readiness gate will not break.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **architecture**: Rewrite against the real code — remove the never-built Multi-Pass Query Analyzer
+  / cyBERT / KvikIO fiction, anchor every subsystem to file:line (#71)
+  ([#467](https://github.com/oimiragieo/tensor-grep/pull/467),
+  [`1867682`](https://github.com/oimiragieo/tensor-grep/commit/186768228f5809284a4ff604f4b257fc18e72588))
+
+
 ## v1.51.8 (2026-07-09)
 
 ### Bug Fixes
