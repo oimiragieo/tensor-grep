@@ -1102,6 +1102,9 @@ def test_plain_search_refuses_glob_with_implicit_path_on_large_root(monkeypatch,
         ["--type", "py"],
         ["-T", "py"],
         ["--iglob", "*.py"],
+        ["-tpy"],  # bundled attached-value short form (rg idiom) -- re-gate BLOCK sibling
+        ["-Tpy"],
+        ["-itpy"],  # mid-bundle: -i then -t py
     ],
 )
 def test_plain_search_refuses_type_and_iglob_with_implicit_path_on_large_root(

@@ -320,6 +320,20 @@ def _requires_full_cli(search_args: list[str]) -> bool:
             return True
         if arg.startswith(_TG_ONLY_SEARCH_FLAG_PREFIXES):
             return True
+        # Bundled/attached short-flag value form of the walk-scope type filters: rg accepts
+        # `-tpy` == `-t py`, `-Tpy` == `-T py`, and mid-bundle `-itpy` == `-i -t py`. The exact
+        # token / `--x=` checks above miss these, so a bare bundled type filter would slip into
+        # the unguarded rg passthrough (bundled sibling of the -t/--type walk-DoS, bug #88). Walk
+        # the short cluster: the first VALUE-CONSUMING short flag swallows the remainder, so if
+        # that flag is -t/-T it carries an attached type value -> route to the full CLI (where the
+        # walk-scope guard fires). A value-consuming flag that is NOT t/T (e.g. -f<file>) swallows
+        # the rest as its value, so any later t is data, not a flag -> stop scanning this token.
+        if len(arg) > 2 and arg.startswith("-") and not arg.startswith("--"):
+            for ch in arg[1:]:
+                if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+                    if ch in ("t", "T"):
+                        return True
+                    break
     return False
 
 
