@@ -1,6 +1,219 @@
 # CHANGELOG
 
 
+## v1.54.4 (2026-07-09)
+
+### Bug Fixes
+
+- **search**: Bound the bare --glob walk when no PATH is given (dogfood #88)
+  ([#480](https://github.com/oimiragieo/tensor-grep/pull/480),
+  [`46b1d05`](https://github.com/oimiragieo/tensor-grep/commit/46b1d0569deca6e55894091a676ed50ffbd1705a))
+
+* fix(search): bound the bare --glob walk when no PATH is given (dogfood #88)
+
+`tg search --glob X PATTERN` with NO positional PATH hung/timed out on a large or workspace-shaped
+  root (reproduced on both the native front door and the Python fallback CLI). Root cause: the
+  "generated scan bound" check used to gate the workspace-root / vendored-root / large-root-ceiling
+  refusal guards treated ANY --glob/--iglob/--type/--type-not flag as sufficient bounding, but a
+  candidate filter does not bound how much of the tree must be walked to find matches -- only
+  --max-depth does. A bare --glob search with the PATH defaulted to "." therefore skipped all three
+  guards and walked/searched unbounded.
+
+Rust (rust_core/src/main.rs, handle_ripgrep_search): add a bounded ceiling probe
+  (implicit_glob_scan_exceeds_ceiling, mirrors the Python 1500-file ceiling) that fires only when
+  request.path_was_implicit is true and --glob is present, before the real rg passthrough call. It
+  walks with the same glob/max-depth/no-ignore settings the real search would use and stops the
+  instant the ceiling is exceeded -- never a full-tree enumeration. Explicit-path + --glob (even on
+  a huge root) still runs uninhibited (Trap #3 parity).
+
+Python (cli/main.py): the three refusal guards (_should_refuse_unbounded_workspace_root_scan,
+  _should_refuse_unbounded_vendored_root_scan, _should_refuse_unbounded_large_root_scan) now take
+  paths_defaulted and use a new _has_walk_scope_bound helper -- glob/iglob/type/type_not only bypass
+  when PATH was explicit; --max-depth and --allow-broad-generated-scan remain unconditional
+  bypasses. This closes the same gap in the Python fallback CLI (independently reproduced via
+  TG_DISABLE_NATIVE_TG=1).
+
+MCP (cli/mcp_server.py): _mcp_broad_root_scan_refusal (shared by tg_search/tg_ast_search) now
+  derives paths_defaulted from path == "." (the MCP path parameter's Python-level default is
+  indistinguishable from an omitted argument, so the literal default value is treated as defaulted
+  -- the conservative, safe reading).
+
+Repro (native binary, C:/dev/projects, a large multi-project workspace): tg search --glob '*.ts' foo
+  -- was exit 124 after 30s+ (streamed 3853+ unbounded matches from deep node_modules trees); now
+  exit 2 in ~0.55s with an actionable refusal. tg search --glob '*.py' -- exit 2 in <1s (clap
+  requires PATTERN; unaffected, already fast). tg search foo . -- unaffected pre-existing separate
+  gap (no --glob; out of scope for #88, tracked as the F6/#52-class general unscoped-search bound).
+
+Tests: 4 new Rust unit tests for implicit_glob_scan_exceeds_ceiling (over-ceiling refuses,
+  under-ceiling allows, glob-filtered count is respected, max-depth is respected) + 1 non-regression
+  test pinning that the check only fires when path_was_implicit; full `cargo test --bin tg` (69/69),
+  `cargo clippy -- -D warnings`, and `cargo fmt -- --check` all clean. Python: 6 new tests across
+  test_cli_modes.py (workspace/ vendored/large-root guard unit tests with paths_defaulted=True, plus
+  two CliRunner end-to-end tests reproducing the exact reported CLI shape) and test_mcp_server.py
+  (glob + default path on an over-ceiling root); updated 12 existing call sites for the new
+  paths_defaulted keyword arg. Full suite: 793 passed (3 pre-existing, unrelated failures
+  deselected: an LSP provider-mode test and an lsprotocol-import test failing on baseline too, and a
+  CUDA-build-only calibrate test). ruff check/format --preview and mypy clean on all touched Python
+  files.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(search): count the WALK not glob-matches, and normalize empty implicit paths (dogfood #88
+  re-harvest)
+
+The first #88 fix (296cc92) still hung on `tg search --glob "*" PATTERN` and `--glob "**/*"` with no
+  PATH (dogfood v1.54.1 re-harvest, exit 124 / 60s+). Two root causes, both fixed here:
+
+ROOT CAUSE 1 (native, empty paths): `resolve_search_request` sets `request.paths = []` (NOT `["."]`)
+  whenever `grep_cli::is_readable_stdin()` is true (`implicit_search_paths`). The 296cc92 probe
+  early-returned on empty roots, so it never counted anything -- yet rg still walked the cwd
+  unbounded. The call site in `handle_ripgrep_search` now normalizes an implicit empty-paths search
+  to `["."]` before probing (the Python CLI already always guards `["."]`, which is why it lacked
+  this specific gap).
+
+ROOT CAUSE 2 (both, walk vs match): the probe counted post-GLOB MATCHES, so a glob matching
+  everything-but-slowly (`**/*`) made the probe itself walk the whole tree, and a SELECTIVE glob
+  (`*.rs` in a huge JS tree) counted few matches, sailed under the ceiling, and proceeded into the
+  unbounded WALK. The hang is TREE-WALK cost, independent of match count. Both probes now count
+  every FILE the walker VISITS (glob filter stripped; `--max-depth`/ignore/hidden kept, since those
+  genuinely bound the walk) and early-exit at `ceiling + 1` -- robust to glob selectivity and
+  self-bounded.
+
+Native (rust_core/src/main.rs): renamed `implicit_glob_scan_exceeds_ceiling` ->
+  `implicit_search_walk_exceeds_ceiling` (drops the glob param, adds `hidden`); `WalkBuilder` import
+  made unconditional, `OverrideBuilder` stays cuda-gated.
+
+Python CLI (cli/main.py): the full CLI reaches the SAME bug through a DIFFERENT door -- `--glob` is
+  a `_TG_ONLY_SEARCH_FLAG`, so bootstrap routes a bare `tg search --glob X PATTERN` to
+  `_run_full_cli()`, which hands the implicit-`.` walk to the rg passthrough BEFORE
+  `_should_refuse_unbounded_large_root_scan` (that guard only runs on the slow per-file loop, never
+  on the rg-passthrough fast path). On a large single-project root whose top level carries a project
+  marker (e.g. a workspace dir with a package.json -- the real `C:/dev/projects` shape), the
+  workspace-root guard SKIPS it and the vendored-root guard finds no top-level vendored dir, so it
+  sailed into an unbounded rg walk (dogfood: 487k lines past 60s). New
+  `_implicit_glob_search_walk_exceeds_ceiling` (a bounded, glob-stripped DirectoryScanner walk)
+  refuses it fast before native delegation / rg passthrough.
+
+REPRO (native binary, C:/dev/projects, RED->GREEN, shell-timeout wrapped): tg search "function"
+  --glob "*" 296cc92: exit 124 @ 12s hang -> fixed: exit 2 @ 0.2s tg search "x" --glob "**/*"
+  296cc92: exit 124 @ 12s hang -> fixed: exit 2 @ 0.2s tg search "x" --glob "*.zzz" (0 matches, huge
+  tree) -> fixed: exit 2 @ 0.25s (walk-count) Both front doors verified end-to-end through the venv
+  `tg` bootstrap: exit 2 @ 0.5s. Controls unchanged: explicit-path + glob still runs (Trap #3),
+  small-repo implicit glob returns matches (9040 lines), `--max-depth` bounds the walk and runs.
+
+TESTS: rewrote the 5 native Rust unit tests for walk-count semantics (over-ceiling refuses,
+  under-ceiling allows, SELECTIVE-glob-still-refuses = the walk-count RED case, max-depth respected,
+  empty-roots self-bounded, path_was_implicit gate) + 4 Python tests (walk-not-match probe,
+  small/max-depth allow, the marked-single-root CLI repro that the workspace guard misses,
+  explicit-path Trap #3). RED confirmed: the CLI marked-root test fails (rg emits matches, exit 0)
+  with the guard disabled; GREEN with it. Full `cargo test --bin tg` 70/70, clippy -D warnings
+  clean, cargo fmt clean; Python 747 passed (3 pre-existing unrelated deselected), ruff check/format
+  --preview + mypy clean.
+
+* fix(search): close the --type/-t/--type-not/-T + --iglob siblings of the bare-glob walk DoS
+  (adversarial-gate BLOCK on #480)
+
+The --glob fix missed the sibling walk-scope flags: --type/-t and --type-not/-T skipped the native
+  ceiling probe (trigger only checked args.globs) and bare --type/--iglob routed to the unguarded rg
+  passthrough on the Python front door. The guard's own scope condition is
+  glob|iglob|file_type|type_not, so all four must trip it. Fixes: (1) native trigger also checks
+  !args.file_type.is_empty(); (2) add --type/--type-not/-t/-T/--iglob to bootstrap
+  _TG_ONLY_SEARCH_FLAGS so a bare filter reaches the full-CLI guard. Real-binary verified: all four
+  refuse fast (exit 2) unscoped; scoped/explicit-path controls return correct matches. Opus
+  adversarial gate found the --type gap; the --iglob gap found by re-probing the whole flag class.
+
+* fix(search): close the bundled short-flag form (-tpy/-Tpy/-itpy) of the walk-scope DoS (re-gate
+  BLOCK #2 on #480)
+
+_requires_full_cli only matched exact tokens + --x= prefixes, so rg's idiomatic attached-value short
+  form -tpy (== -t py) slipped past into the unguarded rg passthrough (60s cap = pre-fix walk-DoS).
+  Walk the short cluster: the first value-consuming short flag swallows the remainder, so if it is
+  -t/-T the token carries an attached type filter -> full CLI where the walk guard fires. Closes
+  -tpy/-Tpy AND mid-bundle -itpy; a non-t/T value-consumer (e.g. -f<file>) stops the scan so no
+  legit search is over-routed. Real-binary verified: all bundled forms refuse fast (exit 2)
+  unscoped; scoped/explicit-path still return matches. Third form-sibling the adversarial gate
+  caught -- close the whole flag CLASS incl. every FORM (space/equals/long/bundled).
+
+* fix(search): also route bundled -g<glob> (the glob short-flag sibling of the bundled walk-DoS)
+
+Pre-empting the same form-class gap for -g: my prior bundled-short-flag fix only routed -t/-T, so
+  tests\unit\test_benchmark_scripts.py: patterns = ["TODO", "FIXME", "BUG"]
+  tests\unit\test_benchmark_scripts.py: "TODO", tests\unit\test_benchmark_scripts.py: "TODO",
+  tests\unit\test_cli_modes.py: (src / f"stub_{index}.py").write_text("TODO placeholder\n",
+  encoding="utf-8") tests\unit\test_cli_modes.py: result = CliRunner().invoke(app, ["search",
+  "TODO", str(repo)]) tests\unit\test_cli_modes.py: result = CliRunner().invoke(app, ["search",
+  "TODO", str(repo), "--glob", "*.py"]) tests\unit\test_cli_modes.py: result =
+  CliRunner().invoke(app, ["search", "TODO", "--glob", "*.py"]) tests\unit\test_cli_modes.py: result
+  = CliRunner().invoke(app, ["search", "TODO", *scope_args]) tests\unit\test_cli_modes.py: result =
+  CliRunner().invoke(app, ["search", "TODO", "--glob", "*.py"]) tests\unit\test_cli_modes.py: (src /
+  f"stub_{index}.py").write_text("TODO placeholder\n", encoding="utf-8")
+  tests\unit\test_cli_modes.py: result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*"])
+  tests\unit\test_cli_modes.py: (src / f"stub_{index}.py").write_text("TODO placeholder\n",
+  encoding="utf-8") tests\unit\test_cli_modes.py: result = CliRunner().invoke(app, ["search",
+  "TODO", str(tmp_path), "--glob", "*.py"]) tests\unit\test_cli_modes.py: result =
+  CliRunner().invoke(app, ["search", "TODO", str(repo)]) tests\unit\test_cli_modes.py: result =
+  CliRunner().invoke(app, ["search", "TODO", str(repo), "--json"])
+  benchmarks\external_repos\click\src\click\_termui_impl.py: # TODO: This never terminates if the
+  passed generator never terminates. (attached glob, no PATH) still walked the tree unguarded (exit
+  0, proceeded -- would hang on a large TS tree). The walk-scope short flags are -g (glob), -t
+  (type), -T (type-not); --iglob has no short form. Extend the cluster-walk to route -g too.
+  Real-binary verified: -g*.py / -ig*.py refuse fast (exit 2) unscoped; scoped/explicit + -C2
+  context unaffected. Completes the flag x form matrix (glob/iglob/type/type-not x
+  space/equals/long/bundled).
+
+* test(bootstrap): add a DIRECT _requires_full_cli guard for the walk-DoS form-class (re-gate:
+  CliRunner test was false-green)
+
+The parametrized test_cli_modes cases use CliRunner().invoke(app, ...), which enters the Typer app
+  PAST the bootstrap front door (the CliRunner trap in AGENTS.md) -- they pass via the Typer
+  full-CLI guard and would stay green even if the _requires_full_cli routing fix were reverted, so
+  they do not guard it. This exercises _requires_full_cli directly across the whole flag x form
+  matrix (-g/-t/-T/--glob/--iglob/--type/--type-not x space/equals/long/bundled) + the
+  non-over-route cases (-C3/-fpat.txt/-jtpy/etc). Bidirectional-verified: RED when the bundled-flag
+  routing is neutralized, GREEN with it.
+
+* test(bootstrap): drop the stale -t-passthrough case (walk-scope flags now route to full CLI,
+  consistent with -g/--glob)
+
+test_main_entry_should_passthrough_option_first_root_search_flags pinned -> rg passthrough, an
+  inconsistency: -g/--glob already routed scoped searches to the full CLI on main, but -t did not.
+  Routing -t/-T to the full CLI (the #88 walk-DoS fix) makes it consistent with -g, so the -t
+  passthrough case is now stale. The routing is pinned directly at
+  test_requires_full_cli_routes_every_walk_scope_filter_form. --count-matches (non-walk-scope) still
+  passes through. Caught by running the FULL suite -- my earlier commits only ran test_cli_modes.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile ledger to the live drain state (#84/#476/#477/#478 merged, #479/#480
+  shipping, v1.54.3 publishing) + break out the agentic-audit P0s #94-99 + save the #95 MCP-moat
+  design ([#481](https://github.com/oimiragieo/tensor-grep/pull/481),
+  [`7be8e80`](https://github.com/oimiragieo/tensor-grep/commit/7be8e80dffd751cc6a2cd7105082a08f8fce99c6))
+
+### Testing
+
+- **governance**: Make public-docs governance reads cwd-independent (#37)
+  ([#479](https://github.com/oimiragieo/tensor-grep/pull/479),
+  [`2b9a3f2`](https://github.com/oimiragieo/tensor-grep/commit/2b9a3f2550be8ead5d53d4e7c33862665bff2132))
+
+test_public_docs_governance.py resolved all its doc + source reads via cwd-relative Path("docs/...")
+  / Path("src/...") literals. Any test that leaves the process cwd changed makes these governance
+  reads resolve against the wrong tree -> the "test-ordering pollution" flake (#37).
+
+Anchor every read to _REPO_ROOT = Path(__file__).resolve().parents[2]: the 12 module doc-path
+  constants, the pyproject read in _project_release_tag, the inline CONTRACTS.md read, and the two
+  source reads in test_public_ast_positioning (main.py + main.rs). Reads are only ever
+  .read_text()/.exists() (verified all 91 const usages), so absolute paths are a byte-identical
+  no-op from repo root.
+
+Proof of the fix (and that #37 was a REAL latent flake, not stale): before this change the whole
+  file passed from the repo root but test_public_ast_positioning FAILED when run from a foreign cwd;
+  after, the whole file passes 43/43 from both the repo root AND a foreign cwd.
+
+
 ## v1.54.3 (2026-07-09)
 
 ### Bug Fixes
