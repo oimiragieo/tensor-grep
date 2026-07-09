@@ -168,8 +168,14 @@ def test_heartbeat_keeps_mtime_fresh_during_long_hold(tmp_path: Path) -> None:
     hold."""
     index_path = tmp_path / "index.json"
     lock_path = _index_lock._lock_path_for(index_path)
-    stale_after_s = 0.15
-    hold_s = 0.6  # several multiples of stale_after_s
+    # Absolute values are deliberately generous: the property under test is that the
+    # heartbeat keeps mtime younger than stale_after_s, which only requires the heartbeat
+    # interval to be a small fraction of stale_after_s. Tight sub-100ms bounds flake on
+    # loaded 2-core CI runners where the heartbeat thread can be GIL-starved for >150ms
+    # (observed: 0.152s > 0.15s on macos-latest). stale_after_s here is 12x the heartbeat
+    # interval, so realistic scheduling jitter stays well clear of the bound.
+    stale_after_s = 0.6
+    hold_s = 1.5  # several multiples of stale_after_s
 
     max_observed_age = 0.0
     stop_observer = threading.Event()
