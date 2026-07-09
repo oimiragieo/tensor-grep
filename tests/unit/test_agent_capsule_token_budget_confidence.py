@@ -216,3 +216,162 @@ def test_capsule_keeps_safety_floor_for_genuine_misroute_even_with_corroboration
     assert payload["context_consistency"]["primary_file_included"] is False
     assert payload["confidence"]["overall"] <= 0.55
     assert payload["ask_user_before_editing"]["required"] is True
+
+
+# --- Dogfood #84: budget-only confidence drag, corroborated by TARGETED validation evidence ---
+# The uplift above only fires when blast-radius call-site collection succeeds, which itself
+# requires the query to EXACTLY name the primary symbol (`_target_symbol_was_explicitly_requested`
+# -> `repo_map._symbol_name_matches_query_exactly`). A natural-language query like "update the
+# request handler" never earns that exact match, so a populated, targeted validation_plan bought
+# nothing -- the capsule sat at the 0.55 floor and demanded confirmation even though a real,
+# scoped test file corroborates the primary target. Fix: `_capsule_token_budget_uplift_eligible`
+# also accepts non-empty `targeted_validation_evidence` (scope in {symbol,file}, non-empty target,
+# confidence>=0.7) with an "aligned"/"mismatch-filtered-with-kept" alignment as an alternative
+# corroboration channel, capped at the LOWER `_CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP` (0.75)
+# -- below the call-site channel's 0.8 -- with its own channel-distinct downgrade reason. Every
+# other disqualifier (scan-truncation, no-snippets, genuine-misroute, tie, non-budget reasons,
+# query-overlap) is retained VERBATIM and gates this new channel exactly like the old one.
+
+_TARGETED_VALIDATION_STEP = {
+    "runner": "pytest",
+    "scope": "file",
+    "target": "tests/test_handler.py",
+    "command": "uv run pytest tests/test_handler.py -q",
+    "confidence": 0.82,
+    "detection": "detected",
+}
+_REPO_SCOPE_VALIDATION_STEP = {
+    "runner": "pytest",
+    "scope": "repo",
+    "target": "",
+    "command": "uv run pytest -q",
+    "confidence": 0.55,
+    "detection": "detected",
+}
+# Query deliberately does NOT exactly name `_PRIMARY_SYMBOL` (proven by
+# `test_capsule_keeps_safety_floor_when_symbol_not_named_and_no_call_sites` above to leave
+# call_site_evidence uncollected) while still token-overlapping the "handler" file stem, so the
+# shared query-overlap disqualifier (`_primary_target_matches_query`) still passes.
+_NON_SYMBOL_QUERY = "update the request handler"
+
+
+def _context_payload_with_validation_plan(
+    *,
+    primary_file: Path,
+    caller_file: Path,
+    primary_symbol: str,
+    validation_plan: list[dict[str, Any]],
+    validation_alignment: dict[str, Any],
+) -> dict[str, Any]:
+    payload = _context_payload(
+        primary_file=primary_file,
+        caller_file=caller_file,
+        primary_symbol=primary_symbol,
+    )
+    commands = [str(step["command"]) for step in validation_plan]
+    payload["validation_commands"] = commands
+    payload["edit_plan_seed"]["validation_plan"] = validation_plan
+    payload["edit_plan_seed"]["validation_commands"] = commands
+    payload["edit_plan_seed"]["validation_alignment"] = validation_alignment
+    return payload
+
+
+def test_capsule_uplifts_confidence_for_corroborated_targeted_validation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_project(tmp_path)
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render",
+        lambda *args, **kwargs: _context_payload_with_validation_plan(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+            primary_symbol=_PRIMARY_SYMBOL,
+            validation_plan=[_TARGETED_VALIDATION_STEP],
+            validation_alignment={"status": "aligned", "kept_count": 1, "filtered_count": 0},
+        ),
+    )
+
+    payload = agent_capsule.build_agent_capsule(
+        _NON_SYMBOL_QUERY,
+        paths["project"],
+        max_tokens=200,
+    )
+
+    # Corroboration held via the validation channel, not call-site evidence.
+    assert payload["context_consistency"]["capsule_primary_file_omitted"] is True
+    assert payload["call_site_evidence"]["status"] != "collected"
+    # Capped at the LOWER targeted-validation ceiling, not the 0.8 graph-corroborated one.
+    assert payload["confidence"]["overall"] == 0.75
+    assert payload["primary_target"]["confidence"] == 0.75
+    assert payload["ask_user_before_editing"]["required"] is False
+    assert any(
+        "validation-corroborated" in reason for reason in payload["confidence"]["downgrade_reasons"]
+    )
+
+
+def test_capsule_repo_scope_step_never_earns_targeted_validation_uplift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard paired with the positive case above: an UN-targeted repo-scope step (the same shape
+    `_ensure_primary_language_validation_fallback` emits, e.g. `uv run pytest -q` @ 0.55) must
+    NEVER qualify as targeted evidence, even under the exact same corroboration-permissive query
+    and fixture -- this is the trap the confidence fix must not reopen."""
+    paths = _write_project(tmp_path)
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render",
+        lambda *args, **kwargs: _context_payload_with_validation_plan(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+            primary_symbol=_PRIMARY_SYMBOL,
+            validation_plan=[_REPO_SCOPE_VALIDATION_STEP],
+            validation_alignment={"status": "aligned", "kept_count": 1, "filtered_count": 0},
+        ),
+    )
+
+    payload = agent_capsule.build_agent_capsule(
+        _NON_SYMBOL_QUERY,
+        paths["project"],
+        max_tokens=200,
+    )
+
+    assert payload["context_consistency"]["capsule_primary_file_omitted"] is True
+    assert payload["call_site_evidence"]["status"] != "collected"
+    assert payload["confidence"]["overall"] <= 0.55
+    assert payload["ask_user_before_editing"]["required"] is True
+
+
+def test_capsule_keeps_safety_floor_for_misroute_even_with_targeted_validation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine misroute (`primary_file_included` False) must stay floored even when a strong
+    targeted validation step is present -- the new channel must not leak through the
+    genuine-misroute disqualifier any more than the call-site channel could."""
+    paths = _write_project(tmp_path)
+
+    def fake_context_render(*args: object, **kwargs: object) -> dict[str, Any]:
+        payload = _context_payload_with_validation_plan(
+            primary_file=paths["handler"].resolve(),
+            caller_file=paths["caller"].resolve(),
+            primary_symbol=_PRIMARY_SYMBOL,
+            validation_plan=[_TARGETED_VALIDATION_STEP],
+            validation_alignment={"status": "aligned", "kept_count": 1, "filtered_count": 0},
+        )
+        payload["context_consistency"] = {
+            "primary_file_included": False,
+            "rendered_context_includes_primary": False,
+        }
+        return payload
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+
+    payload = agent_capsule.build_agent_capsule(
+        _PRIMARY_SYMBOL,
+        paths["project"],
+        max_tokens=200,
+    )
+
+    assert payload["context_consistency"]["primary_file_included"] is False
+    assert payload["confidence"]["overall"] <= 0.55
+    assert payload["ask_user_before_editing"]["required"] is True

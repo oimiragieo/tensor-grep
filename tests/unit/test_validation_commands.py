@@ -1128,3 +1128,231 @@ def test_agent_capsule_scoped_python_repo_yields_root_test_suggestion(tmp_path: 
     assert suggested[0]["target_test"] == "tests/test_foo.py"
     assert suggested[0]["verified"] is False
     assert suggested[0]["command"] not in payload["validation_commands"]
+
+
+# --- Dogfood #84: scoped-agent / edit-plan validation_plan parity ---------------------------
+# Bug A (README boundary-trap): `_validation_repo_root`'s walk-up used to stop at the FIRST
+# directory carrying even a single boundary marker (README.md/.gitignore/LICENSE/AGENTS.md)
+# before ever examining that directory's parent -- so a scoped subdirectory with its own
+# README.md never reached the real project root (pyproject.toml etc.), and validation discovery
+# silently early-returned []. Fix A: a directory only becomes a strong `boundary_candidate` when
+# it has `.git` (dir/file) OR >=2 distinct boundary markers -- a lone README no longer traps the
+# walk, while a genuine repo/package boundary still does.
+
+
+def test_validation_repo_root_lone_boundary_marker_does_not_trap_walk(tmp_path: Path) -> None:
+    """Bug A headline repro: a README.md living IN the scoped directory used to trap the walk
+    before it ever reached the root pyproject.toml two levels up."""
+    project = tmp_path / "project"
+    hooks_dir = project / "core" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    (hooks_dir / "README.md").write_text("hooks module\n", encoding="utf-8")
+
+    result = repo_map._validation_repo_root(hooks_dir)
+
+    assert result == project.resolve()
+
+
+def test_validation_repo_root_git_directory_alone_is_a_strong_boundary(tmp_path: Path) -> None:
+    """Companion (git-top-stop): unlike a lone README, a `.git` directory by itself IS a strong
+    boundary -- the walk must stop there even though a grandparent also carries a project
+    marker, matching how every other tool treats `.git` as the definitive repo-root signal."""
+    project = tmp_path / "project"
+    hooks_dir = project / "core" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (project / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'outside'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+
+    result = repo_map._validation_repo_root(hooks_dir)
+
+    assert result == project.resolve()
+
+
+def test_validation_repo_root_two_boundary_markers_still_trap_walk(tmp_path: Path) -> None:
+    """Companion: a directory with TWO distinct boundary markers is a genuinely strong boundary
+    (e.g. a vendored subtree carrying its own README + LICENSE) and must still trap the walk --
+    Fix A only exempts a LONE marker, it does not remove the boundary-trap mechanism entirely."""
+    project = tmp_path / "project"
+    hooks_dir = project / "core" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    (hooks_dir / "README.md").write_text("hooks module\n", encoding="utf-8")
+    (hooks_dir / "LICENSE").write_text("MIT\n", encoding="utf-8")
+
+    result = repo_map._validation_repo_root(hooks_dir)
+
+    assert result == hooks_dir.resolve()
+
+
+def test_validation_repo_root_tempdir_guard_blocks_marker_above_temp_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Companion (tempdir guard): the walk must never climb PAST the OS temp root looking for a
+    marker, even when Fix A's relaxed single-marker rule would otherwise let it keep going."""
+    fake_temp_root = tmp_path / "faketemp"
+    fake_temp_root.mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'outside'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    scoped = fake_temp_root / "scoped"
+    scoped.mkdir()
+    monkeypatch.setattr(repo_map.tempfile, "gettempdir", lambda: str(fake_temp_root))
+
+    result = repo_map._validation_repo_root(scoped)
+
+    assert result == scoped.resolve()
+
+
+# Bug B (JS/TS-only discovery): `_discover_validation_tests_for_primary_file` skipped every
+# candidate test file whose suffix wasn't JS/TS, so a scoped python run never found its sibling
+# `tests/test_<stem>.py` even once Fix A let the walk reach the real root. Fix B: let `.py` test
+# files (already `_is_test_file`-gated) fall through to the language-neutral scoring; the JS/TS
+# node:test gate is untouched.
+
+
+def test_discover_validation_tests_for_primary_file_finds_python_sibling_test(
+    tmp_path: Path,
+) -> None:
+    """Bug B headline repro: with Fix A in place the walk reaches `project` (root pyproject.toml)
+    from a README-carrying scoped directory, but discovery still needs Fix B to actually return
+    the sibling python test instead of silently dropping every non-JS/TS candidate."""
+    project = tmp_path / "project"
+    scoped = project / "scoped"
+    scoped.mkdir(parents=True)
+    (scoped / "README.md").write_text("scoped readme\n", encoding="utf-8")
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    tests_dir = project / "tests"
+    tests_dir.mkdir()
+    primary_file = scoped / "widget.py"
+    primary_file.write_text("def create_widget():\n    return 1\n", encoding="utf-8")
+    test_file = tests_dir / "test_widget.py"
+    test_file.write_text("def test_create_widget():\n    assert True\n", encoding="utf-8")
+
+    discovered = repo_map._discover_validation_tests_for_primary_file(
+        scoped,
+        str(primary_file),
+        primary_symbol_name="create_widget",
+        query="create widget",
+        limit=5,
+    )
+
+    assert str(test_file.resolve()) in discovered
+
+
+def test_discover_validation_tests_for_primary_file_still_gates_non_node_test_js_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Companion: Fix B must not loosen the pre-existing JS/TS node:test gate -- a JS/TS test
+    file that does NOT use node:test is still excluded from discovery."""
+    project = tmp_path / "project"
+    scoped = project / "scoped"
+    scoped.mkdir(parents=True)
+    (project / "package.json").write_text("{}\n", encoding="utf-8")
+    tests_dir = project / "tests"
+    tests_dir.mkdir()
+    primary_file = scoped / "widget.ts"
+    primary_file.write_text("export function createWidget() { return 1; }\n", encoding="utf-8")
+    test_file = tests_dir / "widget.test.ts"
+    test_file.write_text("test('widget', () => expect(1).toBe(1));\n", encoding="utf-8")
+    monkeypatch.setattr(repo_map, "_javascript_test_file_uses_node_test", lambda _path: False)
+
+    discovered = repo_map._discover_validation_tests_for_primary_file(
+        scoped,
+        str(primary_file),
+        primary_symbol_name="createWidget",
+        query="create widget",
+        limit=5,
+    )
+
+    assert str(test_file.resolve()) not in discovered
+
+
+# E2E headline (both fixes together) + the edit-plan surface mirror -- Fix A + Fix B both land in
+# the shared `_build_edit_plan_seed` builder, so a single fix heals `tg agent <scope>` (via
+# `build_agent_capsule` -> `build_context_render`) AND `tg edit-plan` (via
+# `build_context_edit_plan`) at once.
+
+
+def test_agent_capsule_scoped_python_readme_trap_yields_targeted_validation_plan(
+    tmp_path: Path,
+) -> None:
+    """E2E headline for dogfood #84: before both fixes, a scoped `tg agent core/hooks ...` run
+    on a repo with a hooks-local README.md got an EMPTY validation_plan (Bug A trapped discovery
+    at the scoped dir; Bug B would have dropped the python sibling test even if it hadn't)."""
+    from tensor_grep.cli.agent_capsule import build_agent_capsule
+
+    project = tmp_path / "project"
+    hooks_dir = project / "core" / "hooks"
+    tests_dir = project / "tests" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    (hooks_dir / "README.md").write_text("hooks module\n", encoding="utf-8")
+    (hooks_dir / "hook_handler.py").write_text(
+        "def do_thing():\n    return True\n", encoding="utf-8"
+    )
+    (tests_dir / "test_hook_handler.py").write_text(
+        "def test_do_thing():\n    assert True\n", encoding="utf-8"
+    )
+
+    payload = build_agent_capsule("do thing", str(hooks_dir))
+
+    validation_plan = payload["validation_plan"]
+    pytest_file_steps = [
+        step
+        for step in validation_plan
+        if step.get("runner") == "pytest" and step.get("scope") == "file"
+    ]
+    assert pytest_file_steps, f"expected a file-scoped pytest step, got {validation_plan!r}"
+    target = str(pytest_file_steps[0]["target"])
+    assert not Path(target).is_absolute(), f"target must be root-relative, got {target!r}"
+    assert pytest_file_steps[0]["detection"] == "detected"
+    assert payload["validation_commands"]
+    ask_reasons = payload["ask_user_before_editing"]["reasons"]
+    assert "no validation command evidence" not in ask_reasons
+
+
+def test_build_context_edit_plan_mirrors_scoped_python_readme_trap_fix(tmp_path: Path) -> None:
+    """Finding-2 parity: `tg edit-plan` (`build_context_edit_plan`) flows through the same shared
+    seed builder as `build_agent_capsule` above, so the same scoped README-trap fixture must heal
+    there too."""
+    project = tmp_path / "project"
+    hooks_dir = project / "core" / "hooks"
+    tests_dir = project / "tests" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    (hooks_dir / "README.md").write_text("hooks module\n", encoding="utf-8")
+    (hooks_dir / "hook_handler.py").write_text(
+        "def do_thing():\n    return True\n", encoding="utf-8"
+    )
+    (tests_dir / "test_hook_handler.py").write_text(
+        "def test_do_thing():\n    assert True\n", encoding="utf-8"
+    )
+
+    payload = repo_map.build_context_edit_plan("do thing", hooks_dir)
+
+    validation_plan = payload["edit_plan_seed"]["validation_plan"]
+    pytest_file_steps = [
+        step
+        for step in validation_plan
+        if step.get("runner") == "pytest" and step.get("scope") == "file"
+    ]
+    assert pytest_file_steps, f"expected a file-scoped pytest step, got {validation_plan!r}"
+    assert not Path(pytest_file_steps[0]["target"]).is_absolute()
+    assert payload["validation_commands"]

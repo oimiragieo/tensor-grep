@@ -1603,6 +1603,26 @@ def _capsule_primary_omission_is_token_budget_only(consistency: dict[str, Any]) 
     )
 
 
+def _targeted_validation_corroboration_qualifies(
+    targeted_validation_evidence: list[str],
+    validation_alignment_status: str,
+    validation_kept_count: int,
+) -> bool:
+    """Dogfood #84: the SECOND corroboration channel for the token-budget uplift, alongside
+    verified call-site evidence. `targeted_validation_evidence` (`_targeted_validation_evidence`)
+    is non-empty only for steps SCOPED to the primary (symbol/file, non-empty target,
+    confidence>=0.7) -- a repo-scope fallback step (e.g. `uv run pytest -q` @ 0.55) can never
+    populate it, so it can never qualify here either. The alignment check mirrors the tie-break
+    use of the same evidence elsewhere in this module: "aligned", or "mismatch-filtered" with at
+    least one step actually kept for the primary's language.
+    """
+    if not targeted_validation_evidence:
+        return False
+    if validation_alignment_status == "aligned":
+        return True
+    return validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0
+
+
 def _capsule_token_budget_uplift_eligible(
     *,
     query: str,
@@ -1611,6 +1631,9 @@ def _capsule_token_budget_uplift_eligible(
     consistency: dict[str, Any],
     call_site_evidence: dict[str, Any],
     scan_truncated: bool,
+    targeted_validation_evidence: list[str],
+    validation_alignment_status: str,
+    validation_kept_count: int,
 ) -> bool:
     """T2: eligibility for the corroborated-resolution uplift, covering BOTH the original
     capsule-own-budget primary omission (F4) and a render-truncated-only cut where the primary's
@@ -1620,7 +1643,7 @@ def _capsule_token_budget_uplift_eligible(
     selected/rendered at all, an unresolved alternative-target tie, an unrequested marker-helper
     demotion, or any downgrade reason outside the render/token-budget family (language mismatch,
     validation misalignment, ...). Only a target independently corroborated by the query AND by
-    verified call-site evidence is eligible.
+    EITHER verified call-site evidence OR targeted validation evidence (dogfood #84) is eligible.
 
     PR-1 (1D): a TRUNCATED repo scan (`scan_truncated`, from `_capsule_scan_incomplete` on the
     inner context-render payload) is ALSO a first-class disqualifier, checked first -- the ranking
@@ -1635,6 +1658,13 @@ def _capsule_token_budget_uplift_eligible(
     make the check disqualify itself. Every genuine (non-budget) cause of that flag already leaves
     its own specific, non-generic text in `consistency["downgrade_reasons"]` (trust mismatches) or
     is checked explicitly above (ties, marker-helper demotion, never-ranked primary).
+
+    Dogfood #84: EVERY disqualifier above this point gates BOTH corroboration channels
+    identically -- the targeted-validation channel added below is only an alternative to the
+    FINAL `call_site_evidence` check, never a bypass of scan-truncation, no-snippets, genuine
+    misroute, alternative-target tie, marker-helper demotion, any non-budget downgrade reason, or
+    the query-overlap check. This is deliberate: a validation step matching a WRONG primary's stem
+    by coincidence must not corroborate anything the query itself never named.
     """
     if scan_truncated:
         return False
@@ -1663,7 +1693,13 @@ def _capsule_token_budget_uplift_eligible(
         return False
     if not _primary_target_matches_query(query, target):
         return False
-    return call_site_evidence.get("status") == "collected"
+    if call_site_evidence.get("status") == "collected":
+        return True
+    return _targeted_validation_corroboration_qualifies(
+        targeted_validation_evidence,
+        validation_alignment_status,
+        validation_kept_count,
+    )
 
 
 def _apply_capsule_token_budget_confidence_uplift(
@@ -1678,6 +1714,9 @@ def _apply_capsule_token_budget_confidence_uplift(
     call_site_evidence: dict[str, Any],
     ask_reasons: list[str],
     scan_truncated: bool,
+    targeted_validation_evidence: list[str],
+    validation_alignment_status: str,
+    validation_kept_count: int,
 ) -> None:
     """Uplift a render/token-budget-only confidence clamp for a CORROBORATED resolution -- never
     for a genuine misroute or a genuine ambiguity (see `_capsule_token_budget_uplift_eligible`).
@@ -1688,6 +1727,15 @@ def _apply_capsule_token_budget_confidence_uplift(
     render/token-budget artifacts, not resolution-quality signals, so both are eligible for the
     same corroborated-resolution relief up to `_CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP`.
 
+    Dogfood #84: eligibility is now shared by TWO corroboration channels -- verified call-site
+    evidence (the original, strongest signal) and targeted validation evidence (a scoped pytest/
+    jest/etc step that actually names the primary as its target). They are NOT treated as equally
+    strong: the call-site channel keeps the higher `_CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP`
+    (0.8), while a targeted-validation-only corroboration is capped at the lower, historical
+    `_CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP` (0.75) -- still enough to clear the >=0.75
+    no-ask threshold, but deliberately short of the graph-corroborated ceiling. Each channel also
+    gets its own channel-distinct downgrade-reason text for telemetry.
+
     STRUCTURAL note: this must run AFTER `_collect_capsule_call_site_evidence` (agent_capsule.py
     call order), since verified caller evidence -- the corroboration this uplift depends on --
     isn't available until that call returns. It mutates `confidence`, `target`, `alternatives`,
@@ -1695,8 +1743,8 @@ def _apply_capsule_token_budget_confidence_uplift(
     reflects the uplift without re-deriving `ask_user_before_editing` from scratch.
     """
     current_overall = float(confidence.get("overall", 0.0))
-    uplift_cap = _CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP
-    if current_overall >= uplift_cap:
+    max_possible_uplift_cap = _CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP
+    if current_overall >= max_possible_uplift_cap:
         return
     if not _capsule_token_budget_uplift_eligible(
         query=query,
@@ -1705,8 +1753,23 @@ def _apply_capsule_token_budget_confidence_uplift(
         consistency=consistency,
         call_site_evidence=call_site_evidence,
         scan_truncated=scan_truncated,
+        targeted_validation_evidence=targeted_validation_evidence,
+        validation_alignment_status=validation_alignment_status,
+        validation_kept_count=validation_kept_count,
     ):
         return
+    call_site_corroborated = call_site_evidence.get("status") == "collected"
+    if call_site_corroborated:
+        uplift_cap = _CAPSULE_GRAPH_CORROBORATED_CONFIDENCE_CAP
+        channel_reason = (
+            "token budget limited rendering only; confidence reflects graph-corroborated resolution"
+        )
+    else:
+        uplift_cap = _CAPSULE_TOKEN_BUDGET_CONFIDENCE_UPLIFT_CAP
+        channel_reason = (
+            "token budget limited rendering only; confidence reflects validation-corroborated "
+            "resolution"
+        )
     uplifted = round(min(uplift_cap, confidence_cap), 3)
     if uplifted <= current_overall:
         return
@@ -1716,9 +1779,7 @@ def _apply_capsule_token_budget_confidence_uplift(
         for reason in confidence.get("downgrade_reasons", [])
         if reason not in _CAPSULE_BUDGET_ONLY_DOWNGRADE_REASONS
     ]
-    remaining_reasons.append(
-        "token budget limited rendering only; confidence reflects graph-corroborated resolution"
-    )
+    remaining_reasons.append(channel_reason)
     confidence["downgrade_reasons"] = remaining_reasons
     consistency["capsule_token_budget_confidence_uplifted"] = True
     consistency["confidence_basis"] = "resolution-quality"
@@ -2100,6 +2161,9 @@ def build_agent_capsule(
         call_site_evidence=call_site_evidence,
         ask_reasons=ask_reasons,
         scan_truncated=scan_truncated,
+        targeted_validation_evidence=targeted_validation_evidence,
+        validation_alignment_status=validation_alignment_status,
+        validation_kept_count=validation_kept_count,
     )
     # DAR (arxiv steal #4): runs AFTER call-site collection so it can dedupe against
     # `related_call_sites`, and deliberately does NOT touch `target`/`confidence`/`consistency`/
