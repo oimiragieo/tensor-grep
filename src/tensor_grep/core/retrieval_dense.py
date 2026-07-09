@@ -92,8 +92,11 @@ def load_dense_model(model_dir: str | Path) -> Any:
     if not path.is_dir():
         raise DenseUnavailableError(
             "semantic ranking unavailable: model not fetched -- expected a model2vec "
-            f"StaticModel directory at {path}; run `tg index --fetch-model` (or set "
-            "TG_SEMANTIC_MODEL_DIR) to provide one"
+            f"StaticModel directory at {path}. There is no `tg` fetch command for this leg yet; "
+            "fetch it yourself via model2vec's own HuggingFace integration, e.g. "
+            "`StaticModel.from_pretrained('minishlab/potion-code-16M').save_pretrained(<dir>)`, "
+            "then point TG_SEMANTIC_MODEL_DIR at <dir> (or save_pretrained directly to "
+            f"{path})"
         )
     try:
         from model2vec import StaticModel
