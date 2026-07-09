@@ -16,6 +16,7 @@ fetched locally (not committed to the repo; CI does not fetch it).
 from __future__ import annotations
 
 import sys
+import types
 from collections.abc import Callable
 
 import numpy as np
@@ -163,6 +164,10 @@ def test_late_available_false_without_extra(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_late_available_false_when_tokenizers_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     # Isolates the tokenizers-missing branch, which is only reached once onnxruntime succeeds.
+    # The dev venv installs NEITHER onnxruntime nor tokenizers (both are [rerank]-extra only),
+    # so onnxruntime must be stubbed PRESENT to pass the first probe and reach the tokenizers
+    # check -- otherwise the probe short-circuits on onnxruntime and this asserts the wrong branch.
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.ModuleType("onnxruntime"))
     monkeypatch.setitem(sys.modules, "tokenizers", None)
     available, reason = late_available()
     assert available is False
