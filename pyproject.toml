@@ -476,6 +476,13 @@ ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript", "tre
 # after that). Absent -> visible BM25-only fallback (never a silent downgrade); see
 # core/retrieval_dense.py:dense_available().
 semantic = ["model2vec>=0.5", "numpy>=1.26"]
+# Late-interaction (MaxSim) rerank stage (`tg search --rerank`, roadmap
+# docs/plans/design-tensor-grep-late-rerank-2026-07-09.md): onnxruntime is CPU-only ONNX Runtime
+# (MIT) and tokenizers is the Rust-backed HF tokenizer (Apache-2.0) -- NO torch/transformers/PyLate
+# at runtime. Requires `semantic` because the rerank stage reorders the head of the RRF-fused
+# BM25+dense pool, never runs standalone. Absent -> visible degrade to the RRF order (never a
+# silent skip); see core/retrieval_late.py.
+rerank = ["tensor-grep[semantic]", "onnxruntime>=1.20", "tokenizers>=0.21"]
 dev = [
   "pytest>=9.0.3", "pytest-cov>=5.0", "pytest-mock>=3.14",
   "pytest-asyncio>=0.24", "pytest-snapshot>=0.9",

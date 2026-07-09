@@ -45,6 +45,19 @@ def test_semantic_extra_should_pin_model2vec_and_numpy_no_torch() -> None:
     assert not any(dep.lower().startswith("torch") for dep in deps)
 
 
+def test_rerank_extra_pins_onnxruntime_and_tokenizers_no_torch() -> None:
+    deps = _optional_dependencies()["rerank"]
+
+    assert "tensor-grep[semantic]" in deps  # the rerank stage sits on top of the RRF-fused pool
+    assert "onnxruntime>=1.20" in deps
+    assert "tokenizers>=0.21" in deps
+    # The late-interaction rerank stage runs CPU ONNX inference (design doc "Inference") -- no
+    # torch/transformers/PyLate at runtime, and never the GPU build of onnxruntime.
+    assert not any(dep.lower().startswith("torch") for dep in deps)
+    assert not any("onnxruntime-gpu" in dep.lower() for dep in deps)
+    assert not any("pylate" in dep.lower() for dep in deps)
+
+
 def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> None:
     ruff_config = _pyproject_payload()["tool"]["ruff"]
 
