@@ -22,37 +22,43 @@ Always run the common-sense gate before pending a question to the CEO.
 ## SHIPPING — open PRs (drain one-per-publish)
 | PR | Fix | Files | Verified |
 |----|-----|-------|----------|
-| #475 | dogfood #84 — scoped-agent + edit-plan validation-plan parity (README boundary-trap + python discovery) + budget-corroborated 0.75 confidence channel | repo_map, agent_capsule | 158t real-venv + real-binary dogfood on gotcontext-saddle (validation_plan empty->5, confidence 0.55->0.9, ask_user required->False) |
+| #479 | #37 — make public-docs governance reads cwd-independent (kills the ordering-pollution flake) | test_public_docs_governance | 43t repo-root AND foreign-cwd (reproduced then fixed the flake) |
+| #480 | #88 — bound the bare `--glob` walk when no PATH given (broad globs refuse fast, were exit-124 hangs) | main.rs, main.py, mcp_server | 684 py + 70 rust + real-binary dogfood; **adversarial Opus gate RUNNING** (touches mcp_server) |
 
-**Push-race (2026-07-09):** v1.55.0 mid-publish (from #474). #475 waits for the `chore(release): v1.55.0` stamp + PyPI before it can drain.
+**Push-race (2026-07-09):** **v1.54.3 mid-publish** (from #478/#52 deadline). #479/#480 wait for the `chore(release): v1.54.3` stamp + PyPI. #480 ALSO waits on its Opus gate PASS.
 
-**Deep-dive #81 audit drain (v1.51.x, 2026-07-08/09) — 100% MERGED + LIVE:** #461 ast CWE-88 · #462 backend fail-closed (#10/#14/#79) · #463 from-dot-import recall (#3/#4/#11) · #460 scoped file-dep primitives `tg imports`/`importers` (#74 moat) · #455 cpu ReDoS-gate bypass (#6/#16) · #464 mcp read-path confine (#1/#2/#12) · #457 index-lock ownership token (#14) · #465 rust exit-2 + pcre2 fail-closed (#7/#9) · #466 daemon token-ACL (#13) · #467 docs/architecture rewrite · #468 release-stamp anchor + 2 masked governance gates · #469 policy-anchor confinement (#76) · #470 BACKLOG refresh. **All 14 findings shipped; every security PR passed the adversarial Opus gate.**
+**MERGED this session (live/publishing):** #84 (validation-plan parity → v1.54.2) · #476 (docs/backlog reconcile + AGENTS.md doc-drift + skill accuracy) · #477 (#64 index-lock flake-harden) · **#478 (#52 --deadline hard wall-clock bound, 354s→10s, real-binary proven → v1.54.3)**.
 
-**Late-rerank feature (task #86, the #1 ColGrep competitive response) — T0-T6 MERGED (ships default-OFF behind `TG_LATE_RERANK`):** #471 (T0-T2 extra + maxsim + LateReranker) · #472 (T3-T4 ONNX encoder + checksum-pinned LateOn-Code-edge fetch, Opus-gate PASS) · #473 (T5-T6 rerank_hybrid seam + fail-closed) · #474 (#87 fetch total-deadline nit). **T7-T10 remaining** (see backlog).
+**Deep-dive #81 audit drain (v1.51.x) — 100% MERGED + LIVE:** #455/#457/#460-#470 (14 findings; every security PR passed the adversarial Opus gate).
+
+**Late-rerank feature (task #86, the #1 ColGrep competitive response) — T0-T6 MERGED (default-OFF behind `TG_LATE_RERANK`):** #471-#473 + #474 (#87 fetch total-deadline). **T7-T10 remaining** (golden-set ship gate is the decision).
 
 ---
 
-## CURRENT LIVE BACKLOG (2026-07-09, updated) — action after #475 drains
+## CURRENT LIVE BACKLOG (2026-07-09, refreshed) — action after the queue drains
 
-### 1.54.0 WSL2 workspace dogfood (2026-07-09) — new P0/P1 signal
-- `[P0]` **#52 --deadline is not a hard wall-clock bound** (CONFIRMED 3x now, #1 recurring): `tg callers ... --deadline 15` = 354s (23x); `--deadline 5` = 104s; `inventory --deadline 30` = 76s. JSON flags `result_incomplete` + exit 2 but the WALL-CLOCK isn't bounded -> agents hang 6 min. Root: "each stage bounded != pipeline bounded" (#61 = the 2 remaining unbounded caller-scan loops). Needs a DESIGN pass (thread a monotonic deadline INSIDE the hot loops). Sibling to #88.
-- `[P1]` **#89 WSL /mnt/c/ absolute-path resolution** fails in native backend (path_not_found on a valid bind-mount; relative path from cwd works). Cross-platform path normalization — WSL/Windows/Docker must resolve the same path. Deployment blocker for Linux agents.
-- `[P1]` **#90 tg scan ast-grep portability on Linux/WSL** + doctor false-"available": scan exit 127 (execs the Windows npm shim from Linux); doctor reports "available" (checks presence, not executability). Fix doctor to probe-run + resolve a platform-native/managed ast-grep.
-- `[P2]` **#91 `tg search --type <lang> --json` reports `total_matches:0`** while plain search finds hits (--type filter vs JSON aggregate disagree — a false 0 is worse than a slow answer).
-- `[P3]` **#92 tg classify --stdin/--text** literal mode (log-streaming agents; keep file-path default, bounded+fail-closed read).
-- `[strategic/CEO-gated]` enterprise gaps the report surfaced (mostly already tracked): workspace-scale indexing / raise the 512 cap (#57 P0), agent target-selection accuracy gate + published metrics (#72-adjacent), observability/run-receipt export, multi-root `tg orient --roots`, semantic-search graduation (= rerank #86). GPU promotion (#project-gpu, paused).
+### Agentic audit (CEO-relayed 2026-07-09) — the "make models prefer tg" P0s + SaaS thesis. Memory: `tensor-grep-agentic-audit-saas-thesis-2026-07-09`. **Phase-0 (#94-98) = same work as the SaaS foundation.** All BUILDS collide with #480 (main.py/mcp_server.py) → gated on #480 harvest; DESIGNS proceed now (read-only).
+- `[P0, #94, DESIGN RUNNING]` **Latency — the #1 preference-killer** (6-33s/call, cold-start-dominated; empty-dir orient 6.5s vs native 63ms). (A) daemon-as-default fast path (lazy auto-start; MCP `tg_session_*` bypass it today); (B) collapse the ~270ms 2-chained-bash-shim WSL-probe launcher tax. ALSO fixes flaky #83. Design: agent aa95d03d → `docs/plans/design-tensor-grep-94-*` on return.
+- `[P0, #95, DESIGN DONE]` **MCP moat exposure** (highest-leverage): add `tg_orient` tool, `--rank`/`--semantic`/rerank on `tg_search` (+ fix GPU-oversell string), custom rules on `tg_ruleset_scan`, `tg_doctor`+`deadline`. **SECURITY: ~35 MCP tools' primary `path=` UNCONFINED** — build confinement FIRST as the safety floor. Design: `docs/plans/design-tensor-grep-95-mcp-moat-exposure-2026-07-09.md`. NEXT: Opus gate on the design → build.
+- `[P0, #96]` **Answer-first payloads + universal `--max-tokens`** on defs/refs/callers (callers = 200KB/464 entries, no output cap; --max-tokens inconsistent). Apply the capsule's omissions/follow_up_reads pattern.
+- `[P0/P1, #97]` **help-stability + P1 batch:** bare `tg --help` renders 2 docs (clap vs Typer); exit-2-on-partial ambiguity; GPU-oversell string; `--model` silent no-op; harness_api doc-gen (38/45 tools); MCP path confinement (overlaps #95).
+- `[P2, #98]` MCP tool consolidation (45→~10 task-shaped) + git-aware staleness receipts + workspace/multi-repo + the $0 Sverklo file-deps re-run. (AGENTS.md doc-drift half DONE in #476.)
+- `[CEO-gated, #99]` **SaaS thesis** — local-first code-intel + governance plane for agent fleets. **CI-bot vs SAST wedge = the CEO's call** (needs design partners). npm never published (registry 404 — public-ship gate).
 
-- `[P1, SHIPPING #475]` **Agent validation-plan parity** (dogfood #84) — DONE, draining. (moved to SHIPPING table above.) NOTE: the 1.54.0 report also flags agent TARGET-SELECTION accuracy (picked a wrong-language .js @0.65 for an "authentication flow" query) — distinct from #84's validation-plan fix; folds into the #72 accuracy-gate strategic item.
-- `[P1, ready]` **Late-rerank T7-T10** (task #86, fresh-session — heavy + ship-gated): T7 real-model latency receipt (cold+warm, `scripts/dogfood/`), **T8 golden-set ship/no-ship gate** (`eval_late_rerank_quality.py` + ~40 vocab-mismatch queries, 4-arm BM25/dense/RRF/RRF+MaxSim, nDCG@5 >=+0.03 & no recall regression & p50<=2000ms), T9 `--rerank` registration (all 8 sites, ONLY after T8 evidence), T10 docs + NOTICE (Apache-2.0). Design: `docs/plans/design-tensor-grep-late-rerank-2026-07-09.md`. **T8 is the ship decision** — if it fails its own gate, keep env-gated experimental / honest no-ship in PAPER.md.
-- `[P2, ready]` **#88 — `tg search --glob` alone times out** on large/harness repos (1.54.0 dogfood): a bare `--glob` (no PATH positional) triggers an unbounded whole-repo walk -> exit-124. Fix = auto-scope/bound the glob walk. Needs verify-plan-against-code on the search-routing seam FIRST (the 8-site / 2-front-door misroute hazard). **DESIGN dispatched this tick (Sonnet, background).**
-- `[P2, ready]` **imports/importers dynamic-import awareness** (dogfood #84): `tg imports` misses `sys.path.insert` + sibling `from X import`; `tg importers` returns 0. Known #74 limit — add awareness OR emit a `resolution_gaps` honesty signal.
-- `[P2, ready]` **orient suggested_scope/suggested_ignore auto-hints** (dogfood #84): root orient without `--ignore` ranks `seo/scripts/*` central; auto-hint so agents don't hand-apply `--ignore`.
-- `[P3, ready]` unscoped-search immediate-refuse (detect missing PATH/--glob before the scan, not exit-124 after); blast-radius proceed/stop rubric when confidence=moderate + parser_backed>0 + callers<5.
-- `[P1, research/CEO-gated]` **#72 benchmark reconcile** — re-run bench (tokens-per-correct) now that #74 imports/importers shipped; needs external Sverklo harness + bidirectional-oracle (fresh context). CEO-gated: public benchmark publish.
-- `[blocked/CEO-gated]` **tg-ledger / A2A local coordination** (#77) — document-now-build-later; go/no-go on the 2-week demand receipt from #456's instrumentation.
-- `[P3]` flaky-test hardening: #83 `test_public_help_falls_back...` (windows, needs timeout-mechanism investigation, not blind-widen), #64 index_lock_concurrency, #37 test-ordering pollution.
-- `[re-verify]` #78 ReDoS simple-path residual (Rust-less install falls to Python re on unflagged patterns), #76-pt2 islice giant-line bound (batch into one gated mcp/cpu follow-up). **#76 read-path exfil = DONE (shipped #464/#469, verified on main).**
-- `[stale-WIP, revive-or-retire]` `tensor-grep-deweight` worktree (`feat/auto-deweight-vendored-trees`, based on v1.40.3): auto-deweight vendored/harness trees in orient centrality; needs rebase onto current + Fable's file-subgraph exclusion. Left in place (holds real WIP) — decide revive vs retire next campaign.
+### 1.54.0 WSL2 dogfood (2026-07-09) — remaining
+- `[P1, #89]` **WSL /mnt/c/ path resolution** fails in the native backend (path_not_found on a valid bind-mount). **Needs a Linux/WSL box to repro+verify.**
+- `[P1, #90]` **tg scan ast-grep on Linux/WSL** (exit 127 Windows-shim) + doctor false-"available". **Needs a Linux box.**
+- `[P2, #91]` `tg search --type <lang> --json` reports `total_matches:0` while plain search finds hits. (Collides with #480 search path.)
+- `[P3, #92]` `tg classify --stdin/--text` literal mode.
+- `[P2/P3, #93]` dogfood #84 tail: imports/importers dynamic-import awareness · orient suggested_scope hints · unscoped-refuse. (The validation-plan headline shipped in #475/v1.54.2.)
+
+### Feature / other
+- `[P1, #86]` **Late-rerank T7-T10** (fresh-session, heavy): T7 latency receipt · **T8 golden-set ship/no-ship gate** (the decision) · T9 8-site `--rerank` registration · T10 docs+NOTICE. Design: `docs/plans/design-tensor-grep-late-rerank-2026-07-09.md`.
+- `[P0, #57]` raise the 512 `CALLER_SCAN_FILE_CEILING` — **now SAFE (the #52 deadline bound makes the larger scan interruptible)**; build on top of #478.
+- `[re-verify]` #78 ReDoS simple-path residual + #76-pt2 islice giant-line bound (batch, gated). **#76 read-path exfil DONE** (#464/#469). #52/#64/#37/#84 DONE.
+- `[P3]` flaky #83 (root cause = native startup latency, fixed by #94 — sidecar-timeout hypothesis REFUTED).
+- `[CEO-gated]` #72 benchmark publish · #77 tg-ledger go/no-go.
+- `[stale-WIP]` `tensor-grep-deweight` worktree (auto-deweight vendored trees, v1.40.3 base) — revive-or-retire next campaign.
 
 > **NOTE (2026-07-09):** the P0/P1 sections below are from the 2026-07-07 v1.45.x campaign — MANY releases have shipped since (now v1.51.9). Re-verify each against current code before actioning; several (PERF parse-cache #432, the repo_map cluster) likely shipped in the v1.46-1.51 line. `gh pr list --state merged` + `git log` are authoritative.
 
