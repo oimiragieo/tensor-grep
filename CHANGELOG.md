@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.51.8 (2026-07-09)
+
+### Bug Fixes
+
+- **daemon**: Create the token file owner-restricted BEFORE writing the HMAC secret (close the
+  Windows write-then-ACL disclosure window) — icacls kept as defense-in-depth (audit #81 #13)
+  ([#466](https://github.com/oimiragieo/tensor-grep/pull/466),
+  [`3cbea6f`](https://github.com/oimiragieo/tensor-grep/commit/3cbea6f1a1f85d3c6a33f8e7d352d39bf87089a7))
+
+The old _write_daemon_metadata wrote daemon.json (the per-daemon HMAC token) via the shared,
+  POSIX-oriented _write_json_atomic and only ran icacls afterward, on the already-published path. On
+  Windows, os.chmod/the os.open `mode=` bits grant no real per-user access control (only the DOS
+  read-only attribute), so the token file carried the sessions directory's default/inherited
+  permissions for the entire write+rename+icacls duration -- any other local account able to read
+  that directory could read the HMAC secret in that window.
+
+Fix: on Windows, create the temp file empty, lock its ACL to the current user via icacls WHILE still
+  holding the same open file descriptor (verified empirically that Windows os.open() defaults to
+  DENY_NONE sharing, so a concurrent icacls process can set the DACL with no sharing violation),
+  THEN write the token payload, THEN atomically rename into place. The rename stays within the same
+  directory, so the explicit (non-inherited) DACL travels with the file instead of being recomputed.
+  icacls is still called again on the published path afterward as defense-in-depth, per the existing
+  fail-open contract (a failed icacls must never break daemon startup).
+
+POSIX is unchanged: _write_json_atomic already creates the temp file AT mode 0600 via
+  os.open(O_CREAT|O_EXCL, mode), applied atomically at creation, not via a post-write chmod.
+
+TDD: added 3 new tests that assert directly against on-disk state (not just mock call order) -- the
+  first confirms the file is still empty bytes at the moment the pre-publish ACL lock fires
+  (reproduces the bug against the old code: FAILED, ordering fixed: PASSED), the second confirms the
+  lock targets the pre-publish temp rather than the already-renamed daemon.json, and the third
+  confirms no partial/unlocked temp is left behind if the lock step ever raises. Also manually
+  verified end-to-end against real (non-mocked) icacls on this Windows box: the published
+  daemon.json ends up with exactly one ACE (the current user, Full control), no inherited entries.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.51.7 (2026-07-09)
 
 ### Bug Fixes
