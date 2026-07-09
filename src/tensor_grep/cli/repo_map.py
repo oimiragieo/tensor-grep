@@ -159,13 +159,20 @@ DEFAULT_AGENT_REPO_MAP_LIMIT = 2000
 # passthrough, so a per-command option default cannot reach it). The caller-scan functions
 # (build_symbol_callers_from_map, build_symbol_blast_radius_from_map via its callers-scan,
 # build_symbol_refs_from_map) do a slow per-file prefilter + re-parse whose wall-clock scales
-# with the file universe size (task #52: ~100s on a 1941-file repo at the old 512 cap already;
-# a naive raise to 2000 would make it worse). This ceiling bounds that ONE hot loop at a single
-# internal chokepoint, so it stays fast regardless of DEFAULT_AGENT_REPO_MAP_LIMIT / an explicit
-# --max-repo-files / a stored session map's size. When the scan is capped below the map's true
-# file count, the payload is marked result_incomplete (see _CALLER_SCAN_CEILING_REMEDIATION)
-# so the exit-2 truncation-honesty contract still fires.
-CALLER_SCAN_FILE_CEILING = 512
+# with the file universe size (task #52: ~100s on a 1941-file repo at the old 512 cap). This
+# ceiling bounds that ONE hot loop at a single internal chokepoint, so it stays fast regardless
+# of DEFAULT_AGENT_REPO_MAP_LIMIT / an explicit --max-repo-files / a stored session map's size.
+# backlog #57 (2026-07-09): raised 512 -> 2000, matching DEFAULT_AGENT_REPO_MAP_LIMIT above, now
+# that #478 threaded a --deadline hard-bound through every caller-scan loop and closed the #52
+# unbounded-hang risk that originally kept this ceiling frozen below the map default. 2000 is a
+# deliberate knee (see the map-build cost note above), not a removal of the cap: the ceiling
+# stays a hard backstop for a --max-repo-files-raised mega-repo and for the flag-less
+# (--deadline omitted) default path, which still has no other wall-clock bound. Raising past
+# 2000 needs fresh cost data plus confirming _PARSE_PRODUCT_CACHE_MAXSIZE (below) still exceeds
+# it -- otherwise the shared parse-cache guarantee silently thrashes via FIFO eviction. When the
+# scan is capped below the map's true file count, the payload is marked result_incomplete (see
+# _CALLER_SCAN_CEILING_REMEDIATION) so the exit-2 truncation-honesty contract still fires.
+CALLER_SCAN_FILE_CEILING = 2000
 # F1-review HIGH fix (task#52 shape, 2026-07-06): _order_caller_scan_candidates probes
 # _file_may_contain_literal_symbol (a stat + cached read_bytes) across the caller-scan file
 # UNIVERSE to decide ordering, BEFORE _cap_caller_scan_files slices to CALLER_SCAN_FILE_CEILING.
@@ -1237,7 +1244,14 @@ def _read_source_text_cached_bounded(path_str: str) -> str:
     return Path(path_str).read_text(encoding="utf-8")
 
 
-_PARSE_PRODUCT_CACHE_MAXSIZE = 1024
+# backlog #57 companion fix (2026-07-09): must stay >= CALLER_SCAN_FILE_CEILING (2000). This
+# cache is FIFO (insertion-order eviction, not LRU -- see _mtime_aware_cache above), so if it were
+# smaller than the caller-scan ceiling, a single callers/refs/blast-radius pass over a
+# >maxsize-eligible-file repo would silently thrash: files parsed early in the scan get evicted
+# before later consumers (refs after callers, or a second symbol lookup) can reuse them, quietly
+# defeating the "one parse per file, shared across every symbol/ref/caller extractor" guarantee
+# this cache exists to provide. 2048 keeps headroom above the 2000 ceiling.
+_PARSE_PRODUCT_CACHE_MAXSIZE = 2048
 
 
 def _parser_for_source_suffix(suffix: str) -> Any | None:
@@ -1544,9 +1558,12 @@ def _cap_caller_scan_files(
     ``files`` classified as tests), ORDER the candidates first via
     ``_order_caller_scan_candidates`` so literal symbol-hit files and a proportional share of
     tests survive the slice instead of being stranded behind a long source-file run (see that
-    function's docstring for the full rationale + trap). The ceiling itself is left at 512 on
-    purpose -- raising it reintroduces task #52's ~100s TS-regex hang, the reason
-    CALLER_SCAN_FILE_CEILING shipped (see the module note above ``CALLER_SCAN_FILE_CEILING``).
+    function's docstring for the full rationale + trap). The ceiling itself (
+    ``CALLER_SCAN_FILE_CEILING``, see the module note above) is a hard backstop, not a fixed
+    historical relic: backlog #57 (2026-07-09) raised it 512 -> 2000 now that #478's
+    --deadline hard-bound closed task #52's ~100s TS-regex hang risk for the interruptible path,
+    but a flag-less (--deadline omitted) invocation and a --max-repo-files-raised mega-repo still
+    have no other wall-clock bound, so the ceiling remains in force at the new, higher value.
     When no ``test_files`` are passed (or none exist), behavior is unchanged: a plain prefix
     slice of ``files`` in whatever order the caller already supplied.
 
@@ -14498,15 +14515,35 @@ def build_file_importers_from_map(
     payload["importers"] = edges
     payload["importer_files"] = sorted(dict.fromkeys(str(item["file"]) for item in edges))
     payload["importer_count"] = len(edges)
+    # backlog #57 companion fix: copy the (unrelated) repo-map-level scan_limit/scan_remediation
+    # BEFORE stamping the caller-scan ceiling's own remediation below -- build_symbol_callers_from_map
+    # orders it the same way (_copy_scan_limit, then its ceiling-hit _mark_result_incomplete).
+    # Reversing this order was a real bug caught while adding coverage for this branch: a COMPLETE
+    # repo-map scan always stamps `scan_remediation: None` on its own payload (see
+    # _mark_result_incomplete's docstring), and _copy_scan_limit unconditionally copies that key
+    # over when `source["scan_limit"]` is a dict -- clobbering the ceiling-hit remediation this
+    # function sets below if _copy_scan_limit ran AFTER it instead of before.
+    _copy_scan_limit(payload, repo_map)
     if ceiling_hit:
         # task #61 lesson: bound this sibling loop with the SAME ceiling the caller-scan main
         # loop uses, and mark it via the shared `caller_scan_limit` shape so the CLI's existing
         # `_scan_truncation_warning`/exit-2 contract picks it up with no bespoke wiring.
-        payload["caller_scan_limit"] = {
-            "possibly_truncated": True,
-            "ceiling": CALLER_SCAN_FILE_CEILING,
-            "files_total": len(prefiltered),
-        }
+        # backlog #57 companion fix: route through _mark_result_incomplete (as
+        # build_symbol_callers_from_map/build_symbol_refs_from_map already do at their own
+        # ceiling-hit sites) instead of setting `caller_scan_limit` alone -- the CLI's exit-2 gate
+        # already read `caller_scan_limit` directly so behavior there was unaffected, but a
+        # non-CLI consumer (MCP tools, a direct build_file_importers*/session_file_importers call)
+        # used to see the ceiling-truncation fact without the `result_incomplete`/`scan_remediation`
+        # honesty signal its callers/refs siblings always set.
+        _mark_result_incomplete(
+            payload,
+            remediation=_CALLER_SCAN_CEILING_REMEDIATION,
+            caller_scan_limit={
+                "possibly_truncated": True,
+                "ceiling": CALLER_SCAN_FILE_CEILING,
+                "files_total": len(prefiltered),
+            },
+        )
     if deadline_hit:
         payload["partial"] = True
         payload["deadline_limit"] = {
@@ -14514,7 +14551,6 @@ def build_file_importers_from_map(
             "importer_candidates_scanned": scanned_count,
             "importer_candidates_total": len(bounded_candidates),
         }
-    _copy_scan_limit(payload, repo_map)
     payload["resolution_gaps"] = list(repo_map.get("resolution_gaps", []))
     return payload
 
