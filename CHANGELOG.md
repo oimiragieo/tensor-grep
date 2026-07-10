@@ -1,6 +1,56 @@
 # CHANGELOG
 
 
+## v1.58.11 (2026-07-10)
+
+### Bug Fixes
+
+- Checkpoint undo confines snapshot SOURCE paths; checkpoint create enforces a disk budget (audit
+  H3/H4) ([#508](https://github.com/oimiragieo/tensor-grep/pull/508),
+  [`754d9bb`](https://github.com/oimiragieo/tensor-grep/commit/754d9bb103267d80e9aafe7a19c4e9b696abcaf7))
+
+H3 (HIGH, arbitrary-file-read-into-working-tree): undo_checkpoint() validated the restore TARGET via
+  _resolve_within_root but composed the snapshot SOURCE as a plain `snapshot_dir / rel_path` join at
+  both call sites (the pre-flight missing/readable check and the staging-phase copy).
+  shutil.copy2(..., follow_symlinks=False) only refuses a symlink at the FINAL path component, so a
+  snapshot tree whose ANCESTOR directory is a symlink (or, on Windows, a directory junction)
+  pointing outside the snapshot was transparently traversed by the OS: `tg checkpoint undo` read
+  host-file content THROUGH the link and copied it into an otherwise validly-confined working-tree
+  target. A malicious repo shipping a pre-crafted `.tensor-grep/checkpoints/<id>/` could exfiltrate
+  arbitrary host-readable files this way via a victim's routine `tg checkpoint undo <id>`.
+
+Fixed by reusing the same _resolve_within_root containment helper already used for targets (S1),
+  scoped to snapshot_dir, at both call sites -- any entry whose resolved source escapes the snapshot
+  now raises ValueError in the read-only pre-flight phase, before any working-tree file is touched.
+  Verified on Windows against BOTH a real symlink and a directory junction (junctions need no
+  elevated privilege, so they are the more realistic Windows attack surface; Path.resolve() follows
+  both identically since they are both NTFS reparse points, while Path.is_symlink() reads False for
+  a junction).
+
+H4 (MEDIUM, disk exhaustion): create_checkpoint()'s copy loop had no per-file size cap, no
+  cumulative-size budget, and no free-space check -- reachable via `tg checkpoint create`, the MCP
+  tg_checkpoint_create tool, and tg_rewrite_apply(checkpoint=true). The only existing control
+  (TG_CHECKPOINT_MAX) bounds retained checkpoint COUNT, and pruning runs after the full copy, so
+  peak transient usage was unbounded per call.
+
+Added three env-configurable budgets enforced pre-flight, before any snapshot directory exists,
+  raising the new CheckpointBudgetExceededError: - TG_CHECKPOINT_MAX_FILE_BYTES (default 512 MiB) --
+  per-file ceiling. - TG_CHECKPOINT_MAX_TOTAL_BYTES (default 4 GiB) -- cumulative snapshot budget. -
+  TG_CHECKPOINT_FREE_SPACE_MARGIN_BYTES (default 256 MiB) -- shutil.disk_usage(root).free
+  pre-flight, refusing if the copy would leave less than the margin free. The copy loop is also
+  wrapped so any mid-copy failure (budget-related or an ordinary OSError, e.g. a file growing
+  between the pre-flight stat and the actual copy) removes the partial checkpoint directory before
+  re-raising -- no half-copied snapshot ever survives an abort.
+
+TDD: RED tests proved both findings live on current main before the fix (H3 via a standalone exploit
+  script that copied a fabricated private key into the working tree through a symlinked snapshot
+  ancestor; H4 via the pre-fix ImportError on the new CheckpointBudgetExceededError symbol). All new
+  + existing checkpoint tests are GREEN (67 total: 56 pre-existing + 4 new H3 + 7 new H4). ruff
+  check, ruff format --preview --check, and mypy src/tensor_grep are clean.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.10 (2026-07-10)
 
 ### Bug Fixes
