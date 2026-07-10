@@ -1,6 +1,152 @@
 # CHANGELOG
 
 
+## v1.57.0 (2026-07-10)
+
+### Features
+
+- **mcp**: Expose the moat via MCP -- orient/doctor tools, rank/semantic/inline-rules, deadline;
+  6-round-hardened (audit #95 Part 2) ([#489](https://github.com/oimiragieo/tensor-grep/pull/489),
+  [`382289a`](https://github.com/oimiragieo/tensor-grep/commit/382289a018d4e9c25e74fedefa88f987a894ed8c))
+
+* feat(mcp): expose the moat via MCP — tg_orient/tg_doctor tools, --rank/--semantic + inline_rules
+  on search/scan, deadline on 5 symbol tools, contract 1.1.0->1.2.0, #102 anchor-split (audit #95
+  Part 2)
+
+* fix(mcp): reject YAML aliases in inline_rules -- close the alias-expansion DoS (audit #95 Part-2
+  Opus-gate BLOCK)
+
+The _MAX_INLINE_RULES_CHARS length cap admits alias-depth ~1000 while a billion-laughs bomb
+  detonates by depth ~9: SafeLoader shares alias nodes (the load itself is linear), but the
+  downstream str() coercions on id/severity/message in _load_inline_rule_specs deep-walk that shared
+  graph and expand it ~9^depth. The Opus security gate proved a 469-byte aliased payload hung >15s
+  on the shipped tg_ruleset_scan(inline_rules=...) tool -- the length cap alone is 3 orders of
+  magnitude short of the detonation depth.
+
+Fix (Opus's prescribed approach): _NoAliasSafeLoader.compose_node raises on the first AliasEvent,
+  before any expansion. Inline ast-grep rules never legitimately need YAML anchors/aliases. The
+  shared _load_inline_rule_specs helper guards BOTH the MCP tg_ruleset_scan(inline_rules=...) tool
+  and the CLI --inline-rules twin (identical mechanism). Uses the pure-Python SafeLoader subclass
+  (not CSafeLoader) so compose_node is overridable; inline payloads are length-capped so the perf
+  cost is negligible.
+
+Proven end-to-end: a 664-byte depth-11 bomb (9^11 ~= 31 billion nodes if expanded) now returns
+  invalid_input in 0.031s. New regression test
+  (test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb, watchdog-guarded per
+  anti-hang-test-protocol) + all 318 mcp_server tests green; ruff check + format clean.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(mcp): catch RecursionError in inline_rules parse -- close the deep-nested-YAML fail-closed gap
+  (audit #95 Part-2 re-gate BLOCK #2)
+
+The alias-rejection fix (5dd76a7) closed the aliased billion-laughs, but the re-gate found a
+  DISTINCT residual: a deep-nested ALIAS-FREE payload ("["*20000, ~40 KB, under the 64 KiB length
+  cap, no aliases so _NoAliasSafeLoader cannot reject it) recurses the YAML parser/composer past the
+  interpreter's recursion limit. The pure-Python SafeLoader raises a CATCHABLE RecursionError (the
+  old CSafeLoader hard-crashed the whole process, exit 0xC00000FD -- so the Part-2 fix already
+  IMPROVED this path from an uncatchable crash to a catchable error), but it escaped uncaught as a
+  raw traceback, violating the tool's "never a raw traceback" fail-closed contract
+  (mcp_server.py:1900-1901).
+
+Fix: catch RecursionError alongside yaml.YAMLError at the load site (main.py:4670) -> structured
+  invalid_input. Comprehensive for the recursion-DoS class -- the catch fires regardless of
+  flow-style (`[[[...]]]`) or block-style (deeply-nested mappings) nesting, since both recurse the
+  same load. Legit inline rules are shallow and never approach the limit, so no false positives.
+
+New mirror regression test (test_tg_ruleset_scan_inline_rules_rejects_deep_nested_yaml); 319
+  mcp_server tests green; ruff check + format --preview clean.
+
+* fix(mcp): bound inline_rules scan fan-out + catch BackendExecutionError -- close 2 scan-execution
+  DoS/fail-closed gaps (audit #95 Part-2 re-gate)
+
+The round-3 re-gate SHIPPED the inline_rules PARSE surface (alias + recursion + length all closed)
+  but found 2 REACHABLE residuals in the downstream SCAN-EXECUTION surface, both introduced by the
+  feature commit 76697ef:
+
+1. Unbounded scan fan-out DoS. Each inline rule is scanned as a SEPARATE ast-grep pass (~40 ms/rule)
+  with no count bound, so ~1000 tiny rules (a ~33 KB payload, well under the 64 KiB length cap)
+  drives a >40 s hang. Fix: _MAX_INLINE_RULES=100 count cap, fail-closed reject BEFORE any scan
+  runs. The length cap admits ~4000 minimal rules, so it is NOT the binding bound on fan-out -- the
+  count cap is.
+
+2. Backend fault -> raw traceback. A 60 KB pattern (valid YAML, supported language) parses fine,
+  then the ast-grep backend raises BackendExecutionError (a RuntimeError -- e.g. WinError 206
+  "command line too long" on Windows), which tg_ruleset_scan's `except (BroadScanRefusedError,
+  ValueError)` did NOT catch, so it escaped uncaught as a RAW TRACEBACK on a trivial valid payload
+  -- violating the tool's "never a raw traceback" fail-closed contract. Fix: catch
+  BackendExecutionError -> structured backend_error (mirrors the existing catches in tg_search /
+  tg_ast_search in the same file).
+
+2 new regression tests (rejects_excessive_rule_count, backend_execution_error_fails_closed); 321
+  mcp_server tests green; ruff check + format --preview clean.
+
+* fix(mcp): broaden tg_ruleset_scan fault-class catch to close ConfigurationError + OSError
+  raw-traceback escapes (audit #95 Part-2 round-4 gate BLOCK)
+
+The round-3 BackendExecutionError-only catch (296e90f) was an INCOMPLETE closure. The round-4 gate
+  found 2 sibling exception classes still escaping tg_ruleset_scan as raw tracebacks:
+
+1. ConfigurationError (a RuntimeError) -- raised by _select_ast_backend_for_pattern when the
+  ast-grep binary is absent. ast-grep is NOT a declared dependency, so a DEFAULT `pip install
+  tensor-grep` has no ast-grep binary, and a trivial one-line inline rule then raises
+  ConfigurationError: a raw traceback on the COMMON default-install path (not adversarial). Now ->
+  structured "unavailable" (mirrors tg_ast_search's handling).
+
+2. OSError/PermissionError/IsADirectoryError -- an unreadable caller-supplied
+  baseline_path/suppressions_path (e.g. a directory) makes _load_ruleset_baseline's read_text raise
+  OSError, not ValueError. Now -> structured "invalid_input".
+
+Fix: broaden the scan try-block from a BackendExecutionError-only catch to ConfigurationError
+  (->unavailable) + OSError (->invalid_input) + RuntimeError (->backend_error backstop, covering
+  BackendExecutionError + any sibling), mirroring the CLI twin's `except (ValueError, RuntimeError)`
+  (main.py:11213). Logic bugs (KeyError/TypeError/ AttributeError) are NOT RuntimeError and still
+  surface.
+
+Self-verified the whole fault class is now closed: subprocess.TimeoutExpired is wrapped in
+  BackendExecutionError (ast_wrapper_backend.py:297), exit-code + missing-binary faults too, and
+  JSONDecodeError is a ValueError subclass -- no reachable raw-traceback path remains.
+
+2 new regression tests (configuration_error_fails_closed, baseline_io_error_fails_closed); 323
+  mcp_server tests green; ruff check + format --preview clean.
+
+* fix(mcp): guard the inline_rules language override -- close the last tg_ruleset_scan raw-traceback
+  (audit #95 Part-2 round-5 gate BLOCK)
+
+Round 5 found the final fail-closed gap: the inline-branch language resolution
+  (normalize_ast_language at mcp_server.py:2008) sits OUTSIDE every try-block. A rule that carries
+  its OWN valid `language:` short-circuits the loader's guarded default_language normalization
+  (1986-1989), so an unsupported top-level `language=` override reaches line 2008 UNGUARDED -> a raw
+  ValueError traceback on a valid-but-bogus payload (demonstrated with language="zzznotalang" + a
+  rule that sets its own language).
+
+Fix: wrap the resolution in try/except ValueError -> structured invalid_input (the same guard the
+  loader path already uses). The Path.resolve() siblings (2013/2032/2045) were verified NOT a gap --
+  a null-byte path already returns invalid_input (caught downstream by the round-4 broadened scan
+  catch).
+
+Closeout adversarial sweep (the gate's own method) across parse + scan + setup: 9 hostile payloads
+  (bad-language override, null-byte path, baseline/suppressions-is-directory, both-sources,
+  empty-rules, non-mapping, ruleset-bad-lang) -> 0 raw-traceback escapes. The tg_ruleset_scan fault
+  class is closed. 1 new SEC test; 324 mcp_server tests green; ruff clean.
+
+* harden(mcp): int()-coerce max_chars in _truncate_evidence_snippet -- defense-in-depth for a direct
+  non-MCP caller passing a fractional float (audit #95 Part-2 round-6 gate non-blocking note; MCP
+  surface already rejects non-int at the schema/pydantic boundary)
+
+* fix(mypy): annotate _NoAliasSafeLoader.compose_node type-ignores for strict mypy (no-untyped-def +
+  no-untyped-call on yaml untyped methods) -- CI Formatting&Linting gate on #489
+
+* test(ci): harden env-fragile test_l10_calibrate -- mock resolve_native_tg_binary=None so it
+  deterministically tests the exit-1 unsupported path (false-failed on all 6 CI platforms when a
+  native binary was present -> native calibrate exits 2 on no-CUDA; banked no-operator-real-state
+  lesson)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.56.2 (2026-07-10)
 
 ### Bug Fixes
