@@ -101,6 +101,51 @@ def test_map_then_callers_then_refs_parses_each_file_at_most_once(tmp_path, monk
     assert calls["n"] == file_count, "warm cache: a second pass must not re-parse any file"
 
 
+def test_callers_then_refs_over_1024_files_stays_one_parse_per_file(tmp_path, monkeypatch) -> None:
+    """backlog #57 companion-fix regression: _PARSE_PRODUCT_CACHE_MAXSIZE must stay >=
+    CALLER_SCAN_FILE_CEILING (2000) or this FIFO (insertion-order, not LRU -- see
+    _mtime_aware_cache) cache silently thrashes once a callers+refs pass touches more files than
+    its capacity. At the OLD 1024 cap, files parsed early in the callers pass over a >1024-file
+    universe get evicted before the refs pass (which revisits the SAME file universe) can reuse
+    them, defeating the "one parse per file, shared across every symbol/ref/caller extractor"
+    guarantee this cache exists to provide -- silently turning an O(N) scan into ~O(2N) at scale.
+    Builds 1100 (> the old 1024 cap) TS files that ALL reference the target symbol, so every one
+    of them is genuinely re-parsed by both the callers AND the refs scan, and proves the total
+    real-parse count never exceeds one per file through the full pass."""
+    root = tmp_path / "project"
+    _write(
+        root / "src" / "core.ts",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
+    )
+    file_count = 1100
+    caller_count = file_count - 1
+    for index in range(caller_count):
+        _write(
+            root / "src" / f"caller_{index:05d}.ts",
+            'import { createInvoice } from "./core";\n\n'
+            f"export function use_{index}(total) {{\n"
+            "  return createInvoice(total);\n"
+            "}\n",
+        )
+
+    calls = _spy_parse_calls(monkeypatch)
+
+    repo_map_payload = repo_map.build_repo_map(str(root), max_repo_files=file_count + 100)
+    assert len(repo_map_payload["files"]) == file_count
+
+    repo_map.build_symbol_callers_from_map(repo_map_payload, "createInvoice")
+    assert calls["n"] == file_count, (
+        f"callers pass: expected exactly {file_count} real parses (one per file), saw {calls['n']}"
+    )
+
+    repo_map.build_symbol_refs_from_map(repo_map_payload, "createInvoice")
+    assert calls["n"] == file_count, (
+        "refs pass over the SAME >1024-file universe must be served entirely from the warm "
+        f"parse-product cache (still {file_count} total real parses, one per file) -- a FIFO "
+        f"cache smaller than the file count would force re-parses here; saw {calls['n']}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (2) staleness
 # ---------------------------------------------------------------------------
