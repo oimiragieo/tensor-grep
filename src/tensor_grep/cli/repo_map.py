@@ -7416,6 +7416,124 @@ def _apply_context_token_budget(payload: dict[str, Any], max_tokens: int | None)
     return capped
 
 
+# Secondary (supporting-context) fields trimmed BEFORE the primary answer array when a
+# defs/refs/callers/impact payload exceeds --max-tokens (design #96, answer-first shrink order).
+_SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS: tuple[str, ...] = ("tests", "related_paths")
+
+
+def _apply_symbol_token_budget(
+    payload: dict[str, Any],
+    max_tokens: int | None,
+    *,
+    primary_field: str,
+    companion_fields: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Bound a defs/refs/callers/impact payload to ~``max_tokens`` (design #96 item 4).
+
+    Modeled on ``_apply_context_token_budget``'s serialize-then-measure approach, but with an
+    ANSWER-FIRST shrink order: SECONDARY fields (``tests``, ``related_paths`` -- whichever are
+    present; each field's ``{field}_matches`` companion, e.g. impact's ``test_matches``, is
+    cleared alongside it so the real bloat source is not left untouched) are cleared FIRST since
+    they are supporting context, not the answer itself. Only if the payload is STILL over budget
+    after zeroing every secondary field is the PRIMARY answer array (``primary_field`` --
+    ``definitions``/``references``/``callers``/``files``) trimmed, and that is flagged distinctly
+    (``token_budget.primary_truncated``/``primary_omitted``) so an agent trusting "here are all N
+    callers" can tell N was cut for space, not because there were only N. ``companion_fields``
+    (e.g. impact's ``file_matches``, which shares ``files``'s exact order/length by construction)
+    are sliced to the same length as the trimmed primary array so the two never disagree.
+
+    ``max_tokens`` of None/<=0 is a no-op (unbounded opt-out), matching
+    ``_apply_context_token_budget``. This is an OUTPUT-cap, never a scan-truncation signal: it
+    must never set ``result_incomplete``/``partial``/``caller_scan_limit`` (design #96 contract
+    safety section) -- achieved simply by never touching those keys.
+    """
+    if max_tokens is None or max_tokens <= 0:
+        return payload
+    estimated = _estimate_payload_tokens(payload)
+    if estimated <= max_tokens:
+        capped = dict(payload)
+        capped["token_budget"] = {
+            "max_tokens": max_tokens,
+            "estimated_tokens": estimated,
+            "truncated": False,
+            "primary_truncated": False,
+        }
+        return capped
+
+    capped = dict(payload)
+    secondary_trimmed: list[str] = []
+    for field_name in _SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS:
+        if estimated <= max_tokens:
+            break
+        current_value = capped.get(field_name)
+        if isinstance(current_value, list) and current_value:
+            capped[field_name] = []
+            companion = f"{field_name}_matches"
+            if isinstance(capped.get(companion), list):
+                capped[companion] = []
+            secondary_trimmed.append(field_name)
+            estimated = _estimate_payload_tokens(capped)
+
+    primary_truncated = False
+    primary_omitted = 0
+    if estimated > max_tokens:
+        primary_list = list(capped.get(primary_field) or [])
+        original_primary_count = len(primary_list)
+        count = original_primary_count
+        # Floor at 1, never 0 (mirrors _apply_context_token_budget's file-shrink floor): trimming
+        # the primary answer array all the way to an EMPTY list is indistinguishable from a
+        # genuine "not found" (the exact "confident false zero" this codebase's own
+        # _scan_truncation_warning docstring calls "the single most dangerous output for a
+        # refactor-safety tool") -- _emit_symbol_command_result reads an empty primary field as
+        # not_found and exits 1, which would silently relabel a budget trim as an absence.
+        while count > 1 and estimated > max_tokens:
+            # Proportional first guess, then strictly shrink so we always make progress (mirrors
+            # _apply_context_token_budget's file-shrink loop).
+            guess = max(1, min(count - 1, count * max_tokens // max(estimated, 1)))
+            capped[primary_field] = primary_list[:guess]
+            estimated = _estimate_payload_tokens(capped)
+            count = guess
+        # count/original_primary_count already <=1 (0 or 1 entries): nothing left to trim without
+        # zeroing the answer out, so best-effort stop here even if still over budget -- keeping a
+        # truthful non-empty answer outranks strictly honoring the token cap.
+        new_primary_len = len(capped.get(primary_field) or [])
+        primary_omitted = max(0, original_primary_count - new_primary_len)
+        primary_truncated = primary_omitted > 0
+        if primary_truncated:
+            surviving_primary = capped.get(primary_field) or []
+            # Filter by PATH MEMBERSHIP (not index/length slicing): a companion like impact's
+            # `file_matches` is not guaranteed to stay index-aligned with `files` once the CLI
+            # layer has post-processed the primary field (e.g. impact's own caller-merge step
+            # appends extra file paths to `files` with no matching `file_matches` entry) -- a
+            # length-slice would silently keep the WRONG entries in that case.
+            if surviving_primary and all(isinstance(item, str) for item in surviving_primary):
+                surviving_set = set(surviving_primary)
+                for companion in companion_fields:
+                    companion_value = capped.get(companion)
+                    if isinstance(companion_value, list):
+                        capped[companion] = [
+                            entry
+                            for entry in companion_value
+                            if not (isinstance(entry, dict) and "path" in entry)
+                            or str(entry["path"]) in surviving_set
+                        ]
+            else:
+                for companion in companion_fields:
+                    companion_value = capped.get(companion)
+                    if isinstance(companion_value, list):
+                        capped[companion] = companion_value[:new_primary_len]
+
+    capped["token_budget"] = {
+        "max_tokens": max_tokens,
+        "estimated_tokens": estimated,
+        "truncated": True,
+        "secondary_fields_trimmed": secondary_trimmed,
+        "primary_truncated": primary_truncated,
+        "primary_omitted": primary_omitted,
+    }
+    return capped
+
+
 def build_context_pack(
     query: str,
     path: str | Path = ".",
@@ -13339,15 +13457,58 @@ def _definition_confidence_score(definition: dict[str, Any], symbol: str) -> flo
     return round(max(0.0, min(1.0, score)), 3)
 
 
+def _apply_symbol_field_output_limit(
+    payload: dict[str, Any],
+    *,
+    field_name: str,
+    max_count: int | None,
+) -> dict[str, Any]:
+    """Cap ``payload[field_name]`` (a flat list) to ``max_count`` entries, stamping ``output_limit``.
+
+    Generalizes ``_apply_blast_radius_output_limits``'s tests-cap + ``output_limit`` stamping
+    (design #96 item 2) to any flat-list field -- giving defs/refs/callers/impact a DEDICATED
+    ``--max-tests`` instead of blast-radius's conflated ``--max-files``, and leaving the helper
+    ``field_name``-generic so a follow-up can reuse it for ``import_graph_consumers``.
+
+    Deliberately field-NAME-scoped output_limit keys (``{field_name}_truncated``, e.g.
+    ``tests_truncated`` -- never blast-radius's own ``callers_truncated``/``files_truncated``
+    names, which ``main._scan_truncation_warning`` DOES recognize as a SCAN truncation). An
+    output cap here is a COMPLETE analysis capped for display and must stay exit-0 (design #96
+    contract-safety section; see ``main._scan_incomplete``'s docstring for the scan-vs-output-cap
+    split this deliberately avoids colliding with).
+
+    ``max_count=None`` is a no-op: the field and ``output_limit`` are left untouched, so an
+    uncapped library/MCP caller sees byte-identical output to before this cap existed (mirrors
+    ``_apply_context_token_budget``'s ``None``-is-unbounded contract).
+    """
+    if max_count is None:
+        return payload
+    normalized_max = max(0, int(max_count))
+    original = list(payload.get(field_name) or [])
+    capped_list = original[:normalized_max]
+    payload[field_name] = capped_list
+    output_limit = dict(payload.get("output_limit") or {})
+    output_limit[f"max_{field_name}"] = normalized_max
+    output_limit[f"{field_name}_truncated"] = len(capped_list) < len(original)
+    output_limit[f"total_{field_name}"] = len(original)
+    output_limit[f"returned_{field_name}"] = len(capped_list)
+    output_limit[f"omitted_{field_name}"] = max(0, len(original) - len(capped_list))
+    payload["output_limit"] = output_limit
+    return payload
+
+
 def build_symbol_defs(
     symbol: str,
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    max_tests: int | None = None,
 ) -> dict[str, Any]:
     payload = build_repo_map(path, max_repo_files=max_repo_files)
-    return build_symbol_defs_from_map(payload, symbol, semantic_provider=semantic_provider)
+    return build_symbol_defs_from_map(
+        payload, symbol, semantic_provider=semantic_provider, max_tests=max_tests
+    )
 
 
 def build_symbol_defs_from_map(
@@ -13355,12 +13516,12 @@ def build_symbol_defs_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    max_tests: int | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
     payload["files"] = list(repo_map.get("files", []))
     payload["symbols"] = [dict(current) for current in repo_map.get("symbols", [])]
     payload["imports"] = [dict(current) for current in repo_map.get("imports", [])]
-    payload["tests"] = list(repo_map.get("tests", []))
     payload["related_paths"] = list(repo_map.get("related_paths", []))
     native_definitions = [
         {
@@ -13411,6 +13572,13 @@ def build_symbol_defs_from_map(
             definition["score"] = _definition_confidence_score(definition, symbol)
 
     definition_files = [str(current["file"]) for current in definitions]
+    # Root-cause fix (audit #96): defs used to shallow-copy the WHOLE-REPO test manifest into
+    # `tests` (every _is_test_file up to the repo-map scan cap), regardless of relevance -- the
+    # "69KB for a 1-symbol answer" bug. Route through the SAME relevance filter callers/impact
+    # already use so defs stops dumping the manifest, then cap it BEFORE `related_paths` derives
+    # below (a leak-back through the second field is the same bug one layer down).
+    payload["tests"] = _relevant_tests_for_symbol(repo_map, symbol, definition_files)
+    _apply_symbol_field_output_limit(payload, field_name="tests", max_count=max_tests)
     related_paths = []
     for current in [*definition_files, *payload["tests"]]:
         if current not in related_paths:
@@ -13621,6 +13789,7 @@ def build_symbol_impact(
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
     deadline_seconds: float | None = None,
+    max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     # moat P0-6 step 3: convert the relative --deadline once to an ABSOLUTE monotonic timestamp so
@@ -13637,6 +13806,7 @@ def build_symbol_impact(
         symbol,
         semantic_provider=semantic_provider,
         deadline_monotonic=deadline_monotonic,
+        max_tests=max_tests,
         _profiling_collector=_profiling_collector,
     )
     _copy_partial_signal(
@@ -13651,6 +13821,7 @@ def build_symbol_impact_from_map(
     *,
     semantic_provider: str = "native",
     deadline_monotonic: float | None = None,
+    max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -13728,6 +13899,15 @@ def build_symbol_impact_from_map(
         deadline_hit=related_tests_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
+    # impact's own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths/test_matches
+    # derive below (both are indexed off `related_tests`), or the omitted tests leak back in via
+    # the second field. `payload` does not exist yet at this point, so cap through a scratch dict.
+    impact_tests_limit_scratch: dict[str, Any] = {"tests": related_tests}
+    _apply_symbol_field_output_limit(
+        impact_tests_limit_scratch, field_name="tests", max_count=max_tests
+    )
+    related_tests = cast(list[str], impact_tests_limit_scratch["tests"])
+    impact_tests_output_limit = impact_tests_limit_scratch.get("output_limit")
 
     definition_file_set = set(definition_files)
     file_matches_by_path: dict[str, dict[str, Any]] = {}
@@ -13809,6 +13989,8 @@ def build_symbol_impact_from_map(
     payload["file_summaries"] = _file_summaries(repo_map.get("symbols", []), impacted_files)
     payload["tests"] = related_tests
     payload["test_matches"] = [test_matches_by_path[str(current)] for current in related_tests]
+    if impact_tests_output_limit is not None:
+        payload["output_limit"] = impact_tests_output_limit
     payload["imports"] = context_payload["imports"]
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
@@ -13945,13 +14127,18 @@ def build_symbol_refs(
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
     deadline_seconds: float | None = None,
+    max_tests: int | None = None,
 ) -> dict[str, Any]:
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
     result = build_symbol_refs_from_map(
-        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+        repo_map,
+        symbol,
+        semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
+        max_tests=max_tests,
     )
     _copy_partial_signal(result, repo_map)
     return result
@@ -13963,6 +14150,7 @@ def build_symbol_refs_from_map(
     *,
     semantic_provider: str = "native",
     deadline_monotonic: float | None = None,
+    max_tests: int | None = None,
 ) -> dict[str, Any]:
     payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     if payload.get("no_match"):
@@ -14167,6 +14355,11 @@ def build_symbol_refs_from_map(
     )
 
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
+    # refs' own DEDICATED --max-tests (design #96 item 2), independent of defs' -- the nested
+    # build_symbol_defs_from_map call above passes no max_tests, so `payload["tests"]` here is
+    # still the full relevance-filtered (uncapped) list; cap it now, BEFORE related_paths derives
+    # below, or the omitted tests leak back in via the second field.
+    _apply_symbol_field_output_limit(payload, field_name="tests", max_count=max_tests)
     related_paths: list[str] = []
     for current in [*payload["files"], *referenced_files, *payload["tests"]]:
         if current not in related_paths:
@@ -14592,6 +14785,7 @@ def build_symbol_callers(
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
     deadline_seconds: float | None = None,
+    max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
@@ -14606,6 +14800,7 @@ def build_symbol_callers(
         symbol,
         semantic_provider=semantic_provider,
         deadline_monotonic=deadline_monotonic,
+        max_tests=max_tests,
         _profiling_collector=_profiling_collector,
     )
     _copy_partial_signal(result, repo_map)
@@ -14618,6 +14813,7 @@ def build_symbol_callers_from_map(
     *,
     semantic_provider: str = "native",
     deadline_monotonic: float | None = None,
+    max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
@@ -14967,6 +15163,14 @@ def build_symbol_callers_from_map(
         deadline_hit=related_tests_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
+    # callers' own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths derives
+    # below, or the omitted tests leak back in via the second field. `payload` does not exist yet
+    # at this point (built via _envelope below), so cap through a scratch dict and read the
+    # (possibly capped) list + stamped output_limit back out.
+    tests_limit_scratch: dict[str, Any] = {"tests": related_tests}
+    _apply_symbol_field_output_limit(tests_limit_scratch, field_name="tests", max_count=max_tests)
+    related_tests = cast(list[str], tests_limit_scratch["tests"])
+    tests_output_limit = tests_limit_scratch.get("output_limit")
 
     related_paths: list[str] = []
     for related_path in [
@@ -14988,6 +15192,8 @@ def build_symbol_callers_from_map(
     payload["import_graph_consumer_count"] = len(import_graph_consumers)
     payload["files"] = caller_files
     payload["tests"] = related_tests
+    if tests_output_limit is not None:
+        payload["output_limit"] = tests_output_limit
     payload["imports"] = context_payload["imports"]
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
