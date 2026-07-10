@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.56.0 (2026-07-10)
+
+### Features
+
+- **mcp**: Confine every MCP tool primary path to the server root + TG_MCP_ROOT override (audit #95
+  security core) ([#484](https://github.com/oimiragieo/tensor-grep/pull/484),
+  [`e7c9335`](https://github.com/oimiragieo/tensor-grep/commit/e7c9335478b6c8d1289dc887eeb43ba69a1cfb52))
+
+* wip(mcp): #95 MCP path-confinement build (agent a0c37a02, died on session-limit pre-final-verify)
+  - PRESERVE for harvest
+
+* docs(mcp): correct _confine_mcp_path docstring - flag the 13 residual cwd-anchored round-6/7
+  params (Opus gate non-blocking #1)
+
+* fix(mcp): tg_ast_search fails closed with structured "unavailable" when ast deps missing + format
+
+CI (Linux test-python) caught the confinement ratchet's positive (in-root-accepted) probe failing on
+  tg_ast_search: Pipeline(ast=True) construction raises ConfigurationError when the
+  ast-grep/tree-sitter deps are absent for the pattern (Linux runner without ast-grep), EARLIER than
+  the backend-type check, so a valid in-root call escaped as a raw FastMCP ToolError. Fix: catch
+  ConfigurationError at construction and return the same structured "unavailable" error the
+  backend-type branch already returns (Backend Fail-Closed Contract). Passed on Windows only because
+  ast-grep is available there. + ruff-format test_typed_ref_kinds.py (the Formatting & Linting
+  failure). New regression test mocks the ConfigurationError cross-platform.
+
+* test(mcp): confinement ratchet positive probe tolerates a tool erroring for a NON-confinement
+  reason (ast-grep deps absent on Linux CI) -- fixes tg_ruleset_scan + all ast-backed tools without
+  whack-a-mole; security negative assertion untouched
+
+
 ## v1.55.0 (2026-07-10)
 
 ### Documentation
