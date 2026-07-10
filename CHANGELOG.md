@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.57.1 (2026-07-10)
+
+### Bug Fixes
+
+- **rust**: Hoist the walk-ceiling into execute_ripgrep_search -- close the -e-form native-frontdoor
+  DoS bypass (audit #100, #480 residual)
+  ([#491](https://github.com/oimiragieo/tensor-grep/pull/491),
+  [`3a71c8f`](https://github.com/oimiragieo/tensor-grep/commit/3a71c8fb9c485b078d8c2ee5dca00a25ac451d3e))
+
+* recover(#100): DoS-hoist work from dead agent a27aa68b (mid-build death, uncommitted) -
+  UNVERIFIED, needs cargo build + FFI smoke + Opus gate before PR
+
+* docs(rust): soften the #100 hoist comment -- it closes #105 for the RG engine only; the native-CPU
+  (--json) implicit-walk residual remains, tracked in #105 (audit #100 Opus gate)
+
+
 ## v1.57.0 (2026-07-10)
 
 ### Features
