@@ -1,6 +1,76 @@
 # CHANGELOG
 
 
+## v1.58.9 (2026-07-10)
+
+### Bug Fixes
+
+- **search**: Honor multiple -e patterns + read -f on the native/CPU path (audit #69, re-do of #441
+  with a Windows golden) ([#501](https://github.com/oimiragieo/tensor-grep/pull/501),
+  [`2e1c81a`](https://github.com/oimiragieo/tensor-grep/commit/2e1c81affdd94571aaf80ea7f0e009400071d9a8))
+
+`tg search --cpu -e foo -e bar` silently searched only "foo" (main.py:6338 took regexp_patterns[0]
+  with no combine logic), and `tg search --cpu -f patterns.txt` never read the file on the
+  native/CPU path at all (config.file_patterns was read only by ripgrep_backend.py:788, the
+  rg-routed path).
+
+Fix: gather all -e patterns (or all -f file lines) and build one rg-parity OR-alternation regex, so
+  the existing single-pattern machinery (CPUBackend, the Rust FFI, native-binary subprocess
+  delegation) treats it exactly like a hand-typed `-e "foo|bar"`. Each pattern is its own
+  non-capturing-group branch (`_combine_multi_patterns`); -F literals are re.escape'd per branch; a
+  leading (?i)-style inline flag is rewritten to the scoped (?i:...) form so it stays legal and
+  scoped once no longer first in the string (`_scope_leading_inline_flag`). The rg-routed
+  passthrough path is untouched -- it reads config.regexp/config.file_patterns directly. The -f file
+  read is deliberately DEFERRED until the search is confirmed to not be rg-passthrough (past the
+  first `can_passthrough_rg` exit, before Pipeline() construction which routes on
+  config.query_pattern) -- an eager read broke the existing
+  test_python_search_treats_file_option_as_pattern_file_not_regex contract, where real rg must read
+  -f itself on the passthrough path, never tg.
+
+Also fixes cli/bootstrap.py's OWN, separate outer-argv `_can_delegate_to_native_tg_search` (the
+  intercept-before-Typer front door) to exclude -e/-f, mirroring main.py's inner gate
+  (regexp/file_patterns are already in _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS). Without this,
+  -e/-f searches would bypass main.py's fix entirely and hit the separately-compiled native tg
+  binary's own independent multi-pattern bugs (confirmed reachable: tg.exe resolves via PATH and the
+  venv Scripts dir in this environment) -- verified via direct invocation in PR #441 (-f never read
+  at all; multiple -e not deduplicated on an any-match line).
+
+PR #441 (never merged) already implemented and validated this approach on Windows CI (run
+  28917558068): its own 18 new tests all passed on windows-latest/py3.11+py3.12. The ONLY failure in
+  that run was test_output_golden_contract[json_multi_file-python-m], a pre-existing snapshot drift
+  from commit fa5fc23 (2026-07-03, added a submatches JSON field without updating that one fixture)
+  -- unrelated to #441's diff (confirmed: its diff only touched bootstrap.py/main.py/test files,
+  never json_fmt.py/result.py/snapshots) and independently reproduced on this tree BEFORE any of
+  this change's edits. PR #441 was closed on a misdiagnosis, not an actual defect. Deliberately did
+  NOT adopt #441's fuller "-e + -f combined = union" scope: it conflicts with an existing pinned
+  test (test_search_single_regexp_with_unused_file_option_and_only_matching_still_works, which
+  asserts a single -e always wins over -f as a dead flag) -- confirmed by direct inspection, not
+  assumption.
+
+Tests: new tests/e2e/test_multi_pattern_native.py (17 cases: multi-e OR-match, -f reads the file,
+  hard-coded deterministic golden-parity assertions with no rg-binary dependency, missing-file exit
+  2 + JSON envelope, blank-line-matches-everything rg parity, -F literal escaping, (?i) scoping,
+  single-pattern byte-identical regression, dead-flag pin, rg passthrough parity, -o/-r still
+  rejected) + 1 new + 1 updated test in tests/unit/test_cli_bootstrap.py for the bootstrap.py gate
+  (the updated test flips a governance assertion that previously pinned the bug: multi-pattern +
+  --gpu-device-ids now routes to the full CLI instead of the buggy native binary). All new tests
+  confirmed RED against pre-fix source via a saved patch revert/reapply, then GREEN after.
+
+CI-parity: ruff check clean, ruff format --preview clean, mypy src/tensor_grep clean (77
+
+files). Full regression sweep: tests/e2e/test_multi_pattern_native.py,
+  tests/unit/test_cli_bootstrap.py (67), tests/unit/test_cli_modes.py (472, 2 pre-existing unrelated
+  lsprotocol-missing failures deselected), tests/unit/test_ripgrep_backend.py,
+  tests/e2e/test_rg_parity_edges.py, tests/e2e/test_output_golden_contract.py -- 632 passed, 1
+  pre-existing unrelated failure (json_multi_file submatches drift, confirmed present before this
+  change).
+
+Scope: cli/main.py + cli/bootstrap.py only, zero edits to
+  cpu_backend/rust_backend/ripgrep_backend/base.py.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.8 (2026-07-10)
 
 ### Bug Fixes
