@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.58.7 (2026-07-10)
+
+### Bug Fixes
+
+- **tests**: Pin json_multi_file/ndjson_multi_file golden cases to --cpu (flaky rg-vs-cpu submatches
+  divergence) ([#503](https://github.com/oimiragieo/tensor-grep/pull/503),
+  [`8d60c33`](https://github.com/oimiragieo/tensor-grep/commit/8d60c33a64770c68faa5b4bb0a338a646e91b9e5))
+
+The python-m launcher sets TG_DISABLE_NATIVE_TG=1 but never pins the search backend, so `tg --json
+  hello <dir>` transparently routes to RipgrepBackend when `rg` is on PATH, else falls back to the
+  CPU/RustCoreBackend. The two backends are functionally equivalent (same matches/files/counts) but
+  json_fmt.py's `_match_payload` only populates the optional `submatches` key when the backend
+  supplies rg's byte-offset data (by design -- "omit the key entirely ... for non-rg backends"). The
+  committed golden snapshot was captured without submatches, so any CI runner where `rg` happens to
+  be on PATH flips the json_multi_file-python-m case red on that field alone -- flaky, not a product
+  bug (PR #501 Windows legs).
+
+Pin both cases to --cpu, the same mechanism cpu_multi_file/cpu_single_file already use, so the
+  JSON/NDJSON shape under test no longer depends on whether `rg` is installed on the runner. No
+  snapshot content changed: the committed snapshots already matched the CPU-backend shape
+  byte-for-byte, so --cpu simply makes that outcome deterministic instead of accidental.
+
+Verified: full golden-contract suite (43 cases x 2 launchers) green both with `rg` on PATH and with
+  `rg` fully removed from PATH. Native launcher was never affected (its own JSON serializer has no
+  submatches concept), and count_matches_native's rg-required behavior is a separate, pre-existing,
+  out-of-scope gap (reproduces identically on unmodified HEAD) -- not touched.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.6 (2026-07-10)
 
 ### Bug Fixes
