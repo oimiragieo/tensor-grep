@@ -1,6 +1,65 @@
 # CHANGELOG
 
 
+## v1.56.2 (2026-07-10)
+
+### Bug Fixes
+
+- **cli**: Share one repo_map across tg impact's callers pass (task #103)
+  ([#490](https://github.com/oimiragieo/tensor-grep/pull/490),
+  [`81353ee`](https://github.com/oimiragieo/tensor-grep/commit/81353eea165d83e0eb24dab39aee10c68bb7049b))
+
+tg impact built its whole repo_map TWICE per invocation: the CLI handler called two self-contained
+  wrappers, build_symbol_impact(...) and build_symbol_callers(...), and each one independently
+  called build_repo_map(...) from scratch. This doubled the repo-parse cost on every `tg impact`
+  call and silently doubled --deadline's effective budget, since each wrapper converted
+  deadline_seconds into a fresh deadline_monotonic = time.monotonic() + deadline_seconds starting
+  from its own call time.
+
+Fix 1 (main.py): impact() now builds repo_map and deadline_monotonic ONCE, then calls
+  build_symbol_impact_from_map(...) and build_symbol_callers_from_map(...) against that shared map
+  -- the same proven pattern build_symbol_blast_radius already uses internally, and the same pattern
+  the daemon (session_store.py) and MCP server already use across a session's repo_map. Output shape
+  and the exit-2/partial/ incomplete_reason contract are unchanged (verified via the existing
+  callers/impact output-shape test suite).
+
+Fix 2 (repo_map.py): build_context_pack_from_map's symbol-scoring loop (the single largest
+  repo-size-proportional loop in context-pack construction, called from both
+  build_symbol_impact_from_map and build_symbol_callers_from_map) accepted no deadline parameter and
+  ran unconditionally. Threaded deadline_monotonic/deadline_hit through, gated the loop with the
+  same pre-iteration check _preferred_definition_files/_relevant_tests_for_symbol already use, and
+  folded the early-break signal into partial at both call sites.
+
+Verified on this repo (863 scanned files): `tg impact . build_repo_map` wall-clock drops from a mean
+  of ~16.4s (5 runs, 14.2-20.5s) to ~11.7s (5 runs, 10.5-13.5s), roughly a 28% reduction, by
+  eliminating the fully redundant second repo_map build. Deadline-doubling is closed and proven
+  deterministically: a fake-clock test shows the pre-fix code consuming 10 parse-ticks against a
+  5-tick --deadline budget (two independent 5-tick budgets back to back); post-fix it consumes 5.
+
+RED-then-GREEN tests: - test_impact_callers_shared_map.py: build_repo_map call-count == 1 (found and
+  not-found paths), --deadline not doubled. - test_repo_map_deadline.py (task #103 block):
+  context-pack loop honors an already-expired deadline, breaks mid-scan (not just pre-check), and
+  folds into partial at both build_symbol_impact_from_map and build_symbol_callers_from_map,
+  isolated from the other sibling loops. -
+  test_cli_deadline_flag.py::test_impact_propagates_caller_scan_partial_exits_2 updated to mock at
+  the new build_symbol_impact_from_map/ build_symbol_callers_from_map seam (the CLI handler no
+  longer calls the build_symbol_impact/build_symbol_callers wrappers it used to mock).
+
+ruff check, ruff format --preview --check, and mypy --strict are clean on both changed source files.
+
+### Documentation
+
+- Bank #100 DoS-hoist design + 1.54.6 dogfood skill updates + reconcile BACKLOG to v1.55.0/v1.56.0
+  ([#488](https://github.com/oimiragieo/tensor-grep/pull/488),
+  [`f9cbc12`](https://github.com/oimiragieo/tensor-grep/commit/f9cbc123bbf2917c7a94455de620104049993470))
+
+- design-tensor-grep-100: the walk-ceiling hoist spec (re-classified nit -> HIGH security; live
+  -e-form native-binary walk-DoS bypass). - skills: 1.54.6 dogfood updates (--deadline improvement
+  note, tg importers path-doubling caveat, workspace-dogfood results). - BACKLOG SHIPPING:
+  v1.54.4/5/6 + v1.55.0 (payload cut) SHIPPED; v1.56.0 (#484 confinement) releasing; #487 open;
+  #100/#86 building; #95 Part 2 unblocked.
+
+
 ## v1.56.1 (2026-07-10)
 
 ### Bug Fixes
