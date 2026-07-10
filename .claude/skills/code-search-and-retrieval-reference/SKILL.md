@@ -407,24 +407,67 @@ isolation, since this is still the fastest-moving area in the repo.
 | `gil_used` pin | `rust_core/src/lib.rs:342` | pinned `true`; free-threading needs a full green Linux CI run to re-attempt |
 | LSP framing | `lsp_external_provider.py:91,131` | `Content-Length` capped at 64MB against a malicious/buggy server |
 | Model2Vec/potion (SHIPPED) | `retrieval_dense.py`, `retrieval_fusion.py` | `tg search --semantic`; `potion-code-16M`; default-off-by-flag, not marketed default |
-| ReDoS routing gap (`-w`/`-x`/`-C`/`--ltl`) | `cpu_backend.py:339-350` (`rust_semantics_supported`), `:331-337` (`config.ltl`) | OPEN — these flags bypass the linear-time Rust regex route and fall through to Python's backtracking `re`; fix in flight, unmerged as of this writing — see §1a below |
+| ReDoS gate (`-w`/`-x`/`-C`/`--ltl`/UTF-8-fallback/native-failure/`--pcre2`) | `cpu_backend.py:355` (`config.ltl`), `:377-384` (word/context routing), `:438` (UTF-8-fallback gate) + `:485` (`--pcre2`) + `:512` (native-failure) all calling `_fallback_pattern_is_provably_linear` (`:280`) | CLOSED (audit #6/#16/#111) — every path that could reach Python's backtracking `re` either routes through the linear-time Rust engine first or fails closed with `BackendExecutionError` unless the pattern is `fixed_strings` (the only provably-linear shape); see §1a below |
 
-### 1a. ReDoS-gate bypass on `-w`/`-x`/`-C`/`--ltl` — open, watch-item (do not cite as fixed)
+### 1a. ReDoS-gate bypass on `-w`/`-x`/`-C`/`--ltl`/UTF-8-fallback/native-failure — CLOSED (audit #6/#16/#111)
 
-`cpu_backend.py`'s ReDoS protection (§ near line 339: *"Instead of using Python's standard `re`
-module ... we route complex pure-python CPU requests to the native Rust `regex` crate"*) only
-applies when `rust_semantics_supported` is true — and that flag is false whenever `context` /
-`before_context` / `after_context` / `line_regexp` (`-x`) / `word_regexp` (`-w`) is set
-(`cpu_backend.py:343-349`). `--ltl` (line-transition-language mode) unconditionally routes to
-`self._search_ltl`, a separate pure-Python path, before the Rust-routing check ever runs
-(`cpu_backend.py:331-337`). Both bypass paths run the pattern through Python's backtracking `re`,
-reopening the catastrophic-backtracking (ReDoS) class the Rust-routing exists to close — a
-malicious or pathological pattern combined with any of `-w`/`-x`/`-C`/`--ltl` is not currently
-protected the way a plain `tg search PATTERN` is. This is a real, present-tense gap in the shipped
-code, tracked by an in-flight, **unmerged** fix (audit #6+#16) — do not describe it as fixed or
-cite a PR number as "shipped" until it lands on `origin/main`; treat the pattern above (linear-Rust
-routing must cover every flag combination, not just the default one) as durable guidance regardless
-of that PR's merge state.
+`cpu_backend.py`'s ReDoS protection (comment above `def search`: *"Instead of using Python's
+standard `re` module ... we route complex pure-python CPU requests to the native Rust `regex`
+crate"*) now covers every path that can reach this backend:
+
+- **`-w`/`-x`/`-C`/`-A`/`-B` (word/line/context flags)**: `needs_word_or_context_rust_routing`
+  (`cpu_backend.py:395-402`) routes these to `_search_word_line_context_via_rust` (`:797`), which
+  resolves the match-SET via the linear-time Rust engine (`_rust_match_set`, `:760`) and
+  assembles context windows in pure Python — no backtracking regex ever runs on this path. On any
+  Rust failure it raises `BackendExecutionError` (fail closed) instead of falling back to Python
+  `re`.
+- **`--ltl`**: `_search_ltl` (`:928`) resolves both LTL sub-expressions via the same
+  `_rust_match_set` helper and fails closed identically.
+- **`--pcre2`**: the generic Rust-exception handler's `pcre2` branch (`:497`) fails closed
+  unconditionally (`BackendExecutionError`) regardless of *why* Rust could not service the
+  request — CPUBackend has no real PCRE2 engine, only Python `re` as a backtracking
+  approximation, so it never silently swaps to that engine.
+- **UTF-8-fallback + native-runtime-failure (audit #111, closed 2026-07-10)**: two residual paths
+  of the "simple pattern" route used to fall through to unbounded Python `re` — (1) the empty-Rust-
+  result-on-a-non-UTF-8-file retry (`_RustUtf8DecodeMismatch`, handled at `:438`), on the premise
+  "Rust already ran the pattern in O(n), so it's ReDoS-safe"; and (2) the generic `except Exception`
+  branch on a non-syntax Rust runtime fault (native panic / IO / version skew), which fell open
+  "for robustness" (`:512`). Both premises are the SAME one already refuted for `--pcre2` — a
+  pattern Rust runs in guaranteed linear time can still catastrophically backtrack under Python's
+  backtracking engine; Rust accepting/running a pattern proves nothing about Python-`re` safety
+  (Rust has no catastrophic-backtracking failure mode for ANY pattern it accepts). Reproduced
+  empirically: `(a+)+$` on a non-UTF-8 file pegged a CPU core (158+ CPU-seconds, forced kill).
+  **The first fix attempt (a static "no quantifier metachar `*+?{`" allow-list) was itself BLOCKED
+  by the adversarial Opus security gate as PROVABLY UNSOUND** — catastrophic backtracking has a
+  SECOND source besides repetition: variable-length ALTERNATION. `(a|aa)(a|aa)...(a|aa)b`
+  (`"(a|aa)"*k + "b"`) contains no quantifier char yet backtracks 2^k (measured pure-Python `re`:
+  k=24 → 6.19s, clean 2^k), and the attacker dials severity via pattern length on a tiny file. **No
+  static pattern analysis can be the gate.** The shipped fix gates ALL these paths on
+  `CPUBackend._fallback_pattern_is_provably_linear` (`:280`), which admits ONLY `fixed_strings`
+  (re.escape'd → a literal automaton → provably linear regardless of the raw pattern text); EVERY
+  other pattern fails closed with `BackendExecutionError`. This deliberately fails closed a legit
+  non-ASCII regex on a non-UTF-8 file (e.g. `caf\xe9\d+` on latin-1) — the endorsed
+  security-over-availability trade; such users pass `--fixed-strings` or use ripgrep (a genuine
+  byte-safe engine). Regression tests in `tests/unit/test_cpu_backend.py`:
+  `test_should_fail_closed_for_nested_quantifier_bomb_on_non_utf8_file`,
+  `test_should_fail_closed_for_alternation_bomb_on_non_utf8_file` (the Opus counterexample),
+  `test_fixed_strings_nonascii_literal_matches_via_python_fallback_but_regex_fails_closed`,
+  `test_should_fail_closed_on_nonsyntax_rust_runtime_failure_for_regex`. Note for anyone writing a
+  regression test against this class: Python's `_sre` engine holds the GIL for the entire match
+  attempt, so even an in-process `Thread.join(timeout=...)` watchdog cannot reliably bound it — a
+  sibling thread stuck in catastrophic backtracking can prevent the *main* thread's own timeout
+  wait from waking up too; only an OS-level process kill (`subprocess.run(timeout=...)`) reliably
+  bounds it.
+
+The durable lesson (keep citing this even after further refactors): (1) "Rust ran this pattern
+successfully" is NEVER sufficient evidence that Python's backtracking `re` can safely run the SAME
+pattern — asking Rust again is not a valid gate, because Rust runs a catastrophic-backtracking-
+shaped pattern and a benign one in the same guaranteed linear time. (2) NO static analysis of the
+raw pattern is a sound gate either — catastrophic backtracking arises from BOTH nested quantifiers
+(`(a+)+$`) AND quantifier-free variable-length alternation (`(a|aa)...b`), so any character/shape
+allow-list is a bypass waiting to be dialed. The ONLY sound gate is the structural `fixed_strings`
+guarantee; any new code path that could fall back to Python `re` must admit only `fixed_strings`
+or fail closed.
 
 ## Provenance and maintenance
 
@@ -450,9 +493,10 @@ grep -n "Content-Length\|_MAX_LSP_MESSAGE_BYTES" C:/dev/projects/tensor-grep/src
 # (embed_backend.py / retrieval_hybrid.py never existed -- don't grep for those)
 test -f C:/dev/projects/tensor-grep/src/tensor_grep/core/retrieval_dense.py -a -f C:/dev/projects/tensor-grep/src/tensor_grep/core/retrieval_fusion.py && echo "SHIPPED (section 9 current)" || echo "MISSING -- section 9 needs re-audit"
 
-# Re-check the ReDoS-gate bypass flags and whether the in-flight fix has merged
-grep -n "rust_semantics_supported" C:/dev/projects/tensor-grep/src/tensor_grep/backends/cpu_backend.py
-git -C C:/dev/projects/tensor-grep log --oneline origin/main | head -5   # look for a merge above this skill's HEAD SHA before citing any fix as shipped
+# Re-check the ReDoS gate is still closed (audit #6/#16/#111) — confirm the fixed_strings-only
+# gate still exists and BOTH the UTF-8-fallback and native-failure branches call it before any
+# Python `re` retry. It must admit ONLY fixed_strings; a static pattern-char allow-list is unsound.
+grep -n "_fallback_pattern_is_provably_linear\|needs_word_or_context_rust_routing" C:/dev/projects/tensor-grep/src/tensor_grep/backends/cpu_backend.py
 
 # Re-run the AST comparison benchmark before citing its numbers
 cd C:/dev/projects/tensor-grep && uv run python benchmarks/run_ast_benchmarks.py
@@ -463,9 +507,10 @@ Open uncertainties (do not cite as fact without independent verification):
 - The exact upstream ripgrep issue numbers for the `--multiline --pcre2 --json` double-submatch and
   `-c` NUL-omission edge cases (section 1) — no in-repo test fixture or citation exists for either as
   of this writing.
-- Whether the ReDoS-gate bypass on `-w`/`-x`/`-C`/`--ltl` (§1a) has been fixed by the time you read
-  this — the fix was an OPEN, unmerged PR (audit #6+#16) as of this writing; re-check
-  `rust_semantics_supported` in `cpu_backend.py` and whether it still excludes those flags before
-  citing this as open or closed.
+- The ReDoS gate on `-w`/`-x`/`-C`/`--ltl`/UTF-8-fallback/`--pcre2` (§1a) is CLOSED as of audit
+  #111 (2026-07-10) — but re-verify before citing on a fresh session anyway: any NEW code path
+  added to `cpu_backend.py` that could fall back to Python `re` must independently prove pattern
+  safety or fail closed (see the durable lesson at the end of §1a); a future change could
+  reintroduce a bypass the same way audit #111 found a third one after #6/#16 closed the first two.
 - task #79 (§1: `RipgrepBackend` raising a bare `RuntimeError` instead of `BackendExecutionError`)
   is tracked as an open reconciliation item, not yet resolved as of this writing.

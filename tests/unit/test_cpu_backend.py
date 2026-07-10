@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import time
 import types
 import warnings
@@ -60,9 +62,14 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Simulate the native engine being genuinely ABSENT (audit #111 Opus-gate hardening: the
+        # Python fallback loop is now reachable for a non-fixed-strings pattern ONLY via the
+        # ImportError branch -- a present-but-failing Rust fails closed instead). This test is
+        # about binary-file handling, not ReDoS, so routing it through the Rust-absent fall-open
+        # preserves its intent while staying on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -377,9 +384,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -401,9 +412,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -520,9 +535,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -543,9 +562,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -564,9 +587,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -591,9 +618,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -617,9 +648,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -653,9 +688,13 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -693,9 +732,13 @@ class TestCPUBackend:
         log.write_text("the color is red\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
         backend = CPUBackend()
@@ -712,9 +755,13 @@ class TestCPUBackend:
         log.write_text("flagok\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
         backend = CPUBackend()
@@ -730,9 +777,13 @@ class TestCPUBackend:
         log.write_text("workers\nunrelated line\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
+        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
+        # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
+        # prefilter test stays on a currently-reachable path.
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")
+                raise ImportError("simulated rust_core absent")
 
         rust_mod.RustBackend = FailingRustBackend
         backend = CPUBackend()
@@ -765,20 +816,41 @@ class TestCPUBackend:
             with pytest.raises(InvalidRegexError):
                 CPUBackend().search(str(f), r"(?=(a+)+)$", config=SearchConfig())
 
-    def test_should_still_fall_back_to_python_re_on_nonsyntax_rust_failure(self, tmp_path):
+    def test_should_fail_closed_on_nonsyntax_rust_runtime_failure_for_regex(self, tmp_path):
+        # Audit #111 Opus-gate hardening (must-fix #2): a present-but-failing Rust (non-syntax
+        # runtime fault, NOT a syntax rejection, NOT --pcre2) must NOT fall open to unbounded
+        # Python `re` for an arbitrary pattern -- a hazard pattern would then backtrack unbounded.
+        # Fail CLOSED, matching the -w/-x/-C/--ltl/--pcre2 siblings. (Before this fix it returned
+        # a match here; the availability of that fall-open was the ReDoS hole.)
         f = tmp_path / "x.txt"
         f.write_text("ERROR here\nno match\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
         class FailingRustBackend:
             def search(self, **_kwargs):
-                raise RuntimeError("force python fallback")  # NOT a syntax rejection
+                raise RuntimeError("native panic, unrelated to pattern syntax")
 
         rust_mod.RustBackend = FailingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
-            result = CPUBackend().search(str(f), "ERROR", config=SearchConfig())
+            with pytest.raises(BackendExecutionError):
+                CPUBackend().search(str(f), "ERROR", config=SearchConfig())
+
+    def test_should_still_fall_open_on_nonsyntax_rust_failure_for_fixed_strings(self, tmp_path):
+        # The legitimate robustness case is preserved for the ONE provably-safe shape:
+        # fixed_strings is re.escape'd -> a literal automaton -> cannot catastrophically
+        # backtrack, so a transient Rust runtime fault may safely fall open to Python here.
+        f = tmp_path / "x.txt"
+        f.write_text("ERROR here\nno match\n", encoding="utf-8")
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("native panic, unrelated to pattern syntax")
+
+        rust_mod.RustBackend = FailingRustBackend
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = CPUBackend().search(str(f), "ERROR", config=SearchConfig(fixed_strings=True))
         assert result.total_matches == 1
-        # Fell open to the Python engine (prefilter variant counts) — no raise, no engine block.
         assert result.routing_reason.startswith("cpu_python_regex")
 
     def test_should_fail_closed_when_pcre2_backreference_cannot_run_through_rust(self, tmp_path):
@@ -920,3 +992,134 @@ def test_context_and_word_regexp_combined_hazard_pattern_is_bounded_not_hung(tmp
     _run_hazard_pattern_bounded(
         CPUBackend(), log, SearchConfig(word_regexp=True, context=2, pcre2=True)
     )
+
+
+# --- Audit #111 + Opus-gate hardening: UTF-8-fallback / native-failure ReDoS gate --------------
+#
+# `cpu_backend.py`'s "simple pattern" path attempts the linear-time Rust engine first. Two of its
+# residual paths used to fall through to raw, unbounded Python `re.search()`: (1) the
+# _RustUtf8DecodeMismatch branch (Rust returned empty on a non-UTF-8 file), on the premise "Rust
+# already ran the pattern in O(n), so it's ReDoS-safe"; and (2) the generic `except Exception`
+# branch (a non-syntax Rust runtime fault), "for robustness". Both premises are refuted -- the
+# same way `--pcre2` was: a pattern Rust runs in guaranteed linear time can still catastrophically
+# backtrack under Python's backtracking engine.
+#
+# Catastrophic backtracking has TWO independent sources, so NO static pattern check is a sound
+# gate (the Opus security gate proved this by breaking an earlier "no `*+?{` quantifier char"
+# heuristic):
+#   * nested quantifiers -- `(a+)+$`
+#   * variable-length ALTERNATION -- `(a|aa)(a|aa)...(a|aa)b` (i.e. `"(a|aa)"*k + "b"`) backtracks
+#     2^k with NO quantifier metacharacter at all.
+# The fix admits ONLY `fixed_strings` (re.escape'd -> a literal automaton -> provably linear) to
+# the Python fallback; every other pattern fails CLOSED (BackendExecutionError), matching the
+# -w/-x/-C/--ltl/--pcre2 siblings. The two bomb tests below assert both sources fail closed.
+#
+# A REAL SUBPROCESS bounds these tests (anti-hang-test-protocol), not a same-process thread
+# watchdog. Python's `_sre` backtracking engine holds the GIL for the ENTIRE duration of a single
+# `re.search()` call and never yields it mid-match, so a sibling thread stuck in catastrophic
+# backtracking can ALSO prevent the main thread's own `Thread.join(timeout=...)` wait from waking
+# up on schedule (empirically confirmed: an earlier in-process `Thread.join(timeout=2.0)` version
+# of the nested-quantifier test itself hung well past a 30s outer shell timeout against unfixed
+# code -- the "thread-based timeout mechanism" the anti-hang-test-protocol generally recommends is
+# NOT sufficient for this GIL-monopolizing hang class). A real OS process can always be
+# force-terminated externally regardless of its GIL state: `subprocess.run(..., timeout=...)`
+# kills the child via `Popen.kill()` (`TerminateProcess` on Windows, `SIGKILL` on POSIX).
+_REDOS_SUBPROCESS_BOUND_SECONDS = 15.0
+_REDOS_SUBPROCESS_SNIPPET = (
+    "import sys\n"
+    "from tensor_grep.backends.base import BackendExecutionError\n"
+    "from tensor_grep.backends.cpu_backend import CPUBackend\n"
+    "from tensor_grep.core.config import SearchConfig\n"
+    "try:\n"
+    "    CPUBackend().search(sys.argv[1], sys.argv[2], config=SearchConfig(text=True))\n"
+    "except BackendExecutionError:\n"
+    "    print('FAIL_CLOSED')\n"
+    "    sys.exit(0)\n"
+    "print('NO_ERROR_RAISED')\n"
+)
+# Trailing bytes that make a file invalid UTF-8 (bare continuation bytes, no NUL -> not treated as
+# binary), so `Path.read_text('utf-8')` raises and the _RustUtf8DecodeMismatch branch is reached.
+_NON_UTF8_TAIL = b"!" + b"\x80\x81\xfe"
+
+
+def _assert_search_fails_closed_bounded(tmp_path, name, file_bytes, pattern):
+    """Run `CPUBackend().search(pattern)` on a non-UTF-8 file in a CHILD PROCESS bounded by an
+    OS-level timeout; assert it fails closed (`BackendExecutionError`) rather than hanging.
+
+    The child inherits PYTHONPATH/VIRTUAL_ENV from the current interpreter, so it resolves the
+    same `tensor_grep` (and the same compiled `rust_core`) this test file imports.
+    """
+    f = tmp_path / name
+    f.write_bytes(file_bytes)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _REDOS_SUBPROCESS_SNIPPET, str(f), pattern],
+            capture_output=True,
+            text=True,
+            timeout=_REDOS_SUBPROCESS_BOUND_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"pattern {pattern!r} on a non-UTF-8 file did not return within "
+            f"{_REDOS_SUBPROCESS_BOUND_SECONDS}s -- the audit #111 ReDoS gate failed to fail "
+            "closed and instead hung"
+        )
+    assert "FAIL_CLOSED" in proc.stdout, (
+        f"expected a fail-closed BackendExecutionError for {pattern!r}; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+
+
+def test_should_fail_closed_for_nested_quantifier_bomb_on_non_utf8_file(tmp_path):
+    """RED->GREEN regression for audit #111: the classic nested-quantifier catastrophic-
+    backtracking payload `(a+)+$` on a non-UTF-8 file must fail closed, bounded, never hung.
+    """
+    _assert_search_fails_closed_bounded(
+        tmp_path, "nested_q_bomb.bin", b"a" * 45 + _NON_UTF8_TAIL, _HAZARD_PATTERN
+    )
+
+
+def test_should_fail_closed_for_alternation_bomb_on_non_utf8_file(tmp_path):
+    """Opus-gate counterexample (must-fix #3): variable-length ALTERNATION
+    `(a|aa)...(a|aa)b` backtracks 2^k under Python `re` with NO quantifier metacharacter --
+    the exact bomb that broke the earlier "no `*+?{` char" static allow-list. Must fail closed
+    exactly like `(a+)+$`. k=26 backtracks ~25s unfixed (measured k=24 -> 6.19s), well past the
+    15s bound, so a regressed gate manifests as a subprocess timeout, not a silent pass.
+    """
+    alternation_bomb = "(a|aa)" * 26 + "b"
+    _assert_search_fails_closed_bounded(
+        tmp_path, "alternation_bomb.bin", b"a" * 52 + _NON_UTF8_TAIL, alternation_bomb
+    )
+
+
+def test_fixed_strings_nonascii_literal_matches_via_python_fallback_but_regex_fails_closed(
+    tmp_path,
+):
+    """Semantics preservation + the structural contrast the audit #111 gate enforces.
+
+    The ONE legitimate case the UTF-8 fallback exists for: a non-ASCII LITERAL that Rust (which
+    searches raw bytes with a UTF-8-encoded pattern) cannot match against a latin-1-encoded file,
+    but Python CAN after decoding. This genuinely exercises the fallback (Rust returns empty ->
+    _RustUtf8DecodeMismatch), and with `fixed_strings` (re.escape'd -> provably linear) the gate
+    admits it and the latin-1 match succeeds.
+
+    The SAME literal WITHOUT `fixed_strings` fails closed -- the gate is structural (admits only
+    fixed_strings), it does NOT try to statically classify a pattern as hazardous-or-not (that is
+    unsound). This documents the accepted security-over-availability trade: a legit non-ASCII
+    regex on a non-UTF-8 file is refused, not silently run through the backtracking engine. Both
+    calls are bounded literals -> safe to run in-process (no hang risk for a benign pattern).
+    """
+    f = tmp_path / "latin1_cafe.bin"
+    # "cafe" + e-acute (U+00E9). Built with chr(0xE9) so this source file stays strictly ASCII.
+    # Encoded latin-1 the accented char is the single byte 0xE9, which alone is invalid UTF-8 ->
+    # forces the _RustUtf8DecodeMismatch fallback (Rust searches the UTF-8-encoded pattern bytes
+    # 0xC3 0xA9 and misses the file's single 0xE9 byte).
+    literal = "caf" + chr(0xE9)
+    f.write_bytes(("ERROR " + literal + " here").encode("latin-1") + b"\n")
+
+    matched = CPUBackend().search(str(f), literal, config=SearchConfig(fixed_strings=True))
+    assert matched.total_matches == 1
+    assert matched.routing_reason.startswith("cpu_python_regex")
+
+    with pytest.raises(BackendExecutionError):
+        CPUBackend().search(str(f), literal, config=SearchConfig())
