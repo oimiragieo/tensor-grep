@@ -5002,11 +5002,25 @@ def _write_json_refuse_symlink(write_path: Path, data: object) -> None:
     Two layers, because ``os.O_NOFOLLOW`` is unavailable on Windows (mirrors cpython's
     own tempfile module: ``getattr(os, "O_NOFOLLOW", 0)``, not a hard import-time
     dependency):
-      1. An explicit ``is_symlink()`` pre-check -- the authoritative guard on Windows,
-         and works there without elevated privileges (only *creating* a Windows symlink
-         needs privilege; checking for one does not).
-      2. ``O_NOFOLLOW`` on the actual open -- the authoritative guard on POSIX, closing
-         the narrow race between step 1's check and the open() call.
+      1. An explicit ``is_symlink()`` pre-check -- works without elevated privileges
+         (only *creating* a Windows symlink needs privilege; checking for one does not).
+         On Windows this is a best-effort narrowing, NOT an atomic guard: ``O_NOFOLLOW``
+         is a no-op there (see step 2), so a symlink swapped into ``write_path`` between
+         this check and the ``os.open()`` call below would still be followed -- a narrow,
+         same-process TOCTOU window. That residual window is consciously accepted rather
+         than papered over with fragile ctypes/CreateFileW handle-reopen tricks: it is a
+         single-digit-microsecond gap inside one process (not the cross-process window a
+         planted symlink usually needs), the caller has already confined ``write_path``
+         to a validated directory before this function runs, and creating a *new* Windows
+         symlink at that exact instant still requires the attacker to hold
+         symlink-creation privilege (Developer Mode or elevation). Audit #110 closed the
+         cross-process analog of this race (a symlink planted between a separate
+         confinement check and a *later* write, e.g. across a Rust subprocess boundary)
+         in the Rust audit-manifest writer via ``O_NOFOLLOW`` / Windows
+         ``FILE_FLAG_OPEN_REPARSE_POINT`` -- see ``write_bytes_refuse_symlink`` in
+         ``rust_core/src/main.rs``.
+      2. ``O_NOFOLLOW`` on the actual open -- the authoritative, atomic guard on POSIX,
+         closing the narrow race between step 1's check and the open() call.
     """
     if write_path.is_symlink():
         raise ValueError(f"Refusing to write through symlink at {write_path}")
