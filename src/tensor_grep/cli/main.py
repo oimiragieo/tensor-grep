@@ -5794,7 +5794,7 @@ def _select_ast_backend_for_pattern(
 
 @app.command(
     name="search",
-    help="""Search files for a regex pattern, with GPU acceleration when applicable.
+    help="""Search files for a regex pattern. GPU routing is experimental and opt-in via --gpu-device-ids; CPU/ripgrep is the default and the current speed baseline.
 The stable text-search contract is the validated common rg-compatible subset documented in docs/CONTRACTS.md.
 Use --format rg --json when a tool needs ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.
 
@@ -6306,7 +6306,7 @@ def search_command(
     ),
 ) -> None:
     """
-    Search files for a regex pattern, with GPU acceleration when applicable.
+    Search files for a regex pattern. GPU routing is experimental and opt-in via --gpu-device-ids; CPU/ripgrep is the default and the current speed baseline.
     The stable text-search contract is the validated rg-compatible surface documented in docs/CONTRACTS.md.
     """
     # Just forward to CPU backend for now as a stub.
