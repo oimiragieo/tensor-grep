@@ -5767,39 +5767,113 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
 # unbounded stdin.read (memory DoS). Mirrors lsp_external_provider._MAX_LSP_MESSAGE_BYTES.
 _MAX_MCP_STDIO_MESSAGE_BYTES = 64 * 1024 * 1024
 
+# Bound the header preamble itself (audit #49 part 2): a hostile/buggy client that streams endless
+# header lines, or one that never sends the blank-line terminator, must not hang the reader or
+# exhaust memory BEFORE the Content-Length size check above even gets a chance to run. Both a hard
+# iteration cap (number of header lines) and a hard byte cap (any single line, and the cumulative
+# preamble) apply -- fail closed on either, mirroring the body-size cap's fail-closed shape.
+_MAX_MCP_STDIO_HEADER_LINES = 128
+_MAX_MCP_STDIO_HEADER_BYTES = 64 * 1024
 
-async def _read_stdio_message_payload(stdin: anyio.AsyncFile[str]) -> str | None:
-    line = await stdin.readline()
-    if line == "":
+# Bound the FIRST line too (audit #49 part 3, gate must-fix): the first read carries either the
+# `Content-Length:` header (framed shim) OR -- in the newline-delimited transport, which is the
+# OFFICIAL/primary MCP stdio path -- the ENTIRE JSON-RPC message. `_MAX_MCP_STDIO_MESSAGE_BYTES`
+# above caps only the framed body, so without this the newline path had NO message-size cap at all,
+# and a `Content-Length` line with no newline could grow memory unbounded BEFORE the size check.
+# Cap line 1 at the full message budget (+1 so a maximal message keeps room for its trailing
+# newline); a legit MCP message is far under 64MB and a framed header line is tiny, so nothing valid
+# is truncated. A first line that reaches this cap with no newline is refused (fail closed).
+_MAX_MCP_STDIO_FIRST_LINE_BYTES = _MAX_MCP_STDIO_MESSAGE_BYTES + 1
+
+
+async def _read_bounded_line(stdin: anyio.AsyncFile[bytes], limit: int) -> bytes:
+    """``readline()``, but never buffer more than `limit` bytes for a single line.
+
+    ``anyio.AsyncFile.readline()`` does not forward a size bound to the wrapped sync file, so this
+    reaches into ``.wrapped`` -- the same underlying binary buffered stream `stdin` already reads
+    through, with no text-decoder layer involved, so there is no read-ahead/desync risk in doing
+    so -- to call the stdlib's own size-bounded ``readline(limit)``.
+    """
+    return await anyio.to_thread.run_sync(stdin.wrapped.readline, limit)
+
+
+async def _read_stdio_message_payload(stdin: anyio.AsyncFile[bytes]) -> str | None:
+    line = await _read_bounded_line(stdin, _MAX_MCP_STDIO_FIRST_LINE_BYTES)
+    if line == b"":
+        return None
+    if len(line) >= _MAX_MCP_STDIO_FIRST_LINE_BYTES and not line.endswith(b"\n"):
+        # Fail closed: line 1 reached the read cap with no newline terminator. This is the last
+        # unbounded-read vector -- either a `Content-Length:` header line with no newline (memory
+        # growth BEFORE the size check below), or a newline-delimited message larger than
+        # _MAX_MCP_STDIO_MESSAGE_BYTES (that transport has no other size cap). A complete line that
+        # happens to be exactly the cap length still ends in "\n", so this rejects only the
+        # over-cap / newline-less case, never truncates a valid message.
         return None
     if not line.strip():
         return ""
-    if not line.lower().startswith("content-length:"):
-        return line
+    if not line.lower().startswith(b"content-length:"):
+        try:
+            return line.decode("utf-8")
+        except UnicodeDecodeError:
+            # Fail closed: a non-UTF-8 line is a framing error, not a silent-wrong parse.
+            return None
 
     try:
-        content_length = int(line.split(":", 1)[1].strip())
+        content_length = int(line.split(b":", 1)[1].strip())
     except (IndexError, ValueError):
-        return line
+        try:
+            return line.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
     if content_length <= 0 or content_length > _MAX_MCP_STDIO_MESSAGE_BYTES:
         # Fail closed: a non-positive or oversized frame is refused rather than read unbounded.
         return None
-    while True:
-        header = await stdin.readline()
-        if header == "":
+
+    header_bytes_total = 0
+    for _ in range(_MAX_MCP_STDIO_HEADER_LINES):
+        header = await _read_bounded_line(stdin, _MAX_MCP_STDIO_HEADER_BYTES)
+        if header == b"":
+            return None
+        header_bytes_total += len(header)
+        if header_bytes_total > _MAX_MCP_STDIO_HEADER_BYTES:
+            # Fail closed: the header preamble (one oversized line, or too many small ones)
+            # exceeded its byte budget before a blank-line terminator ever showed up. Worst case
+            # here is bounded to ~2x the byte cap (the over-budget line that tripped this check),
+            # never unbounded.
             return None
         if not header.strip():
             break
-    return await stdin.read(content_length)
+    else:
+        # Fail closed: too many header lines without a blank-line terminator.
+        return None
+
+    # Read the body as EXACTLY `content_length` BYTES off the binary stream -- not characters off
+    # a text-decoding wrapper. A multi-byte UTF-8 payload has fewer characters than its
+    # Content-Length-declared byte count, so a char-count read desyncs every subsequent framed
+    # message on the same connection (audit #49).
+    body = await stdin.read(content_length)
+    if len(body) != content_length:
+        # Fail closed: EOF before the declared byte count arrived is a framing error, not a hang
+        # or a silently-truncated parse.
+        return None
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 @asynccontextmanager
 async def _stdio_server_accepting_content_length(
-    stdin: anyio.AsyncFile[str] | None = None,
+    stdin: anyio.AsyncFile[bytes] | None = None,
     stdout: anyio.AsyncFile[str] | None = None,
 ) -> AsyncIterator[tuple[Any, Any]]:
     if not stdin:
-        stdin = anyio.wrap_file(TextIOWrapper(sys.stdin.buffer, encoding="utf-8"))
+        # Raw binary stream -- NOT a TextIOWrapper. `_read_stdio_message_payload` needs byte-exact
+        # control over how many bytes it consumes for a Content-Length-framed body; decoding is
+        # done once, per logical message, after the correct number of bytes has been read (see
+        # audit #49). Mixing a text-decoding wrapper with an explicit byte count desyncs the
+        # stream on any multi-byte UTF-8 payload.
+        stdin = anyio.wrap_file(sys.stdin.buffer)
     if not stdout:
         stdout = anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
 
