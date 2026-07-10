@@ -137,26 +137,31 @@ def test_blast_radius_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
 def test_impact_propagates_caller_scan_partial_exits_2(tmp_path: Path, monkeypatch) -> None:
     # cursor review 1.40.0: impact's second caller-scan pass can be deadline-truncated; impact must
     # carry that partial signal so it exits 2 like `tg callers`.
+    #
+    # task #103: impact() now builds ONE shared repo_map and calls the *_from_map variants
+    # directly (build_symbol_impact_from_map / build_symbol_callers_from_map) instead of the
+    # build_symbol_impact/build_symbol_callers wrappers -- mock at the new seam, since the old
+    # wrapper names are no longer imported/called by the CLI handler at all.
     (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
 
-    def _impact(symbol, path=".", **_kwargs):
+    def _impact_from_map(repo_map_arg, symbol, **_kwargs):
         # impact FOUND files, but its second caller-scan pass is deadline-truncated -> impact must carry
         # that partial signal and exit 2 EVEN THOUGH it found files (council-verified B: truncation trumps
         # found), so an agent never trusts a truncated impact set as exhaustive.
         return {
             "symbol": symbol,
-            "path": str(path),
+            "path": str(repo_map_arg.get("path", ".")),
             "files": ["m.py"],
             "tests": [],
             "callers": [],
             "no_match": False,
         }
 
-    def _callers(symbol, path=".", **_kwargs):
+    def _callers_from_map(repo_map_arg, symbol, **_kwargs):
         return {"callers": [], "partial": True, "deadline_limit": {"deadline_exceeded": True}}
 
-    monkeypatch.setattr(repo_map, "build_symbol_impact", _impact)
-    monkeypatch.setattr(repo_map, "build_symbol_callers", _callers)
+    monkeypatch.setattr(repo_map, "build_symbol_impact_from_map", _impact_from_map)
+    monkeypatch.setattr(repo_map, "build_symbol_callers_from_map", _callers_from_map)
     result = CliRunner().invoke(app, ["impact", "foo", str(tmp_path), "--json"])
     assert result.exit_code == 2, result.output
 
