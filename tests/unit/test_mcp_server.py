@@ -952,6 +952,32 @@ def test_tg_ast_search_backend_execution_error_skips_file_and_keeps_partial_resu
     assert "b.py" in payload["incomplete_reason"]
 
 
+def test_tg_ast_search_returns_structured_unavailable_when_pipeline_construction_raises(
+    tmp_path, monkeypatch
+):
+    """Regression (CI 2026-07-10, PR #484): ``Pipeline(ast=True)`` construction itself raises
+    ``ConfigurationError`` when the ast-grep/tree-sitter deps are absent for the pattern (e.g. a
+    Linux runner without ast-grep) -- EARLIER than the backend-type check. tg_ast_search must
+    fail closed with a STRUCTURED ``unavailable`` error, never let it escape as a raw FastMCP
+    ToolError (Backend Fail-Closed Contract). Without the catch, a valid in-root call raised,
+    which broke the confinement ratchet's positive (in-root-accepted) probe on Linux CI."""
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.core.pipeline import ConfigurationError
+
+    monkeypatch.chdir(tmp_path)  # an in-root path so the confinement check passes first
+    with patch(
+        "tensor_grep.cli.mcp_server.Pipeline",
+        side_effect=ConfigurationError(
+            "Explicit AST search requires AST dependencies: ast-grep wrapper backend is required"
+        ),
+    ):
+        out = mcp_server.tg_ast_search("def $A():", "python", ".")
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "unavailable"
+    assert "not available" in payload["error"]["message"]
+
+
 def test_tg_ast_search_refuses_vendored_root_scan_with_actionable_message(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server

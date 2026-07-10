@@ -56,7 +56,7 @@ from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
-from tensor_grep.core.pipeline import Pipeline
+from tensor_grep.core.pipeline import ConfigurationError, Pipeline
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -4062,8 +4062,30 @@ def tg_ast_search(
 
     normalized_max_repo_files = max(1, int(max_repo_files))
     config = SearchConfig(ast=True, lang=lang, no_messages=True)
-    pipeline = Pipeline(config=config)
-    backend = pipeline.get_backend()
+    try:
+        pipeline = Pipeline(config=config)
+        backend = pipeline.get_backend()
+    except ConfigurationError as exc:
+        # Fail closed with a STRUCTURED "unavailable" error instead of letting the
+        # ConfigurationError escape as an unwrapped FastMCP ToolError (Backend Fail-Closed
+        # Contract). `Pipeline(ast=True)` construction itself raises when the ast-grep /
+        # tree-sitter deps are absent for this pattern (e.g. a Linux runner without ast-grep),
+        # which is EARLIER than the backend-type check below -- mirror that branch's response
+        # so a valid in-root path returns a clean "unavailable" rather than a raw exception.
+        if structured_json:
+            return json.dumps(
+                {
+                    "pattern": pattern,
+                    "lang": lang,
+                    "path": path,
+                    "error": {
+                        "code": "unavailable",
+                        "message": f"AstBackend is not available on this system: {exc}",
+                    },
+                },
+                indent=2,
+            )
+        return f"Error: AstBackend is not available on this system: {exc}"
 
     backend_name = type(backend).__name__
     if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
