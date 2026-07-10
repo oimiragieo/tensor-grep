@@ -20,19 +20,24 @@ def _project(tmp_path):
     return str(tmp_path)
 
 
-def test_tg_context_render_bounds_by_default(tmp_path):
+def test_tg_context_render_bounds_by_default(tmp_path, monkeypatch):
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so the
+    # tmp_path-derived project root is in-root.
+    monkeypatch.chdir(tmp_path)
     payload = json.loads(mcp_server.tg_context_render("create invoice", _project(tmp_path)))
     assert payload["max_tokens"] == mcp_server._DEFAULT_MCP_CONTEXT_MAX_TOKENS
 
 
-def test_tg_context_render_zero_is_unbounded_opt_out(tmp_path):
+def test_tg_context_render_zero_is_unbounded_opt_out(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     payload = json.loads(
         mcp_server.tg_context_render("create invoice", _project(tmp_path), max_tokens=0)
     )
     assert payload["max_tokens"] is None  # normalized <=0 -> unbounded
 
 
-def test_tg_context_pack_accepts_and_defaults_max_tokens(tmp_path):
+def test_tg_context_pack_accepts_and_defaults_max_tokens(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     # tg_context_pack had NO max_tokens param at all -> always unbounded. It now accepts one and
     # defaults to the bound (call succeeds + emits the pack).
     out = mcp_server.tg_context_pack("create invoice", _project(tmp_path))

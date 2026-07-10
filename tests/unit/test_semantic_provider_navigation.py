@@ -1778,6 +1778,9 @@ def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeyp
 
 
 def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path
+    # is in-root.
+    monkeypatch.chdir(tmp_path)
     module_path = tmp_path / "module.py"
     module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
 
@@ -1798,6 +1801,9 @@ def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path
+    # is in-root.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_impact",
@@ -1823,6 +1829,9 @@ def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
 
 
 def test_mcp_source_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path
+    # is in-root.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_source",
@@ -1844,6 +1853,9 @@ def test_mcp_source_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
 
 
 def test_mcp_blast_radius_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path
+    # is in-root.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_blast_radius",
@@ -1869,6 +1881,9 @@ def test_mcp_blast_radius_accepts_provider_parameter(tmp_path: Path, monkeypatch
 
 
 def test_mcp_blast_radius_plan_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path
+    # is in-root.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_plan",
@@ -1896,6 +1911,10 @@ def test_mcp_blast_radius_plan_accepts_provider_parameter(tmp_path: Path, monkey
 
 
 def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path
+    # is in-root.
+    monkeypatch.chdir(tmp_path)
+
     def fake_build_symbol_blast_radius_render(
         symbol,
         path,

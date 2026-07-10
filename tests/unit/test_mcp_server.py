@@ -263,7 +263,9 @@ def test_tg_ast_search_accepts_ast_wrapper_backend():
 
         out = mcp_server.tg_ast_search("def $A():", "python", ".", structured_json=False)
 
-    assert out.startswith("No AST matches found for pattern in ..")
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being echoed back, so only the message PREFIX (not the exact trailing path) is stable.
+    assert out.startswith("No AST matches found for pattern in ")
     assert "Routing: backend=" in out
 
 
@@ -448,7 +450,8 @@ def test_tg_search_can_return_bounded_structured_json():
 
     payload = json.loads(out)
     assert payload["pattern"] == "ERROR"
-    assert payload["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path.
+    assert payload["path"] == str(Path.cwd().resolve())
     assert payload["total_matches"] == 3
     assert payload["total_files"] == 2
     assert payload["rendered_match_count"] == 2
@@ -497,7 +500,9 @@ def test_tg_search_uses_single_aggregate_ripgrep_search_for_cli_parity():
         out = mcp_server.tg_search("ERROR", ".")
 
     backend.search.assert_called_once()
-    assert backend.search.call_args.args[:2] == (".", "ERROR")
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the backend.
+    assert backend.search.call_args.args[:2] == (str(Path.cwd().resolve()), "ERROR")
     payload = json.loads(out)
     assert payload["total_matches"] == 1
     assert payload["total_files"] == 1
@@ -610,7 +615,9 @@ def test_tg_search_count_matches_should_respect_total_files_without_materialized
 
         out = mcp_server.tg_search("ERROR", ".", count_matches=True, structured_json=False)
 
-    assert out.startswith("Found a total of 3 matches across 1 files in ..")
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path, so only
+    # the message PREFIX (not the exact trailing path) is stable.
+    assert out.startswith("Found a total of 3 matches across 1 files in ")
     assert "Routing: backend=RustCoreBackend reason=rust_count" in out
     assert "gpu_device_ids=[]" in out
     assert "gpu_chunk_plan_mb=[]" in out
@@ -823,7 +830,8 @@ def test_tg_search_walk_deadline_exceeded_preserves_partial_results_and_flags_in
     assert payload["truncated"] is True
 
 
-def test_tg_search_refuses_vendored_root_scan_with_actionable_message(tmp_path):
+def test_tg_search_refuses_vendored_root_scan_with_actionable_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     (tmp_path / "vendor").mkdir()
@@ -944,7 +952,34 @@ def test_tg_ast_search_backend_execution_error_skips_file_and_keeps_partial_resu
     assert "b.py" in payload["incomplete_reason"]
 
 
-def test_tg_ast_search_refuses_vendored_root_scan_with_actionable_message(tmp_path):
+def test_tg_ast_search_returns_structured_unavailable_when_pipeline_construction_raises(
+    tmp_path, monkeypatch
+):
+    """Regression (CI 2026-07-10, PR #484): ``Pipeline(ast=True)`` construction itself raises
+    ``ConfigurationError`` when the ast-grep/tree-sitter deps are absent for the pattern (e.g. a
+    Linux runner without ast-grep) -- EARLIER than the backend-type check. tg_ast_search must
+    fail closed with a STRUCTURED ``unavailable`` error, never let it escape as a raw FastMCP
+    ToolError (Backend Fail-Closed Contract). Without the catch, a valid in-root call raised,
+    which broke the confinement ratchet's positive (in-root-accepted) probe on Linux CI."""
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.core.pipeline import ConfigurationError
+
+    monkeypatch.chdir(tmp_path)  # an in-root path so the confinement check passes first
+    with patch(
+        "tensor_grep.cli.mcp_server.Pipeline",
+        side_effect=ConfigurationError(
+            "Explicit AST search requires AST dependencies: ast-grep wrapper backend is required"
+        ),
+    ):
+        out = mcp_server.tg_ast_search("def $A():", "python", ".")
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "unavailable"
+    assert "not available" in payload["error"]["message"]
+
+
+def test_tg_ast_search_refuses_vendored_root_scan_with_actionable_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     (tmp_path / "third_party").mkdir()
@@ -1066,7 +1101,8 @@ def test_tg_classify_logs_defaults_to_local_heuristics(monkeypatch, tmp_path):
     assert any("error" in lbl.lower() for lbl in anomaly_labels)
 
 
-def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Path):
+def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -1101,7 +1137,8 @@ def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Pat
     assert payload["edit_plan_seed"]["plan_trust_summary"]
 
 
-def test_tg_session_context_supports_auto_refresh_alias(tmp_path: Path):
+def test_tg_session_context_supports_auto_refresh_alias(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server, session_store
 
     project = tmp_path / "project"
@@ -1138,10 +1175,13 @@ def test_tg_session_context_returns_uniform_error_detail(tmp_path: Path):
     assert "detail" in payload["error"]
 
 
-def test_tg_session_context_default_max_tokens_matches_sibling_context_tools(tmp_path: Path):
+def test_tg_session_context_default_max_tokens_matches_sibling_context_tools(
+    tmp_path: Path, monkeypatch
+):
     # H4: `tg_session_context` used to call `session_context` (-> `build_context_pack_from_map`)
     # with NO token bound at all, unlike every sibling context tool. It must now default to the
     # same `_DEFAULT_MCP_CONTEXT_MAX_TOKENS` and emit the `token_budget` field.
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -1158,7 +1198,8 @@ def test_tg_session_context_default_max_tokens_matches_sibling_context_tools(tmp
     assert payload["token_budget"]["truncated"] is False
 
 
-def test_tg_session_context_bounds_pack_by_max_tokens(tmp_path: Path):
+def test_tg_session_context_bounds_pack_by_max_tokens(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -1213,7 +1254,8 @@ def test_tg_session_lifecycle_errors_return_uniform_error_detail(tmp_path: Path)
             assert "detail" in payload["error"]
 
 
-def test_tg_session_open_accepts_initial_repo_map_cap(tmp_path: Path):
+def test_tg_session_open_accepts_initial_repo_map_cap(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -1235,7 +1277,8 @@ def test_tg_session_open_accepts_initial_repo_map_cap(tmp_path: Path):
     assert payload["build_seconds"] >= 0
 
 
-def test_tg_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path):
+def test_tg_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -1311,6 +1354,7 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
 
 
 def test_tg_ruleset_scan_refuses_direct_temp_root_before_walking(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
     from tests.unit.test_cli_modes import _ExplodingAstScanner
 
@@ -1552,6 +1596,8 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
     assert isinstance(parsed["plan_digest"], str) and parsed["plan_digest"]
     assert parsed["match_count"] == payload["total_edits"]
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv.
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1563,7 +1609,7 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
         # round-3 security: `--` ends options so a pattern beginning with `-` is a positional.
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((Path.cwd() / "src").resolve()),
     ]
 
 
@@ -1611,7 +1657,7 @@ def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
     options = mcp_server.mcp._mcp_server.create_initialization_options()
 
     assert options.server_name == "tensor-grep"
-    assert options.server_version == "1.0.0"
+    assert options.server_version == "1.1.0"
     assert options.server_version == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mcp_server._mcp_server_version() == version("tensor-grep")
 
@@ -1648,6 +1694,7 @@ def test_tg_mcp_capabilities_reports_bad_native_override(monkeypatch, tmp_path):
 
 
 def test_tg_rewrite_plan_uses_embedded_fallback_without_native_binary(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     expected = {
@@ -1681,6 +1728,7 @@ def test_tg_rewrite_plan_uses_embedded_fallback_without_native_binary(monkeypatc
 
 
 def test_tg_rewrite_plan_reports_unavailable_without_native_or_embedded(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
@@ -1703,6 +1751,7 @@ def test_tg_rewrite_plan_reports_unavailable_without_native_or_embedded(monkeypa
 
 
 def test_tg_rewrite_apply_verify_returns_unavailable_without_native_binary(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
@@ -1727,6 +1776,7 @@ def test_tg_rewrite_apply_verify_returns_unavailable_without_native_binary(monke
 
 
 def test_tg_rewrite_diff_returns_unavailable_without_native_binary(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
@@ -1749,6 +1799,7 @@ def test_tg_rewrite_diff_returns_unavailable_without_native_binary(monkeypatch, 
 
 
 def test_tg_rewrite_diff_returns_unavailable_for_bad_native_override(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(tmp_path / "missing-tg.exe"))
@@ -1771,6 +1822,7 @@ def test_tg_rewrite_diff_returns_unavailable_for_bad_native_override(monkeypatch
 
 
 def test_tg_index_search_returns_unavailable_without_native_binary(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
@@ -1898,6 +1950,8 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
     # apply fields are otherwise unchanged.
     assert {key: parsed[key] for key in payload} == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv.
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1910,7 +1964,7 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
         "--json",
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((Path.cwd() / "src").resolve()),
     ]
 
 
@@ -1978,6 +2032,8 @@ def test_tg_rewrite_apply_supports_optional_validation_commands(monkeypatch):
     # audit A4: tolerate the added mcp_contract_version envelope key.
     assert {key: parsed[key] for key in payload} == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv.
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -1994,7 +2050,7 @@ def test_tg_rewrite_apply_supports_optional_validation_commands(monkeypatch):
         "--json",
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((Path.cwd() / "src").resolve()),
     ]
 
 
@@ -2122,6 +2178,7 @@ def test_tg_rewrite_apply_gates_policy_file_validation_commands(tmp_path, monkey
     gate OFF the policy's lint_cmd must be refused (code=unsupported_option) BEFORE
     any command runs (load_apply_policy fails closed before native/command execution).
     """
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     monkeypatch.delenv("TG_MCP_ALLOW_VALIDATION_COMMANDS", raising=False)
@@ -2151,7 +2208,8 @@ def test_tg_rewrite_apply_gates_policy_file_validation_commands(tmp_path, monkey
     assert parsed["error"]["retryable"] is False
 
 
-def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
+def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     policy_path = tmp_path / "apply-policy.json"
@@ -2235,6 +2293,8 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
     # M12: applied_edits count is stamped at the top level
     assert "applied_edits" in parsed
     assert isinstance(parsed["applied_edits"], int)
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv.
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -2247,11 +2307,12 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
         "--json",
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((Path.cwd() / "src").resolve()),
     ]
 
 
 def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     # round-5 security: audit_manifest is confined to cwd (see the round-5 confinement
@@ -2307,6 +2368,8 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkey
     # audit A4: tolerate the added mcp_contract_version envelope key.
     assert {key: parsed[key] for key in payload} == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv (mirrors resolved_manifest's own confinement).
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -2320,7 +2383,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkey
         "--json",
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((cwd / "src").resolve()),
     ]
 
 
@@ -2391,6 +2454,7 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
 
 
 def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     # round-5 security: audit_manifest is confined to cwd, and audit_signing_key (a secret
@@ -2448,6 +2512,8 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, mon
     # audit A4: tolerate the added mcp_contract_version envelope key.
     assert {key: parsed[key] for key in payload} == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv (mirrors resolved_manifest's own confinement).
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -2463,7 +2529,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, mon
         "--json",
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((cwd / "src").resolve()),
     ]
 
 
@@ -2496,7 +2562,8 @@ def test_tg_audit_manifest_verify_supports_signed_manifests(tmp_path, monkeypatc
     assert parsed["errors"] == []
 
 
-def test_tg_audit_history_matches_cli_json_schema(tmp_path):
+def test_tg_audit_history_matches_cli_json_schema(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import audit_manifest, mcp_server
 
     project = tmp_path / "project"
@@ -2514,7 +2581,8 @@ def test_tg_audit_history_matches_cli_json_schema(tmp_path):
     assert payload["history"] == audit_manifest.list_audit_history(project)
 
 
-def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path):
+def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3511,6 +3579,11 @@ def _read_path_case_file_importers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def _read_path_case_session_file_importers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     from tensor_grep.cli import mcp_server
 
+    # round-8 (audit #95): tg_session_open's `path` is now confined to the MCP root (cwd);
+    # chdir to tmp_path so `project` (a subdirectory) is in-root while `escape` (a SIBLING of
+    # project, still under tmp_path/cwd) stays correctly outside the session_root=project
+    # anchor this case is actually testing.
+    monkeypatch.chdir(tmp_path)
     project = tmp_path / "project"
     project.mkdir()
     (project / "app.py").write_text("x = 1\n", encoding="utf-8")
@@ -3611,7 +3684,8 @@ def test_tg_file_importers_accepts_in_root_path(tmp_path, monkeypatch):
     assert parsed["importer_files"] == [str(consumer.resolve())]
 
 
-def test_tg_session_file_importers_accepts_in_root_path(tmp_path):
+def test_tg_session_file_importers_accepts_in_root_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3631,12 +3705,13 @@ def test_tg_session_file_importers_accepts_in_root_path(tmp_path):
     assert parsed["importer_files"] == [str(consumer.resolve())]
 
 
-def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path):
+def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path, monkeypatch):
     """VERIFY confining `policy` (round-7 fix, Opus gate item #2) does not regress a
     legitimate in-root policy: a policy file inside the scan root must reach
     load_apply_policy's OWN schema validation (code="invalid_policy") rather than being
     refused by the new confinement check (which would instead surface code="invalid_input"
     with a "must stay within" message)."""
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     proj = tmp_path / "proj"
@@ -3667,12 +3742,13 @@ def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path):
     assert any(detail["field"] == "on_failure" for detail in parsed["error"]["details"])
 
 
-def test_tg_rewrite_apply_accepts_co_located_policy_for_single_file_target(tmp_path):
+def test_tg_rewrite_apply_accepts_co_located_policy_for_single_file_target(tmp_path, monkeypatch):
     """audit #76 (Opus-gate nit on #464): when `path` is a single FILE (a targeted rewrite),
     a policy co-located in the file's directory must reach load_apply_policy's schema
     validation (code="invalid_policy"), NOT be fail-closed-refused by confinement
     (code="invalid_input"). Pre-fix the policy anchor was the file itself, which has no
     descendants, so any co-located policy was rejected."""
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     proj = tmp_path / "proj"
@@ -3731,7 +3807,8 @@ def test_tg_rewrite_apply_still_rejects_policy_outside_single_file_target_dir(tm
     assert parsed["error"]["code"] == "invalid_input"
 
 
-def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
+def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3755,7 +3832,8 @@ def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
     assert target.read_text(encoding="utf-8") == "value = 1\n"
 
 
-def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
+def test_tg_session_mcp_tools_wrap_session_store(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3784,7 +3862,8 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
 
-def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
+def test_tg_session_context_render_uses_cached_repo_map(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3817,7 +3896,10 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert "rendered_context" in rendered
 
 
-def test_tg_session_context_render_profile_includes_profiling_without_changing_output(tmp_path):
+def test_tg_session_context_render_profile_includes_profiling_without_changing_output(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3847,7 +3929,8 @@ def test_tg_session_context_render_profile_includes_profiling_without_changing_o
     assert _without_profiling(profiled) == _without_profiling(baseline)
 
 
-def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path):
+def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3894,7 +3977,8 @@ def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path):
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
-def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_path):
+def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3944,7 +4028,9 @@ def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_pa
 
 def test_tg_symbol_blast_radius_render_profile_includes_profiling_without_changing_output(
     tmp_path,
+    monkeypatch,
 ):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3993,7 +4079,8 @@ def test_tg_symbol_blast_radius_render_profile_includes_profiling_without_changi
     assert _without_profiling(profiled) == baseline
 
 
-def test_tg_symbol_blast_radius_plan_returns_machine_readable_bundle(tmp_path):
+def test_tg_symbol_blast_radius_plan_returns_machine_readable_bundle(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4037,7 +4124,8 @@ def test_tg_symbol_blast_radius_plan_returns_machine_readable_bundle(tmp_path):
     )
 
 
-def test_tg_session_blast_radius_render_uses_cached_repo_map(tmp_path):
+def test_tg_session_blast_radius_render_uses_cached_repo_map(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4148,7 +4236,8 @@ def test_session_serve_render_commands_include_enriched_edit_plan_seed(tmp_path)
     assert str(service_path.resolve()) in responses[1]["edit_plan_seed"]["dependent_files"]
 
 
-def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
+def test_tg_session_refresh_updates_cached_session_payload(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4173,7 +4262,8 @@ def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
     assert str(second_path.resolve()) in shown["repo_map"]["files"]
 
 
-def test_tg_session_context_reports_stale_session_until_refreshed(tmp_path):
+def test_tg_session_context_reports_stale_session_until_refreshed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4199,7 +4289,8 @@ def test_tg_session_context_reports_stale_session_until_refreshed(tmp_path):
     assert context["routing_reason"] == "session-context"
 
 
-def test_tg_session_context_can_auto_refresh_stale_session(tmp_path):
+def test_tg_session_context_can_auto_refresh_stale_session(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4258,6 +4349,8 @@ def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
     assert parsed["routing_reason"] == "ast-native"
     assert parsed["sidecar_used"] is False
     assert parsed["diff"] == diff_preview
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv.
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "run",
@@ -4268,18 +4361,21 @@ def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
         "--diff",
         "--",
         "def $F($$$ARGS): return $EXPR",
-        "src",
+        str((Path.cwd() / "src").resolve()),
     ]
 
 
 def test_tg_rewrite_plan_returns_structured_error_for_missing_path():
     from tensor_grep.cli import mcp_server
 
+    # round-8 (audit #95): an absolute out-of-cwd path is now refused by CONFINEMENT before
+    # ever reaching the "Path not found" existence check this test exercises -- use a
+    # relative, in-root-but-nonexistent path so the existence check is still what fires.
     out = mcp_server.tg_rewrite_plan(
         pattern="def $F($$$ARGS): return $EXPR",
         replacement="lambda $$$ARGS: $EXPR",
         lang="python",
-        path="C:/definitely-missing-for-mcp-server-tests",
+        path="definitely-missing-for-mcp-server-tests",
     )
 
     parsed = json.loads(out)
@@ -4329,6 +4425,8 @@ def test_tg_index_search_returns_native_index_search_json_shape():
     # audit A4: tolerate the added mcp_contract_version envelope key.
     assert {key: parsed[key] for key in payload} == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
+    # path before it reaches the native argv.
     assert mock_run.call_args.args[0] == [
         "tg.exe",
         "search",
@@ -4336,16 +4434,19 @@ def test_tg_index_search_returns_native_index_search_json_shape():
         "--json",
         "--",
         "ERROR",
-        "src",
+        str((Path.cwd() / "src").resolve()),
     ]
 
 
 def test_tg_index_search_returns_structured_error_for_missing_path():
     from tensor_grep.cli import mcp_server
 
+    # round-8 (audit #95): an absolute out-of-cwd path is now refused by CONFINEMENT before
+    # ever reaching the "Path not found" existence check this test exercises -- use a
+    # relative, in-root-but-nonexistent path so the existence check is still what fires.
     out = mcp_server.tg_index_search(
         pattern="ERROR",
-        path="C:/definitely-missing-for-mcp-server-tests",
+        path="definitely-missing-for-mcp-server-tests",
     )
 
     parsed = json.loads(out)
@@ -4356,7 +4457,8 @@ def test_tg_index_search_returns_structured_error_for_missing_path():
     assert "Traceback" not in parsed["error"]["message"]
 
 
-def test_tg_repo_map_returns_json_inventory(tmp_path):
+def test_tg_repo_map_returns_json_inventory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4404,7 +4506,8 @@ def test_tg_repo_map_returns_json_inventory(tmp_path):
     assert str(module_path.resolve()) in payload["related_paths"]
 
 
-def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path):
+def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4469,7 +4572,8 @@ def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path):
     )
 
 
-def test_tg_context_pack_returns_ranked_inventory(tmp_path):
+def test_tg_context_pack_returns_ranked_inventory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4504,7 +4608,8 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path):
     assert payload["files"][0] == str(module_path.resolve())
 
 
-def test_tg_context_render_returns_prompt_ready_context(tmp_path):
+def test_tg_context_render_returns_prompt_ready_context(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4571,7 +4676,10 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert "create_invoice" in payload["rendered_context"]
 
 
-def test_tg_context_render_profile_includes_profiling_without_changing_output(tmp_path):
+def test_tg_context_render_profile_includes_profiling_without_changing_output(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4608,7 +4716,8 @@ def test_tg_context_render_profile_includes_profiling_without_changing_output(tm
     assert _without_profiling(profiled) == baseline
 
 
-def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
+def test_tg_context_render_includes_exact_caller_update_lines(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4650,7 +4759,8 @@ def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
         assert f"calls create_invoice() on line {entry['start_line']}" in entry["rationale"]
 
 
-def test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target(tmp_path):
+def test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4694,7 +4804,8 @@ def test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target(tmp
     assert payload["context_consistency"]["primary_file_included"] is True
 
 
-def test_tg_agent_capsule_returns_actionable_context_capsule(tmp_path: Path):
+def test_tg_agent_capsule_returns_actionable_context_capsule(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4739,6 +4850,7 @@ def test_tg_agent_capsule_returns_actionable_context_capsule(tmp_path: Path):
 
 
 def test_tg_agent_capsule_accepts_gpu_evidence_options(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import agent_capsule, mcp_server
 
     project = tmp_path / "project"
@@ -4776,7 +4888,8 @@ def test_tg_agent_capsule_accepts_gpu_evidence_options(monkeypatch, tmp_path: Pa
     assert acceleration["sidecar_used"] is True
 
 
-def test_tg_agent_capsule_returns_invalid_input_for_missing_path(tmp_path: Path):
+def test_tg_agent_capsule_returns_invalid_input_for_missing_path(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     payload = json.loads(
@@ -4791,7 +4904,8 @@ def test_tg_agent_capsule_returns_invalid_input_for_missing_path(tmp_path: Path)
     assert "Path not found" in payload["error"]["message"]
 
 
-def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
+def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4857,7 +4971,8 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
     assert "rendered_context" not in payload["plan"]
 
 
-def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):
+def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4904,7 +5019,8 @@ def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):
     )
 
 
-def test_tg_context_render_honors_max_render_chars(tmp_path):
+def test_tg_context_render_honors_max_render_chars(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4931,7 +5047,8 @@ def test_tg_context_render_honors_max_render_chars(tmp_path):
     assert payload["sources"][0]["name"] == "create_invoice"
 
 
-def test_tg_context_render_accepts_max_tokens_and_model(tmp_path):
+def test_tg_context_render_accepts_max_tokens_and_model(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -4970,7 +5087,8 @@ def test_tg_context_render_accepts_max_tokens_and_model(tmp_path):
     )
 
 
-def test_tg_context_render_can_optimize_source_blocks_for_llm_use(tmp_path):
+def test_tg_context_render_can_optimize_source_blocks_for_llm_use(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5010,7 +5128,8 @@ def test_tg_context_render_can_optimize_source_blocks_for_llm_use(tmp_path):
     assert "create_invoice" in payload["rendered_context"]
 
 
-def test_tg_context_render_strips_python_docstrings_and_pass_boilerplate(tmp_path):
+def test_tg_context_render_strips_python_docstrings_and_pass_boilerplate(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5064,7 +5183,8 @@ def test_tg_context_render_strips_python_docstrings_and_pass_boilerplate(tmp_pat
     assert create_invoice["line_map"][0]["rendered_start_line"] == 1
 
 
-def test_tg_session_context_render_accepts_max_tokens_and_model(tmp_path):
+def test_tg_session_context_render_accepts_max_tokens_and_model(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5102,7 +5222,8 @@ def test_tg_session_context_render_accepts_max_tokens_and_model(tmp_path):
     )
 
 
-def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
+def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5127,7 +5248,8 @@ def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
     assert payload["graph_completeness"] == "strong"
 
 
-def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path):
+def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5155,7 +5277,8 @@ def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path):
     assert rust_payload["definitions"][0]["kind"] == "function"
 
 
-def test_tg_symbol_source_returns_exact_python_function_body(tmp_path):
+def test_tg_symbol_source_returns_exact_python_function_body(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5179,7 +5302,8 @@ def test_tg_symbol_source_returns_exact_python_function_body(tmp_path):
     assert "subtotal = total + tax" in payload["sources"][0]["source"]
 
 
-def test_tg_symbol_source_can_extract_typescript_and_rust_blocks(tmp_path):
+def test_tg_symbol_source_can_extract_typescript_and_rust_blocks(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5209,7 +5333,8 @@ def test_tg_symbol_source_can_extract_typescript_and_rust_blocks(tmp_path):
     assert "let subtotal = 1;" in rust_payload["sources"][0]["source"]
 
 
-def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
+def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5250,6 +5375,7 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
 
 
 def test_tg_symbol_impact_uses_bounded_repo_scan_by_default(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     seen: dict[str, object] = {}
@@ -5293,7 +5419,8 @@ def test_tg_symbol_impact_uses_bounded_repo_scan_by_default(monkeypatch, tmp_pat
     assert seen["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
 
 
-def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_path):
+def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5336,7 +5463,10 @@ def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_pa
     assert rust_payload["tests"][0] == str(rust_test_path.resolve())
 
 
-def test_tg_symbol_impact_prefers_import_linked_source_files_over_name_only_matches(tmp_path):
+def test_tg_symbol_impact_prefers_import_linked_source_files_over_name_only_matches(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5365,7 +5495,10 @@ def test_tg_symbol_impact_prefers_import_linked_source_files_over_name_only_matc
     assert str(noisy_path.resolve()) not in payload["files"][:2]
 
 
-def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(tmp_path):
+def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5405,7 +5538,8 @@ def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(t
     assert {item["name"] for item in payload["file_summaries"][0]["symbols"]} == {"create_invoice"}
 
 
-def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
+def test_tg_symbol_refs_returns_python_reference_sites(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5433,7 +5567,8 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
 
 
-def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_path):
+def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5479,7 +5614,8 @@ def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_p
     assert any(caller["file"] == str(rust_path.resolve()) for caller in rust_callers["callers"])
 
 
-def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
+def test_tg_symbol_callers_returns_python_call_sites(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5522,7 +5658,8 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
     assert str(other_path.resolve()) not in payload["related_paths"][:1]
 
 
-def test_tg_symbol_callers_prefers_import_linked_typescript_tests(tmp_path):
+def test_tg_symbol_callers_prefers_import_linked_typescript_tests(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5555,7 +5692,8 @@ def test_tg_symbol_callers_prefers_import_linked_typescript_tests(tmp_path):
     assert payload["tests"][0] == str(ts_test_path.resolve())
 
 
-def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
+def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5623,7 +5761,10 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
 # structured error, not propagate a raw traceback out of the MCP call. ---
 
 
-def test_tg_symbol_blast_radius_returns_structured_error_on_unexpected_exception(tmp_path):
+def test_tg_symbol_blast_radius_returns_structured_error_on_unexpected_exception(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     with patch(
@@ -5640,7 +5781,9 @@ def test_tg_symbol_blast_radius_returns_structured_error_on_unexpected_exception
 
 def test_tg_symbol_blast_radius_render_returns_structured_error_on_unexpected_exception(
     tmp_path,
+    monkeypatch,
 ):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     with patch(
@@ -5654,7 +5797,8 @@ def test_tg_symbol_blast_radius_render_returns_structured_error_on_unexpected_ex
     assert payload["error"]["retryable"] is False
 
 
-def test_tg_repo_map_returns_structured_error_on_unexpected_exception(tmp_path):
+def test_tg_repo_map_returns_structured_error_on_unexpected_exception(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     with patch(
@@ -5668,7 +5812,8 @@ def test_tg_repo_map_returns_structured_error_on_unexpected_exception(tmp_path):
     assert payload["error"]["retryable"] is False
 
 
-def test_tg_context_pack_returns_structured_error_on_unexpected_exception(tmp_path):
+def test_tg_context_pack_returns_structured_error_on_unexpected_exception(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     with patch(
@@ -5682,7 +5827,8 @@ def test_tg_context_pack_returns_structured_error_on_unexpected_exception(tmp_pa
     assert payload["error"]["retryable"] is False
 
 
-def test_tg_agent_capsule_returns_structured_error_on_unexpected_exception(tmp_path):
+def test_tg_agent_capsule_returns_structured_error_on_unexpected_exception(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     with patch(
@@ -5695,7 +5841,10 @@ def test_tg_agent_capsule_returns_structured_error_on_unexpected_exception(tmp_p
     assert payload["error"]["code"] == "internal_error"
 
 
-def test_tg_session_edit_plan_returns_structured_error_on_unexpected_exception(tmp_path):
+def test_tg_session_edit_plan_returns_structured_error_on_unexpected_exception(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5717,7 +5866,8 @@ def test_tg_session_edit_plan_returns_structured_error_on_unexpected_exception(t
     assert payload["session_id"] == session_id
 
 
-def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_path):
+def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5763,7 +5913,10 @@ def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_pat
     assert payload["test_matches"][0]["association"]["confidence"] in {"strong", "moderate"}
 
 
-def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers(tmp_path):
+def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5813,7 +5966,8 @@ def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers
     assert central_match["graph_score"] > leaf_match["graph_score"]
 
 
-def test_tg_symbol_impact_orders_tests_by_graph_score(tmp_path):
+def test_tg_symbol_impact_orders_tests_by_graph_score(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5872,7 +6026,10 @@ def test_tg_symbol_impact_orders_tests_by_graph_score(tmp_path):
     assert cli_match["association"]["confidence"] in {"strong", "moderate"}
 
 
-def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):
+def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5904,7 +6061,10 @@ def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(
     assert consumer_calls[0]["line"] == 5
 
 
-def test_tg_symbol_callers_uses_parser_backed_typescript_calls_not_string_noise(tmp_path):
+def test_tg_symbol_callers_uses_parser_backed_typescript_calls_not_string_noise(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5936,7 +6096,8 @@ def test_tg_symbol_callers_uses_parser_backed_typescript_calls_not_string_noise(
     assert consumer_calls[0]["line"] == 5
 
 
-def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_path):
+def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5967,7 +6128,8 @@ def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_pa
     assert consumer_calls[0]["line"] == 4
 
 
-def test_tg_symbol_callers_resolves_javascript_namespace_import_aliases(tmp_path):
+def test_tg_symbol_callers_resolves_javascript_namespace_import_aliases(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -5997,7 +6159,8 @@ def test_tg_symbol_callers_resolves_javascript_namespace_import_aliases(tmp_path
     assert consumer_calls[0]["line"] == 3
 
 
-def test_tg_symbol_callers_resolves_rust_module_alias_use_chains(tmp_path):
+def test_tg_symbol_callers_resolves_rust_module_alias_use_chains(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -6027,7 +6190,10 @@ def test_tg_symbol_callers_resolves_rust_module_alias_use_chains(tmp_path):
     assert consumer_calls[0]["line"] == 4
 
 
-def test_tg_symbol_callers_prefers_typescript_definition_selected_by_namespace_import(tmp_path):
+def test_tg_symbol_callers_prefers_typescript_definition_selected_by_namespace_import(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -6068,7 +6234,10 @@ def test_tg_symbol_callers_prefers_typescript_definition_selected_by_namespace_i
     )
 
 
-def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_chain(tmp_path):
+def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_chain(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -6109,7 +6278,8 @@ def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_
     )
 
 
-def test_tg_symbol_callers_prefers_typescript_tests_importing_direct_callers(tmp_path):
+def test_tg_symbol_callers_prefers_typescript_tests_importing_direct_callers(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -6159,7 +6329,8 @@ def test_tg_symbol_callers_prefers_typescript_tests_importing_direct_callers(tmp
     )
 
 
-def test_tg_symbol_callers_prefers_rust_tests_importing_direct_callers(tmp_path):
+def test_tg_symbol_callers_prefers_rust_tests_importing_direct_callers(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -6212,7 +6383,8 @@ def test_tg_symbol_callers_prefers_rust_tests_importing_direct_callers(tmp_path)
     )
 
 
-def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path):
+def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -6565,3 +6737,363 @@ def test_ruleset_scan_write_baseline_overwrites_on_rerun(monkeypatch, tmp_path):
     assert written["fingerprints"] == [first["findings"][0]["fingerprint"]]
     # round-5: the write lands under the validated anchor (scan_root == cwd here, path=".").
     assert baseline_file.resolve().parent == tmp_path.resolve()
+
+
+# ============================================================================================
+# round-8 ratchet (audit #95 gate-corrected version): every MCP tool's PRIMARY path/root
+# param was UNCONFINED (only secondary params like manifest_path/baseline_path/policy were
+# confined by the round-6/7 work above) -- an arbitrary-directory READ (and, on the rewrite/
+# checkpoint family, WRITE) primitive reachable from any MCP client. `_mcp_root()`/
+# `_confine_mcp_path()` (mcp_server.py) close this. This ratchet enumerates the LIVE
+# registered schema (mcp.list_tools()), NOT a hand-maintained name-matched list like
+# _READ_PATH_COVERAGE_CASES above -- a name-matched list only catches an escape on a param
+# someone remembered to add a case for. A future tool with an unclassified string param
+# (e.g. named "directory"/"target") FAILS this test until it is consciously confined (a real
+# _confine_mcp_path/_confine_write_path/_confine_read_path call, plus a _RATCHET_BASE_KWARGS
+# entry below) or allowlisted with a documented, genuinely-non-path reason.
+# ============================================================================================
+
+# Every string/string|None param NAME that is not a filesystem path, keyed by parameter name
+# (not tool) since the same name means the same thing everywhere it appears in this file. Two
+# exemption REASONS show up: (1) genuinely not a path (an identifier, pattern, or enum-like
+# mode name); (2) deliberately gated by a DIFFERENT mechanism than path confinement (an
+# operator opt-in env var) where confining it would be wrong, not a gap.
+CONFINEMENT_EXEMPT: dict[str, str] = {
+    "pattern": "a regex/literal search pattern, not a path",
+    "query": "a free-text ranking query, not a path",
+    "symbol": "an exact symbol name to resolve, not a path",
+    "session_id": "an opaque session identifier, not a path",
+    "lang": "a tree-sitter language name, not a path",
+    "ruleset": "a built-in ruleset NAME resolved via resolve_rule_pack, not a path",
+    "replacement": "a rewrite template string, not a path",
+    "glob": "a glob pattern fragment (tg_search), not a path",
+    "type_filter": "a file-type filter token e.g. 'py' (tg_search), not a path",
+    "file_type": (
+        "a file-type filter token e.g. 'py' (tg_ruleset_scan's sibling of type_filter), not a path"
+    ),
+    "language": "a ruleset language override name, not a path",
+    "justification": "free-text audit-suppression rationale, not a path",
+    "model": "a model name used for local token estimation, not a path",
+    "provider": "a semantic-provider mode name (native/lsp/hybrid), not a path",
+    "render_profile": "an enum-like render mode name (full/compact/llm), not a path",
+    "inline_rules": (
+        "reserved for a future inline ast-grep rule-source param (#95 follow-up, not yet "
+        "shipped) -- listed now so it does not need re-litigating when it lands"
+    ),
+    "signing_key": (
+        "a READ of secret HMAC key material, deliberately gated by the "
+        "TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ opt-in env var instead of path confinement -- "
+        "operators legitimately keep HMAC keys outside the repo (e.g. ~/.config)"
+    ),
+    "audit_signing_key": (
+        "tg_rewrite_apply's sibling of signing_key above; same opt-in-env-var gate, not "
+        "path confinement"
+    ),
+    "checkpoint_id": "an opaque checkpoint identifier, not a path",
+    "expected_plan_digest": "a hex content digest from a prior tg_rewrite_plan call, not a path",
+    "lint_cmd": (
+        "a shell command string, refused outright unless TG_MCP_ALLOW_VALIDATION_COMMANDS=1 "
+        "(a stronger, independent gate) -- not a path, and not confinable as one"
+    ),
+    "test_cmd": "tg_rewrite_apply's sibling of lint_cmd above; same validation-commands gate",
+}
+
+# Minimal valid kwargs per tool so a targeted param's confinement check is actually REACHED
+# during the test call instead of short-circuiting on an earlier missing-required-arg or
+# unrelated validation error. None of these values need to exist on disk -- confinement is
+# pure path resolution/ancestry, never an existence check -- except where a tool's OWN
+# downstream loader reads the file directly with no FileNotFoundError guard (see
+# _ratchet_positive_value below for the two params that need a real file).
+_RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
+    "tg_ruleset_scan": {"ruleset": "secrets-basic", "path": "."},
+    "tg_repo_map": {"path": "."},
+    "tg_context_pack": {"query": "x", "path": "."},
+    "tg_edit_plan": {"query": "x", "path": "."},
+    "tg_context_render": {"query": "x", "path": "."},
+    "tg_agent_capsule": {"query": "x", "path": "."},
+    "tg_session_edit_plan": {"session_id": "nonexistent-session", "query": "x", "path": "."},
+    "tg_session_context_render": {
+        "session_id": "nonexistent-session",
+        "query": "x",
+        "path": ".",
+    },
+    "tg_session_blast_radius": {
+        "session_id": "nonexistent-session",
+        "symbol": "Foo",
+        "path": ".",
+    },
+    "tg_session_file_importers": {
+        "session_id": "nonexistent-session",
+        "file": "dummy.py",
+        "path": ".",
+    },
+    "tg_symbol_blast_radius_plan": {"symbol": "Foo", "path": "."},
+    "tg_session_blast_radius_render": {
+        "session_id": "nonexistent-session",
+        "symbol": "Foo",
+        "path": ".",
+    },
+    "tg_session_blast_radius_plan": {
+        "session_id": "nonexistent-session",
+        "symbol": "Foo",
+        "path": ".",
+    },
+    "tg_symbol_defs": {"symbol": "Foo", "path": "."},
+    "tg_symbol_source": {"symbol": "Foo", "path": "."},
+    "tg_symbol_impact": {"symbol": "Foo", "path": "."},
+    "tg_symbol_refs": {"symbol": "Foo", "path": "."},
+    "tg_symbol_callers": {"symbol": "Foo", "path": "."},
+    "tg_file_imports": {"file": "dummy.py"},
+    "tg_file_importers": {"file": "dummy.py", "path": "."},
+    "tg_symbol_blast_radius": {"symbol": "Foo", "path": "."},
+    "tg_symbol_blast_radius_render": {"symbol": "Foo", "path": "."},
+    "tg_search": {"pattern": "x", "path": "."},
+    "tg_ast_search": {"pattern": "x", "lang": "python", "path": "."},
+    "tg_classify_logs": {"file_path": "dummy.log"},
+    "tg_index_search": {"pattern": "x", "path": "."},
+    "tg_rewrite_plan": {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
+    "tg_rewrite_apply": {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
+    "tg_audit_manifest_verify": {"manifest_path": "manifest.json"},
+    "tg_audit_history": {"path": "."},
+    "tg_audit_diff": {
+        "previous_manifest": "previous.json",
+        "current_manifest": "current.json",
+    },
+    "tg_review_bundle_create": {"manifest_path": "manifest.json"},
+    "tg_review_bundle_verify": {"bundle_path": "bundle.json"},
+    "tg_checkpoint_create": {"path": "."},
+    "tg_checkpoint_list": {"path": "."},
+    "tg_checkpoint_undo": {"checkpoint_id": "cp-1", "path": "."},
+    "tg_session_open": {"path": "."},
+    "tg_session_list": {"path": "."},
+    "tg_session_show": {"session_id": "nonexistent-session", "path": "."},
+    "tg_session_refresh": {"session_id": "nonexistent-session", "path": "."},
+    "tg_session_context": {"session_id": "nonexistent-session", "query": "x", "path": "."},
+    "tg_rewrite_diff": {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
+}
+
+
+def _tool_string_param_names(tool) -> list[str]:
+    """Every param name in `tool`'s live input schema typed `str` or `str | None`."""
+    properties = tool.inputSchema.get("properties", {})
+    names = []
+    for param_name, schema in properties.items():
+        types_seen = set()
+        if "type" in schema:
+            types_seen.add(schema["type"])
+        for sub in schema.get("anyOf", ()):
+            if "type" in sub:
+                types_seen.add(sub["type"])
+        if "string" in types_seen:
+            names.append(param_name)
+    return names
+
+
+def _enumerate_confinement_ratchet_cases() -> list[tuple[str, str]]:
+    """(tool_name, param_name) for every non-exempt string param on every registered tool."""
+    from tensor_grep.cli import mcp_server
+
+    cases: list[tuple[str, str]] = []
+    for tool in asyncio.run(mcp_server.mcp.list_tools()):
+        for param_name in _tool_string_param_names(tool):
+            if param_name in CONFINEMENT_EXEMPT:
+                continue
+            cases.append((tool.name, param_name))
+    return sorted(cases)
+
+
+_CONFINEMENT_RATCHET_CASES = _enumerate_confinement_ratchet_cases()
+
+
+def _ratchet_positive_value(tool_name: str, param_name: str, root: Path) -> str:
+    """The 'valid in-root' value for a (tool, param) ratchet case.
+
+    Defaults to a nonexistent in-root relative name -- confinement never requires
+    existence, and every tool's OWN not-found handling for that param is already covered
+    by its existing tests. Two params are special-cased: tg_ruleset_scan's baseline_path/
+    suppressions_path loaders (`_load_ruleset_baseline`/`_load_ruleset_suppressions` in
+    cli/main.py) call `.read_text()` directly with no FileNotFoundError guard in
+    tg_ruleset_scan's own except clauses (only ValueError/BroadScanRefusedError are caught
+    there), so a missing file would raise past this test instead of exercising the
+    confinement layer -- pre-create a minimal valid file for those two.
+    """
+    if param_name == "path":
+        return "."
+    if tool_name == "tg_ruleset_scan" and param_name == "baseline_path":
+        (root / "ratchet_baseline.json").write_text(
+            json.dumps({"fingerprints": []}), encoding="utf-8"
+        )
+        return "ratchet_baseline.json"
+    if tool_name == "tg_ruleset_scan" and param_name == "suppressions_path":
+        (root / "ratchet_suppressions.json").write_text(json.dumps({}), encoding="utf-8")
+        return "ratchet_suppressions.json"
+    return "ratchet_ok_target"
+
+
+@pytest.mark.parametrize(
+    "tool_name,param_name",
+    _CONFINEMENT_RATCHET_CASES,
+    ids=[f"{t}.{p}" for t, p in _CONFINEMENT_RATCHET_CASES],
+)
+def test_mcp_primary_path_confinement_ratchet(
+    tool_name, param_name, tmp_path, tmp_path_factory, monkeypatch
+):
+    """Every non-exempt string param on every registered MCP tool must reject an
+    out-of-root candidate AND accept an in-root one (audit #95 gate-corrected ratchet).
+
+    Schema-driven (mcp.list_tools()), not a hand-maintained name-matched list: a NEW tool
+    with an unclassified string param fails here (or errors loudly via the assertion
+    below) until it is consciously confined or added to CONFINEMENT_EXEMPT with a reason.
+    """
+    monkeypatch.chdir(tmp_path)
+    assert tool_name in _RATCHET_BASE_KWARGS, (
+        f"{tool_name} has a non-exempt string param {param_name!r} this ratchet does not "
+        "know how to reach. Either confine it (_confine_mcp_path for a primary path/root "
+        "param, _confine_write_path/_confine_read_path for a secondary one) and add a "
+        "_RATCHET_BASE_KWARGS entry, or add it to CONFINEMENT_EXEMPT with a reason if it "
+        "is genuinely not a path."
+    )
+    base_kwargs = dict(_RATCHET_BASE_KWARGS[tool_name])
+
+    outside_dir = tmp_path_factory.mktemp("ratchet_outside")
+
+    # --- negative: an out-of-root candidate must be refused, fail-closed, structured.
+    rejected = _call_mcp_tool_text(tool_name, {**base_kwargs, param_name: str(outside_dir)})
+    assert "must stay within" in rejected, (
+        f"{tool_name}.{param_name} accepted an out-of-root path without rejecting it "
+        f"(response: {rejected[:500]!r}). Confine it via _confine_mcp_path (primary path/"
+        "root param) or _confine_write_path/_confine_read_path (secondary param), or add "
+        "it to CONFINEMENT_EXEMPT above if it is genuinely not a path."
+    )
+    try:
+        rejected_payload = json.loads(rejected)
+    except json.JSONDecodeError:
+        rejected_payload = None
+    if isinstance(rejected_payload, dict) and isinstance(rejected_payload.get("error"), dict):
+        assert rejected_payload["error"].get("code") == "invalid_input"
+
+    # --- positive: an in-root candidate must NOT trip the confinement check. Bidirectional
+    # on purpose -- the negative case alone only proves *some* rejection fires; it would
+    # stay green even if confinement were entirely absent, as long as some OTHER error
+    # happened to fire for an out-of-root value. This half proves the "must stay within"
+    # signal specifically tracks confinement, not noise.
+    positive_value = _ratchet_positive_value(tool_name, param_name, tmp_path)
+    try:
+        accepted = _call_mcp_tool_text(tool_name, {**base_kwargs, param_name: positive_value})
+    except Exception as exc:
+        # A tool may fail for a NON-confinement reason on a given runner: e.g. the ast-grep /
+        # tree-sitter deps are absent (Linux CI without ast-grep), so an ast-backed tool
+        # (tg_ast_search, tg_ruleset_scan, ...) raises a wrapped ToolError BEFORE it would run.
+        # That is NOT a confinement rejection -- confinement rejections RETURN structured text
+        # (see the negative probe above), they never raise. So a raised error still satisfies
+        # the positive half (the anchor did not reject the in-root path); assert only that it is
+        # not specifically the confinement "must stay within" signal.
+        accepted = str(exc)
+    assert "must stay within" not in accepted, (
+        f"{tool_name}.{param_name} rejected an in-root path as if it were out-of-root "
+        f"(response: {accepted[:500]!r}); the confinement anchor is probably wrong."
+    )
+
+
+def test_confinement_exempt_allowlist_has_no_unused_entries():
+    """Every CONFINEMENT_EXEMPT entry must correspond to a real param somewhere in the live
+    schema, except the one documented forward-looking reservation (inline_rules, a future
+    tool addition) -- otherwise a stale allowlist entry could mask a real future gap."""
+    from tensor_grep.cli import mcp_server
+
+    all_param_names: set[str] = set()
+    for tool in asyncio.run(mcp_server.mcp.list_tools()):
+        all_param_names.update(tool.inputSchema.get("properties", {}))
+
+    forward_looking = {"inline_rules"}
+    stale = set(CONFINEMENT_EXEMPT) - all_param_names - forward_looking
+    assert not stale, f"CONFINEMENT_EXEMPT has stale/unused entries: {sorted(stale)}"
+
+
+def test_mcp_root_defaults_to_cwd(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.delenv("TG_MCP_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    assert mcp_server._mcp_root() == tmp_path.resolve()
+
+
+def test_mcp_root_empty_env_treated_as_unset(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", "")
+    monkeypatch.chdir(tmp_path)
+
+    assert mcp_server._mcp_root() == tmp_path.resolve()
+
+
+def test_mcp_root_whitespace_env_treated_as_unset(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", "   ")
+    monkeypatch.chdir(tmp_path)
+
+    assert mcp_server._mcp_root() == tmp_path.resolve()
+
+
+def test_mcp_root_honors_valid_override(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    override = tmp_path / "override-root"
+    override.mkdir()
+    monkeypatch.setenv("TG_MCP_ROOT", str(override))
+
+    assert mcp_server._mcp_root() == override.resolve()
+
+
+def test_mcp_root_falls_back_to_cwd_on_nonexistent_override(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    missing = tmp_path / "does-not-exist"
+    monkeypatch.setenv("TG_MCP_ROOT", str(missing))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    assert mcp_server._mcp_root() == cwd.resolve()
+
+
+def test_mcp_root_falls_back_to_cwd_when_override_is_a_file(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    a_file = tmp_path / "not-a-dir.txt"
+    a_file.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(a_file))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    assert mcp_server._mcp_root() == cwd.resolve()
+
+
+def test_confine_mcp_path_uses_mcp_root_override(tmp_path, monkeypatch):
+    """TG_MCP_ROOT relocates the primary-path confinement anchor for a real tool call --
+    a path outside cwd but inside the configured override must now be ACCEPTED."""
+    from tensor_grep.cli import mcp_server
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    override_root = tmp_path / "fleet-root"
+    other_repo = override_root / "other-repo"
+    other_repo.mkdir(parents=True)
+    monkeypatch.setenv("TG_MCP_ROOT", str(override_root))
+    monkeypatch.chdir(cwd)
+
+    # other_repo is outside cwd but inside the TG_MCP_ROOT override -- must be accepted.
+    out = mcp_server.tg_repo_map(str(other_repo))
+    parsed = json.loads(out)
+    assert parsed.get("error") is None
+
+    # A path outside the override entirely must still be refused.
+    outside_override = tmp_path / "outside-override"
+    outside_override.mkdir()
+    refused = mcp_server.tg_repo_map(str(outside_override))
+    refused_parsed = json.loads(refused)
+    assert refused_parsed["error"]["code"] == "invalid_input"
+    assert "must stay within" in refused_parsed["error"]["message"]
