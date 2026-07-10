@@ -139,12 +139,19 @@ pub struct TrigramIndex {
     files: Vec<FileEntry>,
     file_trigrams: Vec<FileTrigramHits>,
     postings: HashMap<[u8; 3], Vec<PostingEntry>>,
+    /// Whether this index was built with `--no-ignore` (gitignored files included).
+    /// Persisted so a query whose --no-ignore mode differs from the build mode is
+    /// detected as stale (audit H1d) instead of silently serving the wrong file set --
+    /// either leaking gitignored content into a default query, or missing gitignored
+    /// files a --no-ignore query asked for.
+    no_ignore: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerializableIndex {
     files: Vec<FileEntry>,
     postings: HashMap<String, Vec<PostingEntry>>,
+    no_ignore: bool,
 }
 
 impl TrigramIndex {
@@ -160,6 +167,7 @@ impl TrigramIndex {
         SerializableIndex {
             files: self.files.clone(),
             postings,
+            no_ignore: self.no_ignore,
         }
     }
 
@@ -179,12 +187,18 @@ impl TrigramIndex {
             files: s.files,
             file_trigrams,
             postings,
+            no_ignore: s.no_ignore,
         })
     }
 }
 
 const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
-const INDEX_FORMAT_VERSION: u8 = 3;
+// Bumped 3 -> 4 (audit H1d) to add the `no_ignore` build-mode byte below; any index
+// written by an older binary fails the version check in bincode_deserialize and is
+// rebuilt from scratch by every caller of TrigramIndex::load (main.rs's
+// detect_warm_index_state and handle_index_search both already treat a load error as
+// "stale, rebuild"), so the bump is safe.
+const INDEX_FORMAT_VERSION: u8 = 4;
 
 fn normalize_postings(postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>) {
     for entries in postings.values_mut() {
@@ -252,6 +266,7 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(INDEX_MAGIC);
     buf.push(INDEX_FORMAT_VERSION);
+    buf.push(u8::from(index.no_ignore));
 
     let root_bytes = index.root.to_string_lossy().as_bytes().to_vec();
     buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
@@ -334,6 +349,8 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         );
     }
 
+    let no_ignore = read_u8(data, &mut pos)? != 0;
+
     let root_len = read_u32_le(data, &mut pos)? as usize;
     let root_str = String::from_utf8_lossy(read_exact(data, &mut pos, root_len)?).to_string();
 
@@ -396,6 +413,7 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         files,
         file_trigrams,
         postings,
+        no_ignore,
     })
 }
 
@@ -449,6 +467,7 @@ impl TrigramIndex {
             files: file_entries,
             file_trigrams,
             postings,
+            no_ignore,
         })
     }
 
@@ -563,6 +582,10 @@ impl TrigramIndex {
 
         normalize_affected_postings(&mut self.postings, &affected_trigrams);
         self.root = root.to_path_buf();
+        // H1d: persist the query's no_ignore mode onto the rebuilt index so a subsequent
+        // staleness check compares against what this rebuild actually walked with, not a
+        // stale build-time value.
+        self.no_ignore = no_ignore;
 
         Ok(IncrementalUpdateResult { index: self, stats })
     }
@@ -633,7 +656,7 @@ impl TrigramIndex {
         fixed_strings: bool,
     ) -> Result<Vec<IndexQueryResult>> {
         let candidate_selection = if fixed_strings {
-            RegexCandidateSelection::Indexed(self.query_candidates_fixed(pattern, ignore_case))
+            self.fixed_string_candidate_selection(pattern, ignore_case)
         } else {
             self.regex_candidate_selection(pattern, ignore_case)
         };
@@ -672,6 +695,40 @@ impl TrigramIndex {
 
         all_results.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
         Ok(all_results)
+    }
+
+    /// Candidate selection for `--fixed-strings` queries. Falls back to a full scan
+    /// (never a silently-empty `Indexed([])`) in the two cases the trigram prefilter
+    /// cannot answer correctly:
+    ///
+    /// - H1b: a pattern shorter than TRIGRAM_LEN has no trigrams to index on, so
+    ///   `query_candidates_fixed` returns zero candidates -- `search()` would read that
+    ///   as "definitely no match" instead of "the index can't accelerate this".
+    /// - H1c: build-time trigrams are lowercased with `to_ascii_lowercase` (a no-op on
+    ///   multi-byte UTF-8, see `extract_file_trigrams`), but `query_candidates_fixed`'s
+    ///   ignore_case path lowercases with Unicode-aware `str::to_lowercase` -- a
+    ///   non-ASCII ignore-case pattern's trigrams can never line up with the index's,
+    ///   again reading as a false "no match". Same precedent as
+    ///   `normalize_prefilter_literal`'s regex-path guard just below.
+    fn fixed_string_candidate_selection(
+        &self,
+        pattern: &str,
+        ignore_case: bool,
+    ) -> RegexCandidateSelection {
+        if ignore_case && !pattern.is_ascii() {
+            return RegexCandidateSelection::FullScan;
+        }
+
+        let normalized_len = if ignore_case {
+            pattern.to_lowercase().len()
+        } else {
+            pattern.len()
+        };
+        if normalized_len < TRIGRAM_LEN {
+            return RegexCandidateSelection::FullScan;
+        }
+
+        RegexCandidateSelection::Indexed(self.query_candidates_fixed(pattern, ignore_case))
     }
 
     fn regex_candidate_selection(
@@ -715,11 +772,26 @@ impl TrigramIndex {
         Ok(matches)
     }
 
-    pub fn is_stale(&self) -> bool {
-        self.staleness_reason().is_some()
+    pub fn is_stale(&self, no_ignore: bool) -> bool {
+        self.staleness_reason(no_ignore).is_some()
     }
 
-    pub fn staleness_reason(&self) -> Option<String> {
+    /// `no_ignore` is the CURRENT query's `--no-ignore` request, compared against the
+    /// mode this index was actually built with (`self.no_ignore`).
+    pub fn staleness_reason(&self, no_ignore: bool) -> Option<String> {
+        // H1d (audit): a stored no_ignore mode that disagrees with the current query's
+        // --no-ignore request means this index was built walking a DIFFERENT file set
+        // than the one the query now expects -- reusing it as-is either leaks gitignored
+        // content into a default query (built --no-ignore, queried without) or misses
+        // gitignored files a --no-ignore query asked for (built without, queried with).
+        // Treat it as stale so the caller rebuilds under the query's requested mode.
+        if self.no_ignore != no_ignore {
+            return Some(format!(
+                "no_ignore mode changed: index built with no_ignore={}, query requested no_ignore={}",
+                self.no_ignore, no_ignore
+            ));
+        }
+
         let indexed_paths: std::collections::HashSet<&Path> = self
             .files
             .iter()
@@ -750,9 +822,12 @@ impl TrigramIndex {
         }
 
         if self.root.is_dir() {
+            // Mirror collect_file_entries' walk semantics exactly -- this was hardcoded
+            // .git_ignore(true) regardless of no_ignore (audit H1d), so the new-file scan
+            // could disagree with how this index would actually be rebuilt.
             let current_files: Vec<PathBuf> = ignore::WalkBuilder::new(&self.root)
                 .hidden(true)
-                .git_ignore(true)
+                .git_ignore(!self.no_ignore)
                 .build()
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
@@ -1301,11 +1376,11 @@ mod tests {
         write_test_file(dir.path(), "a.txt", "hello\n");
 
         let index = TrigramIndex::build(dir.path()).unwrap();
-        assert!(!index.is_stale());
+        assert!(!index.is_stale(false));
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_test_file(dir.path(), "a.txt", "modified\n");
-        assert!(index.is_stale());
+        assert!(index.is_stale(false));
     }
 
     #[test]
@@ -1366,12 +1441,12 @@ mod tests {
         let dir = tempdir().unwrap();
         write_test_file(dir.path(), "a.txt", "hello world\n");
         let index = TrigramIndex::build(dir.path()).unwrap();
-        assert!(index.staleness_reason().is_none());
+        assert!(index.staleness_reason(false).is_none());
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_test_file(dir.path(), "a.txt", "changed content\n");
 
-        let reason = index.staleness_reason().unwrap();
+        let reason = index.staleness_reason(false).unwrap();
         assert!(reason.contains("a.txt"), "reason={reason}");
     }
 
@@ -1383,7 +1458,7 @@ mod tests {
         let index = TrigramIndex::build(dir.path()).unwrap();
 
         fs::remove_file(dir.path().join("b.txt")).unwrap();
-        let reason = index.staleness_reason().unwrap();
+        let reason = index.staleness_reason(false).unwrap();
         assert!(reason.contains("deleted"), "reason={reason}");
         assert!(reason.contains("b.txt"), "reason={reason}");
     }
@@ -1393,10 +1468,10 @@ mod tests {
         let dir = tempdir().unwrap();
         write_test_file(dir.path(), "a.txt", "hello\n");
         let index = TrigramIndex::build(dir.path()).unwrap();
-        assert!(index.staleness_reason().is_none());
+        assert!(index.staleness_reason(false).is_none());
 
         write_test_file(dir.path(), "b.txt", "new file\n");
-        let reason = index.staleness_reason().unwrap();
+        let reason = index.staleness_reason(false).unwrap();
         assert!(reason.contains("new file"), "reason={reason}");
     }
 
@@ -1412,7 +1487,7 @@ mod tests {
             "a.txt",
             "much longer content here to change size\n",
         );
-        let reason = index.staleness_reason();
+        let reason = index.staleness_reason(false);
         assert!(reason.is_some(), "should detect change");
     }
 
@@ -1426,7 +1501,29 @@ mod tests {
 
         let data = fs::read(&index_path).unwrap();
         assert_eq!(&data[0..4], b"TGI\x00", "magic bytes");
-        assert_eq!(data[4], 3, "format version should be 3");
+        assert_eq!(data[4], 4, "format version should be 4");
+    }
+
+    #[test]
+    fn test_no_ignore_mode_change_is_stale() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello\n");
+
+        let index = TrigramIndex::build_with_options(dir.path(), false).unwrap();
+        assert!(
+            !index.is_stale(false),
+            "same no_ignore mode should not be stale"
+        );
+        assert!(
+            index.is_stale(true),
+            "a query requesting a different no_ignore mode must be treated as stale"
+        );
+
+        let reason = index.staleness_reason(true).unwrap();
+        assert!(
+            reason.contains("no_ignore"),
+            "staleness reason should name the no_ignore mismatch: reason={reason}"
+        );
     }
 
     #[test]
@@ -1496,7 +1593,7 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_test_file(dir.path(), "a.txt", "goodbye world\n");
-        assert!(index1.is_stale());
+        assert!(index1.is_stale(false));
 
         let index2 = TrigramIndex::build(dir.path()).unwrap();
         let r2_hello = index2.search("hello", false, true).unwrap();

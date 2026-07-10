@@ -4904,7 +4904,11 @@ fn detect_warm_index_state(
     match TrigramIndex::load(&index_path) {
         Ok(index) => IndexRoutingState {
             exists: true,
-            is_stale: index.is_stale(),
+            // H1d (audit): a query's --no-ignore mode that disagrees with the mode this
+            // index was built under must be treated as stale so auto-routing does not
+            // silently serve gitignored content the query didn't ask for (or silently
+            // omit gitignored content a --no-ignore query did ask for).
+            is_stale: index.is_stale(args.no_ignore),
             pattern_compatible: true,
         },
         Err(_) => IndexRoutingState {
@@ -5884,6 +5888,45 @@ fn handle_index_search(
     if request.paths.len() != 1 {
         anyhow::bail!("index search currently supports exactly one path root");
     }
+
+    // Backend Fail-Closed Contract (audit H1a): route_search() (routing.rs) selects
+    // TrigramIndex for --index before any compatibility checks run, and run_index_query()
+    // below only ever reads pattern/ignore_case/fixed_strings -- every other search flag
+    // was silently dropped instead of honored or refused (e.g. --index -v used to return
+    // the NON-inverted set with exit 0). Mirror the same compatibility subset
+    // detect_warm_index_state already enforces for warm-index auto-routing and fail
+    // closed instead of silently running the query without them. Deliberately excludes
+    // the pattern-length and non-ASCII-ignore-case checks detect_warm_index_state also
+    // has -- those (H1b/H1c) are handled as a transparent full-scan fallback inside
+    // TrigramIndex::search/fixed_string_candidate_selection instead of a refusal, since
+    // the index can still honor them correctly, just without the trigram prefilter.
+    let mut unsupported_with_index: Vec<&str> = Vec::new();
+    if args.invert_match {
+        unsupported_with_index.push("-v/--invert-match");
+    }
+    if search_has_context(args) {
+        unsupported_with_index.push("-C/-A/-B (context)");
+    }
+    if args.max_count.is_some() {
+        unsupported_with_index.push("-m/--max-count");
+    }
+    if args.word_regexp {
+        unsupported_with_index.push("-w/--word-regexp");
+    }
+    if !args.globs.is_empty() {
+        unsupported_with_index.push("-g/--glob");
+    }
+    if request.patterns.len() != 1 {
+        unsupported_with_index.push("multiple patterns (-e)");
+    }
+    if !unsupported_with_index.is_empty() {
+        anyhow::bail!(
+            "--index does not support {} yet; rerun without --index (or without the \
+             flag(s) above) to search without the trigram index accelerator",
+            unsupported_with_index.join(", ")
+        );
+    }
+
     let search_path = Path::new(request.primary_path());
     if !search_path.exists() {
         anyhow::bail!(
@@ -5917,7 +5960,7 @@ fn handle_index_search(
                 return run_index_query(args, request, query, &fresh);
             }
         };
-        if let Some(reason) = loaded.staleness_reason() {
+        if let Some(reason) = loaded.staleness_reason(args.no_ignore) {
             if args.verbose {
                 eprintln!("[index] stale: {reason}");
             }
