@@ -9241,8 +9241,14 @@ def imports(
 
 @app.command()
 def importers(
-    file: str = typer.Argument(..., help="File to find importers of."),
-    root: str = typer.Argument(".", help="Root to scan for importers."),
+    file: str = typer.Argument(
+        ...,
+        help=(
+            "File to find importers of. Resolved against the current directory (like any "
+            "normal path argument) whether relative or absolute -- NOT joined onto ROOT."
+        ),
+    ),
+    root: str = typer.Argument(".", help="Root to scan for importers (the scan boundary only)."),
     max_repo_files: int = typer.Option(
         _DEFAULT_AGENT_REPO_SCAN_LIMIT,
         "--max-repo-files",
@@ -9265,6 +9271,11 @@ def importers(
     Bounded reverse lookup: prefilters candidate importers via the repo's import-alias graph,
     then re-parses and CONFIRMS each candidate against FILE before reporting it as an edge (the
     alias prefilter alone over-counts -- see `tg callers`' import-consumer precision notes).
+
+    FILE is always resolved independently against the current directory (same rule as `tg
+    imports FILE`), never joined onto ROOT -- e.g. from a parent directory,
+    `tg importers myrepo/src/util.py myrepo` resolves FILE to `<cwd>/myrepo/src/util.py`, not
+    `<cwd>/myrepo/myrepo/src/util.py` (dogfood #104).
     """
     from tensor_grep.cli.repo_map import build_file_importers
 
