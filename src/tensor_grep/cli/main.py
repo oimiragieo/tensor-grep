@@ -4781,6 +4781,12 @@ def _ruleset_finding_fingerprint(
 
 
 def _truncate_evidence_snippet(text: str, max_chars: int) -> dict[str, object]:
+    # Defense-in-depth: coerce to int so a direct (non-MCP) caller passing a fractional float
+    # cannot crash the slice below (`normalized[:max_chars]` requires an int index). The MCP
+    # surface already rejects non-int max_evidence_snippet_chars at the tool inputSchema + FastMCP
+    # pydantic boundary, so this is not a reachable vuln -- it hardens the helper for any future
+    # in-process caller. (audit #95 Part-2 round-6 gate: non-blocking hardening note.)
+    max_chars = int(max_chars)
     normalized = " ".join(text.split())
     if max_chars <= 0:
         return {"text": "", "truncated": bool(normalized)}
