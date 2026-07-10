@@ -253,7 +253,14 @@ def test_m15_detector_keys_on_child_project_markers(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_l10_calibrate_exits_one_when_unsupported() -> None:
+def test_l10_calibrate_exits_one_when_unsupported(monkeypatch) -> None:
+    # Hermetic: force the no-native-binary branch so this asserts the exit-1 "unsupported"
+    # convention DETERMINISTICALLY, regardless of whether a native tg binary happens to be
+    # present in the runner env. A present binary runs the native `calibrate`, which exits 2
+    # on a no-CUDA box -- an env-dependent FALSE failure of this test's intent (this test
+    # false-failed on all CI platforms when a native binary was present; banked lesson: a test
+    # must not depend on operator-real / env-resolved binary presence).
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
     runner = CliRunner()
     result = runner.invoke(app, ["calibrate"])
     # On a box without the native binary / CUDA, calibrate is a runtime/unsupported
