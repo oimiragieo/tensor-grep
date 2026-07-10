@@ -18,6 +18,15 @@ const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
 const TG_NATIVE_TG_BINARY_ENV: &str = "TG_NATIVE_TG_BINARY";
 const TG_HELP_PROBE_TIMEOUT_MS_ENV: &str = "TG_HELP_PROBE_TIMEOUT_MS";
+// audit H5: execute_python_passthrough_command_inner used to call a raw, unbounded
+// `child.wait()` -- a wedged parser/LSP/FS/pathological-regex on the Python side hung the
+// ENTIRE `tg` invocation forever, with no recovery short of an external kill. This is the
+// general one-shot passthrough dispatch target for ~35 subcommands (map/audit/scan/orient/
+// session/doctor/checkpoint/defs/refs/callers/blast-radius/agent/context/rulesets/devices/
+// lsp/etc. -- see run_command_cli in main.rs); it now shares the same bounded
+// wait-or-kill machinery already proven for the sidecar (resolve_sidecar_timeout) and the
+// --help probe (resolve_help_probe_timeout) paths below.
+const TG_PASSTHROUGH_TIMEOUT_MS_ENV: &str = "TG_PASSTHROUGH_TIMEOUT_MS";
 const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
 // audit #97 item 1: raised from 750ms -- measured `python -m tensor_grep --help` at ~500-550ms
 // median even with a WARM filesystem cache on a fast dev box (see the fix commit's PR description
@@ -31,6 +40,14 @@ const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
 // general 30s sidecar timeout (a --help probe should still fail fast when Python is genuinely
 // broken) and well under the 6s wall-clock budget the fallback-timeout test asserts.
 const DEFAULT_HELP_PROBE_TIMEOUT_MS: u64 = 3_000;
+// audit H5: a generous "safety ceiling, not typical case" wall-clock bound for the general
+// one-shot Python passthrough dispatch. Mirrors the Python side's own precedent for a generic
+// subprocess timeout -- TG_SUBPROCESS_TIMEOUT_SECONDS defaults to 600s for run_subprocess()
+// (subprocess_policy.py:20-25), and the large-repo-scale-campaign numbers show every currently
+// known one-shot command (map/audit/scan/callers/etc.), even on a large repo, completing in the
+// tens of seconds, not minutes. 600_000ms gives wide headroom above any legitimate case while
+// still guaranteeing eventual recovery from a truly-infinite hang instead of hanging forever.
+const DEFAULT_PASSTHROUGH_TIMEOUT_MS: u64 = 600_000;
 const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
 const WINDOWS_EXE_BRIDGE_MARKER: &str = "tg.exe.tensor-grep-bridge";
 const WINDOWS_EXE_BRIDGE_MARKER_CONTENT: &str = "tensor-grep managed tg.exe bridge";
@@ -121,6 +138,10 @@ fn execute_python_passthrough_command_inner(
     stdin_bytes: Option<Vec<u8>>,
 ) -> Result<i32, SidecarError> {
     let python = resolve_python_command();
+    // audit H5: decide the exemption BEFORE `args` is moved into the child's argv builder
+    // below -- see is_long_running_passthrough_command's doc comment for the exact,
+    // explicit, auditable exemption list (mcp / session serve / lsp server mode).
+    let is_daemon_launch = is_long_running_passthrough_command(command, &args);
 
     let mut child = command_for_executable(&python);
     configure_python_child_environment(&mut child);
@@ -137,6 +158,37 @@ fn execute_python_passthrough_command_inner(
         })
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+
+    // audit H5 (Opus gate must-fix): place the child in its own process group on Unix so
+    // terminate_passthrough_process's killpg(child.id(), SIGKILL) actually signals the whole
+    // subtree on timeout. WITHOUT this, the child inherits tg's PGID, no process group with
+    // id == child.id() exists, killpg returns ESRCH (swallowed, and the POSIX branch has no
+    // child.kill() fallback), the wedged child is never signaled, and terminate's own
+    // child.wait() blocks forever -- i.e. the hang would just move from the old bare wait to
+    // the new one on Linux/macOS. The setpgid closure is byte-identical to invoke_sidecar's
+    // audit-I8 block above; only the `if !is_daemon_launch` gate differs.
+    //
+    // The gate is deliberate, not incidental: only the bounded path is ever killpg'd, so only
+    // it needs its own group. The daemon-exempt launches (mcp / session serve / lsp) take the
+    // unbounded wait below (never killpg'd) AND read an inherited stdin, so leaving them in
+    // tg's process group preserves today's TTY behavior -- a child in a NEW background process
+    // group that reads the controlling terminal would take SIGTTIN and stop. The bounded
+    // commands that reach here do not read a TTY stdin (analysis commands take args; the only
+    // stdin-piping caller, `run`, uses Stdio::piped(), which is not a TTY), so this is
+    // SIGTTIN-safe by construction. The `#[cfg(unix)] unsafe { child.pre_exec(...) }` wrapper
+    // is byte-identical to invoke_sidecar's audit-I8 block above; only the inner
+    // `if !is_daemon_launch` guard is added.
+    #[cfg(unix)]
+    unsafe {
+        if !is_daemon_launch {
+            child.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
 
     let mut child = child
         .spawn()
@@ -163,16 +215,81 @@ fn execute_python_passthrough_command_inner(
         drop(stdin);
     }
 
-    let status = child.wait().map_err(|err| SidecarError {
-        exit_code: 1,
-        message: format!(
-            "Failed while waiting for Python passthrough with `{}`: {err}",
-            python.to_string_lossy()
-        ),
-        stderr: String::new(),
-    })?;
+    // audit H5: a long-running server/daemon launch (tg mcp, tg session serve, tg lsp in
+    // server mode) must never die on a timer -- fall back to the original unbounded wait for
+    // exactly these explicit cases. Every other one-shot passthrough command gets the same
+    // bounded wait-or-kill machinery already proven for the sidecar and --help probe paths.
+    if is_daemon_launch {
+        let status = child.wait().map_err(|err| SidecarError {
+            exit_code: 1,
+            message: format!(
+                "Failed while waiting for Python passthrough with `{}`: {err}",
+                python.to_string_lossy()
+            ),
+            stderr: String::new(),
+        })?;
+
+        return Ok(status.code().unwrap_or(1));
+    }
+
+    let timeout = resolve_passthrough_timeout();
+    let wait_outcome = wait_for_passthrough_or_kill(&mut child, timeout)?;
+
+    if matches!(wait_outcome, SidecarWaitOutcome::TimedOut) {
+        return Err(SidecarError {
+            exit_code: 124,
+            message: format!(
+                "Python passthrough command `{command}` timed out after {} ms and was terminated",
+                timeout.as_millis()
+            ),
+            stderr: String::new(),
+        });
+    }
+
+    let status = match wait_outcome {
+        SidecarWaitOutcome::Exited(status) => status,
+        SidecarWaitOutcome::TimedOut => unreachable!("timed out passthrough handled above"),
+    };
 
     Ok(status.code().unwrap_or(1))
+}
+
+/// Recognizes the passthrough subcommands that legitimately launch a long-running
+/// server/daemon and must NOT be killed by `resolve_passthrough_timeout()` (audit H5). Keep
+/// this list explicit and auditable -- do not widen it to a heuristic (e.g. "no args" or
+/// "took a while to print anything"), and do not add an entry without citing the Python
+/// command it exempts.
+///
+/// - `mcp` -- `tg mcp` starts the Model Context Protocol server (`mcp_server()` ->
+///   `run_mcp_server()`, `src/tensor_grep/cli/main.py:11898-11903`) and blocks on stdio
+///   JSON-RPC for the lifetime of the client connection. Rust's `Commands::Mcp` variant takes
+///   no args, so `command == "mcp"` alone is sufficient.
+/// - `session` + `serve` -- `tg session serve <id>` starts a JSONL request/response loop on
+///   stdin/stdout (`session_serve` -> `serve_session_stream`,
+///   `src/tensor_grep/cli/main.py:10854-10880`) for repeated repo-map/symbol queries. Every
+///   OTHER `tg session ...` subcommand (open/list/show/refresh/context/edit-plan/blast-radius/
+///   importers/`daemon start|status|stop`) is one-shot and already internally bounded (e.g.
+///   `session_daemon_start` spawns a DETACHED background process and returns within
+///   `_DAEMON_START_TIMEOUT_SECONDS` = 5s, `src/tensor_grep/cli/session_daemon.py:61,654-696`)
+///   -- only literally `serve` is exempt.
+/// - `lsp` without `--debug-trace` -- `tg lsp` starts the structural-search Language Server
+///   Protocol server (`lsp()` -> `run_lsp()`, `src/tensor_grep/cli/main.py:11762-11833`) and
+///   blocks on the LSP stdio protocol. `tg lsp --debug-trace LANGUAGE` is the one documented
+///   one-shot exception -- a health probe that returns instead of starting the server
+///   (`src/tensor_grep/cli/main.py:11819-11831`) -- and MUST stay bounded.
+fn is_long_running_passthrough_command(command: &str, args: &[String]) -> bool {
+    match command {
+        "mcp" => true,
+        "session" => args.first().map(String::as_str) == Some("serve"),
+        // Both the space form (`--debug-trace python`) and Click's equals form
+        // (`--debug-trace=python`, a single trailing_var_arg token) turn `tg lsp` into a
+        // one-shot health probe that returns instead of starting the server -- both MUST stay
+        // bounded, so neither may count as a server launch.
+        "lsp" => !args
+            .iter()
+            .any(|arg| arg == "--debug-trace" || arg.starts_with("--debug-trace=")),
+        _ => false,
+    }
 }
 
 pub fn execute_python_passthrough_command_captured(
@@ -941,6 +1058,15 @@ fn resolve_help_probe_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
+fn resolve_passthrough_timeout() -> Duration {
+    let timeout_ms = env::var(TG_PASSTHROUGH_TIMEOUT_MS_ENV)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_PASSTHROUGH_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms)
+}
+
 fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
     if err.kind() == io::ErrorKind::NotFound {
         return SidecarError {
@@ -967,8 +1093,9 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
 #[cfg(test)]
 mod tests {
     use super::{
-        gpu_device_ids_env_value, managed_install_native_binary_from_home,
-        managed_install_python_from_home, merged_pythonpath, native_tg_binary_env_override,
+        gpu_device_ids_env_value, is_long_running_passthrough_command,
+        managed_install_native_binary_from_home, managed_install_python_from_home,
+        merged_pythonpath, native_tg_binary_env_override,
         native_tg_binary_env_override_for_context, read_all_thread,
         resolve_python_command_for_context, resolve_repo_source_root_relative_to_exe,
         SidecarRequest, MAX_CAPTURED_OUTPUT_BYTES, WINDOWS_EXE_BRIDGE_MARKER,
@@ -1275,5 +1402,93 @@ mod tests {
         let handle = read_all_thread(cursor);
         let result = handle.join().expect("thread should not panic").unwrap();
         assert!(result.is_empty());
+    }
+
+    // --- audit H5: daemon/server-launch exemption tests ---
+    //
+    // These pin the exact, explicit exemption list from is_long_running_passthrough_command
+    // (mcp / session serve / lsp server mode) so a future edit cannot silently widen it (which
+    // would reopen the unbounded-hang bug for a one-shot command) or narrow it (which would
+    // kill a legitimate long-running server on the timer -- the load-bearing failure mode this
+    // fix must never introduce).
+
+    #[test]
+    fn mcp_server_launch_is_exempt() {
+        assert!(is_long_running_passthrough_command("mcp", &[]));
+    }
+
+    #[test]
+    fn session_serve_is_exempt() {
+        let args = vec!["serve".to_string(), "abc123".to_string()];
+        assert!(is_long_running_passthrough_command("session", &args));
+    }
+
+    #[test]
+    fn session_open_is_not_exempt() {
+        let args = vec!["open".to_string(), ".".to_string()];
+        assert!(!is_long_running_passthrough_command("session", &args));
+    }
+
+    #[test]
+    fn session_daemon_start_is_not_exempt() {
+        // `tg session daemon start` spawns a DETACHED background process and returns within
+        // _DAEMON_START_TIMEOUT_SECONDS=5s (session_daemon.py) -- it is one-shot, not itself a
+        // server loop, and must stay bounded like any other one-shot passthrough command.
+        let args = vec!["daemon".to_string(), "start".to_string()];
+        assert!(!is_long_running_passthrough_command("session", &args));
+    }
+
+    #[test]
+    fn session_with_no_subcommand_is_not_exempt() {
+        assert!(!is_long_running_passthrough_command("session", &[]));
+    }
+
+    #[test]
+    fn bare_lsp_is_exempt() {
+        assert!(is_long_running_passthrough_command("lsp", &[]));
+    }
+
+    #[test]
+    fn lsp_with_provider_flag_is_exempt() {
+        let args = vec!["--provider".to_string(), "hybrid".to_string()];
+        assert!(is_long_running_passthrough_command("lsp", &args));
+    }
+
+    #[test]
+    fn lsp_debug_trace_is_not_exempt() {
+        let args = vec!["--debug-trace".to_string(), "python".to_string()];
+        assert!(!is_long_running_passthrough_command("lsp", &args));
+    }
+
+    #[test]
+    fn lsp_debug_trace_equals_form_is_not_exempt() {
+        // Click accepts the equals form, which trailing_var_arg passes through as a single
+        // token -- it must NOT be mistaken for a server launch and left unbounded.
+        let args = vec!["--debug-trace=python".to_string()];
+        assert!(!is_long_running_passthrough_command("lsp", &args));
+    }
+
+    #[test]
+    fn lsp_debug_trace_equals_form_after_other_flags_is_not_exempt() {
+        let args = vec![
+            "--provider".to_string(),
+            "native".to_string(),
+            "--debug-trace=rust".to_string(),
+        ];
+        assert!(!is_long_running_passthrough_command("lsp", &args));
+    }
+
+    #[test]
+    fn unrelated_one_shot_commands_are_not_exempt() {
+        assert!(!is_long_running_passthrough_command("doctor", &[]));
+        assert!(!is_long_running_passthrough_command(
+            "map",
+            &["--json".to_string()]
+        ));
+        assert!(!is_long_running_passthrough_command(
+            "checkpoint",
+            &["create".to_string()]
+        ));
+        assert!(!is_long_running_passthrough_command("upgrade", &[]));
     }
 }
