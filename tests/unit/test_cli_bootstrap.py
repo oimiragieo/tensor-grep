@@ -1122,8 +1122,18 @@ def test_main_entry_should_fallback_to_full_cli_for_show_completion(monkeypatch)
     assert called["full_cli"] is True
 
 
-def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkeypatch):
-    seen: dict[str, object] = {}
+def test_main_entry_should_route_multi_pattern_gpu_search_to_full_cli_not_native(monkeypatch):
+    # audit #69 (re-do of #441): this test used to pin the BUG -- multi-pattern (-e x3) +
+    # --gpu-device-ids delegating straight to the separately-compiled native tg binary,
+    # which has its OWN independent -e/-f bugs (verified via direct invocation: multiple -e
+    # patterns are not deduplicated when a single line matches more than one). The full CLI
+    # now combines multi-pattern correctly (cli/main.py's `_combine_multi_patterns`) and
+    # already refuses this exact case in its OWN inner native-delegation gate (`regexp`/
+    # `file_patterns` are both in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`) -- this
+    # outer bootstrap.py fast path must route it to the full CLI too, never to native.
+    # --gpu-device-ids is documented as experimental/opt-in (main.py's own `search`
+    # docstring); correctness beats speed for this already-rare combo.
+    called = {"full_cli": False}
 
     monkeypatch.setattr(
         sys,
@@ -1146,30 +1156,13 @@ def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkey
     monkeypatch.setattr(
         bootstrap,
         "_run_native_tg_search",
-        lambda binary_name, search_args: (
-            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
-        ),
+        lambda binary_name, search_args: pytest.fail("native tg should not run for -e/-f"),
     )
-    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
 
-    with pytest.raises(SystemExit) as excinfo:
-        bootstrap.main_entry()
+    bootstrap.main_entry()
 
-    assert excinfo.value.code == 0
-    assert seen == {
-        "binary_name": "tg.exe",
-        "search_args": [
-            "--gpu-device-ids",
-            "0",
-            "-e",
-            "error",
-            "-e",
-            "warn",
-            "-e",
-            "fatal",
-            "bench_data",
-        ],
-    }
+    assert called["full_cli"] is True
 
 
 def test_main_entry_should_fallback_to_full_cli_when_rg_is_unavailable(monkeypatch):
@@ -1446,3 +1439,24 @@ def test_rank_bm25_do_not_delegate_to_native_binary() -> None:
     # --ltl) so a future SEARCH_PYTHON_PASSTHROUGH_FLAGS regression cannot strand them.
     assert not bootstrap._can_delegate_to_native_tg_search(["--json", "--rank", "PATTERN"])
     assert not bootstrap._can_delegate_to_native_tg_search(["--json", "--bm25", "PATTERN"])
+
+
+def test_multi_pattern_e_f_do_not_delegate_to_native_binary() -> None:
+    # audit #69 (re-do of #441): the separately-compiled native binary has its OWN,
+    # independent -e/-f bugs (verified via direct invocation -- see cli/bootstrap.py's
+    # `_can_delegate_to_native_tg_search` comment). This outer argv fast path must refuse
+    # ANY -e/-f usage -- even a single one -- for parity with cli/main.py's OWN inner
+    # native-delegation gate, which already refuses it via
+    # `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`regexp`/`file_patterns`).
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "-e", "foo", "-e", "bar", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--json", "-e", "foo", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "-f", "pats.txt", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "--file", "pats.txt", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "--regexp", "foo", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "-efoo", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "-fpats.txt", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "--regexp=foo", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "--file=pats.txt", "."])
+    # No -e/-f -> still delegates; -F (fixed-strings, uppercase) is not a -f prefix match.
+    assert bootstrap._can_delegate_to_native_tg_search(["--cpu", "foo", "."])
+    assert bootstrap._can_delegate_to_native_tg_search(["--cpu", "-F", "foo", "."])

@@ -3835,6 +3835,62 @@ def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
         raise InvalidRegexError(f"error parsing regex: {exc}") from exc
 
 
+_LEADING_INLINE_FLAG_RE = re.compile(r"^\(\?([aiLmsux]+)\)")
+
+
+def _scope_leading_inline_flag(pattern: str) -> str:
+    """Rewrite a GLOBAL leading inline flag group (``(?i)foo``) to the SCOPED form
+    (``(?i:foo)``) so it stays legal -- and stays scoped to its own branch, never leaking
+    case-insensitivity/etc. across the rest of the alternation -- once it is no longer the
+    first thing in a combined multi-pattern regex (audit #69, re-do of #441)."""
+    match = _LEADING_INLINE_FLAG_RE.match(pattern)
+    if not match:
+        return pattern
+    flags = match.group(1)
+    rest = pattern[match.end() :]
+    return f"(?{flags}:{rest})"
+
+
+def _combine_multi_patterns(patterns: list[str], *, fixed_strings: bool) -> str:
+    """OR-combine multiple ``-e``/``-f`` patterns into one rg-parity alternation regex: a
+    line matches if ANY pattern matches (rg's own multi-pattern semantics), reported once
+    even when more than one pattern matches the same line -- never N independent passes.
+    Each pattern becomes its own non-capturing-group branch (never a bare top-level ``|``
+    join), and the whole alternation gets one more enclosing group, so downstream
+    ``-w``/``-x``/``--line-regexp`` wrapping (which wraps the WHOLE pattern string, e.g.
+    ``rf"\\b{pattern}\\b"``) applies to the entire alternation rather than mis-scoping to
+    just the first/last branch via ``|``'s low precedence."""
+    branches = []
+    for raw_pattern in patterns:
+        candidate = (
+            re.escape(raw_pattern) if fixed_strings else _scope_leading_inline_flag(raw_pattern)
+        )
+        branches.append(f"(?:{candidate})")
+    return "(?:" + "|".join(branches) + ")"
+
+
+def _read_patterns_from_file_list(file_paths: list[str], *, json_mode: bool) -> list[str]:
+    """Read ``-f``/``--file`` pattern files, one pattern per line (rg parity: a genuinely
+    blank line is an EMPTY pattern that matches every line, so it is intentionally NOT
+    filtered out here). A missing/unreadable file fails loud with exit 2 -- per the Backend
+    Fail-Closed Contract -- instead of the pre-fix silent flood (an unread ``-f`` collapsed
+    to an empty ``pattern`` that matched every line in every file)."""
+    patterns: list[str] = []
+    for file_path in file_paths:
+        try:
+            content = Path(file_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            _exit_search_error(
+                "pattern_file_error",
+                f"failed to read pattern file: {file_path} ({exc})",
+                json_mode=json_mode,
+                exit_code=2,
+            )
+            return []  # pragma: no cover -- _exit_search_error always calls sys.exit
+        patterns.extend(content.splitlines())
+    return patterns
+
+
 def _search_paths_include_guarded_broad_root(paths: list[str]) -> bool:
     for path in paths:
         if not path or path == "-" or path.startswith("-"):
@@ -6610,8 +6666,28 @@ def search_command(
         gpu_device_ids=parsed_gpu_device_ids,
     )
     if not files:
+        # audit #69 (re-do of #441, this time with a Windows golden from the start):
+        # `multi_pattern_source` already excludes -e-and-f-together (a single -e still makes
+        # -f a dead flag, pinned by
+        # test_search_single_regexp_with_unused_file_option_and_only_matching_still_works)
+        # and excludes -o/-r/--rank/--semantic (rejected with exit 2 above), so this is
+        # exactly the plain-search shape that used to silently drop every pattern but the
+        # first (multiple -e) or never read the file at all (-f alone). The multiple-`-e`
+        # sub-case combines EAGERLY here -- no I/O, and the rg-routed passthrough path is
+        # untouched by it either way (see the combine step below). The `-f`-alone sub-case is
+        # handled LATER, only once the search is confirmed to not be rg-passthrough
+        # (deliberately deferred: an eager read here broke
+        # test_python_search_treats_file_option_as_pattern_file_not_regex, where real `rg`
+        # itself must read the `-f` file on the passthrough path, never tg).
+        combined_multi_patterns: list[str] | None = (
+            list(regexp_patterns) if multi_pattern_source and len(regexp_patterns) > 1 else None
+        )
         try:
-            patterns_to_validate = regexp_patterns if regexp_patterns else [pattern]
+            patterns_to_validate = (
+                combined_multi_patterns
+                if combined_multi_patterns is not None
+                else (regexp_patterns if regexp_patterns else [pattern])
+            )
             for regex_pattern in patterns_to_validate:
                 _validate_search_regex(regex_pattern, config)
         except Exception as exc:
@@ -6634,6 +6710,18 @@ def search_command(
                     _exit_invalid_regex(exc, json_mode=json)
             else:
                 raise
+        if combined_multi_patterns is not None:
+            # Build one rg-parity OR-alternation and let 100% of the existing
+            # single-pattern machinery (CPUBackend, the Rust FFI, native-binary delegation)
+            # treat it exactly like a hand-typed `-e "foo|bar"` -- the rg-ROUTED passthrough
+            # path is untouched by this (it reads `config.regexp`/`config.file_patterns`
+            # directly and builds its own rg argv; see ripgrep_backend.py:788). `-F`
+            # multi-literal is `re.escape`'d per branch, so `fixed_strings` must be cleared
+            # here or the combined alternation string would be re-literal-matched whole.
+            pattern = _combine_multi_patterns(
+                combined_multi_patterns, fixed_strings=config.fixed_strings
+            )
+            config = dataclasses.replace(config, query_pattern=pattern, fixed_strings=False)
     guarded_broad_root = _search_paths_include_guarded_broad_root(paths_to_search)
     explicit_hidden_search_root = not config.hidden and any(
         _path_has_hidden_component(path) for path in paths_to_search
@@ -6776,6 +6864,38 @@ def search_command(
             with nvtx_range("search.passthrough_rg", color="green"):
                 exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
             sys.exit(exit_code)
+
+    if multi_pattern_source and not regexp_patterns:
+        # The `-f`-alone sub-case (see the comment above the earlier `combined_multi_patterns`
+        # assignment) is deferred until HERE, now that a real search is confirmed to not be
+        # rg-passthrough (the `if can_passthrough_rg: if not stats: ... sys.exit(...)` block
+        # just above already returned when it would have applied). Reading `-f` eagerly broke
+        # `test_python_search_treats_file_option_as_pattern_file_not_regex`, where real `rg`
+        # itself must read the pattern file on the passthrough path, never tg. This must land
+        # before `Pipeline(...)` below, which reads `config.query_pattern` to route (audit #69,
+        # re-do of #441).
+        file_sourced_patterns = _read_patterns_from_file_list(file or [], json_mode=json)
+        try:
+            for regex_pattern in file_sourced_patterns:
+                _validate_search_regex(regex_pattern, config)
+        except Exception as exc:
+            if _is_invalid_regex_error(exc):
+                if (
+                    _is_inline_flag_regex_error(str(exc))
+                    and _eligible_for_pcre2_inline_flag_fallback(config)
+                    and _pcre2_fallback_backend_available()
+                ):
+                    config = dataclasses.replace(config, pcre2=True)
+                    typer.echo(
+                        "note: retried with PCRE2 (-P) for inline-flag pattern",
+                        err=True,
+                    )
+                else:
+                    _exit_invalid_regex(exc, json_mode=json)
+            else:
+                raise
+        pattern = _combine_multi_patterns(file_sourced_patterns, fixed_strings=config.fixed_strings)
+        config = dataclasses.replace(config, query_pattern=pattern, fixed_strings=False)
 
     scanner = DirectoryScanner(config)
     candidate_files_ordered, candidate_files_set = _collect_candidate_files(
