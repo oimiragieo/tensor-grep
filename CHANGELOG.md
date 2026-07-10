@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.54.5 (2026-07-10)
+
+### Bug Fixes
+
+- **install**: Collapse the bash launcher-shim 2-hop chain + replace grep WSL probe with a builtin
+  (audit #94 Part B) ([#482](https://github.com/oimiragieo/tensor-grep/pull/482),
+  [`b3f9eff`](https://github.com/oimiragieo/tensor-grep/commit/b3f9eff7bc6b1469c3607aaa31bbc3c44fb88eff))
+
+The compat shims (~/bin/tg, ~/.local/bin/tg) exec-chained into the managed front door
+  (~/.tensor-grep/bin/tg) as a second bash process, and both files independently ran `grep -qi
+  microsoft /proc/version` to distinguish WSL from MSYS/git-bash path conventions -- a subprocess
+  fork on every bash `tg` call.
+
+Lever 1: the compat shims now carry the front door's own MSYS/WSL-detection + native-or-python exec
+  logic directly (install.ps1 writes the shim from the same $frontdoorBashContent variable used for
+  the staged front door, so both files are identical by construction; install.sh copies the
+  already-committed front door onto each shim path). One bash hop per invocation, not two.
+
+Lever 2: the grep-based /proc/version probe is replaced with a builtin `[ -f
+  "$msysInstallDir/.venv/Scripts/python.exe" ]` existence test, tried MSYS-first with a WSL-style
+  fallback on miss (real WSL has no /c/... mount, so the test correctly falls through). install.sh
+  never had this probe (Linux/ macOS have one canonical path convention), so only install.sh's
+  Lever-1 copy applies there.
+
+Verified via a scratch install (junctioned .venv, no ~/.tensor-grep touched): both old- and
+  new-shape shims resolve and run `tg --version` correctly with identical output. Isolated mechanism
+  timing on this box: the grep fork costs ~45ms vs ~1ms for the builtin test, and the extra bash hop
+  costs ~90ms -- consistent with the design's ~155-175ms combined estimate. End-to-end wall-clock
+  delta is real (~150ms) under moderate cache warmth but collapses toward noise once grep.exe/the
+  extra hop are heavily pre-warmed by dense back-to-back re-invocation; the structural fact (2 fewer
+  subprocess forks, 1 fewer bash hop) holds by construction regardless of cache state.
+
+Governance tests in test_install_scripts.py updated to assert the new collapsed/builtin shape, plus
+  new tests asserting the shim is single-hop with no grep-based WSL probe (install.ps1) and a
+  byte-identical copy of the front door (install.sh).
+
+Part A (daemon) and the tg doctor sub-fix are explicitly out of scope per the design at
+  docs/plans/design-tensor-grep-94-latency-daemon-shim-2026-07-09.md.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.54.4 (2026-07-09)
 
 ### Bug Fixes
