@@ -66,6 +66,10 @@ if TYPE_CHECKING:
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 2000
 _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
 _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
+# audit #96 (answer-first payloads): defs/refs/callers/impact's own DEDICATED tests-cap, wired
+# on-by-default like blast-radius's --max-callers/--max-files precedent above (not an opt-in-only
+# flag -- the audit's "95% payload filler" bug needs a default that actually fixes it).
+_DEFAULT_SYMBOL_MAX_TESTS = 25
 _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 15.0
 _DOCTOR_LSP_WINDOWS_PROBE_TIMEOUT_SECONDS = 15.0
 _DOCTOR_LSP_PROBE_TIMEOUT_ENV = "TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS"
@@ -8490,6 +8494,74 @@ def _annotate_result_completeness(
     return caveat, truncation is not None
 
 
+def _attach_symbol_omissions(
+    payload: dict[str, Any],
+    *,
+    command_name: str,
+    path: str,
+    symbol: str,
+    max_tests: int | None,
+    max_tokens: int | None,
+    primary_field: str,
+) -> None:
+    """Stamp an additive, agent-facing ``omissions`` envelope (design #96 item 3).
+
+    Mirrors ``agent_capsule.py``'s ``omissions:{token_budget, omitted_section_count,
+    omitted_sections[], follow_up_reads[]}`` shape (``agent_capsule.py:2262-2267``) as a sibling
+    key on defs/refs/callers/impact, summarizing what the tests-cap (``output_limit``, set by
+    ``repo_map._apply_symbol_field_output_limit``) and the token budget (``token_budget``, set by
+    ``repo_map._apply_symbol_token_budget``) trimmed. Unlike the capsule's follow-up reads (which
+    point at a DIFFERENT command to read more source), the follow-up pointer here is
+    SELF-referential: re-run this SAME command with a bigger ``--max-tests``/``--max-tokens``,
+    since there is nothing else to point at. ALWAYS present (even with nothing omitted, in which
+    case ``omitted_sections``/``follow_up_reads`` are simply empty) so the shape is stable at v1.
+
+    Purely additive/descriptive: never reads or writes ``result_incomplete``/``partial``/
+    ``caller_scan_limit``, so it cannot affect the scan-truncation exit-2 contract.
+    """
+    omitted_sections: list[dict[str, Any]] = []
+    retry_argv: list[str] = ["tg", command_name, path, symbol, "--json"]
+    retry_needed = False
+
+    output_limit = payload.get("output_limit")
+    if isinstance(output_limit, dict) and output_limit.get("tests_truncated"):
+        omitted_sections.append({
+            "section": "tests",
+            "omitted_count": int(output_limit.get("omitted_tests", 0)),
+            "reason": "max-tests cap",
+        })
+        retry_argv.extend(["--max-tests", str(output_limit.get("total_tests", 0))])
+        retry_needed = True
+
+    token_budget = payload.get("token_budget")
+    if isinstance(token_budget, dict) and token_budget.get("primary_truncated"):
+        omitted_sections.append({
+            "section": primary_field,
+            "omitted_count": int(token_budget.get("primary_omitted", 0)),
+            "reason": "max-tokens budget",
+        })
+        retry_argv.extend(["--max-tokens", "0"])
+        retry_needed = True
+
+    follow_up_reads: list[dict[str, Any]] = []
+    if retry_needed:
+        follow_up_reads.append({
+            "file": None,
+            "symbol": symbol,
+            "role": "retry-bigger-budget",
+            "command": subprocess.list2cmdline(retry_argv),
+            "argv": retry_argv,
+        })
+
+    payload["omissions"] = {
+        "token_budget": max_tokens,
+        "max_tests": max_tests,
+        "omitted_section_count": len(omitted_sections),
+        "omitted_sections": omitted_sections,
+        "follow_up_reads": follow_up_reads,
+    }
+
+
 def _emit_symbol_command_result(
     payload: dict[str, Any],
     *,
@@ -8693,10 +8765,25 @@ def defs(
             "(case-insensitive). Disambiguates common method names like 'search'."
         ),
     ),
+    max_tests: int | None = typer.Option(
+        _DEFAULT_SYMBOL_MAX_TESTS,
+        "--max-tests",
+        min=1,
+        help="Maximum relevant test files to include in output; raise for full coverage.",
+    ),
+    max_tokens: int = typer.Option(
+        # Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS (literal keeps the heavy repo_map import
+        # lazy). Answer-first: secondary fields (tests/related_paths) are trimmed before
+        # `definitions` itself. 0 = unbounded opt-out.
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Approximate maximum payload size in tokens (0 = unbounded).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
-    from tensor_grep.cli.repo_map import build_symbol_defs
+    from tensor_grep.cli.repo_map import _apply_symbol_token_budget, build_symbol_defs
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -8710,6 +8797,7 @@ def defs(
             resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            max_tests=max_tests,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -8717,6 +8805,17 @@ def defs(
 
     if class_filter is not None:
         _apply_defs_class_filter(payload, class_filter)
+
+    payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="definitions")
+    _attach_symbol_omissions(
+        payload,
+        command_name="defs",
+        path=resolved_path,
+        symbol=resolved_symbol,
+        max_tests=max_tests,
+        max_tokens=max_tokens,
+        primary_field="definitions",
+    )
 
     def _emit_text(current: dict[str, Any]) -> None:
         typer.echo(f"Definitions for {current['symbol']} in {current['path']}")
@@ -8812,10 +8911,29 @@ def impact(
             "whatever was found so far, instead of running unbounded."
         ),
     ),
+    max_tests: int | None = typer.Option(
+        _DEFAULT_SYMBOL_MAX_TESTS,
+        "--max-tests",
+        min=1,
+        help="Maximum relevant test files to include in output; raise for full coverage.",
+    ),
+    max_tokens: int = typer.Option(
+        # Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS (literal keeps the heavy repo_map import
+        # lazy). Answer-first: secondary fields (tests/related_paths) are trimmed before `files`
+        # itself. 0 = unbounded opt-out.
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Approximate maximum payload size in tokens (0 = unbounded).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
-    from tensor_grep.cli.repo_map import build_symbol_callers, build_symbol_impact
+    from tensor_grep.cli.repo_map import (
+        _apply_symbol_token_budget,
+        build_symbol_callers,
+        build_symbol_impact,
+    )
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -8830,6 +8948,7 @@ def impact(
             semantic_provider=provider,
             max_repo_files=max_repo_files,
             deadline_seconds=deadline,
+            max_tests=max_tests,
         )
         # H5: impact previously surfaced only definition/import-derived `files` and so
         # under-reported call sites relative to `tg callers` (which finds the CLI
@@ -8863,6 +8982,19 @@ def impact(
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+    payload = _apply_symbol_token_budget(
+        payload, max_tokens, primary_field="files", companion_fields=("file_matches",)
+    )
+    _attach_symbol_omissions(
+        payload,
+        command_name="impact",
+        path=resolved_path,
+        symbol=resolved_symbol,
+        max_tests=max_tests,
+        max_tokens=max_tokens,
+        primary_field="files",
+    )
 
     def _emit_text(current: dict[str, Any]) -> None:
         typer.echo(f"Impact for {current['symbol']} in {current['path']}")
@@ -8908,10 +9040,25 @@ def refs(
             "whatever was found so far, instead of running unbounded."
         ),
     ),
+    max_tests: int | None = typer.Option(
+        _DEFAULT_SYMBOL_MAX_TESTS,
+        "--max-tests",
+        min=1,
+        help="Maximum relevant test files to include in output; raise for full coverage.",
+    ),
+    max_tokens: int = typer.Option(
+        # Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS (literal keeps the heavy repo_map import
+        # lazy). Answer-first: secondary fields (tests/related_paths) are trimmed before
+        # `references` itself. 0 = unbounded opt-out.
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Approximate maximum payload size in tokens (0 = unbounded).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
-    from tensor_grep.cli.repo_map import build_symbol_refs
+    from tensor_grep.cli.repo_map import _apply_symbol_token_budget, build_symbol_refs
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -8926,10 +9073,22 @@ def refs(
             semantic_provider=provider,
             max_repo_files=max_repo_files,
             deadline_seconds=deadline,
+            max_tests=max_tests,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+    payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="references")
+    _attach_symbol_omissions(
+        payload,
+        command_name="refs",
+        path=resolved_path,
+        symbol=resolved_symbol,
+        max_tests=max_tests,
+        max_tokens=max_tokens,
+        primary_field="references",
+    )
 
     def _emit_text(current: dict[str, Any]) -> None:
         typer.echo(f"References for {current['symbol']} in {current['path']}")
@@ -8972,10 +9131,25 @@ def callers(
             "whatever was found so far, instead of running unbounded."
         ),
     ),
+    max_tests: int | None = typer.Option(
+        _DEFAULT_SYMBOL_MAX_TESTS,
+        "--max-tests",
+        min=1,
+        help="Maximum relevant test files to include in output; raise for full coverage.",
+    ),
+    max_tokens: int = typer.Option(
+        # Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS (literal keeps the heavy repo_map import
+        # lazy). Answer-first: secondary fields (tests/related_paths) are trimmed before
+        # `callers` itself. 0 = unbounded opt-out.
+        16000,
+        "--max-tokens",
+        min=0,
+        help="Approximate maximum payload size in tokens (0 = unbounded).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
-    from tensor_grep.cli.repo_map import build_symbol_callers
+    from tensor_grep.cli.repo_map import _apply_symbol_token_budget, build_symbol_callers
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -8990,10 +9164,22 @@ def callers(
             semantic_provider=provider,
             max_repo_files=max_repo_files,
             deadline_seconds=deadline,
+            max_tests=max_tests,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+    payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="callers")
+    _attach_symbol_omissions(
+        payload,
+        command_name="callers",
+        path=resolved_path,
+        symbol=resolved_symbol,
+        max_tests=max_tests,
+        max_tokens=max_tokens,
+        primary_field="callers",
+    )
 
     def _emit_text(current: dict[str, Any]) -> None:
         typer.echo(f"Callers for {current['symbol']} in {current['path']}")
