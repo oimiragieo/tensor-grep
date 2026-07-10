@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.58.10 (2026-07-10)
+
+### Bug Fixes
+
+- **mcp**: Read the stdio JSON-RPC body as bytes + bound every framed line (audit #49, framing
+  desync + DoS) ([#502](https://github.com/oimiragieo/tensor-grep/pull/502),
+  [`a8b9e58`](https://github.com/oimiragieo/tensor-grep/commit/a8b9e580d61b578e2c23e6c9ffd6d832566c210f))
+
+Three defects in the MCP stdio Content-Length compatibility reader (_read_stdio_message_payload /
+  _stdio_server_accepting_content_length):
+
+1. char-vs-byte desync: stdin.read(content_length) read N CHARACTERS off a
+  TextIOWrapper(sys.stdin.buffer)-backed text stream, but Content-Length is a BYTE count. Any
+  multi-byte UTF-8 payload (a non-ASCII search query or result) caused the read to consume the wrong
+  number of characters, desyncing the framed stream so every subsequent message misparsed.
+  Reproduced end-to-end against a real subprocess: pre-fix, a Content-Length frame with a multi-byte
+  UTF-8 clientInfo.name causes the server to never respond (times out) to that message.
+
+2. unbounded header-skip loop: the loop reading header lines between the Content-Length line and the
+  blank-line terminator had no iteration cap and no byte cap, so a malformed/hostile client
+  streaming endless header lines (or never sending the terminator) could hang the reader or exhaust
+  memory before the body-size check ever ran.
+
+3. unbounded FIRST line (Opus gate must-fix): the first stdin.readline() was still unbounded. In the
+  newline-delimited transport -- the OFFICIAL/primary MCP stdio path (the Content-Length framing is
+  only a legacy shim) -- the entire JSON-RPC message IS that first line, and
+  _MAX_MCP_STDIO_MESSAGE_BYTES caps only the framed body, so the newline path had NO message-size
+  cap at all; separately, a Content-Length header line with no newline grew memory unbounded before
+  the body-size check.
+
+Fix: read stdin as a raw binary stream throughout (anyio.wrap_file(sys.stdin. buffer), no
+  TextIOWrapper) so the body is read as exactly content_length BYTES, decoded to UTF-8 once at the
+  end; a short read (EOF before content_length bytes) is a clean framing error, not a hang. Bound
+  EVERY line via the _read_bounded_line helper (which forwards a size limit into the wrapped binary
+  stream's own readline -- safe because there is no text-decoder layer to desync against): the first
+  line at the full message budget (_MAX_MCP_STDIO_FIRST_LINE_BYTES = _MAX_MCP_STDIO_MESSAGE_BYTES +
+  1, the +1 leaving room for a maximal message's trailing newline), the header lines at
+  _MAX_MCP_STDIO_HEADER_BYTES with a hard iteration cap (_MAX_MCP_STDIO_HEADER_LINES). A line that
+  reaches its cap with no newline is refused (fail closed); a complete line exactly at the cap still
+  ends in "\n", so a valid message is never truncated. The existing #363 body cap is preserved
+  unchanged. Transport only: no tool behavior, JSON-RPC contract, or response framing changed.
+
+Tests: 14 unit tests in test_mcp_stdio_content_length_cap.py (multi-byte UTF-8 no-desync, ASCII
+  control, short-read framing error, plain newline-delimited fallback, endless-headers bound,
+  single-oversized-header-line bound, at-cap success boundary, giant-no-newline-first-line bound,
+  oversized newline-delimited-message bound, not-truncated regression guard, first-line-cap
+  contract, plus the 3 #363 cap tests re-verified against the byte-exact reader) and 1
+  real-subprocess integration test in test_mcp_stdio_protocol.py that pipelines a multi-byte UTF-8
+  initialize frame followed by a real tools/list call. All confirmed RED against the pre-fix code
+  (byte/str TypeError; a real 10s subprocess timeout for the desync; and for the first-line bound, a
+  behavioral RED where the pre-fix reader returns the entire unbounded newline-delimited message /
+  drains the whole stream) and GREEN after the fix.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.9 (2026-07-10)
 
 ### Bug Fixes
