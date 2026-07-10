@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.58.3 (2026-07-10)
+
+### Bug Fixes
+
+- **cli**: Stabilize bare tg --help -- env-configurable help-probe timeout + moat commands in the
+  clap fallback (audit #97 item 1) ([#496](https://github.com/oimiragieo/tensor-grep/pull/496),
+  [`a4d21a0`](https://github.com/oimiragieo/tensor-grep/commit/a4d21a0772add82d67334f5003acf8b82f786df9))
+
+Root cause: DEFAULT_HELP_PROBE_TIMEOUT_MS was hardcoded to 750ms with no env override
+  (rust_core/src/python_sidecar.rs:21), unlike TG_SIDECAR_TIMEOUT_MS's pattern
+  (resolve_sidecar_timeout(), same file). Measured `python -m tensor_grep --help` at ~500-550ms
+  median even with a warm filesystem cache on a fast dev box, leaving well under 250ms of slack -- a
+  cold interpreter start, antivirus scanning a new process, or a loaded CI box could blow through
+  it, silently swapping the rich Typer help for the sparse clap fallback (the bare `tg --help`
+  instability from audit #97 item 1).
+
+- Add a TG_HELP_PROBE_TIMEOUT_MS env override to resolve_help_probe_timeout(), mirroring
+  resolve_sidecar_timeout()'s parse/validate/fallback pattern; raise the hardcoded default from
+  750ms to 3000ms (~6x headroom over the measured warm-cache median, still well under the existing
+  6s fallback-timeout test budget and an order of magnitude below the general 30s sidecar timeout,
+  so a genuinely broken Python still fails reasonably fast). - Enrich the clap fallback's top-level
+  `about` (new NATIVE_TOP_LEVEL_ABOUT constant in rust_core/src/main.rs) with a curated "AI agent
+  moat commands" quick-reference -- orient/defs/refs/callers/impact/blast-radius/map/agent/
+  search/mcp, each with example invocation syntax -- positioned before the auto-generated Commands:
+  list, mirroring the Typer help's "AI workflows" section in src/tensor_grep/cli/main.py. -
+  Verification correction: dogfooding the real compiled binary showed the clap fallback's
+  auto-generated Commands: list already contained every public command name, including all the named
+  moat commands (confirmed by the existing
+  test_empty_invocation_fallback_help_matches_public_contract, which already passed pre-fix). The
+  enrichment adds a curated, prominently positioned pointer with usage syntax where an agent
+  skimming the fallback will actually see it -- not missing command names, which were never actually
+  missing in the current codebase. - Document TG_HELP_PROBE_TIMEOUT_MS in both help surfaces'
+  env-var lists (ENVIRONMENT_OVERRIDES_HELP in main.rs and the Typer app help in main.py). - Tests:
+  2 new e2e subprocess tests against the real compiled binary
+  (tests/e2e/test_routing_parity.py::test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrough_unavailable,
+  ::test_help_probe_timeout_env_override_is_honored), plus 2 new Rust integration tests using a
+  wedged-Python simulator
+  (rust_core/tests/test_sidecar_ipc.rs::test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python,
+  ::test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_is_wedged). All 4
+  RED-verified against the pre-fix source via a scoped `git stash` before restoring the fix. Dropped
+  a tight wall-clock lower-bound assertion from the default-timeout test after discovering
+  parallel-test subprocess- spawn contention can inflate elapsed time ~1.5-2x, which would have made
+  it flaky; the override mechanism is covered precisely by its own test instead.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.2 (2026-07-10)
 
 ### Bug Fixes
