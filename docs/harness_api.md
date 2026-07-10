@@ -187,17 +187,52 @@ Use this shape when a harness wants structured findings from a built-in security
 | --- | --- | --- |
 | `version` | `integer` | Contract version. |
 | `routing_backend` | `string` | `AstBackend`. |
-| `routing_reason` | `string` | `builtin-ruleset-scan`. |
+| `routing_reason` | `string` | `builtin-ruleset-scan` for a built-in pack, or `ast-inline-rules-scan` for `--inline-rules`/`inline_rules` (see "Inline Rules" below). |
 | `sidecar_used` | `boolean` | Always `false`. |
-| `config_path` | `string` | Built-in config reference such as `builtin:crypto-safe`. |
+| `config_path` | `string` | Built-in config reference such as `builtin:crypto-safe`, the literal string `inline-rules` for an inline-rules scan, or the resolved rule/config file path for the other CLI-only sources. |
 | `path` | `string` | Scan root. |
-| `ruleset` | `string` | Selected ruleset name. |
-| `language` | `string` | Effective language used to resolve the built-in pack. |
+| `ruleset` | `string \| null` | Selected built-in ruleset name, or `null` for an inline-rules scan. |
+| `language` | `string` | Effective language used to resolve the rule set. |
 | `rule_count` | `integer` | Total rules executed. |
 | `matched_rules` | `integer` | Number of rules that matched at least once. |
 | `total_matches` | `integer` | Aggregate matches across every rule. |
 | `backends` | `array<string>` | Backends used during the scan. |
 | `findings` | `array<object>` | Stable per-rule finding summaries. |
+
+### Inline Rules
+
+`tg.exe scan --inline-rules <yaml>` (CLI) and `tg_ruleset_scan(inline_rules=<yaml>, ...)` (MCP)
+run one or more `---`-separated ast-grep rule YAML documents supplied directly as a string --
+no built-in pack, no rule file, no sgconfig, zero file I/O for the rule source itself. Exactly
+one of `--ruleset`/`ruleset` or `--inline-rules`/`inline_rules` is required; supplying both, or
+neither, is a fail-closed `invalid_input` error (`ruleset and inline_rules are mutually
+exclusive.` / `Exactly one of ruleset or inline_rules is required.`).
+
+Each document may set `id`, `language` (falls back to the tool's `language`/`--language`
+override, then `python`), `severity`, `message`, and either a top-level `rule.pattern` (or
+bare `pattern`), or a `rules: [...]` list of the same shape for multiple rules in one document:
+
+```yaml
+id: no-print
+language: python
+severity: warning
+message: Avoid print in library code.
+rule:
+  pattern: print($A)
+```
+
+Invalid YAML, a document with no extractable pattern, or an unsupported language all fail
+closed with a structured `invalid_input` error (never a raw traceback). The MCP tool
+additionally bounds the raw `inline_rules` string to 64KiB (`_MAX_INLINE_RULES_CHARS` in
+`mcp_server.py`) before it ever reaches the YAML loader -- PyYAML's `SafeLoader` still resolves
+anchors/aliases, so an unbounded string is a "billion laughs"-style expansion-bomb DoS surface
+on an (LLM-influenceable) MCP tool call even though it cannot execute arbitrary code.
+
+The CLI additionally supports `--rule <file>` (a single rule file, no sgconfig required) and
+the full `--config sgconfig.yml` project-config workflow; neither is exposed over MCP yet
+(`--rule` is a deferred follow-up; `--config` is deferred because its `ruleDirs`/`testDirs` do
+an **unconfined** recursive directory walk that confining only the top-level scan root would
+not close).
 
 Each `findings[]` object has:
 
@@ -221,6 +256,35 @@ Optional top-level baseline fields:
 | `baseline_written` | `object` | Present when `--write-baseline` is used. Includes the output `path`, written `fingerprints`, and `count`. |
 | `suppressions` | `object` | Present when `--suppressions` is used. Includes the suppression file `path` and `suppressed_findings`. |
 | `suppressions_written` | `object` | Present when `--write-suppressions` is used. Includes the written suppression file `path`, `fingerprints`, and `count`. |
+
+## Orient Capsule JSON
+
+Emitted by `tg.exe orient <path> --json` and `tg_orient(...)` (MCP). Call this FIRST when
+orienting on an unfamiliar repo -- it answers "what is this codebase and where do I start" in
+one bounded call, cheaper than a full `tg_repo_map`/`tg_context_pack` walk.
+
+Built by `build_orient_capsule_json` (`orient_capsule.py`); unlike most other JSON shapes in
+this document it does **not** carry the common envelope fields (`version`/`routing_backend`/
+`sidecar_used`) -- only `routing_reason`. The MCP tool still injects `mcp_contract_version` and
+`schema_version` via the same `_inject_mcp_contract_fields` wrapper every tool uses.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `routing_reason` | `string` | Always `orient`. |
+| `path` | `string` | Absolute root path oriented on. |
+| `central_files` | `array<object>` | Top files ranked by import-graph in-degree centrality, each `{file, graph_score}`. |
+| `entry_points` | `array<object>` | Heuristically detected entry points, each `{file, reason}`. |
+| `symbol_map` | `object` | Top symbols per central file, keyed by file path; each entry an array of `{name, kind, line}` (bounded to 8 per file). |
+| `snippets` | `array<object>` | Bounded AST-boundary source snippets for the highest-ranked central files, each `{file, source, truncated}`. |
+| `token_estimate` | `integer` | Heuristic token estimate (`len/3.5`) for the full rendered capsule. |
+| `token_budget_label` | `string` | Human-readable summary of `token_estimate` and the snippet token budget. |
+| `truncated` | `boolean` | `true` when the snippet token budget clipped or dropped a snippet. |
+| `scan_limit` | `integer` | The effective `max_repo_files` used to build the underlying repo map. |
+
+`ignore` (repeatable glob, matches basename or repo-relative path) excludes a subtree from the
+**centrality ranking** only -- the files are still walked, just kept out of the central-files/
+snippet selection. Useful for keeping a vendor or skill-code tree from crowding out the real
+architecture hubs on a harness or monorepo.
 
 ## Repo Map JSON
 
@@ -1388,7 +1452,9 @@ These examples reuse the existing public contracts above; they are not separate 
 The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
-server contract version (`1.0.0`), not the installed CLI/package version and not
+server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
+`1.2.0` -- re-check the constant before citing a version number, it has already moved once
+from `1.0.0`), not the installed CLI/package version and not
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1402,24 +1468,28 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
-Current tool set:
+Current tool set (47 tools; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again):
 
 - `tg_mcp_capabilities()`
 - `tg_rulesets()`
-- `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)`
+- `tg_ruleset_scan(ruleset=None, inline_rules=None, path=".", language=None, glob=None, file_type=None, max_depth=None, allow_broad_generated_scan=False, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, justification=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)` -- exactly one of `ruleset`/`inline_rules` is required; see "Inline Rules" below.
 - `tg_repo_map(path=".")`
+- `tg_orient(path=".", max_tokens=3000, max_central_files=10, ignore=None)` -- call FIRST for orientation; see "Orient Capsule JSON" below.
+- `tg_doctor(path=".", config="sgconfig.yml", with_lsp=True)`
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
-- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=512, model=None, gpu_device_ids=None, gpu_timeout_s=5.0)`
+- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0)`
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
-- `tg_symbol_impact(symbol, path=".")`
-- `tg_symbol_refs(symbol, path=".")`
-- `tg_symbol_callers(symbol, path=".")`
-- `tg_symbol_blast_radius(symbol, path=".", max_depth=3)`
+- `tg_symbol_impact(symbol, path=".", deadline=None)`
+- `tg_symbol_refs(symbol, path=".", deadline=None)`
+- `tg_symbol_callers(symbol, path=".", deadline=None)`
+- `tg_symbol_blast_radius(symbol, path=".", max_depth=3, deadline=None)`
 - `tg_symbol_blast_radius_plan(symbol, path=".", max_depth=3, max_files=3, max_symbols=5)`
 - `tg_symbol_blast_radius_render(symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
+- `tg_file_imports(file)`
+- `tg_file_importers(file, path=".", max_repo_files=2000, deadline=None)`
 - `tg_checkpoint_create(path=".")`
 - `tg_checkpoint_list(path=".")`
 - `tg_checkpoint_undo(checkpoint_id, path=".")`
@@ -1433,9 +1503,14 @@ Current tool set:
 - `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3, refresh_on_stale=False, auto_refresh=None)`
 - `tg_session_blast_radius_plan(session_id, symbol, path=".", max_depth=3, max_files=3, max_symbols=5, refresh_on_stale=False, auto_refresh=None)`
 - `tg_session_blast_radius_render(session_id, symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_file_importers(session_id, file, path=".", refresh_on_stale=False, auto_refresh=None)`
+- `tg_search(pattern=None, path=".", case_sensitive=False, ignore_case=False, fixed_strings=False, word_regexp=False, context=None, max_count=None, max_results=None, max_files=None, count_matches=False, glob=None, type_filter=None, query=None, structured_json=True, max_repo_files=2000, rank=False, semantic=False)`
+- `tg_ast_search(pattern, lang, path=".", structured_json=True, max_repo_files=2000)`
 - `tg_index_search(pattern, path=".")`
+- `tg_classify_logs(file_path, structured_json=True)`
+- `tg_devices(json_output=True)`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
-- `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
+- `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, audit_manifest=None, audit_signing_key=None, lint_cmd=None, test_cmd=None, policy=None, expected_plan_digest=None, expected_match_count=None)`
 - `tg_audit_manifest_verify(manifest_path, signing_key=None, previous_manifest=None)`
 - `tg_audit_history(path=".")`
 - `tg_audit_diff(previous_manifest, current_manifest)`
@@ -1478,7 +1553,9 @@ Response mapping:
 
 - `tg_mcp_capabilities()` returns the MCP runtime capability envelope described above
 - `tg_rulesets()` returns the same v1 envelope and payload shape as [`examples/rulesets.json`](examples/rulesets.json)
-- `tg_ruleset_scan(...)` returns the same v1 envelope and payload shape as [`examples/ruleset_scan.json`](examples/ruleset_scan.json)
+- `tg_ruleset_scan(...)` returns the same v1 envelope and payload shape as [`examples/ruleset_scan.json`](examples/ruleset_scan.json) for a built-in `ruleset`, or the same shape with `routing_reason = "ast-inline-rules-scan"` and `ruleset = null` for `inline_rules` -- see "Inline Rules" under Ruleset Scan JSON above
+- `tg_orient(...)` returns the same shape as `tg.exe orient --json` -- see "Orient Capsule JSON" above
+- `tg_doctor(...)` returns the same v2 doctor schema as `tg.exe doctor --json` -- see "Doctor JSON" above
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
 - `tg_edit_plan(...)` returns the same v1 envelope and payload shape as [`examples/edit_plan.json`](examples/edit_plan.json)
 - `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)

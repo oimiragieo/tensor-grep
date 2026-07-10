@@ -424,3 +424,133 @@ def test_mcp_search_folds_scanner_scan_truncated_into_possibly_truncated(
     assert payload["scan_limit"]["scanned_files"] == 2
     assert payload["scan_limit"]["possibly_truncated"] is True
     assert payload["truncated"] is True
+
+
+# audit #95 Part 2: `deadline` on the 5 MCP symbol tools that already accepted
+# `max_repo_files` but not `deadline` -- every underlying repo_map.py builder already accepts
+# `deadline_seconds: float | None = None` (zero new builder logic), so this is a pure
+# expose-and-forward, same shape as the max_repo_files tests above.
+
+
+def test_mcp_symbol_impact_exposes_and_forwards_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_symbol_impact)
+    assert signature.parameters["deadline"].default is None
+
+    captured: dict[str, object] = {}
+
+    def fake_build_symbol_impact(symbol: str, path: str, **kwargs: object) -> dict[str, object]:
+        captured["symbol"] = symbol
+        captured["path"] = path
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_symbol_impact", fake_build_symbol_impact)
+
+    payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", ".", deadline=8.5))
+
+    assert payload["ok"] is True
+    assert captured["deadline_seconds"] == 8.5
+
+
+def test_mcp_symbol_impact_deadline_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    captured: dict[str, object] = {}
+
+    def fake_build_symbol_impact(symbol: str, path: str, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_symbol_impact", fake_build_symbol_impact)
+
+    mcp_server.tg_symbol_impact("create_invoice", ".")
+
+    assert captured["deadline_seconds"] is None
+
+
+def test_mcp_symbol_refs_exposes_and_forwards_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_symbol_refs)
+    assert signature.parameters["deadline"].default is None
+
+    captured: dict[str, object] = {}
+
+    def fake_build_symbol_refs(symbol: str, path: str, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_symbol_refs", fake_build_symbol_refs)
+
+    payload = json.loads(mcp_server.tg_symbol_refs("create_invoice", ".", deadline=4.0))
+
+    assert payload["ok"] is True
+    assert captured["deadline_seconds"] == 4.0
+
+
+def test_mcp_symbol_callers_exposes_and_forwards_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_symbol_callers)
+    assert signature.parameters["deadline"].default is None
+
+    captured: dict[str, object] = {}
+
+    def fake_build_symbol_callers(symbol: str, path: str, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_symbol_callers", fake_build_symbol_callers)
+
+    payload = json.loads(mcp_server.tg_symbol_callers("create_invoice", ".", deadline=12.0))
+
+    assert payload["ok"] is True
+    assert captured["deadline_seconds"] == 12.0
+
+
+def test_mcp_file_importers_exposes_and_forwards_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_file_importers)
+    assert signature.parameters["deadline"].default is None
+
+    captured: dict[str, object] = {}
+
+    def fake_build_file_importers(file: str, path: str, **kwargs: object) -> dict[str, object]:
+        captured["file"] = file
+        captured["path"] = path
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_file_importers", fake_build_file_importers)
+
+    payload = json.loads(mcp_server.tg_file_importers("dummy.py", ".", deadline=6.5))
+
+    assert payload["ok"] is True
+    assert captured["deadline_seconds"] == 6.5
+
+
+def test_mcp_symbol_blast_radius_exposes_and_forwards_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    signature = inspect.signature(mcp_server.tg_symbol_blast_radius)
+    assert signature.parameters["deadline"].default is None
+
+    captured: dict[str, object] = {}
+
+    def fake_build_symbol_blast_radius(
+        symbol: str, path: str, **kwargs: object
+    ) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "build_symbol_blast_radius", fake_build_symbol_blast_radius)
+
+    payload = json.loads(mcp_server.tg_symbol_blast_radius("create_invoice", ".", deadline=15.0))
+
+    assert payload["ok"] is True
+    assert captured["deadline_seconds"] == 15.0

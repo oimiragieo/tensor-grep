@@ -4639,13 +4639,42 @@ def _load_inline_rule_specs(
 ) -> list[dict[str, str]]:
     import yaml
 
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    class _NoAliasSafeLoader(yaml.SafeLoader):
+        """SafeLoader that REJECTS YAML aliases. Inline ast-grep rules never legitimately
+        need anchors/aliases, and an aliased node graph is a billion-laughs
+        memory-exhaustion vector: the downstream ``str()`` coercions on ``id``/``severity``/
+        ``message`` (below) deep-walk the SHARED alias graph and expand it ~9^depth. Audit
+        #95 Part-2 Opus gate BLOCK proved a 469-byte aliased payload hangs >15s -- the
+        ``_MAX_INLINE_RULES_CHARS`` length cap admits depth ~1000 while detonation is at
+        depth ~9, so the length cap alone is insufficient; reject at the loader level. This
+        shared helper guards BOTH the MCP ``tg_ruleset_scan(inline_rules=...)`` tool and the
+        CLI ``--inline-rules`` twin (identical mechanism). Uses the pure-Python SafeLoader
+        (not CSafeLoader) so ``compose_node`` is overridable -- inline payloads are small
+        (length-capped) so the perf cost is negligible."""
+
+        def compose_node(self, parent, index):  # type: ignore[override,no-untyped-def]
+            if self.check_event(yaml.events.AliasEvent):  # type: ignore[no-untyped-call]
+                event = self.get_event()  # type: ignore[no-untyped-call]
+                raise yaml.composer.ComposerError(
+                    None,
+                    None,
+                    "YAML aliases are not allowed in inline rules",
+                    event.start_mark,
+                )
+            return super().compose_node(parent, index)
+
     specs: list[dict[str, str]] = []
 
     try:
-        documents = list(yaml.load_all(inline_rules_text, Loader=loader))
-    except yaml.YAMLError as exc:
-        detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
+        documents = list(yaml.load_all(inline_rules_text, Loader=_NoAliasSafeLoader))
+    except (yaml.YAMLError, RecursionError) as exc:
+        # RecursionError: a deeply-nested ALIAS-FREE payload (e.g. "["*20000) recurses the YAML
+        # parser/composer past the interpreter limit. The _NoAliasSafeLoader cannot reject it (no
+        # alias), but the pure-Python SafeLoader raises a *catchable* RecursionError where the C
+        # loader would hard-crash the process (native stack overflow). Catch it here so this path
+        # also fails closed as a structured invalid_input rather than escaping as a raw traceback
+        # -- the tool's fail-closed contract (audit #95 Part-2 re-gate).
+        detail = str(exc).splitlines()[0] if str(exc).strip() else "input nesting too deep"
         raise ValueError(f"Invalid inline rules YAML: {detail}") from exc
 
     for document_index, payload in enumerate(documents, start=1):
@@ -4752,6 +4781,12 @@ def _ruleset_finding_fingerprint(
 
 
 def _truncate_evidence_snippet(text: str, max_chars: int) -> dict[str, object]:
+    # Defense-in-depth: coerce to int so a direct (non-MCP) caller passing a fractional float
+    # cannot crash the slice below (`normalized[:max_chars]` requires an int index). The MCP
+    # surface already rejects non-int max_evidence_snippet_chars at the tool inputSchema + FastMCP
+    # pydantic boundary, so this is not a reachable vuln -- it hardens the helper for any future
+    # in-process caller. (audit #95 Part-2 round-6 gate: non-blocking hardening note.)
+    max_chars = int(max_chars)
     normalized = " ".join(text.split())
     if max_chars <= 0:
         return {"text": "", "truncated": bool(normalized)}

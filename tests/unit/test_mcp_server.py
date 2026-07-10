@@ -915,6 +915,227 @@ def test_tg_search_refuses_glob_with_default_path_on_large_root():
     assert "1500" in payload["error"]["message"]
 
 
+def _tg_search_rank_fixture():
+    """Shared Pipeline/DirectoryScanner mock producing 2 matches for --rank/--semantic tests."""
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        matched_file_paths=["a.log"],
+        total_files=1,
+        total_matches=1,
+    )
+    return fake_backend
+
+
+def test_tg_search_rank_reranks_by_bm25(monkeypatch):
+    """audit #95 Part 2: `rank` mirrors main.py's `--rank`/`--bm25` post-processing --
+    inserted after _finalize_aggregate_result, before the empty/count/full-result branches
+    (main.py's `elif config.rank_bm25 and all_results.matches:` ordering)."""
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = _tg_search_rank_fixture()
+    reranked = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        matched_file_paths=["a.log"],
+        total_files=1,
+        total_matches=1,
+    )
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch("tensor_grep.core.reranker.rerank_by_bm25", return_value=reranked) as mock_rerank,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", rank=True)
+
+    mock_rerank.assert_called_once()
+    assert mock_rerank.call_args.args[0].total_matches == 1
+    assert mock_rerank.call_args.args[1] == "ERROR"
+    assert mock_rerank.call_args.args[2] == ["a.log"]
+    payload = json.loads(out)
+    assert payload["total_matches"] == 1
+
+
+def test_tg_search_semantic_applies_hybrid_rerank(monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = _tg_search_rank_fixture()
+    reranked = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        matched_file_paths=["a.log"],
+        total_files=1,
+        total_matches=1,
+        rank_fallback_reason=None,
+    )
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch(
+            "tensor_grep.cli.mcp_server._apply_semantic_rerank", return_value=reranked
+        ) as mock_semantic,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", semantic=True)
+
+    mock_semantic.assert_called_once()
+    assert mock_semantic.call_args.args[1] == "ERROR"
+    payload = json.loads(out)
+    assert payload["total_matches"] == 1
+
+
+def test_tg_search_semantic_takes_priority_over_rank_when_both_set(monkeypatch):
+    """Mirrors main.py's `if config.semantic_rank: ... elif config.rank_bm25:` ordering --
+    semantic wins when both flags are requested; the BM25-only path must not also fire."""
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = _tg_search_rank_fixture()
+    reranked = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        matched_file_paths=["a.log"],
+        total_files=1,
+        total_matches=1,
+    )
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch(
+            "tensor_grep.cli.mcp_server._apply_semantic_rerank", return_value=reranked
+        ) as mock_semantic,
+        patch("tensor_grep.core.reranker.rerank_by_bm25") as mock_bm25,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        mcp_server.tg_search("ERROR", ".", rank=True, semantic=True)
+
+    mock_semantic.assert_called_once()
+    mock_bm25.assert_not_called()
+
+
+def test_tg_search_semantic_backend_execution_error_returns_distinguishable_error(monkeypatch):
+    """Must catch BackendExecutionError EXPLICITLY (mirrors main.py's search_command boundary)
+    -- a genuine dense-backend fault (corrupt model dir) must surface as a distinguishable
+    structured error, not fall through to the generic internal_error catch-all at the bottom
+    of tg_search (which would lose the fail-closed signal an agent needs to tell "the backend
+    itself broke" apart from "some other internal_error")."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = _tg_search_rank_fixture()
+    fault = BackendExecutionError("corrupt dense model directory")
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch("tensor_grep.cli.mcp_server._apply_semantic_rerank", side_effect=fault),
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", semantic=True)
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "semantic_backend_error"
+    assert payload["error"]["code"] != "internal_error"
+    assert "corrupt dense model directory" in payload["error"]["message"]
+
+
+def test_tg_search_semantic_probes_fallback_reason_on_empty_matches(monkeypatch):
+    """F16 parity (main.py _set_semantic_rank_fallback_reason): even a 0-match search must
+    still probe dense-leg availability so rank_fallback_reason is set whenever the leg is
+    unavailable, regardless of match count."""
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(matches=[], total_files=0, total_matches=0)
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch("tensor_grep.cli.mcp_server._set_semantic_rank_fallback_reason") as mock_probe,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        mcp_server.tg_search("NOPE", ".", semantic=True)
+
+    mock_probe.assert_called_once()
+
+
+def test_tg_search_rank_fallback_reason_surfaces_in_json_payload(monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = _tg_search_rank_fixture()
+    reranked = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        matched_file_paths=["a.log"],
+        total_files=1,
+        total_matches=1,
+        rank_fallback_reason="semantic ranking unavailable: the `semantic` extra is not installed",
+    )
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+        patch("tensor_grep.cli.mcp_server._apply_semantic_rerank", return_value=reranked),
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", semantic=True)
+
+    payload = json.loads(out)
+    assert payload["rank_fallback_reason"] == (
+        "semantic ranking unavailable: the `semantic` extra is not installed"
+    )
+
+
+def test_tg_search_docstring_does_not_oversell_gpu():
+    """The docstring previously read 'high-speed GPU or CPU engine', overselling a paused,
+    non-default, usually-dormant GPU path (architecture-contract known-weak-point #2: GPU is
+    slower than CPU with no promotion-ready path; auto-GPU stays dormant when rg is
+    installed). Mirror the CLI's own qualified phrasing ('with GPU acceleration when
+    applicable') instead of an unqualified speed claim."""
+    from tensor_grep.cli import mcp_server
+
+    doc = mcp_server.tg_search.__doc__ or ""
+    assert "high-speed GPU" not in doc
+    assert "when applicable" in doc.lower()
+
+
 def test_tg_ast_search_backend_execution_error_skips_file_and_keeps_partial_results():
     from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.cli import mcp_server
@@ -1353,6 +1574,427 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
+# audit #95 Part 2 [SEC]: `inline_rules` on tg_ruleset_scan -- the `--inline-rules` CLI source
+# (a string of ast-grep rule YAML, ZERO file I/O), mirrored via _load_inline_rule_specs (never
+# reimplemented). `ruleset` becomes optional; exactly one of ruleset/inline_rules is required.
+
+
+def test_tg_ruleset_scan_supports_inline_rules(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("print($A)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
+
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=inline_rules, path="."))
+
+    assert payload["routing_reason"] == "ast-inline-rules-scan"
+    assert payload["config_path"] == "inline-rules"
+    assert payload["ruleset"] is None
+    assert payload["rule_count"] == 1
+    assert payload["matched_rules"] == 1
+    assert payload["findings"][0]["rule_id"] == "no-print"
+    assert payload["findings"][0]["files"] == ["a.py"]
+
+
+def test_tg_ruleset_scan_inline_rules_preserves_severity_and_message(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("print($A)\n", encoding="utf-8")
+
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "severity: warning",
+        "message: Avoid print in library code.",
+        "rule:",
+        "  pattern: print($A)",
+    ])
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=inline_rules, path="."))
+
+    finding = payload["findings"][0]
+    assert finding["rule_id"] == "no-print"
+    assert finding["severity"] == "warning"
+    assert finding["message"] == "Avoid print in library code."
+
+
+def test_tg_ruleset_scan_ruleset_and_inline_rules_are_mutually_exclusive(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            ruleset="crypto-safe",
+            inline_rules="id: x\nrule:\n  pattern: y\n",
+            path=".",
+        )
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "mutually exclusive" in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_requires_ruleset_or_inline_rules(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(path="."))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "one of ruleset or inline_rules" in payload["error"]["message"].lower()
+
+
+def test_tg_ruleset_scan_inline_rules_invalid_yaml_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules="id: broken\nrule: [", path="."))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "YAML" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_no_valid_rules_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    # Valid YAML, but no `rule.pattern`/`pattern` field anywhere -- _load_inline_rule_specs
+    # extracts zero specs from this document.
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules="id: no-pattern-here\n", path="."))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "no valid inline rules" in payload["error"]["message"].lower()
+
+
+def test_tg_ruleset_scan_inline_rules_unsupported_language_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    inline_rules = "\n".join([
+        "id: unsupported-language",
+        "language: Dart",
+        "rule:",
+        "  pattern: print($A)",
+    ])
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=inline_rules, path="."))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Unsupported AST language Dart" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_honors_explicit_language_override(monkeypatch, tmp_path):
+    """The `inferred_language = normalize_ast_language(language) if language else
+    str(rules[0]["language"]) else` branch only runs when the caller passes `language=`
+    explicitly (the rule's OWN embedded `language:` field, and the no-override default, take
+    a different path entirely) -- exercise it directly so a regression there (e.g. a missing
+    normalize_ast_language import) is actually caught."""
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("print($A)\n", encoding="utf-8")
+
+    # No `language:` field on the rule itself -- the explicit `language=` override must supply
+    # it via the `if language:` branch, not the rule's own per-document field.
+    inline_rules = "id: no-print\nrule:\n  pattern: print($A)\n"
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(inline_rules=inline_rules, path=".", language="python")
+    )
+
+    assert payload["language"] == "python"
+    assert payload["findings"][0]["rule_id"] == "no-print"
+
+
+def test_tg_ruleset_scan_inline_rules_rejects_oversized_input(tmp_path, monkeypatch):
+    """[SEC] YAML expansion-bomb DoS -- DEFENSE-IN-DEPTH layer 1 (the length cap). Bounding the
+    raw string length before it reaches the YAML loader is a cheap, unconditional guard --
+    verify the tool actually enforces the cap (not merely documents it) and that the rejection
+    happens BEFORE any YAML parsing (a bomb payload well past the cap must still be refused
+    fast, not hang trying to parse it). NOTE: the length cap ALONE does NOT stop the bomb -- an
+    aliased payload detonates by depth ~9 while the cap admits depth ~1000, so the real fix is
+    the loader-level alias rejection; see test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb
+    (audit #95 Part-2 Opus-gate BLOCK)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    oversized = "a" * (mcp_server._MAX_INLINE_RULES_CHARS + 1)
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=oversized, path="."))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "exceeds" in payload["error"]["message"].lower()
+    assert str(mcp_server._MAX_INLINE_RULES_CHARS) in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb(tmp_path, monkeypatch):
+    """[SEC] YAML alias-expansion DoS (billion-laughs) -- audit #95 Part-2 Opus-gate BLOCK.
+
+    SafeLoader SHARES alias nodes, so the load itself is linear -- but the downstream ``str()``
+    coercions on ``id``/``severity``/``message`` in ``_load_inline_rule_specs`` deep-walk that
+    shared graph and expand it ~9^depth. A sub-64 KiB nested-alias payload therefore detonates by
+    depth ~9 (the gate proved a 469-byte payload hung >15s), completely under the length cap
+    (which admits depth ~1000). The fix rejects YAML aliases at the loader level
+    (``_NoAliasSafeLoader.compose_node`` raises on the first ``AliasEvent``, before any expansion),
+    so the bomb is refused as ``invalid_input`` fast.
+
+    Kept SHALLOW (depth 5) on purpose: the fix rejects at the FIRST alias regardless of depth, so
+    shallow still proves it, and if the loader-level rejection ever regresses this test FAILS FAST
+    on the assertion (the scan returns a non-``invalid_input`` result) instead of OOM/hanging the
+    suite. A watchdog thread is the belt-and-suspenders anti-hang guard (anti-hang-test-protocol).
+    """
+    import threading
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    # Nested YAML aliases -- the billion-laughs vector. a0 is the anchored seed; each level
+    # aliases the previous 9x. WELL under _MAX_INLINE_RULES_CHARS, so ONLY the _NoAliasSafeLoader
+    # alias rejection -- not the length bound -- can stop it. The `severity: *a4` reaches the
+    # str()-coercion detonation point.
+    lines = ['a0: &a0 ["lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol"]']
+    for depth in range(1, 5):
+        refs = ", ".join([f"*a{depth - 1}"] * 9)
+        lines.append(f"a{depth}: &a{depth} [{refs}]")
+    lines += ["rules:", '  - pattern: "print($X)"', "    severity: *a4"]
+    bomb = "\n".join(lines)
+    assert len(bomb) < mcp_server._MAX_INLINE_RULES_CHARS, (
+        "payload must be sub-cap to test the loader, not the length bound"
+    )
+
+    result: dict[str, str] = {}
+
+    def _run() -> None:
+        result["payload"] = mcp_server.tg_ruleset_scan(inline_rules=bomb, path=".")
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout=15.0)
+    assert not worker.is_alive(), (
+        "tg_ruleset_scan HUNG on a sub-64 KiB YAML alias bomb -- the _NoAliasSafeLoader alias "
+        "rejection regressed; the _MAX_INLINE_RULES_CHARS length cap alone does NOT stop this DoS."
+    )
+
+    payload = json.loads(result["payload"])
+    assert payload.get("error", {}).get("code") == "invalid_input", (
+        f"alias bomb must be refused as invalid_input (loader-level alias rejection); got: {payload}"
+    )
+    assert "YAML" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_rejects_deep_nested_yaml(tmp_path, monkeypatch):
+    """[SEC] Deep-nested ALIAS-FREE YAML DoS residual -- audit #95 Part-2 re-gate BLOCK.
+
+    A ~40 KB payload of 20000 nested flow-sequences (`"["*20000 + "]"*20000`) is UNDER the 64 KiB
+    length cap and has NO aliases, so `_NoAliasSafeLoader` cannot reject it -- but it recurses the
+    YAML parser/composer past the interpreter's recursion limit. The pure-Python SafeLoader raises
+    a CATCHABLE `RecursionError` (the old CSafeLoader hard-crashed the whole process, exit
+    0xC00000FD); the fix catches `RecursionError` at the load site so this path also fails closed
+    as a structured `invalid_input` instead of escaping as a raw traceback (the tool's fail-closed
+    contract). Fast (<1s, O(input) memory, process survives). On revert the assertion fails (or the
+    call raises) fast -- never hangs (anti-hang-test-protocol)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    deep = "rules:\n  - pattern: " + ("[" * 20000) + ("]" * 20000) + '\n    severity: "s"\n'
+    assert len(deep) < mcp_server._MAX_INLINE_RULES_CHARS, (
+        "payload must be sub-cap to test the loader, not the length bound"
+    )
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=deep, path="."))
+
+    assert payload.get("error", {}).get("code") == "invalid_input", (
+        f"deep-nested YAML must fail closed as invalid_input, not a raw traceback; got: {payload}"
+    )
+    assert "YAML" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_rejects_excessive_rule_count(tmp_path, monkeypatch):
+    """[SEC] Unbounded scan fan-out DoS -- audit #95 Part-2 re-gate. Each inline rule is a SEPARATE
+    ast-grep pass (~40 ms/rule), so a payload UNDER the 64 KiB length cap can still drive a
+    multi-minute scan (~1000 rules -> a >40s hang). The rule COUNT cap (_MAX_INLINE_RULES) is the
+    binding bound; a payload exceeding it must be refused fast as invalid_input, BEFORE any scan
+    (no ast-grep is invoked -- the count check precedes _run_ast_scan_payload)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    # _MAX_INLINE_RULES + 1 valid rules, well under the 64 KiB length cap.
+    n = mcp_server._MAX_INLINE_RULES + 1
+    rules_yaml = "rules:\n" + "".join(
+        f"  - id: r{i}\n    pattern: print($A{i})\n" for i in range(n)
+    )
+    assert len(rules_yaml) < mcp_server._MAX_INLINE_RULES_CHARS
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(inline_rules=rules_yaml, path=".", language="python")
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert str(n) in payload["error"]["message"]
+    assert str(mcp_server._MAX_INLINE_RULES) in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_backend_execution_error_fails_closed(tmp_path, monkeypatch):
+    """[SEC] Backend Fail-Closed Contract -- audit #95 Part-2 re-gate. A runtime backend fault
+    (BackendExecutionError, a RuntimeError -- e.g. ast-grep failing on an over-long pattern,
+    WinError 206) was escaping tg_ruleset_scan's `except (BroadScanRefusedError, ValueError)` as a
+    RAW TRACEBACK on a valid payload. It must surface as a structured backend_error instead."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise BackendExecutionError("ast-grep failed: [WinError 206] the filename is too long")
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _boom)
+
+    inline_rules = "rules:\n  - id: x\n    pattern: print($A)\n"
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(inline_rules=inline_rules, path=".", language="python")
+    )
+
+    assert payload["error"]["code"] == "backend_error"
+    assert "backend failed" in payload["error"]["message"].lower()
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_configuration_error_fails_closed(tmp_path, monkeypatch):
+    """[SEC] round-4 gate: ast-grep is NOT a declared dependency, so on a DEFAULT
+    `pip install tensor-grep` a trivial one-line inline rule reaches
+    _select_ast_backend_for_pattern, which raises ConfigurationError (a RuntimeError, NOT a
+    ValueError/BackendExecutionError). That escaped tg_ruleset_scan as a RAW TRACEBACK on the
+    common default-install path. Must fail closed as a structured 'unavailable'."""
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.core.pipeline import ConfigurationError
+
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(*a, **k):
+        raise ConfigurationError("ast-grep binary not found on PATH; install ast-grep")
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _boom)
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            inline_rules="rules:\n  - id: x\n    pattern: print($A)\n", path=".", language="python"
+        )
+    )
+
+    assert payload["error"]["code"] == "unavailable"
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_baseline_io_error_fails_closed(tmp_path, monkeypatch):
+    """[SEC] round-4 gate: an unreadable caller-supplied baseline/suppressions path (e.g. a
+    directory) makes _load_ruleset_baseline's read_text raise OSError/IsADirectoryError (NOT a
+    ValueError). That escaped as a RAW TRACEBACK. Must fail closed structured, never a traceback."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(*a, **k):
+        raise IsADirectoryError("[Errno 21] Is a directory: 'baseline'")
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _boom)
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            inline_rules="rules:\n  - id: x\n    pattern: print($A)\n", path=".", language="python"
+        )
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_bad_language_override_fails_closed(tmp_path, monkeypatch):
+    """[SEC] round-5 gate: a rule carrying its OWN valid `language:` short-circuits the loader's
+    guarded default_language normalization, so an unsupported top-level `language=` override reaches
+    normalize_ast_language (mcp_server.py:2008) UNGUARDED -- it was a raw ValueError traceback on a
+    valid-but-bogus payload. Must fail closed as structured invalid_input. (The control -- a rule
+    that OMITS its own language -- was already caught by the loader; this is the short-circuit gap.)
+    """
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    # rule sets language=python (so the loader succeeds) + a bogus top-level override reaches 2008.
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            inline_rules="rules:\n  - id: x\n    language: python\n    pattern: print($A)\n",
+            path=".",
+            language="zzznotalang",
+        )
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Unsupported AST language" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_at_length_boundary_still_parses(monkeypatch, tmp_path):
+    """Boundary correctness for the length bound: a payload AT the cap must still reach the
+    parser (not be off-by-one refused) and behave exactly like any other invalid-but-in-budget
+    input -- i.e. still get the ordinary 'no valid inline rules' error, not the length error."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    at_cap = "#" + "a" * (mcp_server._MAX_INLINE_RULES_CHARS - 1)
+    assert len(at_cap) == mcp_server._MAX_INLINE_RULES_CHARS
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=at_cap, path="."))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "exceeds" not in payload["error"]["message"].lower()
+
+
+def test_tg_ruleset_scan_inline_rules_confines_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    outside = tmp_path.parent / f"outside-{tmp_path.name}"
+    outside.mkdir(exist_ok=True)
+    try:
+        payload = json.loads(
+            mcp_server.tg_ruleset_scan(
+                inline_rules="id: x\nrule:\n  pattern: y\n", path=str(outside)
+            )
+        )
+        assert payload["error"]["code"] == "invalid_input"
+        assert "must stay within" in payload["error"]["message"]
+    finally:
+        outside.rmdir()
+
+
 def test_tg_ruleset_scan_refuses_direct_temp_root_before_walking(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
@@ -1657,7 +2299,7 @@ def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
     options = mcp_server.mcp._mcp_server.create_initialization_options()
 
     assert options.server_name == "tensor-grep"
-    assert options.server_version == "1.1.0"
+    assert options.server_version == "1.2.0"
     assert options.server_version == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mcp_server._mcp_server_version() == version("tensor-grep")
 
@@ -4572,6 +5214,180 @@ def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path, monkeypatc
     )
 
 
+def test_tg_orient_returns_json_capsule(tmp_path, monkeypatch):
+    """audit #95 Part 2: tg_orient mirrors `tg orient --json` -> build_orient_capsule_json."""
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / "hub.py").write_text("def hub():\n    pass\n", encoding="utf-8")
+    (tmp_path / "leaf.py").write_text("import hub\n\n\ndef leaf():\n    pass\n", encoding="utf-8")
+
+    payload = json.loads(mcp_server.tg_orient(str(tmp_path)))
+
+    assert payload["routing_reason"] == "orient"
+    assert payload["path"] == str(tmp_path.resolve())
+    assert "central_files" in payload
+    assert any(
+        cf["file"] == str((tmp_path / "hub.py").resolve()) for cf in payload["central_files"]
+    )
+    assert "entry_points" in payload
+    assert "snippets" in payload
+    assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    assert isinstance(payload["schema_version"], int)
+
+
+def test_tg_orient_docstring_directs_agent_to_call_first(tmp_path):
+    """Design instruction: the docstring must close the 'run orient first is unreachable via
+    MCP' gap by explicitly telling an agent to call this FIRST for orientation."""
+    from tensor_grep.cli import mcp_server
+
+    assert "call first for orientation" in (mcp_server.tg_orient.__doc__ or "").lower()
+
+
+def test_tg_orient_forwards_max_tokens_max_central_files_and_ignore(monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    captured: dict[str, object] = {}
+
+    def fake_build_orient_capsule_json(path, **kwargs):
+        captured["path"] = path
+        captured.update(kwargs)
+        return json.dumps({"path": path, "routing_reason": "orient"})
+
+    monkeypatch.setattr(mcp_server, "build_orient_capsule_json", fake_build_orient_capsule_json)
+
+    mcp_server.tg_orient(
+        ".",
+        max_tokens=5000,
+        max_central_files=25,
+        ignore=["vendor/**", "core/skills/**"],
+    )
+
+    assert captured["max_tokens"] == 5000
+    assert captured["max_central_files"] == 25
+    assert captured["ignore"] == ("vendor/**", "core/skills/**")
+
+
+def test_tg_orient_reports_structured_error_for_missing_path():
+    from tensor_grep.cli import mcp_server
+
+    # round-8 (audit #95): a relative, in-root-but-nonexistent path so the confinement check
+    # (which fires first) is not what's being exercised here -- see the analogous
+    # tg_index_search missing-path test above.
+    out = mcp_server.tg_orient("definitely-missing-for-mcp-server-tests")
+
+    parsed = json.loads(out)
+    assert parsed["routing_backend"] == "RepoMap"
+    assert parsed["routing_reason"] == "orient"
+    assert parsed["error"]["code"] == "invalid_input"
+    assert "Traceback" not in parsed["error"]["message"]
+
+
+def test_tg_orient_confines_path_to_mcp_root(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    outside = tmp_path.parent / f"outside-{tmp_path.name}"
+    outside.mkdir(exist_ok=True)
+    try:
+        out = mcp_server.tg_orient(str(outside))
+        parsed = json.loads(out)
+        assert parsed["error"]["code"] == "invalid_input"
+        assert "must stay within" in parsed["error"]["message"]
+    finally:
+        outside.rmdir()
+
+
+def test_tg_doctor_returns_json_payload(tmp_path, monkeypatch):
+    """audit #95 Part 2: tg_doctor wraps _build_doctor_payload (main.py:2790)."""
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(mcp_server.tg_doctor(str(tmp_path), with_lsp=False))
+
+    assert payload["root"] == str(tmp_path.resolve())
+    assert payload["config"] == str((tmp_path / "sgconfig.yml").resolve())
+    assert payload["lsp"]["enabled"] is False
+    assert "native_tg_binary_exists" in payload
+    assert "search_acceleration_backend" in payload
+    assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # _build_doctor_payload's OWN "version"/"schema_version" (the tensor-grep semver / doctor
+    # schema int) must survive untouched -- _inject_mcp_contract_fields uses setdefault so it
+    # must never clobber a key the underlying payload already set.
+    assert payload["version"] == mcp_server._mcp_server_version()
+    assert payload["schema_version"] == payload["doctor_schema_version"]
+
+
+def test_tg_doctor_confines_path_to_mcp_root(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    outside = tmp_path.parent / f"outside-{tmp_path.name}"
+    outside.mkdir(exist_ok=True)
+    try:
+        out = mcp_server.tg_doctor(str(outside), with_lsp=False)
+        parsed = json.loads(out)
+        assert parsed["error"]["code"] == "invalid_input"
+        assert "must stay within" in parsed["error"]["message"]
+    finally:
+        outside.rmdir()
+
+
+def test_tg_doctor_confines_config_param(tmp_path, monkeypatch):
+    """New hardening beyond the literal ask: `config` is a SECONDARY param that
+    `_build_doctor_payload` uses to relocate its `root` (config's parent dir) for every
+    downstream diagnostic probe -- unconfined, it is the exact 'secondary anchor derived from
+    an unconfined param' bug class #95's gate flagged (see tg_session_file_importers). Confine
+    it to the (already-confined) doctor root, mirroring tg_ruleset_scan's baseline_path."""
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    outside_config = tmp_path.parent / f"outside-cfg-{tmp_path.name}" / "sgconfig.yml"
+    outside_config.parent.mkdir(exist_ok=True)
+    outside_config.write_text("", encoding="utf-8")
+    try:
+        out = mcp_server.tg_doctor(str(tmp_path), config=str(outside_config), with_lsp=False)
+        parsed = json.loads(out)
+        assert parsed["error"]["code"] == "invalid_input"
+        assert "must stay within" in parsed["error"]["message"]
+    finally:
+        outside_config.unlink()
+        outside_config.parent.rmdir()
+
+
+def test_tg_doctor_empty_string_config_falls_back_like_cli(tmp_path, monkeypatch):
+    """Edge case for the config-confinement addition above: CLI `doctor` treats an empty
+    `--config ""` as "not provided" (falls back to root/sgconfig.yml) via a plain `if config:`
+    truthiness check -- config confinement must preserve that, not treat "" as a real
+    (trivially in-root) value that would overwrite the default resolution."""
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(mcp_server.tg_doctor(str(tmp_path), config="", with_lsp=False))
+
+    assert payload["root"] == str(tmp_path.resolve())
+    assert payload["config"] == str((tmp_path / "sgconfig.yml").resolve())
+
+
+def test_tg_doctor_forwards_with_lsp_true_by_default(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    captured: dict[str, object] = {}
+
+    def fake_build_doctor_payload(path, config=None, *, with_lsp):
+        captured["path"] = path
+        captured["config"] = config
+        captured["with_lsp"] = with_lsp
+        return {"root": path}
+
+    monkeypatch.setattr(mcp_server, "_build_doctor_payload", fake_build_doctor_payload)
+
+    mcp_server.tg_doctor(".")
+
+    assert captured["with_lsp"] is True
+
+
 def test_tg_context_pack_returns_ranked_inventory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
@@ -5386,11 +6202,13 @@ def test_tg_symbol_impact_uses_bounded_repo_scan_by_default(monkeypatch, tmp_pat
         *,
         semantic_provider="native",
         max_repo_files=None,
+        deadline_seconds=None,
     ):
         seen["symbol"] = symbol
         seen["path"] = path
         seen["semantic_provider"] = semantic_provider
         seen["max_repo_files"] = max_repo_files
+        seen["deadline_seconds"] = deadline_seconds
         return {
             "version": 1,
             "routing_backend": "RepoMap",
@@ -6777,8 +7595,10 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
     "provider": "a semantic-provider mode name (native/lsp/hybrid), not a path",
     "render_profile": "an enum-like render mode name (full/compact/llm), not a path",
     "inline_rules": (
-        "reserved for a future inline ast-grep rule-source param (#95 follow-up, not yet "
-        "shipped) -- listed now so it does not need re-litigating when it lands"
+        "a string of inline ast-grep rule YAML (tg_ruleset_scan, mirrors CLI --inline-rules), "
+        "not a path -- parsed via _load_inline_rule_specs with zero file I/O; length-bounded "
+        "by _MAX_INLINE_RULES_CHARS to blunt a YAML anchor/alias expansion-bomb before it ever "
+        "reaches the parser"
     ),
     "signing_key": (
         "a READ of secret HMAC key material, deliberately gated by the "
@@ -6807,6 +7627,8 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
 _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
     "tg_ruleset_scan": {"ruleset": "secrets-basic", "path": "."},
     "tg_repo_map": {"path": "."},
+    "tg_orient": {"path": "."},
+    "tg_doctor": {"path": "."},
     "tg_context_pack": {"query": "x", "path": "."},
     "tg_edit_plan": {"query": "x", "path": "."},
     "tg_context_render": {"query": "x", "path": "."},
@@ -6945,6 +7767,14 @@ def test_mcp_primary_path_confinement_ratchet(
     with an unclassified string param fails here (or errors loudly via the assertion
     below) until it is consciously confined or added to CONFINEMENT_EXEMPT with a reason.
     """
+    # #102 fold-in (ratchet hermeticity): without this, a REAL TG_MCP_ROOT set in the
+    # operator's/CI's own shell environment (not just a monkeypatch-scoped one from another
+    # test -- pytest's monkeypatch fixture already auto-reverts those) would silently relocate
+    # the confinement anchor away from tmp_path below, so the negative probe's "outside_dir"
+    # might land INSIDE the real TG_MCP_ROOT and false-pass, or the positive probe's in-root
+    # relative value might land OUTSIDE it and false-fail -- a "passes in CI, false result
+    # locally" trap. Hermetic tests must not depend on ambient external environment state.
+    monkeypatch.delenv("TG_MCP_ROOT", raising=False)
     monkeypatch.chdir(tmp_path)
     assert tool_name in _RATCHET_BASE_KWARGS, (
         f"{tool_name} has a non-exempt string param {param_name!r} this ratchet does not "
@@ -6997,16 +7827,16 @@ def test_mcp_primary_path_confinement_ratchet(
 
 def test_confinement_exempt_allowlist_has_no_unused_entries():
     """Every CONFINEMENT_EXEMPT entry must correspond to a real param somewhere in the live
-    schema, except the one documented forward-looking reservation (inline_rules, a future
-    tool addition) -- otherwise a stale allowlist entry could mask a real future gap."""
+    schema -- otherwise a stale allowlist entry could mask a real future gap. (inline_rules
+    shipped as a real tg_ruleset_scan param in audit #95 Part 2; no forward-looking
+    reservation remains.)"""
     from tensor_grep.cli import mcp_server
 
     all_param_names: set[str] = set()
     for tool in asyncio.run(mcp_server.mcp.list_tools()):
         all_param_names.update(tool.inputSchema.get("properties", {}))
 
-    forward_looking = {"inline_rules"}
-    stale = set(CONFINEMENT_EXEMPT) - all_param_names - forward_looking
+    stale = set(CONFINEMENT_EXEMPT) - all_param_names
     assert not stale, f"CONFINEMENT_EXEMPT has stale/unused entries: {sorted(stale)}"
 
 
@@ -7097,3 +7927,84 @@ def test_confine_mcp_path_uses_mcp_root_override(tmp_path, monkeypatch):
     refused_parsed = json.loads(refused)
     assert refused_parsed["error"]["code"] == "invalid_input"
     assert "must stay within" in refused_parsed["error"]["message"]
+
+
+# #102 fold-in: the 13 round-6/7 params `_confine_mcp_path`'s docstring names as a residual
+# cwd-hardcoded set (tg_file_imports/importers `file`, tg_classify_logs `file_path`, the
+# tg_audit_*/tg_review_bundle_* manifest/bundle params, tg_rewrite_apply `audit_manifest`) now
+# route through `_mcp_root()` too, so TG_MCP_ROOT relocates them exactly like every primary
+# path/root param. (tool_name, param_name, base_kwargs) -- base_kwargs supplies every OTHER
+# required param with a value that either doesn't need to exist on disk (confinement is pure
+# path resolution) or is pre-created in the test body when the tool's own loader reads it
+# directly (mirrors _RATCHET_BASE_KWARGS / _ratchet_positive_value above).
+_ANCHOR_SPLIT_CASES: list[tuple[str, str, dict[str, object]]] = [
+    ("tg_file_imports", "file", {}),
+    ("tg_file_importers", "file", {"path": "."}),
+    ("tg_classify_logs", "file_path", {}),
+    ("tg_audit_manifest_verify", "manifest_path", {}),
+    ("tg_audit_manifest_verify", "previous_manifest", {"manifest_path": "manifest.json"}),
+    ("tg_audit_diff", "previous_manifest", {"current_manifest": "current.json"}),
+    ("tg_audit_diff", "current_manifest", {"previous_manifest": "previous.json"}),
+    ("tg_review_bundle_create", "manifest_path", {}),
+    ("tg_review_bundle_create", "scan_path", {"manifest_path": "manifest.json"}),
+    ("tg_review_bundle_create", "previous_manifest", {"manifest_path": "manifest.json"}),
+    ("tg_review_bundle_create", "output_path", {"manifest_path": "manifest.json"}),
+    ("tg_review_bundle_verify", "bundle_path", {}),
+    (
+        "tg_rewrite_apply",
+        "audit_manifest",
+        {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "tool_name,param_name,base_kwargs",
+    _ANCHOR_SPLIT_CASES,
+    ids=[f"{t}.{p}" for t, p, _ in _ANCHOR_SPLIT_CASES],
+)
+def test_round8_residual_cwd_params_move_with_tg_mcp_root(
+    tool_name, param_name, base_kwargs, tmp_path, monkeypatch
+):
+    """The residual params still hardcoded to Path.cwd() as of the #95 gate report must be
+    fixed to anchor at _mcp_root() -- an operator who relocates TG_MCP_ROOT to point an MCP
+    server at a fleet repo other than its own cwd must get the SAME relocated confinement on
+    these params as every primary path/root param already gets."""
+    real_root = tmp_path / "real_root"
+    real_root.mkdir()
+    other_cwd = tmp_path / "other_cwd"
+    other_cwd.mkdir()
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(real_root))
+    monkeypatch.chdir(other_cwd)  # cwd != TG_MCP_ROOT so a leftover cwd anchor is caught.
+
+    # ABSOLUTE path, not relative: a bare relative filename resolves safely under ANY anchor
+    # (anchor / "target.json" always stays "within" whatever the anchor happens to be), so it
+    # cannot distinguish the old Path.cwd()-anchored behavior from the fixed _mcp_root()
+    # behavior. An absolute path inside real_root but outside other_cwd can: it is only
+    # accepted when the anchor is really real_root (mirrors test_confine_mcp_path_uses_
+    # mcp_root_override's own absolute-path probe style above).
+    in_root_target = real_root / "target.json"
+    in_root_target.write_text("{}", encoding="utf-8")
+
+    kwargs = {**base_kwargs, param_name: str(in_root_target)}
+    result = _call_mcp_tool_text(tool_name, kwargs)
+
+    assert "must stay within" not in result, (
+        f"{tool_name}.{param_name} rejected a path inside TG_MCP_ROOT while cwd differed from "
+        f"TG_MCP_ROOT -- still anchored to Path.cwd() instead of _mcp_root() "
+        f"(response: {result[:400]!r})"
+    )
+
+    # And a path outside BOTH cwd and TG_MCP_ROOT must still be refused -- this proves the
+    # positive case above is really exercising confinement, not an accidental no-op check.
+    outside = tmp_path / "outside_both"
+    outside.mkdir()
+    (outside / "target.json").write_text("{}", encoding="utf-8")
+    rejected = _call_mcp_tool_text(
+        tool_name, {**base_kwargs, param_name: str(outside / "target.json")}
+    )
+    assert "must stay within" in rejected, (
+        f"{tool_name}.{param_name} accepted a path outside TG_MCP_ROOT (response: "
+        f"{rejected[:400]!r})"
+    )
