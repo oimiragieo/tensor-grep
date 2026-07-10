@@ -2148,13 +2148,13 @@ def tg_ruleset_scan(
 
 
 @mcp.tool()  # type: ignore
-def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
+def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_SCAN_LIMIT) -> str:
     """
     Return a deterministic repository inventory for agent context selection.
 
     Args:
         path: File or directory to inventory.
-        max_repo_files: Maximum repo files to scan before returning. Defaults to 512.
+        max_repo_files: Maximum repo files to scan before returning.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- unconfined it is an arbitrary-directory-read primitive over the MCP

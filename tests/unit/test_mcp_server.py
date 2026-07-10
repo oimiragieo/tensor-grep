@@ -5125,7 +5125,7 @@ def test_tg_repo_map_returns_json_inventory(tmp_path, monkeypatch):
     assert payload["sidecar_used"] is False
     assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
     assert payload["path"] == str(project.resolve())
-    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert payload["scan_limit"]["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
     assert payload["scan_limit"]["possibly_truncated"] is False
     assert str(module_path.resolve()) in payload["files"]
     assert str(test_path.resolve()) in payload["tests"]
@@ -5146,6 +5146,37 @@ def test_tg_repo_map_returns_json_inventory(tmp_path, monkeypatch):
         for entry in payload["imports"]
     )
     assert str(module_path.resolve()) in payload["related_paths"]
+
+
+def test_tg_repo_map_defaults_to_shared_mcp_repo_scan_limit(tmp_path, monkeypatch):
+    """audit #114: tg_repo_map's signature hardcoded `max_repo_files: int | None = 512`
+    while every sibling MCP scan tool (tg_symbol_defs, tg_edit_plan, tg_context_pack, etc.)
+    defaults to the shared `_DEFAULT_MCP_REPO_SCAN_LIMIT` (2000). The effective-limit calc
+    `max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT` only reaches 2000 when a caller
+    EXPLICITLY passes `None` -- the 512 signature default was truthy, so omitting the param
+    (the normal agent-call case) silently capped the scan at 512 instead of 2000. Pin the
+    argument actually forwarded to build_repo_map so this cannot regress to a hardcoded
+    literal that drifts from the shared constant."""
+    monkeypatch.chdir(tmp_path)
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sample.py").write_text("def add(x, y):\n    return x + y\n", encoding="utf-8")
+
+    seen: dict[str, object] = {}
+    real_build_repo_map = mcp_server.build_repo_map
+
+    def _spy_build_repo_map(path, max_repo_files=None, **kwargs):
+        seen["max_repo_files"] = max_repo_files
+        return real_build_repo_map(path, max_repo_files=max_repo_files, **kwargs)
+
+    monkeypatch.setattr(mcp_server, "build_repo_map", _spy_build_repo_map)
+
+    payload = json.loads(mcp_server.tg_repo_map(str(project)))
+
+    assert seen["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
+    assert payload["scan_limit"]["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
 
 
 def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path, monkeypatch):
