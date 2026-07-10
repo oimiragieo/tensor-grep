@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.58.2 (2026-07-10)
+
+### Bug Fixes
+
+- **daemon**: Fall to cold blast_radius on a truncated warm no_match (audit #107, #94 flip blocker)
+  ([#494](https://github.com/oimiragieo/tensor-grep/pull/494),
+  [`241436d`](https://github.com/oimiragieo/tensor-grep/commit/241436dc7712cf26fa620ebc47ca51ccc6d5572d))
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Honest GPU wording on tg search help + refresh BACKLOG to current drain state
+  ([#495](https://github.com/oimiragieo/tensor-grep/pull/495),
+  [`9e502b2`](https://github.com/oimiragieo/tensor-grep/commit/9e502b268b6d8f2566bc5790901fc2a8a8e74b2d))
+
+
 ## v1.58.1 (2026-07-10)
 
 ### Bug Fixes
