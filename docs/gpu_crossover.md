@@ -94,13 +94,16 @@ Until those are true, the public routing decision is explicit GPU search only.
 
 ## Supported semantics
 
-The native GPU backend uses a PFAC (Parallel Failureless Aho-Corasick) algorithm optimized for
-**fixed-string multi-pattern** search over large corpora. This is the only workload class where
-GPU can produce a credible speed win over `rg`.
+The native GPU backend uses a **position-parallel brute-force byte-compare** kernel
+(`gpu_text_search_positions` in `rust_core/src/gpu_native.rs`): each GPU thread owns a text
+position and tests every fixed-string pattern at that position, with the pattern set staged in
+shared memory. It is optimized for **fixed-string multi-pattern** search over large corpora — the
+only workload class where GPU can produce a credible speed win over `rg`. (A PFAC /
+failureless-Aho-Corasick automaton is a *future* optimization, not what ships today.)
 
 | Semantic | GPU support | Fallback |
 | --- | --- | --- |
-| Fixed-string multi-pattern (`-F -e PAT1 -e PAT2 …`) over large corpora | Supported (PFAC CUDA kernel) | — |
+| Fixed-string multi-pattern (`-F -e PAT1 -e PAT2 …`) over large corpora | Supported (position-parallel byte-compare CUDA kernel) | — |
 | General regex (non-literal patterns) | Not supported | CPU |
 | Case-insensitive or smart-case matching (`-i`, `-S`) | Not supported | CPU |
 | Multiline mode (`-U`, `--multiline`) | Not supported | CPU |
@@ -125,7 +128,7 @@ routes explicit `--gpu-device-ids` requests through a CuDF/Torch sidecar path fo
 complex regex when `rg` is unavailable. That path has the same CPU-fallback taxonomy
 and emits the same `fallback_reason`/`UserWarning` when the sidecar is unavailable.
 Fixed-string patterns (`-F`) in the Python pipeline are served by the StringZilla
-SIMD backend, not the GPU path; the PFAC semantics above apply to the native CUDA route.
+SIMD backend, not the GPU path; the fixed-string CUDA semantics above apply to the native CUDA route.
 
 ## Historical v1.7 Artifact (Superseded)
 
