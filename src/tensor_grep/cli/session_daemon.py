@@ -25,6 +25,7 @@ from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
+    _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
     _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
     _SESSION_VERSION,
     _configured_positive_int,
@@ -601,6 +602,55 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
     )
 
 
+def _spawn_daemon_subprocess(root: Path) -> None:
+    """Popen the session-daemon child process for ``root`` and return immediately.
+
+    Extracted from ``start_session_daemon`` (task #94 Part A) so the SAME spawn logic can be
+    reused by the fire-and-forget ``maybe_autostart_session_daemon_nonblocking`` below without
+    duplicating the Popen/PYTHONPATH/creationflags block. Pure side effect: does not wait for
+    ``daemon.json`` to appear and does not touch the start-lock -- the caller is responsible for
+    both (holding the lock across this call, and deciding whether/how long to wait afterward).
+    """
+    _remove_daemon_metadata(root)
+    creationflags = 0
+    env = os.environ.copy()
+    # audit B20: only inject the editable-checkout 'src' onto PYTHONPATH when it actually
+    # exists (an installed wheel has no sibling src/), and derive cwd from the session root
+    # rather than assuming a fixed Path(__file__).parents[3] repo layout.
+    repo_src = Path(__file__).resolve().parents[3] / "src"
+    if repo_src.exists():
+        python_path_parts = [str(repo_src)]
+        if env.get("PYTHONPATH"):
+            python_path_parts.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
+    spawn_cwd = root if root.is_dir() else root.parent
+    # audit I7: detach the daemon from the launching process group/console so it is not
+    # killed by signals delivered to the parent and survives the CLI invocation.
+    popen_kwargs: dict[str, Any] = {}
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "tensor_grep.cli.session_daemon",
+            "--root",
+            str(root),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=creationflags,
+        cwd=str(spawn_cwd),
+        env=env,
+        **popen_kwargs,
+    )
+
+
 def start_session_daemon(path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
     existing = _probe_daemon(root)
@@ -638,44 +688,7 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
         raise RuntimeError(f"session daemon did not start for {root}")
 
     try:
-        _remove_daemon_metadata(root)
-        creationflags = 0
-        env = os.environ.copy()
-        # audit B20: only inject the editable-checkout 'src' onto PYTHONPATH when it actually
-        # exists (an installed wheel has no sibling src/), and derive cwd from the session root
-        # rather than assuming a fixed Path(__file__).parents[3] repo layout.
-        repo_src = Path(__file__).resolve().parents[3] / "src"
-        if repo_src.exists():
-            python_path_parts = [str(repo_src)]
-            if env.get("PYTHONPATH"):
-                python_path_parts.append(env["PYTHONPATH"])
-            env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
-        spawn_cwd = root if root.is_dir() else root.parent
-        # audit I7: detach the daemon from the launching process group/console so it is not
-        # killed by signals delivered to the parent and survives the CLI invocation.
-        popen_kwargs: dict[str, Any] = {}
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-            )
-        else:
-            popen_kwargs["start_new_session"] = True
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "tensor_grep.cli.session_daemon",
-                "--root",
-                str(root),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            creationflags=creationflags,
-            cwd=str(spawn_cwd),
-            env=env,
-            **popen_kwargs,
-        )
+        _spawn_daemon_subprocess(root)
 
         deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
         while time.time() < deadline:
@@ -696,6 +709,40 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
         raise RuntimeError(f"session daemon did not start for {root}")
     finally:
         _release_daemon_start_lock(root)
+
+
+def maybe_autostart_session_daemon_nonblocking(path: str = ".") -> bool:
+    """Fire-and-forget daemon spawn for the default Tier-1 fast path (task #94 Part A, must-fix 3).
+
+    Unlike ``start_session_daemon``, this NEVER blocks the caller on the daemon's warmup: it
+    makes a single non-blocking attempt to acquire the start lock, ``Popen``s the daemon if it
+    got the lock, and returns immediately WITHOUT waiting for ``daemon.json`` to appear. The
+    calling request must run cold (the daemon will be warm for the NEXT call, not this one).
+
+    Double-spawn discipline (deliberately narrower than ``start_session_daemon``'s lock usage):
+    the start lock is held only across the ``Popen`` call itself, not across a warmup wait --
+    holding it any longer would make this function blocking, defeating its purpose. A losing
+    racer (lock already held) simply returns False and does not spawn a second daemon. A THIRD
+    caller arriving after the lock is released but before the just-spawned daemon's own
+    ``daemon.json`` write completes could still observe ``_probe_daemon() is None`` and spawn
+    ANOTHER daemon -- this narrow residual race is bounded and self-heals without a busier lock:
+    each daemon binds an ephemeral port (``_DAEMON_HOST``, port 0), so there is never a port
+    collision; each daemon's ``daemon.json`` write is atomic, so the LAST daemon to finish
+    starting wins the metadata race and is the one future callers discover; and any orphaned
+    duplicate (metadata overwritten, no longer discoverable) self-reaps via the existing
+    idle-shutdown timer (``_DEFAULT_DAEMON_IDLE_SHUTDOWN_SECONDS``, 900s) once it stops
+    receiving requests. Returns True only when THIS call actually issued a spawn.
+    """
+    root = _resolve_root(Path(path))
+    if _probe_daemon(root) is not None:
+        return False
+    if not _try_acquire_daemon_start_lock(root):
+        return False
+    try:
+        _spawn_daemon_subprocess(root)
+    finally:
+        _release_daemon_start_lock(root)
+    return True
 
 
 def stop_session_daemon(path: str = ".") -> dict[str, Any]:
@@ -911,6 +958,29 @@ def _optional_positive_int(value: object) -> int | None:
         return None
 
 
+# task #94 Part A -- the CORE SCOPE-FIX. Before this, _implicit_session_id_for_request only
+# recognized context_render/context_edit_plan: a symbol command (defs/impact/refs/callers/
+# blast_radius) sent with no explicit session_id fell through with session_id="" unchanged,
+# which reaches get_session("", path) -> FileNotFoundError (session_store.py get_session,
+# ~line 810) -> the daemon returns an {"error": ...} response -> every fail-open client wrapper
+# (_maybe_symbol_command_via_running_daemon in main.py) reads that as a miss and falls back to
+# the cold path FOREVER. That silently defeated the whole point of a default warm-daemon fast
+# path for these 5 commands. _IMPLICIT_SESSION_SYMBOL_COMMANDS is deliberately narrower than
+# _DAEMON_METRICS_SYMBOL_COMMANDS above (which also counts blast_radius_render/
+# blast_radius_plan for demand metrics) -- those two render/plan variants are Tier-2 scope,
+# explicitly deferred, and must not gain an implicit session as a side effect of this fix.
+_IMPLICIT_SESSION_SYMBOL_COMMANDS = frozenset({
+    "defs",
+    "impact",
+    "refs",
+    "callers",
+    "blast_radius",
+})
+_IMPLICIT_SESSION_COMMANDS = frozenset({"context_render", "context_edit_plan"}) | (
+    _IMPLICIT_SESSION_SYMBOL_COMMANDS
+)
+
+
 def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> int | None:
     requested = _optional_positive_int(request.get("max_repo_files"))
     if requested is not None:
@@ -919,6 +989,8 @@ def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> i
         return _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT
     if command == "context_edit_plan":
         return _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT
+    if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS:
+        return _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT
     return None
 
 
@@ -950,7 +1022,7 @@ def _implicit_session_id_for_request(
     path: str,
     request: dict[str, Any],
 ) -> str:
-    if session_id or command not in {"context_render", "context_edit_plan"}:
+    if session_id or command not in _IMPLICIT_SESSION_COMMANDS:
         return session_id
 
     max_repo_files = _implicit_session_max_repo_files(command, request)

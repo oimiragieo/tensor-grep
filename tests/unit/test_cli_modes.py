@@ -2631,7 +2631,9 @@ def test_lsp_setup_runs_managed_provider_installer(
             },
         }
 
-    monkeypatch.setattr("tensor_grep.cli.main.install_managed_lsp_providers", _fake_install)
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_provider_setup.install_managed_lsp_providers", _fake_install
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["lsp-setup", "--json"])
@@ -2667,7 +2669,9 @@ def test_lsp_setup_can_enable_toolchain_provider_install(
             "providers": {},
         }
 
-    monkeypatch.setattr("tensor_grep.cli.main.install_managed_lsp_providers", _fake_install)
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_provider_setup.install_managed_lsp_providers", _fake_install
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["lsp-setup", "--json", "--include-toolchain-providers"])
@@ -2701,7 +2705,9 @@ def test_lsp_setup_json_exits_nonzero_when_install_errors(
             "install_errors": {"node": "network unavailable"},
         }
 
-    monkeypatch.setattr("tensor_grep.cli.main.install_managed_lsp_providers", _fake_install)
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_provider_setup.install_managed_lsp_providers", _fake_install
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["lsp-setup", "--json"])

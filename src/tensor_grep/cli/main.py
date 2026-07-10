@@ -24,14 +24,9 @@ if sys.platform.startswith("win") and not sys.stdout.isatty():
 
 import typer
 
-from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
-from tensor_grep.cli.lsp_provider_setup import (
-    install_managed_lsp_providers,
-    supported_lsp_languages,
-)
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version,
     _native_tg_version_matches,
@@ -212,7 +207,8 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `TG_MCP_ALLOW_VALIDATION_COMMANDS`: Set to `1` to let the `tg mcp` server's `tg_rewrite_apply` tool accept and shell-execute `lint_cmd` / `test_cmd`; default off (such requests are rejected with `code="unsupported_option"`).
 - `TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS`: Total per-command budget for optional external LSP provider requests before native fallback.
 - `TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_AST_QUERY_CACHE_MAX_ENTRIES`, `TENSOR_GREP_AST_NODE_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS`: Bound long-lived in-process search and repo-context caches.
-- `TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES`, `TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES`, `TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES`: Bound agent-loop response and LSP provider caches.""",
+- `TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES`, `TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES`, `TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES`: Bound agent-loop response and LSP provider caches.
+- `TG_SESSION_DAEMON_AUTOSTART`: Set to `1` to opt `defs`/`impact`/`refs`/`callers`/`blast-radius` into a default warm-daemon fast path (probes a running `tg session daemon`; auto-spawns one non-blocking on a miss). Default off (today's cold-path behavior); always forced off when `CI` or `GITHUB_ACTIONS` is set. Querying N distinct repo roots with this on can leave up to N resident daemons; each self-shuts-down after `TG_SESSION_DAEMON_IDLE_SECONDS` (900s default) of inactivity.""",
     no_args_is_help=True,
     add_completion=True,
     rich_markup_mode="markdown",
@@ -1937,6 +1933,8 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
 
 
 def _doctor_lsp_languages() -> list[str]:
+    from tensor_grep.cli.lsp_provider_setup import supported_lsp_languages
+
     return supported_lsp_languages()
 
 
@@ -4553,6 +4551,8 @@ def _load_yaml_dict(path: Path) -> dict[str, object]:
 
 
 def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
+    from tensor_grep.backends.ast_backend import normalize_ast_language
+
     resolved = Path(config_path or "sgconfig.yml").resolve()
     if not resolved.exists():
         raise FileNotFoundError(f"Config file {resolved} not found. Use `tg new` to create one.")
@@ -4597,6 +4597,8 @@ def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
 
 
 def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
+    from tensor_grep.backends.ast_backend import normalize_ast_language
+
     root_dir = cast(Path, project_cfg["root_dir"])
     rule_dirs = cast(list[str], project_cfg["rule_dirs"])
     default_language = cast(str, project_cfg["language"])
@@ -4638,6 +4640,8 @@ def _load_inline_rule_specs(
     inline_rules_text: str, *, default_language: str | None = None
 ) -> list[dict[str, str]]:
     import yaml
+
+    from tensor_grep.backends.ast_backend import normalize_ast_language
 
     class _NoAliasSafeLoader(yaml.SafeLoader):
         """SafeLoader that REJECTS YAML aliases. Inline ast-grep rules never legitimately
@@ -5223,6 +5227,7 @@ def _regex_rule_targets_file(rule_language: str, file_path: str) -> bool:
     silently drop a finding for a language ``_target_language_for_path`` does not yet
     recognize.
     """
+    from tensor_grep.backends.ast_backend import normalize_ast_language
     from tensor_grep.cli.repo_map import _target_language_for_path
 
     file_language = _target_language_for_path(file_path)
@@ -5253,6 +5258,7 @@ def _run_ast_scan_payload(
     max_evidence_snippets_per_file: int = 1,
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
+    from tensor_grep.backends.ast_backend import normalize_ast_language
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -5727,6 +5733,7 @@ def _select_ast_backend_for_pattern(
     pattern: str,
     backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] | None = None,
 ) -> "ComputeBackend":
+    from tensor_grep.backends.ast_backend import is_native_ast_language
     from tensor_grep.core.pipeline import ConfigurationError, Pipeline
 
     stripped_pattern = pattern.strip()
@@ -7530,6 +7537,89 @@ def _daemon_directory_path(path: str) -> str | None:
     return str(resolved)
 
 
+def _session_daemon_autostart_enabled() -> bool:
+    """TG_SESSION_DAEMON_AUTOSTART opt-in for the default Tier-1 warm-daemon fast path.
+
+    Task #94 Part A, must-fix 4. DEFAULT OFF: unset (or any value other than 1/true/yes/on)
+    means today's behavior EXACTLY -- no daemon is probed, spawned, or routed to, for any of
+    the 5 symbol commands. Flipping this default ON is a separate, later, conscious decision
+    (per the design-gate verdict SHIP-WITH-CHANGES); this PR only wires the plumbing.
+
+    Auto-forced OFF whenever CI or GITHUB_ACTIONS is set, regardless of the flag's own value,
+    so a CI job can never leave a background session-daemon process (idle-lived up to
+    TG_SESSION_DAEMON_IDLE_SECONDS, 900s default) running past the job that spawned it.
+    """
+    if env_flag_enabled("CI") or env_flag_enabled("GITHUB_ACTIONS"):
+        return False
+    return env_flag_enabled("TG_SESSION_DAEMON_AUTOSTART")
+
+
+def _maybe_symbol_command_via_running_daemon(
+    *,
+    command: str,
+    path: str,
+    symbol: str,
+    provider: str,
+    max_repo_files: int,
+    max_tests: int | None = None,
+    max_depth: int | None = None,
+) -> dict[str, Any] | None:
+    """Fail-open Tier-1 default fast path (task #94 Part A) for defs/impact/refs/callers/
+    blast_radius.
+
+    Mirrors the existing ``_maybe_context_render_via_running_daemon`` /
+    ``_maybe_edit_plan_via_running_daemon`` fail-open shape (probe-only, ``except Exception:
+    return None``) with one addition: on a probe MISS (no daemon reachable yet) it fires a
+    non-blocking spawn so a LATER call is warm, while THIS call still returns None and the
+    caller runs the existing cold path unchanged (must-fix 3 -- cold call #1 must never block
+    on daemon warmup).
+
+    Returns None (forcing the caller's cold path) whenever: the flag is off, a non-native
+    provider was requested (the daemon session is native-only, same rule as context-render/
+    edit-plan), the path does not resolve to a directory, no daemon could be reached, or the
+    daemon responded with an error. A `refresh_on_stale=True` request (mirroring
+    ``_maybe_context_render_via_running_daemon``) means a session whose files changed on disk
+    is refreshed once before being served, so warm output matches cold output on a changed
+    tree (must-fix 5).
+    """
+    if not _session_daemon_autostart_enabled():
+        return None
+    if provider != "native":
+        return None
+    daemon_path = _daemon_directory_path(path)
+    if daemon_path is None:
+        return None
+    try:
+        from tensor_grep.cli.session_daemon import (
+            maybe_autostart_session_daemon_nonblocking,
+            request_running_session_daemon,
+        )
+
+        request: dict[str, Any] = {
+            "command": command,
+            "path": daemon_path,
+            "symbol": symbol,
+            "provider": provider,
+            "refresh_on_stale": True,
+            "max_repo_files": max_repo_files,
+        }
+        if max_tests is not None:
+            request["max_tests"] = max_tests
+        if max_depth is not None:
+            request["max_depth"] = max_depth
+        payload = request_running_session_daemon(daemon_path, request)
+        if payload is None:
+            # No daemon reachable yet. Fire-and-forget spawn so a LATER call is warm; THIS
+            # call must not block on daemon startup -- run the cold path below (must-fix 3).
+            maybe_autostart_session_daemon_nonblocking(daemon_path)
+            return None
+        if "error" in payload:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
 def _maybe_context_render_via_running_daemon(
     *,
     path: str,
@@ -8827,13 +8917,25 @@ def defs(
             symbol_option=symbol,
             command_name="defs",
         )
-        payload = build_symbol_defs(
-            resolved_symbol,
-            resolved_path,
-            semantic_provider=provider,
+        # task #94 Part A Tier-1: default-OFF warm-daemon fast path. Fails open to the cold
+        # build_symbol_defs(...) call below on any miss/error -- see
+        # _maybe_symbol_command_via_running_daemon's docstring for the full contract.
+        payload = _maybe_symbol_command_via_running_daemon(
+            command="defs",
+            path=resolved_path,
+            symbol=resolved_symbol,
+            provider=provider,
             max_repo_files=max_repo_files,
             max_tests=max_tests,
         )
+        if payload is None:
+            payload = build_symbol_defs(
+                resolved_symbol,
+                resolved_path,
+                semantic_provider=provider,
+                max_repo_files=max_repo_files,
+                max_tests=max_tests,
+            )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -8990,48 +9092,106 @@ def impact(
         # re-derived deadline_monotonic from a fresh time.monotonic() at its own start, so
         # --deadline silently allowed up to ~2x the requested budget for `tg impact`.
         deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
-        repo_map = build_repo_map(
-            resolved_path,
-            max_repo_files=max_repo_files,
-            deadline_monotonic=deadline_monotonic,
-        )
-        payload = build_symbol_impact_from_map(
-            repo_map,
-            resolved_symbol,
-            semantic_provider=provider,
-            deadline_monotonic=deadline_monotonic,
-            max_tests=max_tests,
-        )
-        _copy_partial_signal(payload, repo_map)
-        # H5: impact previously surfaced only definition/import-derived `files` and so
-        # under-reported call sites relative to `tg callers` (which finds the CLI
-        # handler, RPC handler, and tests). Populate a top-level `callers` key from the
-        # same caller pass so impact is a superset, not a subset, of callers.
-        if not payload.get("no_match"):
-            callers_payload = build_symbol_callers_from_map(
-                repo_map,
-                resolved_symbol,
-                semantic_provider=provider,
-                deadline_monotonic=deadline_monotonic,
-            )
-            _copy_partial_signal(callers_payload, repo_map)
-            payload["callers"] = list(callers_payload.get("callers", []))
+
+        def _merge_impact_and_callers(
+            impact_payload: dict[str, Any], callers_payload: dict[str, Any]
+        ) -> None:
+            # H5 merge (task #103): impact previously surfaced only definition/import-derived
+            # `files` and so under-reported call sites relative to `tg callers`. Shared by BOTH
+            # the cold and warm-daemon (task #94 Part A) arms below so they cannot silently
+            # diverge into two different merge behaviors.
+            impact_payload["callers"] = list(callers_payload.get("callers", []))
             # Propagate the caller-scan's --deadline partial signal (cursor review 1.40.0): impact's
             # second pass can be deadline-truncated even when the first pass wasn't, so carry partial +
             # deadline_limit onto the impact payload or _emit_symbol_command_result would exit 0 while
             # `tg callers` with the same flags exits 2.
             if callers_payload.get("partial"):
-                payload["partial"] = True
+                impact_payload["partial"] = True
                 caller_deadline_limit = callers_payload.get("deadline_limit")
                 # Don't clobber a deadline_limit the first (impact) pass already set (cursor review LOW).
-                if isinstance(caller_deadline_limit, dict) and "deadline_limit" not in payload:
-                    payload["deadline_limit"] = dict(caller_deadline_limit)
-            for caller in payload["callers"]:
+                if (
+                    isinstance(caller_deadline_limit, dict)
+                    and "deadline_limit" not in impact_payload
+                ):
+                    impact_payload["deadline_limit"] = dict(caller_deadline_limit)
+            for caller in impact_payload["callers"]:
                 caller_file = str(caller.get("file", ""))
-                if caller_file and caller_file not in payload["files"]:
-                    payload["files"].append(caller_file)
+                if caller_file and caller_file not in impact_payload["files"]:
+                    impact_payload["files"].append(caller_file)
+
+        # task #94 Part A Tier-1: default-OFF warm-daemon fast path, skipped entirely when a
+        # --deadline was requested (mirrors defs/refs/callers/blast-radius above). impact's cold
+        # path is a TWO-PASS shared-repo_map call (task #103): impact + a callers-merge. The
+        # daemon session caches ONE repo_map per (path, max_repo_files) key, so issuing TWO
+        # daemon requests (impact, then callers) against that same implicit session reuses the
+        # same cached map -- equivalent sharing to the cold path's single build_repo_map call,
+        # just over two IPC round-trips instead of two in-process calls. Both requests must
+        # succeed (or the symbol must be a confirmed no_match, which never needs a callers pass)
+        # or this falls through to the cold path entirely, so the merged result is never a
+        # warm/cold hybrid.
+        daemon_callers_payload: dict[str, Any] | None = None
+        daemon_impact_payload = (
+            _maybe_symbol_command_via_running_daemon(
+                command="impact",
+                path=resolved_path,
+                symbol=resolved_symbol,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                max_tests=max_tests,
+            )
+            if deadline is None
+            else None
+        )
+        if daemon_impact_payload is not None and not daemon_impact_payload.get("no_match"):
+            daemon_callers_payload = _maybe_symbol_command_via_running_daemon(
+                command="callers",
+                path=resolved_path,
+                symbol=resolved_symbol,
+                provider=provider,
+                max_repo_files=max_repo_files,
+            )
+            if daemon_callers_payload is None:
+                daemon_impact_payload = None  # both-or-nothing -- fall through to cold below
+
+        if daemon_impact_payload is not None:
+            payload = daemon_impact_payload
+            if not payload.get("no_match"):
+                # Invariant: reaching here with daemon_impact_payload set and no_match falsy
+                # means the "both-or-nothing" check above already confirmed the callers request
+                # succeeded (any callers miss reset daemon_impact_payload to None instead).
+                assert daemon_callers_payload is not None
+                _merge_impact_and_callers(payload, daemon_callers_payload)
+            else:
+                payload.setdefault("callers", [])
         else:
-            payload.setdefault("callers", [])
+            repo_map = build_repo_map(
+                resolved_path,
+                max_repo_files=max_repo_files,
+                deadline_monotonic=deadline_monotonic,
+            )
+            payload = build_symbol_impact_from_map(
+                repo_map,
+                resolved_symbol,
+                semantic_provider=provider,
+                deadline_monotonic=deadline_monotonic,
+                max_tests=max_tests,
+            )
+            _copy_partial_signal(payload, repo_map)
+            # H5: impact previously surfaced only definition/import-derived `files` and so
+            # under-reported call sites relative to `tg callers` (which finds the CLI
+            # handler, RPC handler, and tests). Populate a top-level `callers` key from the
+            # same caller pass so impact is a superset, not a subset, of callers.
+            if not payload.get("no_match"):
+                callers_payload = build_symbol_callers_from_map(
+                    repo_map,
+                    resolved_symbol,
+                    semantic_provider=provider,
+                    deadline_monotonic=deadline_monotonic,
+                )
+                _copy_partial_signal(callers_payload, repo_map)
+                _merge_impact_and_callers(payload, callers_payload)
+            else:
+                payload.setdefault("callers", [])
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -9120,14 +9280,30 @@ def refs(
             symbol_option=symbol,
             command_name="refs",
         )
-        payload = build_symbol_refs(
-            resolved_symbol,
-            resolved_path,
-            semantic_provider=provider,
-            max_repo_files=max_repo_files,
-            deadline_seconds=deadline,
-            max_tests=max_tests,
+        # task #94 Part A Tier-1: default-OFF warm-daemon fast path, skipped entirely when a
+        # --deadline was requested (a warm session's cached repo_map cannot honor a fresh
+        # per-request scan deadline) so that flag combination always takes the cold path.
+        payload = (
+            _maybe_symbol_command_via_running_daemon(
+                command="refs",
+                path=resolved_path,
+                symbol=resolved_symbol,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                max_tests=max_tests,
+            )
+            if deadline is None
+            else None
         )
+        if payload is None:
+            payload = build_symbol_refs(
+                resolved_symbol,
+                resolved_path,
+                semantic_provider=provider,
+                max_repo_files=max_repo_files,
+                deadline_seconds=deadline,
+                max_tests=max_tests,
+            )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -9211,14 +9387,30 @@ def callers(
             symbol_option=symbol,
             command_name="callers",
         )
-        payload = build_symbol_callers(
-            resolved_symbol,
-            resolved_path,
-            semantic_provider=provider,
-            max_repo_files=max_repo_files,
-            deadline_seconds=deadline,
-            max_tests=max_tests,
+        # task #94 Part A Tier-1: default-OFF warm-daemon fast path, skipped entirely when a
+        # --deadline was requested (a warm session's cached repo_map cannot honor a fresh
+        # per-request scan deadline) so that flag combination always takes the cold path.
+        payload = (
+            _maybe_symbol_command_via_running_daemon(
+                command="callers",
+                path=resolved_path,
+                symbol=resolved_symbol,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                max_tests=max_tests,
+            )
+            if deadline is None
+            else None
         )
+        if payload is None:
+            payload = build_symbol_callers(
+                resolved_symbol,
+                resolved_path,
+                semantic_provider=provider,
+                max_repo_files=max_repo_files,
+                deadline_seconds=deadline,
+                max_tests=max_tests,
+            )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -9473,7 +9665,10 @@ def blast_radius(
     (~3s on a mid-size repo). Use this, not blast-radius-render, when you want the
     impact graph rather than a prose paste-in.
     """
-    from tensor_grep.cli.repo_map import build_symbol_blast_radius
+    from tensor_grep.cli.repo_map import (
+        _apply_blast_radius_output_limits,
+        build_symbol_blast_radius,
+    )
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -9482,16 +9677,40 @@ def blast_radius(
             symbol_option=symbol,
             command_name="blast-radius",
         )
-        payload = build_symbol_blast_radius(
-            resolved_symbol,
-            resolved_path,
-            max_depth=max_depth,
-            semantic_provider=provider,
-            max_repo_files=max_repo_files,
-            max_callers=max_callers,
-            max_files=max_files,
-            deadline_seconds=deadline,
+        # task #94 Part A Tier-1: default-OFF warm-daemon fast path, skipped entirely when a
+        # --deadline was requested (a warm session's cached repo_map cannot honor a fresh
+        # per-request scan deadline) so that flag combination always takes the cold path. The
+        # daemon-served build_symbol_blast_radius_from_map does not itself apply the
+        # --max-callers/--max-files OUTPUT caps (unlike the cold build_symbol_blast_radius
+        # wrapper, which calls _apply_blast_radius_output_limits internally) -- apply the same
+        # helper here so warm output matches cold output byte-for-byte.
+        payload = (
+            _maybe_symbol_command_via_running_daemon(
+                command="blast_radius",
+                path=resolved_path,
+                symbol=resolved_symbol,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                max_depth=max_depth,
+            )
+            if deadline is None
+            else None
         )
+        if payload is not None:
+            payload = _apply_blast_radius_output_limits(
+                payload, max_callers=max_callers, max_files=max_files
+            )
+        else:
+            payload = build_symbol_blast_radius(
+                resolved_symbol,
+                resolved_path,
+                max_depth=max_depth,
+                semantic_provider=provider,
+                max_repo_files=max_repo_files,
+                max_callers=max_callers,
+                max_files=max_files,
+                deadline_seconds=deadline,
+            )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -11080,6 +11299,7 @@ def scan(
     ),
 ) -> None:
     """Scan code with tensor-grep's bounded AST rule/config surface."""
+    from tensor_grep.backends.ast_backend import normalize_ast_language
     from tensor_grep.cli.rule_packs import resolve_rule_pack
 
     inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
@@ -11592,6 +11812,11 @@ def lsp_setup(
     `tg doctor --with-lsp --json` and inspect health_status / health_check plus
     navigation lsp_proof fields before treating LSP evidence as dependable.
     """
+    from tensor_grep.cli.lsp_provider_setup import (
+        install_managed_lsp_providers,
+        supported_lsp_languages,
+    )
+
     payload = install_managed_lsp_providers(
         python_executable=sys.executable,
         managed_root=None,

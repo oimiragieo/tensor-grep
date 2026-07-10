@@ -49,6 +49,11 @@ _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+# task #94 Part A: the implicit-session default repo-file limit for the 5 symbol commands
+# (defs/impact/refs/callers/blast_radius) opened via the daemon's no-explicit-session path.
+# Same underlying value as the context-render/edit-plan limits above (kept as a distinct name
+# for intent clarity at the call site, not a distinct behavior).
+_DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # audit I2: bound on-disk session retention; keep at most N newest explicit sessions per root
 # so per-open cost and disk usage stay bounded. Configurable via TG_SESSION_MAX.
 _SESSION_MAX_ENV = "TG_SESSION_MAX"
@@ -1229,11 +1234,20 @@ def _serve_session_request_from_payload(
     # blast-radius to native even when the client asked for lsp/hybrid. repo_map normalizes +
     # fails closed to native for an unknown value, so no re-validation here.
     provider = str(request.get("provider", "native"))
+    # task #94 Part A: forward the caller's max_tests (the same optional-int coercion used for
+    # max_repo_files elsewhere in this function) into every symbol builder below so the daemon
+    # path applies the SAME tests-field cap as the cold `build_symbol_*` callers instead of
+    # silently falling back to each builder's own unbounded default -- required for true
+    # warm-vs-cold byte identity when a caller passes a non-default --max-tests.
+    raw_max_tests = request.get("max_tests")
+    max_tests = None if raw_max_tests in (None, "") else int(cast(int | str, raw_max_tests))
     if command == "defs":
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("defs requests require a non-empty symbol")
-        response = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=provider)
+        response = build_symbol_defs_from_map(
+            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+        )
         response["session_id"] = session_id
         response["routing_reason"] = "session-defs"
         return response
@@ -1242,7 +1256,9 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("impact requests require a non-empty symbol")
-        response = build_symbol_impact_from_map(repo_map, symbol, semantic_provider=provider)
+        response = build_symbol_impact_from_map(
+            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+        )
         response["session_id"] = session_id
         response["routing_reason"] = "session-impact"
         return response
@@ -1251,7 +1267,9 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("refs requests require a non-empty symbol")
-        response = build_symbol_refs_from_map(repo_map, symbol, semantic_provider=provider)
+        response = build_symbol_refs_from_map(
+            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+        )
         response["session_id"] = session_id
         response["routing_reason"] = "session-refs"
         return response
@@ -1260,7 +1278,9 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("callers requests require a non-empty symbol")
-        response = build_symbol_callers_from_map(repo_map, symbol, semantic_provider=provider)
+        response = build_symbol_callers_from_map(
+            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+        )
         response["session_id"] = session_id
         response["routing_reason"] = "session-callers"
         return response
