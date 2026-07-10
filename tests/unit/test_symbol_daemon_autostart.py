@@ -454,6 +454,94 @@ def test_blast_radius_daemon_exit2_on_scan_truncation(tmp_path: Path, monkeypatc
     assert payload["scan_limit"]["possibly_truncated"] is True
 
 
+# ------------------------------------------------------------------------------------------
+# Audit #107 (#94 flip blocker): warm/cold blast-radius divergence on a truncated repo. The
+# daemon-served build_symbol_blast_radius_from_map has NO literal-seed rescue (unlike the cold
+# build_symbol_blast_radius, which retries via _literal_symbol_seed_files when the map-based
+# lookup misses on a truncated scan) -- so a symbol sitting outside the daemon session's scan
+# window used to come back as a FALSE no_match from the warm route where cold would find it.
+# ------------------------------------------------------------------------------------------
+
+
+def test_blast_radius_daemon_falls_to_cold_on_truncated_no_match(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """End-to-end with a REAL daemon: a truncated implicit session (--max-repo-files 1) whose
+    scan window excludes the target symbol must not report a false no_match -- the client
+    discards the unreliable warm no_match and falls through to cold, which finds it via the
+    literal-seed rescue."""
+    project = _flat_repo(tmp_path, 6)
+    server = _real_daemon(project)
+    _serve(server)
+    try:
+        monkeypatch.setattr(session_daemon, "_probe_daemon", _probe_fake_for(server, "test-token"))
+        _autostart_env(monkeypatch, enabled=True)
+        # helper_5 lives in m005.py, the LAST of 6 files -- outside the 1-file scan window a
+        # max-repo-files=1 cap keeps (test_defs_daemon_exit2_on_real_scan_truncation above
+        # already proves file index 0, m000.py, is what survives that cap).
+        result = runner.invoke(
+            app,
+            ["blast-radius", str(project), "helper_5", "--max-repo-files", "1", "--json"],
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    payload = json.loads(result.stdout)
+    assert payload.get("no_match") is not True, payload
+    assert any(d.get("name") == "helper_5" for d in payload.get("definitions", [])), payload
+    # The rescued map is still scan-capped at 1 (the seed file is force-injected on top of the
+    # cap, not a cap raise) -- exit 2 (incomplete-but-found), never exit 1 (false not-found).
+    assert result.exit_code == 2, result.output
+
+
+def test_blast_radius_daemon_no_match_stays_warm_when_map_complete(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Precision guard: a warm no_match on a COMPLETE (non-truncated) map is a REAL miss and must
+    stay warm. Falling back to cold here would defeat the daemon speedup for every genuine
+    no-match, not just the truncated-and-wrong ones -- the guard fires ONLY on
+    no_match AND possibly_truncated together."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "m.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+
+    _autostart_env(monkeypatch, enabled=True)
+
+    def fake_request(_path: str, request: dict[str, Any]) -> dict[str, Any]:
+        assert request["command"] == "blast_radius"
+        return {
+            "symbol": "totally_missing_symbol",
+            "path": str(project),
+            "no_match": True,
+            "definitions": [],
+            "callers": [],
+            "caller_tree": [],
+            "files": [],
+            "tests": [],
+            "imports": [],
+            "import_graph_consumers": [],
+            "blast_radius_score": 0.0,
+            "scan_limit": {"possibly_truncated": False},
+        }
+
+    monkeypatch.setattr(session_daemon, "request_running_session_daemon", fake_request)
+
+    from tensor_grep.cli import repo_map as repo_map_module
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "must not fall to cold when the warm map was COMPLETE (possibly_truncated=False)"
+        )
+
+    monkeypatch.setattr(repo_map_module, "build_symbol_blast_radius", _boom)
+
+    result = runner.invoke(app, ["blast-radius", str(project), "totally_missing_symbol", "--json"])
+    assert result.exit_code == 1, result.output  # genuine not-found, not a scan truncation
+    payload = json.loads(result.stdout)
+    assert payload.get("no_match") is True
+
+
 def test_defs_daemon_complete_stays_exit_0(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     project.mkdir()
