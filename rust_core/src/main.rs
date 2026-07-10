@@ -48,7 +48,7 @@ use tensor_grep_rs::python_sidecar::{
 };
 use tensor_grep_rs::rg_passthrough::{
     execute_ripgrep_pcre2_version, execute_ripgrep_search, execute_ripgrep_type_list,
-    ripgrep_is_available, RipgrepSearchArgs,
+    is_unbounded_implicit_search_walk_refusal, ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
     gpu_proof_fields, route_search, BackendSelection, IndexRoutingState, RoutingDecision,
@@ -2347,6 +2347,7 @@ mod tests {
             json: true,
             ndjson: false,
             verbose: false,
+            path_was_implicit: false,
         }
     }
 
@@ -2781,13 +2782,134 @@ mod tests {
             vec!["src".to_string(), "tests".to_string(), "docs".to_string()]
         );
         assert_eq!(
-            native_search_config_for_command(&args, "ERROR", &request.paths, decision).paths,
+            native_search_config_for_command(
+                &args,
+                "ERROR",
+                &request.paths,
+                request.path_was_implicit,
+                decision
+            )
+            .paths,
             vec![
                 PathBuf::from("src"),
                 PathBuf::from("tests"),
                 PathBuf::from("docs")
             ]
         );
+    }
+
+    // --- Audit #105: native-CPU implicit-walk-ceiling signal threading ---------------------
+    // #100 hoisted a walk-ceiling gate into `execute_ripgrep_search` (rg-passthrough engine
+    // only); the native-CPU engine (`run_native_search`, reached via `--json`, `--force-cpu`,
+    // single-pattern `--fixed-strings`, and rg-unavailable routing) never received the
+    // `path_was_implicit` signal at all -- `NativeSearchConfig` had no such field. These tests
+    // pin that the signal is now correctly recorded end-to-end from real CLI parsing through
+    // both `NativeSearchConfig` builders, mirroring
+    // `frontdoor_args_record_path_was_implicit_for_e_flag_bypass`.
+
+    #[test]
+    fn native_search_config_for_command_records_path_was_implicit_for_json_route() {
+        // `tg search -e "TODO" --json` (no explicit PATH) is exactly the #105 bypass shape: this
+        // routes to `native_cpu_json` (reason "json_output"), never through
+        // `execute_ripgrep_search`'s #100 gate at all.
+        let implicit_args = parse_search_args(&["tg", "search", "-e", "TODO", "--json"]);
+        let implicit_request =
+            resolve_search_request(&implicit_args).expect("expected search request");
+        assert!(
+            implicit_request.path_was_implicit,
+            "no PATH given must record path_was_implicit = true"
+        );
+        let implicit_config = native_search_config_for_command(
+            &implicit_args,
+            "TODO",
+            &implicit_request.paths,
+            implicit_request.path_was_implicit,
+            RoutingDecision::native_cpu_json(false),
+        );
+        assert!(
+            implicit_config.path_was_implicit,
+            "NativeSearchConfig must record path_was_implicit = true for an implicit-path \
+             --json search"
+        );
+
+        let explicit_args = parse_search_args(&["tg", "search", "-e", "TODO", "--json", "src"]);
+        let explicit_request =
+            resolve_search_request(&explicit_args).expect("expected search request");
+        assert!(
+            !explicit_request.path_was_implicit,
+            "an explicit trailing PATH must record path_was_implicit = false"
+        );
+        let explicit_config = native_search_config_for_command(
+            &explicit_args,
+            "TODO",
+            &explicit_request.paths,
+            explicit_request.path_was_implicit,
+            RoutingDecision::native_cpu_json(false),
+        );
+        assert!(
+            !explicit_config.path_was_implicit,
+            "NativeSearchConfig must record path_was_implicit = false for an explicit-path \
+             search"
+        );
+    }
+
+    #[test]
+    fn native_search_config_for_positional_records_path_was_implicit() {
+        // Sibling of the above for the bare positional fast-path CLI (`tg PATTERN [PATH]`).
+        use clap::Parser;
+        let implicit_raw_args = ["tg", "TODO", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let implicit_cli =
+            PositionalCli::try_parse_from(&implicit_raw_args).expect("expected CLI to parse");
+        let implicit_paths = implicit_search_paths(&implicit_cli.path, false);
+        let implicit_config = native_search_config_for_positional(
+            &implicit_cli,
+            "TODO",
+            &implicit_paths,
+            RoutingDecision::native_cpu_json(false),
+        );
+        assert!(
+            implicit_config.path_was_implicit,
+            "no PATH given must record path_was_implicit = true"
+        );
+
+        let explicit_raw_args = ["tg", "TODO", "--json", "src"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let explicit_cli =
+            PositionalCli::try_parse_from(&explicit_raw_args).expect("expected CLI to parse");
+        let explicit_paths = implicit_search_paths(&explicit_cli.path, false);
+        let explicit_config = native_search_config_for_positional(
+            &explicit_cli,
+            "TODO",
+            &explicit_paths,
+            RoutingDecision::native_cpu_json(false),
+        );
+        assert!(
+            !explicit_config.path_was_implicit,
+            "an explicit trailing PATH must record path_was_implicit = false"
+        );
+    }
+
+    #[test]
+    fn collect_native_multi_pattern_matches_exits_2_not_1_on_ceiling_refusal() {
+        // Audit #105: `collect_native_multi_pattern_matches` (used by every multi-`-e` native-CPU
+        // route) used to let an implicit-walk-ceiling refusal `Err` propagate via `?` all the way
+        // to `main()`'s default exit-1 termination instead of the fast-bounded exit-2 refusal
+        // every OTHER native-CPU route gets. `exit_on_native_multi_pattern_ceiling_refusal`
+        // (the fix) calls `std::process::exit(2)` directly for this ONE error, which cannot be
+        // observed in-process without exiting the test binary -- so this pins the OTHER half of
+        // the contract instead: the recognizer used to gate that exit call correctly identifies
+        // the shared refusal message and does not misfire on an unrelated native-search error.
+        let refusal =
+            tensor_grep_rs::rg_passthrough::format_unbounded_implicit_search_walk_error(1500);
+        assert!(is_unbounded_implicit_search_walk_refusal(&refusal));
+        assert!(!is_unbounded_implicit_search_walk_refusal(
+            "native search path does not exist: /nope"
+        ));
     }
 
     #[test]
@@ -4412,6 +4534,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             json: cli.json,
             ndjson: cli.ndjson,
             verbose: cli.verbose,
+            path_was_implicit: cli.path.is_empty(),
         })
         .is_none();
 
@@ -4477,6 +4600,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 json: cli.json,
                 ndjson: cli.ndjson,
                 verbose: cli.verbose,
+                path_was_implicit: cli.path.is_empty(),
             };
 
             #[cfg(feature = "cuda")]
@@ -5200,6 +5324,10 @@ fn native_search_config_for_positional(
         line_number: cli.line_number && !cli.no_line_number,
         only_matching: cli.only_matching,
         replace: cli.replace.clone(),
+        // `cli.path` is the RAW user-supplied PATH positionals before `implicit_search_paths`
+        // substitutes stdin/"." -- empty means the caller gave no explicit path (audit #105,
+        // mirrors `positional_ripgrep_args`'s `path_was_implicit: cli.path.is_empty()`).
+        path_was_implicit: cli.path.is_empty(),
         ..NativeSearchConfig::default()
     }
 }
@@ -5208,6 +5336,7 @@ fn native_search_config_for_command(
     args: &SearchArgs,
     pattern: &str,
     paths: &[String],
+    path_was_implicit: bool,
     decision: RoutingDecision,
 ) -> NativeSearchConfig {
     NativeSearchConfig {
@@ -5237,6 +5366,13 @@ fn native_search_config_for_command(
         line_number: args.line_number && !args.no_line_number,
         only_matching: args.only_matching,
         replace: args.replace.clone(),
+        // Audit #105: threaded from `ResolvedSearchRequest::path_was_implicit` at every call
+        // site (mirrors `command_ripgrep_args`'s `path_was_implicit: request.path_was_implicit`)
+        // so this engine's own implicit-walk-ceiling gate (`native_search::
+        // check_native_implicit_walk_ceiling`) can fire for `--json`/`--force-cpu`/single-pattern
+        // `--fixed-strings`/rg-unavailable routing, none of which pass through
+        // `execute_ripgrep_search`'s #100 gate.
+        path_was_implicit,
         ..NativeSearchConfig::default()
     }
 }
@@ -5271,6 +5407,10 @@ fn native_search_config_for_gpu_params(
         verbose: params.verbose,
         text: params.text,
         line_number: params.line_number,
+        // Audit #105: threaded from `GpuSearchParams::path_was_implicit` (see that field's doc
+        // comment -- this is the explicit-`--gpu-device-ids`-fallback-to-CPU route, which used to
+        // have no way to know whether the PATH was implicit at all).
+        path_was_implicit: params.path_was_implicit,
         ..NativeSearchConfig::default()
     }
 }
@@ -5283,12 +5423,35 @@ fn execute_native_search(config: NativeSearchConfig) -> anyhow::Result<SearchSta
     run_native_search(config)
 }
 
+/// Audit #105: `collect_native_multi_pattern_matches`'s two fallible native-search calls (the
+/// AhoCorasick fast path and the per-pattern regex loop below) both funnel any `Err` through
+/// this helper instead of a bare `?`. Every one of this function's 4 call sites (the single- and
+/// multi-`-e` `tg search` routes, and the two GPU-explicit-`--gpu-device-ids` CPU-fallback
+/// routes) would otherwise let an implicit-walk-ceiling refusal `Err` propagate all the way to
+/// `main()`'s default `Result` termination, which exits 1 -- the "exit-1-vs-exit-2 no-match
+/// ambiguity bug" (audit #81 #7) -- instead of the fast-bounded exit-2 refusal every other
+/// native-CPU route already gets via `run_native_search_with_optional_rg_fallback`'s generic Err
+/// handling. Deliberately mirrors `execute_ripgrep_search`'s OWN refusal (rg_passthrough.rs):
+/// always a plain `eprintln!`, never a structured JSON error object, even under `--json` -- so
+/// this refusal reads identically regardless of which internal engine produced it. Any OTHER
+/// native-search error (bad path, bad pattern, ...) is returned completely unchanged; this must
+/// not alter exit-code behavior for pre-existing error kinds.
+fn exit_on_native_multi_pattern_ceiling_refusal(err: anyhow::Error) -> anyhow::Error {
+    if !is_unbounded_implicit_search_walk_refusal(&err.to_string()) {
+        return err;
+    }
+    eprintln!("{err}");
+    std::process::exit(2);
+}
+
 fn collect_native_multi_pattern_matches(
     patterns: &[String],
     mut base_config: NativeSearchConfig,
 ) -> anyhow::Result<Vec<SearchMatchJson>> {
     let include_pattern_metadata = patterns.len() > 1;
-    if let Some(matches) = run_native_fixed_multi_pattern_search(base_config.clone(), patterns)? {
+    let fast_path_matches = run_native_fixed_multi_pattern_search(base_config.clone(), patterns)
+        .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
+    if let Some(matches) = fast_path_matches {
         return Ok(matches
             .into_iter()
             .map(|matched| SearchMatchJson {
@@ -5312,7 +5475,8 @@ fn collect_native_multi_pattern_matches(
     for (pattern_id, pattern) in patterns.iter().enumerate() {
         let mut pattern_config = base_config.clone();
         pattern_config.pattern = pattern.clone();
-        let stats = execute_native_search(pattern_config)?;
+        let stats = execute_native_search(pattern_config)
+            .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
         matches.extend(stats.matches.into_iter().map(|matched| SearchMatchJson {
             file: matched.path.to_string_lossy().into_owned(),
             line: matched.line_number.unwrap_or(0) as usize,
@@ -5530,6 +5694,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             json: args.json,
             ndjson: args.ndjson,
             verbose: args.verbose,
+            path_was_implicit: request.path_was_implicit,
         })
         .is_none();
 
@@ -5596,6 +5761,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 json: args.json,
                 ndjson: args.ndjson,
                 verbose: args.verbose,
+                path_was_implicit: request.path_was_implicit,
             };
 
             #[cfg(feature = "cuda")]
@@ -5611,6 +5777,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         &args,
                         &request.patterns[0],
                         &request.paths,
+                        request.path_was_implicit,
                         fallback_decision,
                     ),
                     rg_fallback,
@@ -5642,6 +5809,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         &args,
                         &request.patterns[0],
                         &request.paths,
+                        request.path_was_implicit,
                         decision,
                     ),
                 ) {
@@ -5671,6 +5839,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                     &args,
                     &request.patterns[0],
                     &request.paths,
+                    request.path_was_implicit,
                     decision,
                 ),
                 rg_fallback,
@@ -8442,6 +8611,15 @@ struct GpuSearchParams<'a> {
     json: bool,
     ndjson: bool,
     verbose: bool,
+    // Audit #105: whether the caller omitted an explicit PATH positional. Threaded into
+    // `native_search_config_for_gpu_params`'s `NativeSearchConfig::path_was_implicit` (and the
+    // rg_fallback `RipgrepSearchArgs` in `handle_gpu_native_search`) so the CPU fallback this
+    // struct eventually reaches, when GPU routing is explicitly requested via
+    // `--gpu-device-ids` but unavailable, still gets the native-CPU implicit-walk-ceiling gate.
+    // "GPU search requires exactly one path root" (`request.paths.len() != 1`) does NOT imply
+    // explicit -- the implicit default is itself a single `["."]` root, so that check alone
+    // cannot be used as a stand-in for this field.
+    path_was_implicit: bool,
 }
 
 #[cfg(feature = "cuda")]
@@ -9032,10 +9210,15 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 no_multiline_dotall: false,
                                 patterns: params.patterns.to_vec(),
                                 paths: vec![params.path.to_string()],
-                                // GPU search always requires exactly one explicit path root
-                                // (`request.paths.len() != 1` is rejected upstream when
-                                // `--gpu-device-ids` is set) -- never implicit/defaulted.
-                                path_was_implicit: false,
+                                // Audit #105 fix: this was hardcoded `false` under the incorrect
+                                // assumption that "GPU search requires exactly one path root"
+                                // (`request.paths.len() != 1` rejected upstream when
+                                // `--gpu-device-ids` is set) implies the path is always explicit.
+                                // It does not -- an implicit/defaulted root is itself a single
+                                // `["."]` path, so `paths.len() != 1` never fires for it, and this
+                                // rg fallback would have silently walked an implicit huge root
+                                // unbounded. Now threaded from the real signal.
+                                path_was_implicit: params.path_was_implicit,
                                 no_ignore_vcs: false,
                                 pcre2: false,
                                 no_pcre2: false,

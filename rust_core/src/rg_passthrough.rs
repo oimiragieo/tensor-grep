@@ -211,9 +211,20 @@ pub fn implicit_search_walk_exceeds_ceiling(
     false
 }
 
+/// Substring marker present in every implicit-walk-ceiling refusal message, regardless of which
+/// engine (rg-passthrough or native-CPU) produced it -- both reuse
+/// `format_unbounded_implicit_search_walk_error` for the exact same text. Audit #105: a caller
+/// that cannot rely on the generic native-search Err-to-exit-2 plumbing (the multi-pattern /
+/// GPU-fallback call sites in main.rs, which otherwise let an `Err` propagate to `main()`'s
+/// default exit-1) uses `is_unbounded_implicit_search_walk_refusal` to recognize ONLY this
+/// specific refusal and normalize it to the shared exit-2 contract, without touching how any
+/// other native-search error is handled.
+const UNBOUNDED_IMPLICIT_SEARCH_WALK_REFUSAL_MARKER: &str =
+    "broad root scan refused as a safety guard";
+
 pub fn format_unbounded_implicit_search_walk_error(ceiling: usize) -> String {
     format!(
-        "Error: broad root scan refused as a safety guard, not a zero-match result: \
+        "Error: {UNBOUNDED_IMPLICIT_SEARCH_WALK_REFUSAL_MARKER}, not a zero-match result: \
 no PATH was given, so the search defaulted to the current directory, which is a large root \
 (over {ceiling} files walked); --glob/--type only filter WHICH files match, they do not bound \
 how much of the tree must be walked to find them. Scope the search to an explicit PATH, add \
@@ -224,6 +235,11 @@ tg search <pattern> <root> --max-depth <N>\n\
 For intentional broad scans:\n\
 --allow-broad-generated-scan"
     )
+}
+
+/// See `UNBOUNDED_IMPLICIT_SEARCH_WALK_REFUSAL_MARKER`.
+pub fn is_unbounded_implicit_search_walk_refusal(message: &str) -> bool {
+    message.contains(UNBOUNDED_IMPLICIT_SEARCH_WALK_REFUSAL_MARKER)
 }
 
 /// First-statement chokepoint for `execute_ripgrep_search`: computes the implicit-walk-ceiling
@@ -947,5 +963,20 @@ mod tests {
             2,
             "an oversized implicit-path walk with --glob must be refused with exit code 2"
         );
+    }
+
+    // --- Audit #105: native-CPU implicit-walk-ceiling refusal recognition ------------------
+
+    #[test]
+    fn is_unbounded_implicit_search_walk_refusal_recognizes_the_shared_message() {
+        // The native-CPU engine (native_search.rs) reuses `format_unbounded_implicit_search_walk_
+        // error` verbatim for its own refusal (audit #105), and main.rs's multi-pattern call
+        // sites use this predicate to normalize that refusal to exit code 2. Both directions must
+        // hold: the real generated message is recognized, and an unrelated error is not.
+        let refusal = format_unbounded_implicit_search_walk_error(IMPLICIT_SEARCH_WALK_FILE_CEILING);
+        assert!(is_unbounded_implicit_search_walk_refusal(&refusal));
+        assert!(!is_unbounded_implicit_search_walk_refusal(
+            "native search path does not exist: /nope"
+        ));
     }
 }
