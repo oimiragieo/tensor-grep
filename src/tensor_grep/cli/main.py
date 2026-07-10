@@ -9605,6 +9605,27 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _daemon_blast_radius_no_match_is_unreliable(payload: dict[str, Any]) -> bool:
+    """audit #107 (#94 flip blocker): True iff a warm/daemon blast_radius payload is a no_match on
+    a possibly_truncated map -- the one case where the daemon-served
+    build_symbol_blast_radius_from_map (repo_map.py, no literal-seed rescue) can disagree with
+    what the cold build_symbol_blast_radius (repo_map.py, which DOES retry via
+    _literal_symbol_seed_files) would find. The symbol may simply sit outside the daemon
+    session's scan window, so a no_match here is unreliable and the caller should fall through to
+    cold instead of trusting it. Mirrors the truncated-no_match condition in
+    repo_map.build_symbol_blast_radius verbatim (repo_map.py:~15373-15378) so the two arms agree
+    on exactly when a no_match is trustworthy.
+
+    Deliberately narrow: only fires on no_match AND possibly_truncated together. A warm no_match
+    on a COMPLETE map is a real miss -- falling back to cold there would defeat the daemon
+    speedup for every genuine no-match, not just the truncated-and-wrong ones.
+    """
+    if not payload.get("no_match"):
+        return False
+    scan_limit = payload.get("scan_limit")
+    return isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+
+
 @app.command(name="blast-radius")
 def blast_radius(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -9696,6 +9717,10 @@ def blast_radius(
             if deadline is None
             else None
         )
+        if payload is not None and _daemon_blast_radius_no_match_is_unreliable(payload):
+            # audit #107: discard the unreliable warm no_match and fall through to the cold
+            # path below, which has the literal-seed rescue the daemon route lacks.
+            payload = None
         if payload is not None:
             payload = _apply_blast_radius_output_limits(
                 payload, max_callers=max_callers, max_files=max_files
