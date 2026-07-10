@@ -276,6 +276,30 @@ class CPUBackend(ComputeBackend):
             except re.error as exc:
                 raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
 
+    @staticmethod
+    def _fallback_pattern_is_provably_linear(config: SearchConfig) -> bool:
+        """Gate for EVERY path that could re-run a pattern through Python's backtracking `re`
+        after the linear-time Rust engine declined/failed (audit #111 + Opus-gate hardening;
+        sibling to the audit #6/#16 fixes in `_search_word_line_context_via_rust` / `_search_ltl`
+        / the `--pcre2` residual).
+
+        The ONLY pattern shape this backend can prove is safe for Python's backtracking engine is
+        `fixed_strings`: `_compile_regexes` runs those through `re.escape`, producing a literal
+        automaton with no quantifier and no alternation, which cannot catastrophically backtrack
+        regardless of the raw pattern text. EVERY other pattern fails closed.
+
+        No STATIC analysis of the raw pattern is or can be the gate. "Rust already ran this
+        pattern in O(n)" is not evidence Python's `re` can run the SAME pattern safely (the
+        premise already refuted for `--pcre2`: nested quantifiers like `(a+)+$` are valid,
+        linear-time-safe Rust syntax that catastrophically backtracks under Python's engine). And
+        an earlier attempt to admit "patterns with no quantifier metacharacter (`*+?{`)" was
+        PROVABLY UNSOUND -- catastrophic backtracking has a second source besides repetition:
+        variable-length ALTERNATION. `(a|aa)(a|aa)...(a|aa)b` (i.e. `"(a|aa)"*k + "b"`) contains
+        no quantifier char at all yet backtracks 2^k, so any static char allow-list is a bypass
+        waiting to be dialed. Only the structural `fixed_strings` guarantee is sound.
+        """
+        return bool(config.fixed_strings)
+
     def is_available(self) -> bool:
         return True
 
@@ -412,10 +436,34 @@ class CPUBackend(ComputeBackend):
             )
 
         except _RustUtf8DecodeMismatch as exc:
-            # Non-UTF-8 file: Rust already compiled + ran the pattern in O(n) (ReDoS-safe).
-            # Fall through to the Python latin-1/replace decode path for compatibility.
+            # Audit #111 (ReDoS gate bypass, third instance -- sibling to #6/#16 above): this
+            # branch used to assume "Rust already compiled + ran the pattern in O(n), so it's
+            # ReDoS-safe" and fall through UNCONDITIONALLY to the Python latin-1/replace decode
+            # loop below. That premise is the SAME one already refuted for `--pcre2` two blocks
+            # down: nested quantifiers like `(a+)+$` are valid, linear-time-safe Rust syntax that
+            # catastrophically backtracks under Python's backtracking `re` -- and, as the Opus
+            # security gate proved, so does quantifier-free variable-length ALTERNATION
+            # (`(a|aa)...(a|aa)b` backtracks 2^k with no `*+?{` char), so NO static pattern check
+            # is a sound gate. The only shape provably safe for the Python fallback is
+            # `fixed_strings` (re.escape'd -> literal automaton). Fail CLOSED for everything else
+            # (Backend Fail-Closed Contract, matching the -w/-x/-C/--ltl/--pcre2 siblings) rather
+            # than silently swapping to the ReDoS-hazardous backtracking engine. This does fail
+            # closed a legit non-ASCII regex on a non-UTF-8 file (e.g. `caf\xe9\d+` on latin-1) --
+            # the correct security-over-availability trade; such users can pass --fixed-strings
+            # or use ripgrep (a genuine byte-safe engine).
+            if not self._fallback_pattern_is_provably_linear(config):
+                raise BackendExecutionError(
+                    "cannot safely evaluate this non-fixed-strings pattern through CPUBackend's "
+                    f"non-UTF-8-file Python fallback ({type(exc).__name__}: {exc}); its "
+                    "backtracking engine has no linear-time guarantee for an arbitrary pattern; "
+                    "use ripgrep (a genuine byte-safe engine) or pass --fixed-strings"
+                ) from exc
+            # fixed_strings only: re.escape'd -> provably linear -> safe to decode the file in
+            # Python (latin-1/replace) and match the literal as text.
             logger.debug(
-                "Rust UTF-8 decode mismatch for %s, using Python decode: %s", file_path, exc
+                "Rust UTF-8 decode mismatch for %s, using Python decode (fixed-strings): %s",
+                file_path,
+                exc,
             )
         except (ImportError, ModuleNotFoundError) as exc:
             # Native extension genuinely absent: Python `re` is the ONLY available engine.
@@ -452,13 +500,28 @@ class CPUBackend(ComputeBackend):
                     "PCRE2 support or drop --pcre2"
                 ) from exc
             # Rust failed at runtime for a reason unrelated to pattern syntax (native panic /
-            # IO / version skew) and the caller did NOT request the backtracking-only
-            # --pcre2 escape hatch: the pattern is not one that requires backreference/
-            # look-around syntax, so falling back to Python `re` here preserves the
-            # backend's existing robustness (e.g. a transient native-extension fault must
-            # not hard-fail an ordinary search). Keep falling open for this narrower case.
+            # IO / version skew) and the caller did NOT request --pcre2. Opus-gate hardening
+            # (audit #111, must-fix #2): this used to fall open to Python `re` "for robustness",
+            # but that is the NEXT ReDoS hole -- a hazard pattern (`(a+)+$` OR the quantifier-free
+            # alternation bomb `(a|aa)...b`) would then backtrack unbounded whenever Rust hit a
+            # transient runtime fault. We cannot prove an arbitrary pattern safe for the
+            # backtracking engine, so fail CLOSED unless it is a `fixed_strings` literal
+            # (re.escape'd -> provably linear), matching the -w/-x/-C/--ltl/--pcre2 siblings which
+            # all fail closed on ANY Rust failure. (Genuine Rust ABSENCE is handled by the
+            # ImportError branch above, which still falls open -- Python is then the only engine,
+            # a dev/broken-install condition, not the shipped MCP-reachable binary.)
+            if not self._fallback_pattern_is_provably_linear(config):
+                raise BackendExecutionError(
+                    "cannot safely evaluate this non-fixed-strings pattern through CPUBackend "
+                    f"after a native-engine runtime failure ({type(exc).__name__}: {exc}); its "
+                    "backtracking engine has no linear-time guarantee for an arbitrary pattern; "
+                    "use ripgrep or pass --fixed-strings"
+                ) from exc
+            # fixed_strings only: re.escape'd -> provably linear -> safe to run through Python.
             logger.warning(
-                "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
+                "Rust backend failed for %s, using Python regex (fixed-strings): %s",
+                file_path,
+                exc,
             )
 
         matches = []
