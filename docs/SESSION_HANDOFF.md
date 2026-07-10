@@ -4,11 +4,11 @@ Last updated: 2026-07-07
 
 ## Current Release State
 
-release_docs_current_tag: v1.58.11
+release_docs_current_tag: v1.58.12
 
-- Latest tagged version: `v1.58.11`
-- Latest complete PyPI version: `v1.58.11`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.58.11>
+- Latest tagged version: `v1.58.12`
+- Latest complete PyPI version: `v1.58.12`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.58.12>
 
 **Recent shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
 
@@ -31,8 +31,8 @@ release_docs_current_tag: v1.58.11
 - Previous CodeQL proof run `26064676072`: passed on the `v1.12.32` release line
 - Previous CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.58.11 tg --version` reports `tensor-grep 1.58.11`
-- GitHub release assets: `v1.58.11` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.58.12 tg --version` reports `tensor-grep 1.58.12`
+- GitHub release assets: `v1.58.12` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
 - Closed v1.13.23 dogfood follow-up gap: PR #236 makes `tg repair-launcher` remove verified tensor-grep-owned Python Scripts entrypoints that shadow the managed native front door, preserves explicit `--allow-foreign-rename` for unrelated foreign launchers, and keeps help/docs aligned with that Windows launcher repair contract.
 - Closed v1.13.22 dogfood follow-up gap: PR #235 keeps Windows public launcher routes contract-equivalent for `tg run --diff`, bounds MCP `tg_search` with `query`, `max_results`, `max_files`, and `structured_json`, makes capsule validation tie resolution cite concrete `targeted-validation` evidence, gives literal `classify` inputs a clear file-path error, and keeps explicit `tg dogfood --output` writes beside the requested artifact.
 - Closed v1.13.21 dogfood follow-up gap: PR #233 restarts pre-existing session daemons after direct or scheduled Windows `tg upgrade` handoff loss and keeps successful LSP proof payloads from surfacing stale Pyright SRE mismatch tracebacks as current stderr; post-v1.13.21 dogfood should verify daemon handoff and LSP diagnostic quieting on public installs.

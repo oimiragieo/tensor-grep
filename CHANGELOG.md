@@ -1,6 +1,102 @@
 # CHANGELOG
 
 
+## v1.58.12 (2026-07-10)
+
+### Bug Fixes
+
+- **sidecar**: Bound the Rust->Python passthrough with a wall-clock timeout + POSIX setpgid (audit
+  H5, Opus-gated SHIP over 2 rounds) ([#512](https://github.com/oimiragieo/tensor-grep/pull/512),
+  [`0672ddd`](https://github.com/oimiragieo/tensor-grep/commit/0672dddc5cb6a36c12297343779a11f3802fe7d4))
+
+* fix(rust): bound the general Python passthrough with a deadline, exempting server launches
+  (Backend Fail-Closed Contract, audit H5)
+
+execute_python_passthrough_command_inner (python_sidecar.rs) called a raw, unbounded child.wait() --
+  unlike the JSON sidecar path (wait_for_sidecar_or_kill, 30s default) and the --help probe path
+  (wait_for_passthrough_or_kill, 3s default). This function is the dispatch target for ~35 one-shot
+  subcommands (map/audit/scan/orient/session/doctor/checkpoint/defs/refs/callers/blast-radius/
+  agent/context/rulesets/devices/lsp/etc.), so a wedged parser/LSP/FS/pathological-regex on the
+  Python side hung the entire `tg` invocation forever with no recovery short of an external kill.
+
+Fix: reuse the existing wait_for_passthrough_or_kill/SidecarWaitOutcome poll-loop machinery (already
+  proven for the --help probe path) to bound the wait, gated by a new TG_PASSTHROUGH_TIMEOUT_MS env
+  var (default 600_000ms, mirroring the Python side's own TG_SUBPROCESS_TIMEOUT_SECONDS=600s
+  generic-subprocess precedent). On timeout the child is terminated and a clear timeout error
+  (exit_code 124) is returned instead of a silent empty/hung result.
+
+`tg mcp` is dispatched through this same function to launch the MCP server, and must never die on a
+  timer. is_long_running_passthrough_command() recognizes the three subcommands that legitimately
+  start a long-running server/daemon and exempts only those from the deadline (falls back to the
+  original unbounded wait): `mcp` (always), `session serve <id>` (but not session's other one-shot
+  subcommands, including daemon start/status/stop, which are already internally bounded), and bare
+  `lsp` (but not `lsp --debug-trace LANGUAGE`, the one documented one-shot health-probe exception).
+  The list is explicit and auditable, cited to the exact Python command each entry exempts.
+
+Tests (rust_core/tests/test_sidecar_ipc.rs): -
+  test_passthrough_timeout_kills_wedged_child_and_reports_error: a wedged one-shot command (doctor)
+  is killed at the deadline and reports a timeout error. Confirmed RED pre-fix (panics "command
+  timed out after 8s" -- a safely bounded failure, not a hang) and GREEN post-fix. -
+  test_passthrough_fast_command_completes_unaffected_by_new_timeout: a fast legitimate command
+  (audit) completes unchanged. - test_passthrough_exempts_mcp_server_launch_from_timeout: `tg mcp`
+  survives 1.5s past a 300ms configured deadline against a wedged child -- the daemon exemption
+  holds.
+
+Plus 9 new unit tests in python_sidecar.rs pinning is_long_running_passthrough_command's exact
+  exemption boundaries (session serve vs open/daemon-start, bare lsp vs --debug-trace, unrelated
+  commands).
+
+cargo fmt -- --check / cargo clippy -- -D warnings / cargo test (lib + test_sidecar_ipc, 23 + 16
+  passed, zero regressions) all green.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(rust): make the H5 passthrough kill actually signal the child on POSIX (Opus gate must-fix) +
+  close the --debug-trace= exemption gap
+
+Opus adversarial security gate on the H5 fix (360dfb8) returned BLOCK: the timeout kill was a NO-OP
+  on Linux/macOS. execute_python_passthrough_command_inner spawned the child WITHOUT putting it in
+  its own process group, but terminate_passthrough_process kills on POSIX via killpg(child.id(),
+  SIGKILL). A child that never called setpgid inherits tg's PGID, so no process group with id ==
+  child.id() exists -> killpg returns ESRCH (swallowed; the POSIX branch has no child.kill()
+  fallback) -> the wedged child is never signaled -> terminate's own child.wait() then blocks
+  forever. Net: on POSIX the infinite hang just moved from the old bare child.wait() to the new one;
+  the fix only worked on Windows (taskkill /T /F by PID/tree).
+
+Must-fix: add the #[cfg(unix)] setpgid pre_exec guard to the _inner spawn, the byte-identical
+  audit-I8 pattern invoke_sidecar already uses, so killpg signals the whole subtree. Gated on
+  !is_daemon_launch: only the bounded path is ever killpg'd, and the daemon-exempt launches (mcp /
+  session serve / lsp) read an inherited stdin, so keeping them in tg's process group preserves
+  their current TTY behavior (a child in a new background process group reading the controlling
+  terminal would take SIGTTIN and stop). The bounded commands that reach here do not read a TTY
+  stdin (analysis commands take args; the only stdin-piping caller, `run`, uses Stdio::piped(), not
+  a TTY), so this is SIGTTIN-safe by construction.
+
+Should-fix: is_long_running_passthrough_command matched the trace probe with `arg ==
+  "--debug-trace"` exactly, so Click's equals form `tg lsp --debug-trace=python` (one
+  trailing_var_arg token) failed the check and was wrongly treated as a server launch -> left
+  unbounded. Now also matches `arg.starts_with("--debug-trace=")`.
+
+Validation: - cargo fmt -- --check: clean. - cargo clippy -- -D warnings (Windows): clean. - The
+  #[cfg(unix)] setpgid block is skipped by Windows clippy, so validated correct-by-construction: an
+  isolated replica of the exact `#[cfg(unix)] unsafe { if !is_daemon_launch { child.pre_exec(...) }
+  }` + spawn/wait structure compiles AND passes clippy -D warnings on the x86_64-unknown-linux-gnu
+  target (real-crate cross-check is blocked only by a native C dep needing x86_64-linux-gnu-gcc,
+  unrelated to this code). - cargo test --lib python_sidecar:: : 25 passed (adds
+  lsp_debug_trace_equals_form_is_not_exempt +
+  lsp_debug_trace_equals_form_after_other_flags_is_not_exempt). - cargo test --test
+  test_sidecar_ipc: the 3 H5 target tests (kill/fast/mcp-exempt) + sidecar-timeout all green; one
+  PRE-EXISTING documented-flaky wall-clock test on the UNRELATED help-probe path
+  (test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python) tripped once under the
+  higher subprocess-spawn contention my new tests add (3.55s vs its 3s bound) but passes in
+  isolation (0.86s) and 3/4 full-binary runs; not modified (relaxing its bound toward 3000ms would
+  defeat its override-vs-default discriminator).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.11 (2026-07-10)
 
 ### Bug Fixes
