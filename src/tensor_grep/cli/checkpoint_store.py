@@ -31,6 +31,17 @@ _DISCOVERY_CACHE_TTL_SECONDS = 300.0
 # new snapshot dir, so an uncapped store grows without limit. Keep only the newest N.
 _CHECKPOINT_MAX_ENV = "TG_CHECKPOINT_MAX"
 _DEFAULT_CHECKPOINT_MAX = 64
+# audit H4: create_checkpoint() copied every entry with no per-file cap, no cumulative-size
+# budget, and no free-space check, so a single huge file (or a large scope) could exhaust disk
+# in one `tg checkpoint create` -- reachable from the CLI, the MCP tg_checkpoint_create tool, and
+# tg_rewrite_apply(checkpoint=true). All three knobs are env-configurable so a repo with
+# legitimately large tracked assets is not permanently blocked.
+_CHECKPOINT_MAX_FILE_BYTES_ENV = "TG_CHECKPOINT_MAX_FILE_BYTES"
+_DEFAULT_CHECKPOINT_MAX_FILE_BYTES = 512 * 1024 * 1024  # 512 MiB per file
+_CHECKPOINT_MAX_TOTAL_BYTES_ENV = "TG_CHECKPOINT_MAX_TOTAL_BYTES"
+_DEFAULT_CHECKPOINT_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024  # 4 GiB per checkpoint
+_CHECKPOINT_FREE_SPACE_MARGIN_BYTES_ENV = "TG_CHECKPOINT_FREE_SPACE_MARGIN_BYTES"
+_DEFAULT_CHECKPOINT_FREE_SPACE_MARGIN_BYTES = 256 * 1024 * 1024  # keep >=256 MiB free after copy
 _NON_GIT_IGNORED_DIRS = {
     ".git",
     ".hg",
@@ -67,6 +78,18 @@ class CheckpointCorruptError(RuntimeError):
     def __init__(self, message: str, missing_files: list[str] | None = None) -> None:
         super().__init__(message)
         self.missing_files: list[str] = missing_files or []
+
+
+class CheckpointBudgetExceededError(RuntimeError):
+    """Raised when create_checkpoint() would exceed a configured disk-usage budget (audit H4).
+
+    Guards against unbounded disk exhaustion: the copy loop previously had no per-file cap,
+    no cumulative-size cap, and no free-space check, so a single ``tg checkpoint create`` could
+    fill the disk. Always raised BEFORE the copy loop creates a snapshot directory (the
+    per-file/total-bytes/free-space pre-flight); a mid-copy failure of any kind (this error or
+    an ordinary OSError) also removes the partial snapshot directory before re-raising, so a
+    refused or interrupted checkpoint never leaves partial state on disk.
+    """
 
 
 def _is_generated_discovery_dir(path: Path) -> bool:
@@ -678,6 +701,88 @@ def _prune_checkpoint_records(
     return retained
 
 
+def _configured_positive_int(env_var: str, default: int) -> int:
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _configured_checkpoint_max_file_bytes() -> int:
+    return _configured_positive_int(
+        _CHECKPOINT_MAX_FILE_BYTES_ENV, _DEFAULT_CHECKPOINT_MAX_FILE_BYTES
+    )
+
+
+def _configured_checkpoint_max_total_bytes() -> int:
+    return _configured_positive_int(
+        _CHECKPOINT_MAX_TOTAL_BYTES_ENV, _DEFAULT_CHECKPOINT_MAX_TOTAL_BYTES
+    )
+
+
+def _configured_checkpoint_free_space_margin_bytes() -> int:
+    return _configured_positive_int(
+        _CHECKPOINT_FREE_SPACE_MARGIN_BYTES_ENV, _DEFAULT_CHECKPOINT_FREE_SPACE_MARGIN_BYTES
+    )
+
+
+def _check_checkpoint_disk_budget(root: Path, entries: dict[str, bool]) -> None:
+    """Pre-flight disk-usage budget for create_checkpoint (audit H4).
+
+    Stats every entry that will be copied (cheap; no copying yet) and refuses BEFORE any
+    snapshot directory is created if a single file exceeds the per-file cap, the cumulative
+    snapshot size exceeds the total-per-checkpoint cap, or performing the copy would leave
+    less than the configured free-space margin on the destination filesystem. All three caps
+    are env-configurable (sane defaults) so a repo with legitimately large tracked assets can
+    raise the limit instead of being permanently blocked.
+    """
+    max_file_bytes = _configured_checkpoint_max_file_bytes()
+    max_total_bytes = _configured_checkpoint_max_total_bytes()
+    free_margin_bytes = _configured_checkpoint_free_space_margin_bytes()
+
+    total_bytes = 0
+    for rel_path, exists in entries.items():
+        if not exists:
+            continue
+        try:
+            size = (root / rel_path).stat().st_size
+        except OSError:
+            # A vanished/unreadable source is reported by the copy loop itself; the budget
+            # pre-flight only needs a best-effort size estimate, not definitive readability.
+            continue
+        if size > max_file_bytes:
+            raise CheckpointBudgetExceededError(
+                f"Checkpoint refused: {rel_path!r} is {size} bytes, over the per-file limit "
+                f"of {max_file_bytes} bytes (raise {_CHECKPOINT_MAX_FILE_BYTES_ENV} to allow "
+                "larger files)."
+            )
+        total_bytes += size
+        if total_bytes > max_total_bytes:
+            raise CheckpointBudgetExceededError(
+                "Checkpoint refused: snapshot size exceeds the per-checkpoint limit of "
+                f"{max_total_bytes} bytes (raise {_CHECKPOINT_MAX_TOTAL_BYTES_ENV} to allow a "
+                "larger checkpoint)."
+            )
+
+    try:
+        free_bytes = shutil.disk_usage(root).free
+    except OSError:
+        # Cannot introspect free space on this filesystem; do not block the checkpoint on a
+        # diagnostic we could not compute -- the per-file/total-bytes caps above still apply.
+        return
+    required_bytes = total_bytes + free_margin_bytes
+    if free_bytes < required_bytes:
+        raise CheckpointBudgetExceededError(
+            f"Checkpoint refused: only {free_bytes} bytes free, but this checkpoint needs "
+            f"{total_bytes} bytes plus a {free_margin_bytes}-byte safety margin (lower "
+            f"{_CHECKPOINT_FREE_SPACE_MARGIN_BYTES_ENV} to change the margin)."
+        )
+
+
 def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     scope = _detect_checkpoint_scope(Path(path))
     root = scope.root
@@ -685,6 +790,10 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     created_at = datetime.now(UTC).isoformat()
     checkpoint_id = f"ckpt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
     entries = _snapshot_entries(scope)
+
+    # audit H4: refuse BEFORE any snapshot directory exists if the copy would blow a
+    # configured size/free-space budget -- see _check_checkpoint_disk_budget.
+    _check_checkpoint_disk_budget(root, entries)
 
     # Create the storage root up front so its resolve() is stable: under concurrent first-time
     # creates, resolving _snapshot_path while another writer is still mkdir-ing .tensor-grep/
@@ -694,15 +803,24 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     snapshot_dir = _snapshot_path(root, checkpoint_id)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    for rel_path, exists in entries.items():
-        if not exists:
-            continue
-        source = root / rel_path
-        destination = snapshot_dir / rel_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        # follow_symlinks=False: store a symlink AS a link, never copy its (possibly
-        # out-of-root) target content into the snapshot (audit HIGH — symlink disclosure).
-        shutil.copy2(source, destination, follow_symlinks=False)
+    try:
+        for rel_path, exists in entries.items():
+            if not exists:
+                continue
+            source = root / rel_path
+            destination = snapshot_dir / rel_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            # follow_symlinks=False: store a symlink AS a link, never copy its (possibly
+            # out-of-root) target content into the snapshot (audit HIGH — symlink disclosure).
+            shutil.copy2(source, destination, follow_symlinks=False)
+    except Exception:
+        # audit H4: never leave a half-copied checkpoint dir behind on any abort, budget-
+        # related or not (e.g. disk fills mid-copy despite the pre-flight, or a file
+        # vanishes/grows mid-loop). Remove the WHOLE per-checkpoint dir (metadata.json has not
+        # been written yet at this point, but snapshot_dir's own parent must go too, not just
+        # the snapshot/ subdir) -- matches how _prune_checkpoint_records removes a checkpoint.
+        shutil.rmtree(snapshot_dir.parent, ignore_errors=True)
+        raise
 
     result = CheckpointCreateResult(
         checkpoint_id=checkpoint_id,
@@ -1041,12 +1159,26 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     entries: dict[str, bool] = metadata["entries"]
     snapshot_dir = _snapshot_path(root, checkpoint_id)
     root_resolved = root.resolve()
+    snapshot_dir_resolved = snapshot_dir.resolve()
 
     # --- PRE-FLIGHT PHASE (read-only; abort before touching any working-tree file) ---
 
-    # 1. Validate every metadata entry stays inside the checkpoint root (S1).
+    # 1. Validate every metadata entry stays inside the checkpoint root (S1) AND that its
+    #    snapshot SOURCE stays inside the snapshot dir (audit H3). Target containment alone
+    #    left the source composition (`snapshot_dir / rel_path`) unguarded: shutil.copy2(...,
+    #    follow_symlinks=False) only refuses a symlink at the FINAL path component, so a
+    #    snapshot tree with a symlinked (or, on Windows, junctioned) ANCESTOR directory --
+    #    e.g. `snapshot/subdir` pointing outside the snapshot -- is transparently traversed by
+    #    the OS, reading host-file content through the link and copying it into a confined
+    #    working-tree target (arbitrary-file-read-into-working-tree). Reuse the same
+    #    containment helper used for targets, scoped to snapshot_dir, so any entry whose
+    #    resolved source escapes the snapshot is refused before any file is touched.
     resolved_targets = {
         rel_path: _resolve_within_root(root, root_resolved, rel_path) for rel_path in entries
+    }
+    resolved_sources = {
+        rel_path: _resolve_within_root(snapshot_dir, snapshot_dir_resolved, rel_path)
+        for rel_path in entries
     }
 
     # 2. Verify every snapshot source that should exist is present and readable BEFORE
@@ -1057,7 +1189,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     for rel_path, exists in entries.items():
         if not exists:
             continue
-        source = snapshot_dir / Path(rel_path)
+        source = resolved_sources[rel_path]
         if not source.exists():
             missing.append(rel_path)
         else:
@@ -1102,12 +1234,13 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         for rel_path, exists in entries.items():
             target = resolved_targets[rel_path]
             if exists:
-                source = snapshot_dir / Path(rel_path)
+                source = resolved_sources[rel_path]
                 staged = staging_root / Path(rel_path)
                 staged.parent.mkdir(parents=True, exist_ok=True)
-                # This copy is safe: source existence was verified in pre-flight.
-                # follow_symlinks=False: a stored symlink stays a link and is never followed to
-                # re-materialize out-of-root content on undo (audit HIGH — symlink disclosure).
+                # This copy is safe: source existence AND containment were verified in
+                # pre-flight (H2 + H3). follow_symlinks=False: a stored symlink stays a link
+                # and is never followed to re-materialize out-of-root content on undo
+                # (audit HIGH — symlink disclosure).
                 shutil.copy2(source, staged, follow_symlinks=False)
                 staging_pairs.append((staged, target))
                 restored_files += 1
