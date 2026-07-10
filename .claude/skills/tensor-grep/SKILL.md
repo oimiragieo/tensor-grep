@@ -97,9 +97,11 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 **Scoped file dependencies (`tg imports` / `tg importers`, shipped #74).** Use `tg imports FILE` for forward edges (O(1) — parses one file) and `tg importers FILE [ROOT]` for reverse edges (bounded repo scan). Do **not** pay for whole-repo `tg map`/`tg orient` when the question is "what does this file import?" or "who imports this file?".
 
-**`--deadline` is best-effort, not a hard SLA (v1.54.x dogfood).** On tensor-grep itself (~800 mapped files), `tg callers … --deadline 5` can still take ~100s and `tg callers … --deadline 15` took ~6 minutes in WSL. Treat `partial`/`result_incomplete` in JSON as the honesty signal; branch on exit `2` for incomplete symbol scans. Narrow `PATH` to a subdirectory or warm `tg session daemon start` before trusting caller graphs on large trees.
+**`--deadline` is best-effort, not a hard SLA (v1.54.x dogfood).** Graph scans may still exceed the requested budget, but v1.54.6 improved materially (callers `--deadline 10` ~13–22s on tensor-grep vs ~6 min on v1.54.0). Treat `partial`/`result_incomplete` in JSON as the honesty signal; branch on exit `2` for incomplete symbol scans. Narrow `PATH` to a subdirectory or warm `tg session daemon start` before trusting caller graphs on large trees.
 
 **WSL + `/mnt/c/` path quirks.** Some native-backend searches report `path_not_found` for absolute `/mnt/c/dev/...` paths even when the directory exists; relative paths from the repo cwd often work. If `tg search` returns `path_not_found`, `cd` into the parent and pass a relative path.
+
+**`tg importers` path resolution (v1.54.6 dogfood).** When `ROOT` is a relative repo name and `FILE` is also repo-relative, tg may double-resolve (`tensor-grep/tensor-grep/src/...`). Prefer absolute paths for both `FILE` and `ROOT`, or `cd` into `ROOT` and pass `FILE` relative to that cwd only.
 
 **AST scan on WSL when ast-grep is a Windows npm shim.** `tg scan` may fail with exit 127 if `doctor` resolves `ast-grep` to a Windows path (`/mnt/c/Users/.../npm/ast-grep`) whose shebang cannot execute under WSL. Install a Linux-native `ast-grep` on PATH or run scan from Windows.
 

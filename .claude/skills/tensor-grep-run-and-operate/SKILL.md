@@ -6,8 +6,8 @@ description: Use when running the `tg` CLI day-to-day — exact syntax for orien
 # tensor-grep run & operate
 
 An imperative, copy-pasteable runbook for **running** `tg` (the tensor-grep CLI). Ground-truthed
-against `src/tensor_grep/cli/main.py` at **released v1.54.0**, re-verified
-**2026-07-09** (workspace dogfood on `/mnt/c/dev/projects`). Every command below is a real `@app.command` in that file — re-verify with the
+against `src/tensor_grep/cli/main.py` at **released v1.54.6**, re-verified
+**2026-07-10** (workspace dogfood on `/mnt/c/dev/projects`). Every command below is a real `@app.command` in that file — re-verify with the
 commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag on a
 newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as an
 approximate anchor: `grep` the symbol, don't trust the raw line.
