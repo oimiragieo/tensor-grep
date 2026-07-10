@@ -4652,9 +4652,9 @@ def _load_inline_rule_specs(
         (not CSafeLoader) so ``compose_node`` is overridable -- inline payloads are small
         (length-capped) so the perf cost is negligible."""
 
-        def compose_node(self, parent, index):  # type: ignore[override]
-            if self.check_event(yaml.events.AliasEvent):
-                event = self.get_event()
+        def compose_node(self, parent, index):  # type: ignore[override,no-untyped-def]
+            if self.check_event(yaml.events.AliasEvent):  # type: ignore[no-untyped-call]
+                event = self.get_event()  # type: ignore[no-untyped-call]
                 raise yaml.composer.ComposerError(
                     None,
                     None,
