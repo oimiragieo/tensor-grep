@@ -2,6 +2,7 @@ use crate::runtime_paths::{
     resolve_existing_relative_to_current_exe, resolve_explicit_file_override,
 };
 use anyhow::{anyhow, Context};
+use ignore::WalkBuilder;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -69,6 +70,13 @@ pub struct RipgrepSearchArgs {
     pub no_multiline_dotall: bool,
     pub patterns: Vec<String>,
     pub paths: Vec<String>,
+    /// Whether the caller omitted an explicit PATH positional (the search root defaulted to
+    /// `.`/stdin instead of a user-supplied path). Gates the implicit-walk-ceiling refusal at
+    /// the top of `execute_ripgrep_search` below -- an explicit, deliberately-scoped PATH must
+    /// never be refused regardless of its size (Trap #3 parity). Every exhaustive construction
+    /// site must set this correctly; `#[derive(Default)]` gives the fail-safe `false` to the one
+    /// test helper that builds via `RipgrepSearchArgs::default()`.
+    pub path_was_implicit: bool,
     pub pcre2: bool,
     pub no_pcre2: bool,
     pub pcre2_unicode: bool,
@@ -108,7 +116,161 @@ pub struct RipgrepSearchArgs {
     pub max_filesize: Option<String>,
 }
 
+// Bug #88 (dogfood v1.54.0 -> v1.54.1 follow-up): a bare `tg search --glob X PATTERN` with NO
+// explicit PATH used to hand the walk straight to real `rg` via `execute_ripgrep_search`
+// (`search_prefers_ripgrep_passthrough`'s `!args.globs.is_empty()` branch in
+// `handle_ripgrep_search`) with no ceiling check at all. `--glob`/`--type` narrow WHICH files
+// MATCH, they do NOT bound how much of the tree is WALKED to find them -- only `--max-depth`
+// (and gitignore/hidden pruning) do. On a large/workspace/vendored cwd this ran effectively
+// unbounded (only the 60s `TG_RG_TIMEOUT_SECONDS` rg-subprocess timeout eventually killed it).
+//
+// The first fix attempt (296cc92) had two gaps the dogfood re-harvest caught:
+//   (1) it counted post-GLOB matches, so a SELECTIVE glob (`*.rs` in a huge JS tree) counts
+//       few matches, sails under the ceiling, and proceeds into the unbounded WALK; and worse,
+//       a glob matching everything but slowly (`**/*`) made the probe itself walk the whole
+//       tree. The hang is TREE-WALK cost, independent of match count -- so this probe now
+//       counts every FILE the walker VISITS (ignoring the glob filter entirely) and early-exits
+//       the instant the WALK exceeds the ceiling. That is both robust to glob selectivity and
+//       self-bounded (never more than `ceiling + 1` files walked).
+//   (2) `request.paths` is EMPTY (not `["."]`) whenever `grep_cli::is_readable_stdin()` is true
+//       (`implicit_search_paths`), so the probe saw no root and skipped -- yet rg still walked
+//       the cwd unbounded. The caller now normalizes an implicit empty-paths search to `["."]`
+//       before probing (mirroring the Python CLI, which always guards `["."]`).
+//
+// Audit #100 (2026-07-10): that guard lived ONLY in `handle_ripgrep_search` (main.rs) -- ONE of
+// several callers of `execute_ripgrep_search`. The native front door's default search fast path
+// (`try_default_search_frontdoor_passthrough` -> `parse_early_ripgrep_args`'s `-e` arm) called
+// `execute_ripgrep_search` directly and never passed through that gate at all: a complete
+// regression of the pre-#480 walk-DoS, reachable via `tg search -e "TODO" --glob "*.py"` with no
+// explicit path on the standalone native binary. HOISTED here (moved from `main.rs`, the binary
+// crate root, into this library module -- `execute_ripgrep_search` cannot call back into a
+// function defined only in the separate `tg` bin crate) as the first statement of
+// `execute_ripgrep_search` itself, so every caller passes through one chokepoint: the frontdoor,
+// `handle_ripgrep_search`, the positional CLI, tg-search-fast, and the PyO3 FFI bridge. Also
+// drops the old `--glob`/`--type` requirement -- the hoisted gate fires on `path_was_implicit`
+// alone, still bounded by the same 1500-file ceiling walk -- closing #105 (a bare, unfiltered
+// implicit-path search on a huge root) too.
+pub const IMPLICIT_SEARCH_WALK_FILE_CEILING: usize = 1500;
+
+/// Bounded WALK probe: walks `paths` honoring the SAME max-depth / no-ignore / hidden traversal
+/// settings the real search would use, counting every FILE the walker VISITS (NOT filtered by
+/// the search glob -- a file glob does not prune the walk, so walk cost is glob-independent),
+/// and returns `true` the instant the WALK exceeds the ceiling. Never enumerates more than
+/// `ceiling + 1` files (that would just be the unbounded work this guard exists to avoid).
+/// Only meaningful when the caller has confirmed `path_was_implicit` (no explicit PATH): an
+/// explicit, deliberately-scoped PATH must still run uninhibited (the CLI's `paths_defaulted`
+/// gate / Trap #3).
+pub fn implicit_search_walk_exceeds_ceiling(
+    paths: &[String],
+    max_depth: Option<usize>,
+    no_ignore: bool,
+    hidden: bool,
+    ceiling: usize,
+) -> bool {
+    let roots: Vec<PathBuf> = paths
+        .iter()
+        .map(PathBuf::from)
+        .filter(|root| root.is_dir())
+        .collect();
+    let Some(first_root) = roots.first() else {
+        return false;
+    };
+
+    let mut builder = WalkBuilder::new(first_root);
+    for root in roots.iter().skip(1) {
+        builder.add(root);
+    }
+    if let Some(depth) = max_depth {
+        builder.max_depth(Some(depth));
+    }
+    // `hidden(true)` = SKIP hidden entries (ripgrep's default). Only descend hidden when the
+    // real search was asked to (`--hidden`), so the probe's walk cost matches rg's.
+    builder.hidden(!hidden);
+    if no_ignore {
+        builder.ignore(false);
+        builder.git_ignore(false);
+        builder.git_global(false);
+        builder.git_exclude(false);
+        builder.parents(false);
+    }
+
+    let mut file_count = 0usize;
+    for entry in builder.build() {
+        let Ok(entry) = entry else { continue };
+        if entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
+            file_count += 1;
+            if file_count > ceiling {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub fn format_unbounded_implicit_search_walk_error(ceiling: usize) -> String {
+    format!(
+        "Error: broad root scan refused as a safety guard, not a zero-match result: \
+no PATH was given, so the search defaulted to the current directory, which is a large root \
+(over {ceiling} files walked); --glob/--type only filter WHICH files match, they do not bound \
+how much of the tree must be walked to find them. Scope the search to an explicit PATH, add \
+--max-depth, or pass --allow-broad-generated-scan to opt in.\n\
+For bounded output:\n\
+tg search <pattern> <root> --glob \"*.py\"\n\
+tg search <pattern> <root> --max-depth <N>\n\
+For intentional broad scans:\n\
+--allow-broad-generated-scan"
+    )
+}
+
+/// First-statement chokepoint for `execute_ripgrep_search`: computes the implicit-walk-ceiling
+/// refusal message (if any) before any rg subprocess is spawned. Mirrors the empty-paths ->
+/// `["."]` substitution `handle_ripgrep_search` used to do at its own (now redundant) call site,
+/// so a caller that leaves `paths` empty (e.g. the frontdoor's `-e` arm when stdin is being
+/// read) still gets a `.`-rooted probe rather than silently skipping it.
+fn check_implicit_walk_ceiling(args: &RipgrepSearchArgs) -> Option<String> {
+    if !args.path_was_implicit {
+        return None;
+    }
+    let dot_root = [".".to_string()];
+    let probe_roots: &[String] = if args.paths.is_empty() {
+        &dot_root
+    } else {
+        &args.paths
+    };
+    if implicit_search_walk_exceeds_ceiling(
+        probe_roots,
+        args.max_depth,
+        args.no_ignore,
+        args.hidden,
+        IMPLICIT_SEARCH_WALK_FILE_CEILING,
+    ) {
+        Some(format_unbounded_implicit_search_walk_error(
+            IMPLICIT_SEARCH_WALK_FILE_CEILING,
+        ))
+    } else {
+        None
+    }
+}
+
 pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
+    // SECURITY (audit #100): must be the FIRST statement, before `resolve_ripgrep_binary()` or
+    // any other work -- this is the single chokepoint every caller of `execute_ripgrep_search`
+    // passes through. Returns `Ok(2)`, NEVER `process::exit`/`Err`/`bail!`: this function is
+    // also called from inside the PyO3 FFI bridge (`lib.rs`), which embeds this crate into the
+    // host Python process -- `process::exit` would hard-kill the Python host, and `Err`/`bail!`
+    // reintroduces the exit-1-vs-exit-2 no-match ambiguity bug (audit #81 #7). Every CLI call
+    // site already treats a non-zero `Ok(exit_code)` the same way it treats a real rg exit code
+    // (`if exit_code != 0 { process::exit(exit_code.max(1)); }`), so returning `Ok(2)` here needs
+    // zero call-site changes.
+    if let Some(refusal) = check_implicit_walk_ceiling(args) {
+        eprintln!("{refusal}");
+        return Ok(2);
+    }
+
     let rg_binary = resolve_ripgrep_binary().ok_or_else(|| {
         anyhow!(
             "ripgrep binary not found. Install `rg`, set {TG_RG_PATH_ENV}, or place a bundled ripgrep binary next to `tg`."
@@ -645,5 +807,145 @@ mod tests {
         let sentinel = operands.iter().position(|a| a == "--").unwrap();
         let path = operands.iter().position(|a| a == "-l").unwrap();
         assert!(sentinel < path);
+    }
+
+    // --- Audit #100: implicit-walk-ceiling hoist -----------------------------------------
+
+    fn _make_stub_file_dir(dir: &std::path::Path, file_count: usize) {
+        for index in 0..file_count {
+            std::fs::write(
+                dir.join(format!("stub_{index}.py")),
+                "nothing interesting\n",
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn check_implicit_walk_ceiling_refuses_oversized_implicit_walk_with_glob() {
+        // RED-before-fix (audit #100): `tg search -e "TODO" --glob "*.py"` with no explicit PATH
+        // on the native binary used to bypass the ceiling check entirely -- `parse_early_
+        // ripgrep_args`'s `-e` arm defaulted `paths` to `["."]` with no `path_was_implicit`
+        // record, so no caller could gate on it. This is the exact shape of that bypass.
+        let dir = tempfile::tempdir().unwrap();
+        _make_stub_file_dir(dir.path(), 1600);
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["TODO"], vec![&dir_path], false);
+        args.globs = vec!["*.py".to_string()];
+        args.path_was_implicit = true;
+
+        let refusal = check_implicit_walk_ceiling(&args);
+
+        assert!(
+            refusal.is_some(),
+            "an oversized implicit-path walk with --glob must be refused"
+        );
+    }
+
+    #[test]
+    fn check_implicit_walk_ceiling_refuses_bare_oversized_implicit_walk_without_glob() {
+        // #105 (bundled into this fix, per the design's LEAN-to-include decision): a BARE
+        // unfiltered implicit-path search (no --glob/--type at all) on a huge root must also be
+        // refused -- the hoisted gate fires on `path_was_implicit` alone now, not
+        // `path_was_implicit && (glob-or-type)`. A normal <1500-file repo is unaffected.
+        let dir = tempfile::tempdir().unwrap();
+        _make_stub_file_dir(dir.path(), 1600);
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["TODO"], vec![&dir_path], false);
+        args.path_was_implicit = true;
+        assert!(args.globs.is_empty() && args.file_types.is_empty());
+
+        let refusal = check_implicit_walk_ceiling(&args);
+
+        assert!(
+            refusal.is_some(),
+            "a bare (no glob/type) oversized implicit-path walk must also be refused (#105)"
+        );
+    }
+
+    #[test]
+    fn check_implicit_walk_ceiling_allows_explicit_path_even_when_oversized() {
+        // Non-regression (Trap #3 parity): an EXPLICIT, deliberately-scoped PATH must never be
+        // refused regardless of size -- only an IMPLICIT (defaulted) root is gated.
+        let dir = tempfile::tempdir().unwrap();
+        _make_stub_file_dir(dir.path(), 1600);
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["TODO"], vec![&dir_path], false);
+        args.globs = vec!["*.py".to_string()];
+        args.path_was_implicit = false;
+
+        let refusal = check_implicit_walk_ceiling(&args);
+
+        assert!(
+            refusal.is_none(),
+            "an explicit path must run uninhibited even when the walk exceeds the ceiling"
+        );
+    }
+
+    #[test]
+    fn check_implicit_walk_ceiling_allows_implicit_path_under_ceiling() {
+        // Normal-case non-regression: an implicit path under the ceiling is unaffected.
+        let dir = tempfile::tempdir().unwrap();
+        _make_stub_file_dir(dir.path(), 50);
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["TODO"], vec![&dir_path], false);
+        args.path_was_implicit = true;
+
+        let refusal = check_implicit_walk_ceiling(&args);
+
+        assert!(
+            refusal.is_none(),
+            "a 50-file implicit root must not be refused"
+        );
+    }
+
+    #[test]
+    fn check_implicit_walk_ceiling_substitutes_dot_root_for_empty_paths() {
+        // Mirrors the (now-deleted) `handle_ripgrep_search` call site's own substitution: a
+        // caller that leaves `paths` empty while `path_was_implicit` is true (e.g. the
+        // frontdoor's `-e` arm when stdin is readable) still gets probed against `.` rather than
+        // silently skipped. Uses the current directory implicitly via `["."]`, so just assert
+        // this does not panic and returns a bool-shaped Option either way.
+        let mut args = args_with(vec!["TODO"], vec![], false);
+        args.path_was_implicit = true;
+        assert!(args.paths.is_empty());
+
+        // Must not panic; the concrete refuse/allow verdict depends on the test runner's cwd
+        // file count, which this test does not control -- only the substitution's hermetic
+        // safety (no panic on an empty roots list) is under test here.
+        let _ = check_implicit_walk_ceiling(&args);
+    }
+
+    #[test]
+    fn execute_ripgrep_search_refuses_oversized_implicit_walk_before_spawning_rg() {
+        // The hermetic through-`execute_ripgrep_search` test the design calls for: now that the
+        // check is the FIRST statement (before `resolve_ripgrep_binary()`), this is hermetic --
+        // no real `rg` subprocess is ever spawned when the gate fires. Bounded per
+        // anti-hang-test-protocol: run on a joined worker thread with an explicit timeout so a
+        // regression (the check silently stops being first, or stops firing) that falls through
+        // to a REAL `rg` subprocess with `Stdio::inherit()` and no timeout cannot hang the test
+        // runner -- it fails fast with a clear panic message instead.
+        let dir = tempfile::tempdir().unwrap();
+        _make_stub_file_dir(dir.path(), 1600);
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["TODO"], vec![&dir_path], false);
+        args.globs = vec!["*.py".to_string()];
+        args.path_was_implicit = true;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = execute_ripgrep_search(&args).map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(10)).expect(
+            "execute_ripgrep_search must return well within 10s -- a hang here means the \
+             walk-ceiling check did not fire before an unbounded rg subprocess spawn",
+        );
+
+        assert_eq!(
+            result.expect("must return Ok, not Err"),
+            2,
+            "an oversized implicit-path walk with --glob must be refused with exit code 2"
+        );
     }
 }

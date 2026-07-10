@@ -3,11 +3,13 @@ use anyhow::Context;
 use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
 use hmac::{Hmac, Mac};
-// Bug #88 (dogfood v1.54.0): `WalkBuilder` is unconditional now -- `implicit_search_walk_
-// exceeds_ceiling` (the bare-`--glob`-no-PATH WALK-ceiling probe) needs it on every build, not
-// just `cuda`. `OverrideBuilder` stays cuda-gated: only `count_search_corpus_bytes` uses it.
+// Bug #88/#480/#100: `implicit_search_walk_exceeds_ceiling` (the WALK-ceiling probe) moved to
+// `rg_passthrough.rs` (a library module, not this binary crate root) -- see the breadcrumb
+// comment above `parse_early_ripgrep_args`. `WalkBuilder`'s only remaining consumer in THIS file
+// is `count_search_corpus_bytes`, which is cuda-gated, so both imports are cuda-gated now.
 #[cfg(feature = "cuda")]
 use ignore::overrides::OverrideBuilder;
+#[cfg(feature = "cuda")]
 use ignore::WalkBuilder;
 use process_control::{ChildExt, Control};
 use serde::{Deserialize, Serialize};
@@ -1827,101 +1829,15 @@ For intentional broad scans:\n\
     )
 }
 
-// Bug #88 (dogfood v1.54.0 -> v1.54.1 follow-up): a bare `tg search --glob X PATTERN` with NO
-// explicit PATH used to hand the walk straight to real `rg` via `execute_ripgrep_search`
-// (`search_prefers_ripgrep_passthrough`'s `!args.globs.is_empty()` branch in
-// `handle_ripgrep_search`) with no ceiling check at all. `--glob`/`--type` narrow WHICH files
-// MATCH, they do NOT bound how much of the tree is WALKED to find them -- only `--max-depth`
-// (and gitignore/hidden pruning) do. On a large/workspace/vendored cwd this ran effectively
-// unbounded (only the 60s `TG_RG_TIMEOUT_SECONDS` rg-subprocess timeout eventually killed it).
-//
-// The first fix attempt (296cc92) had two gaps the dogfood re-harvest caught:
-//   (1) it counted post-GLOB matches, so a SELECTIVE glob (`*.rs` in a huge JS tree) counts
-//       few matches, sails under the ceiling, and proceeds into the unbounded WALK; and worse,
-//       a glob matching everything but slowly (`**/*`) made the probe itself walk the whole
-//       tree. The hang is TREE-WALK cost, independent of match count -- so this probe now
-//       counts every FILE the walker VISITS (ignoring the glob filter entirely) and early-exits
-//       the instant the WALK exceeds the ceiling. That is both robust to glob selectivity and
-//       self-bounded (never more than `ceiling + 1` files walked).
-//   (2) `request.paths` is EMPTY (not `["."]`) whenever `grep_cli::is_readable_stdin()` is true
-//       (`implicit_search_paths`), so the probe saw no root and skipped -- yet rg still walked
-//       the cwd unbounded. The caller now normalizes an implicit empty-paths search to `["."]`
-//       before probing (mirroring the Python CLI, which always guards `["."]`).
-const IMPLICIT_SEARCH_WALK_FILE_CEILING: usize = 1500;
-
-/// Bounded WALK probe: walks `paths` honoring the SAME max-depth / no-ignore / hidden traversal
-/// settings the real search would use, counting every FILE the walker VISITS (NOT filtered by
-/// the search glob -- a file glob does not prune the walk, so walk cost is glob-independent),
-/// and returns `true` the instant the WALK exceeds the ceiling. Never enumerates more than
-/// `ceiling + 1` files (that would just be the unbounded work this guard exists to avoid).
-/// Only meaningful when the caller has confirmed `path_was_implicit` (no explicit PATH): an
-/// explicit, deliberately-scoped PATH must still run uninhibited (the CLI's `paths_defaulted`
-/// gate / Trap #3).
-fn implicit_search_walk_exceeds_ceiling(
-    paths: &[String],
-    max_depth: Option<usize>,
-    no_ignore: bool,
-    hidden: bool,
-    ceiling: usize,
-) -> bool {
-    let roots: Vec<PathBuf> = paths
-        .iter()
-        .map(PathBuf::from)
-        .filter(|root| root.is_dir())
-        .collect();
-    let Some(first_root) = roots.first() else {
-        return false;
-    };
-
-    let mut builder = WalkBuilder::new(first_root);
-    for root in roots.iter().skip(1) {
-        builder.add(root);
-    }
-    if let Some(depth) = max_depth {
-        builder.max_depth(Some(depth));
-    }
-    // `hidden(true)` = SKIP hidden entries (ripgrep's default). Only descend hidden when the
-    // real search was asked to (`--hidden`), so the probe's walk cost matches rg's.
-    builder.hidden(!hidden);
-    if no_ignore {
-        builder.ignore(false);
-        builder.git_ignore(false);
-        builder.git_global(false);
-        builder.git_exclude(false);
-        builder.parents(false);
-    }
-
-    let mut file_count = 0usize;
-    for entry in builder.build() {
-        let Ok(entry) = entry else { continue };
-        if entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
-            file_count += 1;
-            if file_count > ceiling {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn format_unbounded_implicit_search_walk_error(ceiling: usize) -> String {
-    format!(
-        "Error: broad root scan refused as a safety guard, not a zero-match result: \
-no PATH was given, so the search defaulted to the current directory, which is a large root \
-(over {ceiling} files walked); --glob/--type only filter WHICH files match, they do not bound \
-how much of the tree must be walked to find them. Scope the search to an explicit PATH, add \
---max-depth, or pass --allow-broad-generated-scan to opt in.\n\
-For bounded output:\n\
-tg search <pattern> <root> --glob \"*.py\"\n\
-tg search <pattern> <root> --max-depth <N>\n\
-For intentional broad scans:\n\
---allow-broad-generated-scan"
-    )
-}
+// Bug #88/#480/#100: `IMPLICIT_SEARCH_WALK_FILE_CEILING`, `implicit_search_walk_exceeds_ceiling`,
+// and `format_unbounded_implicit_search_walk_error` used to live here. They are now HOISTED into
+// `rg_passthrough.rs` (a library module) so `execute_ripgrep_search` -- which lives there, not
+// here -- can call the probe as its own first statement, closing a native-frontdoor bypass this
+// binary-crate-local copy could not reach (this `tg` binary and the `tensor_grep_rs` library are
+// separate crate compilations; the library cannot call back into a function defined only in this
+// bin crate). See `rg_passthrough.rs` for the full history and the current implementation; this
+// file's existing tests re-import the moved items via `use tensor_grep_rs::rg_passthrough::{...}`
+// inside `mod tests` below.
 
 fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let mut args = RipgrepSearchArgs {
@@ -1978,6 +1894,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         no_multiline_dotall: false,
         patterns: Vec::new(),
         paths: Vec::new(),
+        // Placeholder -- overwritten below once we know whether the caller supplied an explicit
+        // PATH positional (audit #100: this is THE FIX, see the `-e`-vs-positional branch below).
+        path_was_implicit: false,
         no_ignore_vcs: false,
         pcre2: false,
         no_pcre2: false,
@@ -2241,11 +2160,23 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         if positionals.len() < 2 {
             return None;
         }
+        // Positional-pattern form always requires >= 2 positionals (pattern + >= 1 path) to even
+        // reach this branch, so the path is always explicit here.
         args.patterns.push(positionals[0].clone());
         args.paths = positionals[1..].to_vec();
+        args.path_was_implicit = false;
     } else {
+        // THE FIX (audit #100): `-e`/`--regexp` form. `positionals` here is whatever the user
+        // supplied as trailing PATH arguments (the pattern came via `-e`, not a positional) --
+        // record `path_was_implicit` from whether that list is empty BEFORE the `["."]` default
+        // substitution below, mirroring `resolve_search_request_with_stdin` (the full-CLI
+        // equivalent, main.rs `path_was_implicit = true` set inside its own `paths.is_empty()`
+        // branch). This is the exact gap that let `tg search -e "TODO" --glob "*.py"` with no
+        // PATH bypass the walk-ceiling probe entirely: `paths` silently became `["."]` with no
+        // record that the root was implicit, so no caller could gate on it.
         args.paths = positionals;
-        if args.paths.is_empty() && !stdin_should_search_implicit_path() {
+        args.path_was_implicit = args.paths.is_empty();
+        if args.path_was_implicit && !stdin_should_search_implicit_path() {
             args.paths.push(".".to_string());
         }
     }
@@ -2284,6 +2215,12 @@ fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepS
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    // Bug #88/#480/#100: these 3 items moved to `rg_passthrough.rs` (see the breadcrumb comment
+    // above `parse_early_ripgrep_args`); re-imported here so this file's existing tests keep
+    // compiling unqualified via `use super::*` above.
+    use tensor_grep_rs::rg_passthrough::{
+        implicit_search_walk_exceeds_ceiling, IMPLICIT_SEARCH_WALK_FILE_CEILING,
+    };
 
     fn parse_run_args(tokens: &[&str]) -> RunArgs {
         use clap::Parser;
@@ -3529,6 +3466,52 @@ mod tests {
         let frontdoor =
             parse_default_frontdoor_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
         assert_eq!(frontdoor.globs, vec!["*.log".to_string()]);
+    }
+
+    #[test]
+    fn frontdoor_args_record_path_was_implicit_for_e_flag_bypass() {
+        // Audit #100 RED-before-fix shape: `tg search -e "TODO" --glob "*.py"` with NO explicit
+        // PATH used to bypass the walk-ceiling probe entirely -- `parse_early_ripgrep_args`'s
+        // `-e` arm defaulted `paths` to `["."]` with no `path_was_implicit` record at all, so no
+        // caller (including this exact frontdoor) could gate on it. This pins the fix: the
+        // frontdoor parser now records `path_was_implicit` correctly for the `-e` form.
+        let implicit =
+            parse_default_frontdoor_args(&["tg", "search", "-e", "TODO", "--glob", "*.py"]);
+        assert!(
+            implicit.path_was_implicit,
+            "no PATH given via -e + --glob must record path_was_implicit = true"
+        );
+
+        let explicit = parse_default_frontdoor_args(&[
+            "tg",
+            "search",
+            "-e",
+            "TODO",
+            "--glob",
+            "*.py",
+            "some/scoped/dir",
+        ]);
+        assert!(
+            !explicit.path_was_implicit,
+            "an explicit trailing PATH must record path_was_implicit = false"
+        );
+
+        // #105 extension: the SAME `-e` bypass shape without any --glob/--type at all must also
+        // record path_was_implicit = true -- the hoisted gate no longer requires a glob/type to
+        // fire, so this bare form must still surface the implicit-path signal.
+        let bare_implicit = parse_default_frontdoor_args(&["tg", "search", "-e", "TODO"]);
+        assert!(
+            bare_implicit.path_was_implicit,
+            "a bare -e with no PATH and no glob/type must still record path_was_implicit = true"
+        );
+
+        // Positional-pattern form (no -e) requires >= 2 positionals to parse at all (pattern +
+        // >= 1 path), so it can never observe an implicit path through this parser.
+        let positional = parse_default_frontdoor_args(&["tg", "search", "ERROR", "bench_data"]);
+        assert!(
+            !positional.path_was_implicit,
+            "positional-pattern form always carries an explicit path when it parses at all"
+        );
     }
 
     fn _make_stub_file_dir(dir: &std::path::Path, file_count: usize) {
@@ -4959,6 +4942,9 @@ fn positional_ripgrep_args(
         no_multiline_dotall: false,
         patterns: vec![pattern.to_string()],
         paths: paths.to_vec(),
+        // `cli.path` is the RAW user-supplied PATH positionals before `implicit_search_paths`
+        // substitutes stdin/"." -- empty means the caller gave no explicit path.
+        path_was_implicit: cli.path.is_empty(),
         pcre2: cli.pcre2,
         no_pcre2: false,
         pcre2_unicode: cli.pcre2_unicode,
@@ -5059,6 +5045,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         } else {
             request.paths.clone()
         },
+        path_was_implicit: request.path_was_implicit,
         pcre2: args.pcre2,
         no_pcre2: false,
         pcre2_unicode: args.pcre2_unicode,
@@ -5477,38 +5464,20 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         // guard execute_ripgrep_search's Err bubbles via `?` to main()'s default Result
         // termination, which exits 1 -- indistinguishable from a genuine no-match (audit #81 #7).
         require_ripgrep_or_exit(rg_available, "this search's flag combination");
-        // Bug #88 (dogfood v1.54.0 -> v1.54.1 follow-up): with no explicit PATH, `--glob` alone
-        // must not exempt this rg-passthrough call from a WALK ceiling check -- see
-        // `implicit_search_walk_exceeds_ceiling` above. Gated on `path_was_implicit` so an
-        // explicit, deliberately-scoped PATH + `--glob` still runs uninhibited (Trap #3 parity).
-        //
-        // `request.paths` is EMPTY (not `["."]`) whenever stdin is readable
-        // (`grep_cli::is_readable_stdin()` -> `implicit_search_paths`); rg then still walks the
-        // cwd, so normalize the implicit root to `["."]` before probing (mirrors the Python CLI,
-        // which always guards `["."]`). Probe when a glob OR a --type filter is present: BOTH
-        // narrow WHICH files match without bounding the walk, so either routes an unscoped
-        // implicit-path search into the unbounded rg passthrough (bug #88 + its --type sibling).
-        if request.path_was_implicit && (!args.globs.is_empty() || !args.file_type.is_empty()) {
-            let dot_root = [".".to_string()];
-            let probe_roots: &[String] = if request.paths.is_empty() {
-                &dot_root
-            } else {
-                &request.paths
-            };
-            if implicit_search_walk_exceeds_ceiling(
-                probe_roots,
-                args.max_depth,
-                args.no_ignore,
-                args.hidden,
-                IMPLICIT_SEARCH_WALK_FILE_CEILING,
-            ) {
-                eprintln!(
-                    "{}",
-                    format_unbounded_implicit_search_walk_error(IMPLICIT_SEARCH_WALK_FILE_CEILING)
-                );
-                std::process::exit(2);
-            }
-        }
+        // Bug #88/#480/#100: the implicit-walk-ceiling refusal used to live here, gated on
+        // `request.path_was_implicit && (!args.globs.is_empty() || !args.file_type.is_empty())`.
+        // It is now HOISTED into `execute_ripgrep_search` itself (rg_passthrough.rs) as that
+        // function's first statement, before `resolve_ripgrep_binary()` -- a single chokepoint
+        // every caller of `execute_ripgrep_search` passes through (this call site below, the
+        // native frontdoor's `-e` arm, the positional CLI, tg-search-fast, and the PyO3 FFI
+        // bridge), closing the native-frontdoor bypass audit #100 found (the frontdoor's `-e` arm
+        // defaulted `paths` to `["."]` with no `path_was_implicit` record, walking unbounded with
+        // zero ceiling checks). `command_ripgrep_args` below threads `request.path_was_implicit`
+        // into the `RipgrepSearchArgs` passed to `execute_ripgrep_search`, so this duplicate
+        // check is redundant -- deleted rather than left to drift out of sync with the hoisted
+        // one. The hoisted gate also drops the `--glob`/`--file_type` requirement this block had
+        // (fires on `path_was_implicit` alone, still bounded by the same 1500-file ceiling walk),
+        // closing #105 FOR THE RG-PASSTHROUGH ENGINE only (a bare unfiltered implicit-path search on a huge root). SCOPE CAVEAT (audit #100 Opus gate 2026-07-10): this bounds only callers of execute_ripgrep_search; the native-CPU engine (run_native_search, reached via --json / --force-cpu / word / fixed / rg-unavailable) does NOT pass through here and remains an unbounded implicit-walk vector -- tracked as the #105 residual (generalize the ceiling before engine selection, or replicate it at the native-CPU entry).
         if args.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());
         }
@@ -9063,6 +9032,10 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 no_multiline_dotall: false,
                                 patterns: params.patterns.to_vec(),
                                 paths: vec![params.path.to_string()],
+                                // GPU search always requires exactly one explicit path root
+                                // (`request.paths.len() != 1` is rejected upstream when
+                                // `--gpu-device-ids` is set) -- never implicit/defaulted.
+                                path_was_implicit: false,
                                 no_ignore_vcs: false,
                                 pcre2: false,
                                 no_pcre2: false,
