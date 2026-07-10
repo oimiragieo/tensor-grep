@@ -17,8 +17,20 @@ const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
 const TG_NATIVE_TG_BINARY_ENV: &str = "TG_NATIVE_TG_BINARY";
+const TG_HELP_PROBE_TIMEOUT_MS_ENV: &str = "TG_HELP_PROBE_TIMEOUT_MS";
 const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
-const DEFAULT_HELP_PROBE_TIMEOUT_MS: u64 = 750;
+// audit #97 item 1: raised from 750ms -- measured `python -m tensor_grep --help` at ~500-550ms
+// median even with a WARM filesystem cache on a fast dev box (see the fix commit's PR description
+// for the raw measurements; rust_core/tests/test_sidecar_ipc.rs exercises the resulting behavior
+// via test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python and
+// test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_is_wedged). 750ms
+// left well under 250ms of slack, so a cold interpreter start, antivirus scanning a new process,
+// or a loaded CI box could blow through it and silently swap the rich Typer help for the sparse
+// clap fallback -- the bare `tg --help` instability this constant caused. 3000ms gives ~6x
+// headroom over the measured warm-cache median while staying an order of magnitude below the
+// general 30s sidecar timeout (a --help probe should still fail fast when Python is genuinely
+// broken) and well under the 6s wall-clock budget the fallback-timeout test asserts.
+const DEFAULT_HELP_PROBE_TIMEOUT_MS: u64 = 3_000;
 const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
 const WINDOWS_EXE_BRIDGE_MARKER: &str = "tg.exe.tensor-grep-bridge";
 const WINDOWS_EXE_BRIDGE_MARKER_CONTENT: &str = "tensor-grep managed tg.exe bridge";
@@ -921,7 +933,12 @@ fn resolve_sidecar_timeout() -> Duration {
 }
 
 fn resolve_help_probe_timeout() -> Duration {
-    Duration::from_millis(DEFAULT_HELP_PROBE_TIMEOUT_MS)
+    let timeout_ms = env::var(TG_HELP_PROBE_TIMEOUT_MS_ENV)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_HELP_PROBE_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms)
 }
 
 fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {

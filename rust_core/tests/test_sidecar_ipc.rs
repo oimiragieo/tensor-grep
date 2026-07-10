@@ -506,6 +506,119 @@ fn test_sidecar_timeout_kills_child_and_reports_error() {
     }
 }
 
+/// Writes a fake "python" that ignores all argv and sleeps well past any timeout under test,
+/// simulating a wedged/hung Python interpreter for the `--help` probe timeout tests below. Sleeps
+/// ~20s (deliberately far beyond any timeout asserted here, including under parallel-test
+/// subprocess-spawn contention) so a broken kill/timeout mechanism reads as an unambiguous, far-off
+/// natural completion rather than something that could be confused with contention-inflated timing.
+fn write_wedged_python_script(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        let script = dir.join("wedged_python.cmd");
+        fs::write(&script, "@echo off\r\nping -n 21 127.0.0.1 >nul\r\n").unwrap();
+        script
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = dir.join("wedged_python.sh");
+            fs::write(&script, "#!/bin/sh\nsleep 20\n").unwrap();
+            let mut perms = fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            fs::set_permissions(&script, perms).unwrap();
+            script
+        }
+        #[cfg(not(unix))]
+        unreachable!("non-windows, non-unix target")
+    }
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python() {
+    // audit #97 item 1: TG_HELP_PROBE_TIMEOUT_MS must override the (now-3000ms) default help-probe
+    // timeout, mirroring how TG_SIDECAR_TIMEOUT_MS overrides resolve_sidecar_timeout() (see the
+    // sibling test_sidecar_timeout_kills_child_and_reports_error above). A short override must make
+    // the native --help fallback trigger fast even against a Python that never responds.
+    //
+    // The elapsed-time bound below is intentionally generous (measured real-world: ~450-500ms for
+    // this exact scenario run in isolation) to stay robust under parallel-test subprocess-spawn
+    // contention (empirically observed to inflate wall-clock timing by ~1.5-2x when multiple
+    // subprocess-spawning tests race for process-creation resources in the same `cargo test` run).
+    // It still clearly discriminates "override honored" from "override silently ignored, fell
+    // through to the raised 3000ms default" (~3.2s+ in isolation).
+    let dir = tempdir().unwrap();
+    let wedge_script = write_wedged_python_script(dir.path());
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("--help")
+        .env("TG_SIDECAR_PYTHON", &wedge_script)
+        .env("TG_HELP_PROBE_TIMEOUT_MS", "250");
+
+    let started = Instant::now();
+    let output = run_with_timeout(tg, Duration::from_secs(8));
+    let elapsed = started.elapsed();
+
+    assert!(
+        output.status.success(),
+        "expected the native fallback to still exit 0; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "TG_HELP_PROBE_TIMEOUT_MS=250 override was not honored -- fallback took {elapsed:?}, \
+         consistent with the override being ignored and the raised 3000ms default being used instead"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("AI agent moat commands"),
+        "expected the enriched native fallback help; stdout={stdout}"
+    );
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_is_wedged() {
+    // audit #97 item 1: the hardcoded default was 750ms (too tight -- a cold Python start can
+    // exceed it, which is the root cause of bare `tg --help` sometimes rendering the sparse
+    // fallback instead of the rich Typer help). This proves the *default* (no override at all)
+    // still recovers cleanly -- exits 0 with the enriched fallback content -- and does not block
+    // for an unreasonable time when Python is wedged. The exact millisecond value of the default
+    // (raised to 3000ms; see DEFAULT_HELP_PROBE_TIMEOUT_MS in python_sidecar.rs and the
+    // measured-latency comment beside it) is deliberately NOT asserted here via a tight wall-clock
+    // lower bound: a sibling attempt at that showed parallel-test subprocess-spawn contention can
+    // inflate elapsed time by ~1.5-2x, which would make a tight bound flaky. That the override is
+    // honored is covered precisely, without timing ambiguity, by the sibling test above.
+    let dir = tempdir().unwrap();
+    let wedge_script = write_wedged_python_script(dir.path());
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("--help")
+        .env("TG_SIDECAR_PYTHON", &wedge_script)
+        .env_remove("TG_HELP_PROBE_TIMEOUT_MS");
+
+    let started = Instant::now();
+    let output = run_with_timeout(tg, Duration::from_secs(15));
+    let elapsed = started.elapsed();
+
+    assert!(
+        output.status.success(),
+        "expected the native fallback to still exit 0; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "the default help-probe timeout should not block --help this long (wedged Python sleeps \
+         ~20s, so this would indicate the kill/timeout mechanism did not engage); elapsed={elapsed:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("AI agent moat commands"),
+        "expected the enriched native fallback help; stdout={stdout}"
+    );
+}
+
 #[cfg(not(feature = "cuda"))]
 #[test]
 fn test_gpu_search_schema_invalid_json_reports_clear_error() {

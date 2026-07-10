@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -628,3 +629,83 @@ def test_unknown_first_token_without_explicit_path_behaves_like_bare_search(pari
         assert native_result.returncode == 0
         assert "Usage:" not in native_result.stdout
         assert "help" in native_result.stdout
+
+
+def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrough_unavailable(
+    parity_env,
+):
+    """Audit #97 item 1: test_empty_invocation_fallback_help_matches_public_contract already proves
+    the clap fallback's auto-generated Commands: list has always contained every public command
+    name (moat and maintenance alike) -- that part of the audit's "missing moat commands" framing
+    does not hold against current code. What the fallback lacked was a curated, agent-oriented
+    pointer to the flagship/moat commands positioned where an agent would actually see it, mirroring
+    the Typer help's "AI workflows" section. This asserts that pointer exists and appears before the
+    undifferentiated ~40-command wall, not buried after it."""
+    if sys.platform == "win32":
+        broken_python = str(shutil.which("powershell.exe"))
+    else:
+        broken_python = "/bin/sh"
+    env = dict(**os.environ, TG_SIDECAR_PYTHON=broken_python)
+
+    native_help = _run_native_front_door(["--help"], cwd=parity_env, env=env)
+
+    assert native_help.returncode == 0
+    stdout = _strip_ansi(native_help.stdout)
+    assert native_help.stderr.strip() == ""
+    assert "AI agent moat commands" in stdout
+
+    for moat_command in (
+        "orient",
+        "defs",
+        "refs",
+        "callers",
+        "impact",
+        "blast-radius",
+        "map",
+        "agent",
+        "search",
+        "mcp",
+    ):
+        assert moat_command in stdout, (
+            f"Missing moat command {moat_command!r} in native fallback help"
+        )
+
+    moat_header_pos = stdout.index("AI agent moat commands")
+    commands_list_pos = stdout.index("Commands:")
+    assert moat_header_pos < commands_list_pos, (
+        "the curated moat-commands pointer must appear before the auto-generated Commands: list "
+        "so an agent that stops reading early still sees it"
+    )
+
+
+def test_help_probe_timeout_env_override_is_honored(parity_env):
+    """Audit #97 item 1: TG_HELP_PROBE_TIMEOUT_MS must override the (now-3000ms) default, mirroring
+    how TG_SIDECAR_TIMEOUT_MS overrides the general sidecar timeout. A short override must make the
+    fallback trigger fast even against a wedged Python that never responds to --help, proving the
+    env var is actually read rather than silently ignored (which would fall through to the raised
+    3000ms default and take ~3s instead)."""
+    if sys.platform == "win32":
+        wrapper = parity_env / "wedged-python-help-probe-override.cmd"
+        wrapper.write_text("@echo off\r\nping -n 9 127.0.0.1 >nul\r\n", encoding="utf-8")
+    else:
+        wrapper = parity_env / "wedged-python-help-probe-override.sh"
+        wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+
+    env = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper), TG_HELP_PROBE_TIMEOUT_MS="250")
+    if _get_native_binary() is None:
+        _run_native_front_door(["--version"], cwd=parity_env)
+
+    started = time.perf_counter()
+    native_help = _run_native_front_door(["--help"], cwd=parity_env, env=env)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 3.0, (
+        f"TG_HELP_PROBE_TIMEOUT_MS=250 override was not honored -- fallback took {elapsed:.2f}s, "
+        "which is consistent with the override being ignored and the raised 3000ms default being "
+        "used instead"
+    )
+    assert native_help.returncode == 0
+    assert "Usage:" in native_help.stdout
+    assert "AI agent moat commands" in _strip_ansi(native_help.stdout)
+    assert native_help.stderr.strip() == ""
