@@ -270,7 +270,9 @@ def test_mcp_context_render_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["query"] == "create invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 17
 
 
@@ -316,5 +318,7 @@ def test_mcp_session_edit_plan_exposes_and_forwards_max_repo_files(
     assert payload == {"ok": True}
     assert captured["session_id"] == "session-1"
     assert captured["query"] == "create invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 23

@@ -71,7 +71,13 @@ def _mcp_server_version() -> str:
 # Stable contract version for the tg MCP server surface.
 # Bump only on intentional breaking changes to the MCP tool/resource shape.
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.0.0"
+# 1.0.0 -> 1.1.0 (round-8, audit #95): every tool's PRIMARY path/root param is now
+# confined to _mcp_root() (default cwd, override via TG_MCP_ROOT) -- a caller that
+# previously relied on an out-of-cwd path succeeding (e.g. a monorepo fleet pointing an
+# MCP tool at a sibling repo) now gets a structured invalid_input refusal instead of a
+# result, unless TG_MCP_ROOT is set to widen the anchor. Breaking-behavior change, not a
+# breaking shape change -- bump per the gate's should-fix.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.1.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1610,12 +1616,20 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
 # omitted `path` are indistinguishable here -- treat the literal default value "." as
 # "defaulted" (the conservative, safe reading) so a bare `tg_search(pattern=..., glob=...)` MCP
 # call gets the same protection as the CLI's bare `tg search --glob ... PATTERN`.
+#
+# round-8 security (audit #95): `paths_defaulted` is now a REQUIRED param the caller computes
+# from the RAW path BEFORE `_confine_mcp_path` resolves it to an absolute string -- deriving it
+# internally here (the original `path == "."`) would silently and permanently read False once
+# callers started reassigning `path` to its confined (absolute) form, defeating this whole
+# bug #88 guard for every default-path call (caught by test_tg_search_refuses_glob_with_
+# default_path_on_large_root going from a refusal to a real unbounded scan).
 def _mcp_broad_root_scan_refusal(
     path: str,
     config: "SearchConfig",
     *,
     normalized_max_repo_files: int,
     check_large_root: bool,
+    paths_defaulted: bool,
 ) -> tuple[str | None, "DirectoryScanner", Iterator[str]]:
     """Cheap pre-walk safety guard ported from the CLI `tg search` command.
 
@@ -1627,7 +1641,6 @@ def _mcp_broad_root_scan_refusal(
     """
     scanner = DirectoryScanner(config)
     walker: Iterator[str] = iter(scanner.walk(path))
-    paths_defaulted = path == "."
 
     refuse_vendored, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
         [path],
@@ -1750,6 +1763,68 @@ def _confine_read_path(candidate: str, anchor: Path, *, label: str) -> Path:
     return _confine_write_path(candidate, anchor, label=label)
 
 
+def _mcp_root() -> Path:
+    """Return the confinement anchor for every MCP tool's PRIMARY path/root parameter.
+
+    Round-8 (audit #95 gate must-fix): every symbol/session/search/rewrite/checkpoint tool
+    took its scan/session root straight from the caller-supplied ``path``/``root`` argument
+    with NO confinement at all -- only secondary params (baseline_path, manifest_path, ...)
+    were anchored via `_confine_write_path`/`_confine_read_path`. Defaults to the server
+    process's current working directory (the same anchor those secondary confinements
+    already use), so the default-config behavior is unchanged. An operator running the MCP
+    server against a repo other than cwd (a monorepo subtree, a fleet of repos) can move the
+    anchor via the ``TG_MCP_ROOT`` environment variable -- this WIDENS or RELOCATES where
+    reads/writes are permitted, it never disables confinement.
+
+    Two fail-closed guards, both required by the gate:
+    - An unset OR empty/whitespace-only ``TG_MCP_ROOT`` is treated as "not configured" and
+      falls back to cwd, rather than letting ``Path("")`` resolve to the filesystem root
+      (which would silently confine every tool call to "anywhere").
+    - A configured override that does not resolve to a real, existing directory (typo,
+      not-yet-mounted path, a file instead of a directory) is refused and falls back to cwd
+      -- narrowing to the always-valid default is the safe failure mode; crashing the whole
+      MCP server over one bad env var (or worse, silently confining to a non-existent path,
+      which `_confine_read_path`'s `.resolve()` would still do without erroring) is not.
+    """
+    raw = os.environ.get("TG_MCP_ROOT", "").strip()
+    if not raw:
+        return Path.cwd()
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except OSError:
+        print(
+            f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} could not be resolved; "
+            "falling back to the current working directory.",
+            file=sys.stderr,
+        )
+        return Path.cwd()
+    if not resolved.is_dir():
+        print(
+            f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} is not an existing directory "
+            f"(resolved: {resolved}); falling back to the current working directory.",
+            file=sys.stderr,
+        )
+        return Path.cwd()
+    return resolved
+
+
+def _confine_mcp_path(candidate: str, *, label: str) -> Path:
+    """Confine an MCP tool's PRIMARY path/root parameter to `_mcp_root()` (round-8, audit
+    #95 gate must-fix #1/#2/#3).
+
+    Thin wrapper over `_confine_read_path` anchored at `_mcp_root()` (instead of a
+    per-tool-hardcoded `Path.cwd()`), so the one `TG_MCP_ROOT` override relocates every
+    primary-path tool's anchor together. Raises ``ValueError`` (fail closed) on an
+    out-of-root candidate; callers MUST forward the resolved ``Path`` this returns
+    (`str()`'d) as their new ``path``, and MUST do so as the very first operation in the
+    tool body, BEFORE any secondary anchor (session_root, scan_root, policy_anchor, ...) is
+    derived from ``path`` -- otherwise that secondary anchor still derives from the raw,
+    unconfined candidate and the confinement is cosmetic (this exact bug was the gate's
+    LIVE VULN finding on `tg_session_file_importers`'s `session_root`).
+    """
+    return _confine_read_path(candidate, _mcp_root(), label=label)
+
+
 @mcp.tool()  # type: ignore
 def tg_ruleset_scan(
     ruleset: str,
@@ -1806,6 +1881,12 @@ def tg_ruleset_scan(
             (evidence cap). Defaults to 120.
     """
     try:
+        # round-8 security (audit #95 gate must-fix #3, LIVE-VULN-adjacent): confine path to
+        # the MCP root BEFORE root_dir/scan_root below derive anything from it. Both anchor
+        # baseline_path/suppressions_path/write_baseline/write_suppressions confinement AND
+        # the scan itself -- an unconfined path was a full arbitrary-directory scan/read
+        # (and, via write_baseline/write_suppressions, write) primitive over the MCP surface.
+        path = str(_confine_mcp_path(path, label="path"))
         ruleset_meta, rules = resolve_rule_pack(ruleset, language)
     except ValueError as exc:
         return _ruleset_scan_error(
@@ -1895,6 +1976,22 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
         path: File or directory to inventory.
         max_repo_files: Maximum repo files to scan before returning. Defaults to 512.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- unconfined it is an arbitrary-directory-read primitive over the MCP
+    # protocol (systemic finding: every path/root-taking tool except the file-scoped
+    # tg_file_imports/tg_classify_logs lacked this).
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="repo-map",
+            include_schema_version=False,
+        )
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
 
@@ -1944,6 +2041,21 @@ def tg_context_pack(
         path: File or directory to inventory.
         max_tokens: Bound the pack for prompt injection (default ~16000; 0/None = unbounded).
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="context-pack",
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(build_context_pack(query, path, max_tokens=max_tokens), indent=2)
@@ -2002,6 +2114,21 @@ def tg_edit_plan(
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
     from tensor_grep.cli.repo_map import build_context_edit_plan
+
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="context-edit-plan",
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
 
     try:
         return _inject_mcp_contract_fields(
@@ -2073,6 +2200,21 @@ def tg_context_render(
         max_repo_files: Maximum repository files to scan before ranking context.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="context-render",
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -2151,6 +2293,13 @@ def tg_agent_capsule(
         gpu_device_ids: Optional selected GPU IDs for native route evidence.
         gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _agent_capsule_error(str(exc), code="invalid_input", query=query, path=path)
+
     if not Path(path).expanduser().exists():
         return _agent_capsule_error(
             f"Path not found: {Path(path).expanduser().resolve()}",
@@ -2229,6 +2378,20 @@ def tg_session_edit_plan(
         max_symbols: Maximum ranked symbols to retain.
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
+
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+            query=query,
+        )
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
@@ -2310,6 +2473,20 @@ def tg_session_context_render(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query, "render_profile": render_profile},
+            query=query,
+        )
+
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
@@ -2380,6 +2557,21 @@ def tg_session_blast_radius(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
 
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
@@ -2443,6 +2635,26 @@ def tg_session_file_importers(
         path: File or directory rooted at the session scope.
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_file_importers
+
+    # round-8 security (audit #95 gate must-fix #3, LIVE VULN): confine path to the MCP root
+    # BEFORE session_root below derives from it. Previously session_root = Path(path).resolve()
+    # used the RAW caller-supplied path with NO confinement at all, so path="/etc" made
+    # session_root="/etc" and the "confine file to session_root" check just below then let
+    # file="/etc/passwd" straight through -- an arbitrary-directory-read primitive reachable
+    # from any MCP client today. Confining path here (rather than re-anchoring file's
+    # confinement below to cwd) is deliberate: it keeps a legitimate relative `file` working
+    # when session_root != cwd -- see the comment on the file confinement immediately below.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"file": file},
+            file=file,
+        )
 
     # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the session root
     # (path) before any read, same class/rationale as tg_file_imports/tg_file_importers above.
@@ -2528,6 +2740,22 @@ def tg_symbol_blast_radius_plan(
     """
     from tensor_grep.cli.repo_map import build_symbol_blast_radius_plan
 
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-blast-radius-plan",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return json.dumps(
             build_symbol_blast_radius_plan(
@@ -2606,6 +2834,25 @@ def tg_session_blast_radius_render(
         SessionStaleError,
         session_blast_radius_render,
     )
+
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "render_profile": render_profile,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
@@ -2693,6 +2940,26 @@ def tg_session_blast_radius_plan(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
 
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
@@ -2769,6 +3036,21 @@ def tg_symbol_defs(
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-defs",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -2822,6 +3104,21 @@ def tg_symbol_source(
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-source",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -2869,6 +3166,21 @@ def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> 
         symbol: Exact symbol name to evaluate.
         path: File or directory to inventory.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-impact",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -2925,6 +3237,21 @@ def tg_symbol_refs(
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-refs",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -2978,6 +3305,21 @@ def tg_symbol_callers(
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-callers",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -3104,6 +3446,23 @@ def tg_file_importers(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
+
+    # round-8 security (audit #95 gate): confine the secondary root param to the MCP root too
+    # -- unconfined it is an arbitrary-directory-read primitive over the MCP protocol (the
+    # design's proven example: `path` here resolved raw).
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-importers",
+            include_schema_version=False,
+        )
+        payload["file"] = file
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -3153,6 +3512,22 @@ def tg_symbol_blast_radius(
         max_depth: Maximum reverse-import depth to include.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-blast-radius",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -3227,6 +3602,22 @@ def tg_symbol_blast_radius_render(
         render_profile: Render profile to use: full, compact, or llm.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="symbol-blast-radius-render",
+            include_schema_version=False,
+        )
+        payload["symbol"] = symbol
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
@@ -3325,6 +3716,35 @@ def tg_search(
     search_pattern = pattern or query
     if not search_pattern:
         return "Search failed: either pattern or query is required."
+
+    # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
+    # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
+    # reassigned, `path == "."` would always read False and silently defeat the large-root/
+    # vendored-root refusal guard's paths_defaulted logic for every default-path call.
+    paths_defaulted = path == "."
+
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        if structured_json:
+            payload = {
+                "pattern": search_pattern,
+                "path": path,
+                "total_matches": 0,
+                "total_files": 0,
+                "rendered_match_count": 0,
+                "rendered_file_count": 0,
+                "matches": [],
+                "truncated": False,
+                "result_incomplete": True,
+                "incomplete_reason": str(exc),
+                "error": {"code": "invalid_input", "message": str(exc)},
+            }
+            return json.dumps(payload, indent=2)
+        return f"Search failed: {exc}"
+
     rendered_file_limit = max(0, max_files if max_files is not None else 15)
     rendered_result_limit = max(0, max_results if max_results is not None else 150)
     normalized_max_repo_files = max(1, int(max_repo_files))
@@ -3374,6 +3794,7 @@ def tg_search(
                 config,
                 normalized_max_repo_files=normalized_max_repo_files,
                 check_large_root=True,
+                paths_defaulted=paths_defaulted,
             )
             if refusal_message is not None:
                 return _broad_root_scan_refusal_result(
@@ -3610,6 +4031,28 @@ def tg_ast_search(
         max_repo_files: Maximum files the directory walk parses before the scan is
             capped (protects against an unscoped full-monorepo AST parse).
     """
+    # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
+    # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- see
+    # tg_search's identical comment for the full rationale.
+    paths_defaulted = path == "."
+
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        if structured_json:
+            return json.dumps(
+                {
+                    "pattern": pattern,
+                    "lang": lang,
+                    "path": path,
+                    "error": {"code": "invalid_input", "message": str(exc)},
+                },
+                indent=2,
+            )
+        return f"AST search failed: {exc}"
+
     normalized_max_repo_files = max(1, int(max_repo_files))
     config = SearchConfig(ast=True, lang=lang, no_messages=True)
     pipeline = Pipeline(config=config)
@@ -3654,6 +4097,7 @@ def tg_ast_search(
             config,
             normalized_max_repo_files=normalized_max_repo_files,
             check_large_root=True,
+            paths_defaulted=paths_defaulted,
         )
         if refusal_message is not None:
             return _broad_root_scan_refusal_result(
@@ -4011,6 +4455,13 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
         pattern: Regex or literal search pattern.
         path: File or directory to search.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _index_search_error(str(exc), code="invalid_input", pattern=pattern, path=path)
+
     validation_error = _validate_index_search_inputs(pattern, path)
     if validation_error:
         return _index_search_error(
@@ -4042,6 +4493,13 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
         lang: Tree-sitter language name.
         path: File or directory to scan.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _rewrite_error(str(exc), code="invalid_input")
+
     validation_error = _validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
@@ -4105,6 +4563,16 @@ def tg_rewrite_apply(
             When supplied, the apply is refused with code="plan_drift" if the current
             tree no longer yields exactly this many edits.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # BEFORE any of the checks below -- execute_rewrite_apply_json derives policy's
+    # confinement anchor from this same `path` (policy_anchor), so an unconfined path here
+    # would make that downstream anchor unconfined too (see tg_repo_map for the systemic
+    # rationale, and tg_session_file_importers for the exact class of bug this order avoids).
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _rewrite_error(str(exc), code="invalid_input")
+
     # Audit HIGH (2026-06-24): lint_cmd/test_cmd execute a free-form shell command
     # in the native apply path. Over the MCP trust boundary (agent-steerable args)
     # that is an RCE primitive, so refuse them unless the operator explicitly opts in.
@@ -4216,6 +4684,13 @@ def tg_audit_history(path: str = ".") -> str:
 
     if not path.strip():
         return _audit_history_error("path must not be empty.", code="invalid_input")
+
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _audit_history_error(str(exc), code="invalid_input")
 
     try:
         return _inject_mcp_contract_fields(json.dumps(list_audit_history_payload(path), indent=2))
@@ -4434,6 +4909,23 @@ def tg_checkpoint_create(path: str = ".") -> str:
     Args:
         path: File or directory rooted at the checkpoint scope.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read/write -- see tg_repo_map for the systemic-finding rationale. Checkpoint
+    # create/undo write rollback state rooted at `path`, so unconfined this was also an
+    # arbitrary-directory-WRITE primitive, not just a read.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": path,
+            },
+            indent=2,
+        )
+
     from tensor_grep.cli.checkpoint_store import create_checkpoint
 
     try:
@@ -4468,6 +4960,21 @@ def tg_checkpoint_list(path: str = ".") -> str:
     Args:
         path: File or directory rooted at the checkpoint scope.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": path,
+            },
+            indent=2,
+        )
+
     from tensor_grep.cli.checkpoint_store import list_checkpoints
 
     try:
@@ -4502,6 +5009,24 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
         checkpoint_id: Checkpoint ID to restore.
         path: File or directory rooted at the checkpoint scope.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read/write -- see tg_repo_map for the systemic-finding rationale. Checkpoint
+    # undo restores files rooted at `path`, so unconfined this was also an
+    # arbitrary-directory-WRITE primitive, not just a read.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": path,
+                "checkpoint_id": checkpoint_id,
+            },
+            indent=2,
+        )
+
     from tensor_grep.cli.checkpoint_store import undo_checkpoint
 
     try:
@@ -4539,6 +5064,16 @@ def tg_session_open(path: str = ".", max_repo_files: int | None = 512) -> str:
         max_repo_files: Optional cap for files scanned into the initial session repo map.
             Defaults to 512 for agent-safe cold opens.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before opening a session rooted there -- see tg_repo_map for the systemic-finding
+    # rationale. A session persists a cached repo-map keyed to `path`, so unconfined this was
+    # also an arbitrary-directory-read primitive (the cached repo_map content is later
+    # returned verbatim by tg_session_show/tg_session_context/etc.).
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_exception_payload(path=path, message=str(exc), detail={})
+
     from tensor_grep.cli.session_store import get_session, open_session
 
     try:
@@ -4576,6 +5111,13 @@ def tg_session_list(path: str = ".") -> str:
     Args:
         path: File or directory rooted at the session scope.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_exception_payload(path=path, message=str(exc), detail={})
+
     from tensor_grep.cli.session_store import list_sessions
 
     try:
@@ -4602,6 +5144,18 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
         session_id: Session ID to inspect.
         path: File or directory rooted at the session scope.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={},
+        )
+
     from tensor_grep.cli.session_store import get_session
 
     try:
@@ -4626,6 +5180,18 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
         session_id: Session ID to refresh.
         path: File or directory rooted at the session scope.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={},
+        )
+
     from tensor_grep.cli.session_store import refresh_session
 
     try:
@@ -4659,6 +5225,20 @@ def tg_session_context(
         path: File or directory rooted at the session scope.
         max_tokens: Bound the pack for prompt injection (default ~16000; 0/None = unbounded).
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any read -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query},
+            query=query,
+        )
+
     from tensor_grep.cli.session_store import SessionStaleError, session_context
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
@@ -4714,6 +5294,13 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
         lang: Tree-sitter language name.
         path: File or directory to scan.
     """
+    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+    # before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _rewrite_error(str(exc), code="invalid_input")
+
     validation_error = _validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")

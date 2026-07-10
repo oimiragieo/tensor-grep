@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from pathlib import Path
 
 import pytest
 
@@ -38,7 +39,9 @@ def test_mcp_symbol_defs_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 17
 
 
@@ -67,7 +70,9 @@ def test_mcp_symbol_source_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 41
 
 
@@ -93,7 +98,9 @@ def test_mcp_symbol_refs_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 19
 
 
@@ -119,7 +126,9 @@ def test_mcp_symbol_callers_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 23
 
 
@@ -149,7 +158,9 @@ def test_mcp_symbol_blast_radius_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 29
 
 
@@ -183,7 +194,9 @@ def test_mcp_symbol_blast_radius_plan_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 31
 
 
@@ -215,7 +228,9 @@ def test_mcp_symbol_blast_radius_render_exposes_and_forwards_max_repo_files(
 
     assert payload["ok"] is True
     assert captured["symbol"] == "create_invoice"
-    assert captured["path"] == "."
+    # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
+    # being forwarded to the builder.
+    assert captured["path"] == str(Path.cwd().resolve())
     assert captured["max_repo_files"] == 37
 
 
