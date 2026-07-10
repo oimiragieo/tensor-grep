@@ -1584,6 +1584,60 @@ def _cap_caller_scan_files(
     return ordered[:CALLER_SCAN_FILE_CEILING], True
 
 
+def _is_python_dynamic_import_call(node: ast.Call) -> bool:
+    """True when ``node`` is one of the 3 dynamic-import call shapes that a top-level-only
+    ``ast.Import``/``ast.ImportFrom`` scan can never see: ``__import__(...)``, bare
+    ``import_module(...)`` (from ``from importlib import import_module``), or
+    ``importlib.import_module(...)``.  These are ``ast.Call`` EXPRESSIONS that can appear
+    anywhere -- inside a function body, a conditional, a try/except -- which is exactly why they
+    need a whole-tree ``ast.walk`` (see ``_python_dynamic_import_entries``) instead of the
+    ``tree.body``-only scan below (#93 SUB-1 audit finding).
+    """
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id in {"__import__", "import_module"}
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "import_module"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "importlib"
+    )
+
+
+def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
+    """Raw per-call dynamic-import entries: one dict per ``__import__``/``import_module``/
+    ``importlib.import_module`` call anywhere in ``tree``, shaped like the static entries
+    ``_python_imports_with_lines`` emits (``module``, ``line``, ``level``) plus the two #93 SUB-1
+    markers -- ``dynamic`` (always ``True`` here) and ``dynamic_unresolved`` (``True`` when the
+    first argument isn't a static string literal, e.g. a variable or an f-string).
+
+    Fails CLOSED on the unresolved case: ``module`` is ``""`` rather than a guessed name --
+    asserting a fabricated edge for an import whose target we can't actually read would be a
+    precision regression in a moat feature (see ``_resolve_raw_import_entry`` /
+    ``_confirm_import_edges``, which both skip resolution entirely when ``dynamic_unresolved``
+    is set).
+    """
+    entries: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not _is_python_dynamic_import_call(node):
+            continue
+        literal_module: str | None = None
+        if (
+            node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            literal_module = node.args[0].value
+        entries.append({
+            "module": literal_module or "",
+            "line": int(node.lineno),
+            "level": 0,
+            "dynamic": True,
+            "dynamic_unresolved": literal_module is None,
+        })
+    return entries
+
+
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix != ".py":
         return [], []
@@ -1641,6 +1695,15 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
                     end_line=getattr(symbol_node, "end_lineno", symbol_node.lineno),
                 )
             )
+
+    # #93 SUB-1: fold in dynamic-import call targets (only the STATICALLY resolvable ones -- an
+    # unresolved dynamic import has no literal name to add to this alias-graph prefilter list;
+    # see `_python_dynamic_import_entries`) so a file that ONLY reaches a target dynamically is
+    # still discoverable as a candidate by the reverse `tg importers` prefilter
+    # (`_reverse_importers`), not just by the forward `tg imports` primitive.
+    for dynamic_entry in _python_dynamic_import_entries(tree):
+        if dynamic_entry["module"]:
+            imports.append(str(dynamic_entry["module"]))
 
     imports = sorted(dict.fromkeys(imports))
     symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
@@ -3793,6 +3856,33 @@ def _dedupe_symbol_records(symbols: list[dict[str, Any]]) -> list[dict[str, Any]
     return deduped
 
 
+def _js_ts_dynamic_import_hit(line: str) -> tuple[str, bool] | None:
+    """Detect a dynamic ``import(...)`` call or a ``require(...)`` call NOT already covered by
+    the assignment-anchored static regexes above (bare ``require("x");`` with no assignment,
+    ``require(...)``/``import(...)`` used as a sub-expression, or either call form given a
+    non-literal argument).
+
+    Returns ``(module, dynamic_unresolved)`` -- ``module`` is ``""`` when the argument isn't a
+    static string literal (a variable, template literal, or expression), and
+    ``dynamic_unresolved`` is ``True`` in that case -- or ``None`` when neither call form is
+    present on this line.
+
+    #93 SUB-1 recall fix: this is ADDITIVE to the static regexes, never a replacement -- callers
+    only consult this after their own assignment-anchored match comes back empty, so a plain
+    ``const x = require("y")`` line is still reported exactly once (via the static path), not
+    twice. Known limitation (accepted, same "precision over guessing" posture as the rest of
+    this file's regex heuristics): a fully INDIRECT alias -- `const req = require; req("y");` --
+    is not traced; there is no literal `require(`/`import(` call shape on the second line for
+    this to match.
+    """
+    literal_match = re.search(r'\b(?:import|require)\s*\(\s*["\']([^"\']+)["\']\s*\)', line)
+    if literal_match:
+        return literal_match.group(1), False
+    if re.search(r"\b(?:import|require)\s*\(", line):
+        return "", True
+    return None
+
+
 def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
         return [], []
@@ -3843,6 +3933,14 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
                 imports.append(export_from_match.group(1))
             if require_match:
                 imports.append(require_match.group(1))
+            else:
+                # #93 SUB-1: `import("x")` call-form and a require(...) not shaped like the
+                # assignment-anchored regex above. Only the statically-resolvable literal is
+                # useful to this alias-graph prefilter list -- an unresolved (non-literal) hit
+                # has no name to add.
+                dynamic_hit = _js_ts_dynamic_import_hit(line)
+                if dynamic_hit is not None and dynamic_hit[0]:
+                    imports.append(dynamic_hit[0])
             if class_match:
                 end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
@@ -5579,6 +5677,11 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
                         "line": int(node.lineno),
                         "level": int(node.level),
                     })
+    # #93 SUB-1: `ast.walk` (not `tree.body`) picks up `__import__`/`import_module`/
+    # `importlib.import_module` calls anywhere -- inside a function, a conditional, a
+    # try/except -- that the static scan above (top-level Import/ImportFrom statements only)
+    # never visits.
+    entries.extend(_python_dynamic_import_entries(tree))
     return entries
 
 
@@ -5611,6 +5714,18 @@ def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
             entries.append({"module": export_from_match.group(1), "line": line_number})
         if require_match:
             entries.append({"module": require_match.group(1), "line": line_number})
+        else:
+            # #93 SUB-1: `import("x")` call-form and a require(...) not shaped like the
+            # assignment-anchored regex above (bare, chained, or a sub-expression argument).
+            dynamic_hit = _js_ts_dynamic_import_hit(line)
+            if dynamic_hit is not None:
+                module, dynamic_unresolved = dynamic_hit
+                entries.append({
+                    "module": module,
+                    "line": line_number,
+                    "dynamic": True,
+                    "dynamic_unresolved": dynamic_unresolved,
+                })
     return entries
 
 
@@ -14504,8 +14619,16 @@ def _resolve_raw_import_entry(
 ) -> dict[str, Any]:
     module = str(entry.get("module", ""))
     line = int(entry.get("line", 0) or 0)
+    dynamic = bool(entry.get("dynamic", False))
+    dynamic_unresolved = bool(entry.get("dynamic_unresolved", False))
 
-    if language_id in ("javascript", "typescript"):
+    if dynamic_unresolved:
+        # #93 SUB-1: the module argument isn't a static string literal (e.g.
+        # `import_module(pkg_var)` / `import(path)`) -- there is no name to resolve against.
+        # Fail closed: never guess a target file for an import whose identity we don't actually
+        # know (over-reporting here would be a precision regression in a moat feature).
+        resolved, external, provenance, confidence = None, False, [], 0.0
+    elif language_id in ("javascript", "typescript"):
         candidate_info = _js_ts_module_candidates(importer_path, module, repo_root)
         is_relative = module.startswith(".")
         has_candidates = bool(candidate_info["paths"])
@@ -14552,6 +14675,8 @@ def _resolve_raw_import_entry(
         "provenance": provenance,
         "resolution_confidence": confidence,
         "external": external,
+        "dynamic": dynamic,
+        "dynamic_unresolved": dynamic_unresolved,
     }
 
 
@@ -14622,7 +14747,10 @@ def build_file_imports(file_path: str | Path) -> dict[str, Any]:
         dict.fromkeys(
             str(current["module"])
             for current in imports
-            if not current.get("external") and not current.get("resolved")
+            # #93 SUB-1: `current.get("module")` guards out dynamic_unresolved entries (module
+            # ""), which are surfaced via their own `dynamic_unresolved` marker on the raw
+            # entry, not as a fabricated blank name in this flat unresolved-module-names summary.
+            if current.get("module") and not current.get("external") and not current.get("resolved")
         )
     )
     payload["result_incomplete"] = result_incomplete
@@ -14653,6 +14781,13 @@ def _confirm_import_edges(
     for raw_entry in _imports_with_lines_for_path(candidate_importer):
         module = str(raw_entry.get("module", ""))
         line = int(raw_entry.get("line", 0) or 0)
+        dynamic = bool(raw_entry.get("dynamic", False))
+        dynamic_unresolved = bool(raw_entry.get("dynamic_unresolved", False))
+        if dynamic_unresolved:
+            # #93 SUB-1: no literal module name to compare against target_file -- never assert
+            # a confirmed edge for an import whose target we can't actually read (precision
+            # matters more than recall past this point).
+            continue
         if language_id in ("javascript", "typescript"):
             matched = _js_ts_module_matches_definition(
                 candidate_importer, module, target_file, repo_root
@@ -14685,6 +14820,11 @@ def _confirm_import_edges(
             "module": module,
             "provenance": provenance,
             "resolution_confidence": _import_graph_resolution_confidence(provenance),
+            # #93 SUB-1: preserve the dynamic markers instead of silently dropping them -- a
+            # `tg importers` consumer needs to know this edge came from a dynamic call, not a
+            # static import statement.
+            "dynamic": dynamic,
+            "dynamic_unresolved": dynamic_unresolved,
         })
     return edges
 
