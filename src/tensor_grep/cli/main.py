@@ -4667,8 +4667,14 @@ def _load_inline_rule_specs(
 
     try:
         documents = list(yaml.load_all(inline_rules_text, Loader=_NoAliasSafeLoader))
-    except yaml.YAMLError as exc:
-        detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
+    except (yaml.YAMLError, RecursionError) as exc:
+        # RecursionError: a deeply-nested ALIAS-FREE payload (e.g. "["*20000) recurses the YAML
+        # parser/composer past the interpreter limit. The _NoAliasSafeLoader cannot reject it (no
+        # alias), but the pure-Python SafeLoader raises a *catchable* RecursionError where the C
+        # loader would hard-crash the process (native stack overflow). Catch it here so this path
+        # also fails closed as a structured invalid_input rather than escaping as a raw traceback
+        # -- the tool's fail-closed contract (audit #95 Part-2 re-gate).
+        detail = str(exc).splitlines()[0] if str(exc).strip() else "input nesting too deep"
         raise ValueError(f"Invalid inline rules YAML: {detail}") from exc
 
     for document_index, payload in enumerate(documents, start=1):

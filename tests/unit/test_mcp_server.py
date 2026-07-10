@@ -1807,6 +1807,35 @@ def test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb(tmp_path, monkeypa
     assert "Traceback" not in payload["error"]["message"]
 
 
+def test_tg_ruleset_scan_inline_rules_rejects_deep_nested_yaml(tmp_path, monkeypatch):
+    """[SEC] Deep-nested ALIAS-FREE YAML DoS residual -- audit #95 Part-2 re-gate BLOCK.
+
+    A ~40 KB payload of 20000 nested flow-sequences (`"["*20000 + "]"*20000`) is UNDER the 64 KiB
+    length cap and has NO aliases, so `_NoAliasSafeLoader` cannot reject it -- but it recurses the
+    YAML parser/composer past the interpreter's recursion limit. The pure-Python SafeLoader raises
+    a CATCHABLE `RecursionError` (the old CSafeLoader hard-crashed the whole process, exit
+    0xC00000FD); the fix catches `RecursionError` at the load site so this path also fails closed
+    as a structured `invalid_input` instead of escaping as a raw traceback (the tool's fail-closed
+    contract). Fast (<1s, O(input) memory, process survives). On revert the assertion fails (or the
+    call raises) fast -- never hangs (anti-hang-test-protocol)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    deep = "rules:\n  - pattern: " + ("[" * 20000) + ("]" * 20000) + '\n    severity: "s"\n'
+    assert len(deep) < mcp_server._MAX_INLINE_RULES_CHARS, (
+        "payload must be sub-cap to test the loader, not the length bound"
+    )
+
+    payload = json.loads(mcp_server.tg_ruleset_scan(inline_rules=deep, path="."))
+
+    assert payload.get("error", {}).get("code") == "invalid_input", (
+        f"deep-nested YAML must fail closed as invalid_input, not a raw traceback; got: {payload}"
+    )
+    assert "YAML" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
 def test_tg_ruleset_scan_inline_rules_at_length_boundary_still_parses(monkeypatch, tmp_path):
     """Boundary correctness for the length bound: a payload AT the cap must still reach the
     parser (not be off-by-one refused) and behave exactly like any other invalid-but-in-budget
