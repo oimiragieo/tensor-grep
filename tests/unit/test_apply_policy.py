@@ -1381,19 +1381,37 @@ def test_run_policy_command_prefers_trusted_path_entry_over_cwd_shadow(
 def test_run_policy_command_rejects_symlink_shadow_resolving_outside_cwd(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Regression (adversarial security gate): a repo-local shadow that is a SYMLINK into a subdir
-    must still be rejected. The guard compares os.path.abspath, NOT Path.resolve -- resolve()
-    follows the symlink and would put the parent (repo/tools) outside cwd, slipping the parent==cwd
-    check and spawning the payload."""
+    """Regression (adversarial security gate, #453): a repo-local shadow that is a SYMLINK whose
+    TARGET points OUTSIDE the repo must still be rejected, because the guard confines on
+    os.path.abspath (a purely lexical normalization that does NOT follow the symlink's final
+    component), NOT Path.resolve (which follows the link out of the repo).
+
+    This test's whole job is to go RED if the guard is ever regressed from abspath to .resolve()
+    -- the exact change that would re-open the #453 RCE. That property is only pinned when the
+    symlink target is OUTSIDE the repo:
+
+      * CURRENT (correct) abspath guard: `shutil.which` yields the in-repo link `<repo>/ruff.cmd`;
+        abspath keeps it at `<repo>/ruff.cmd` (link not followed) -> BENEATH repo -> REJECTED
+        (this test passes).
+      * REGRESSED .resolve() guard: the link resolves to `<tmp>/outside/evil.cmd` -> NOT beneath
+        repo -> the beneath-or-equal check would NOT reject -> it would reach subprocess.run and
+        the shadow would be spawned (this test would FAIL on the assertions below).
+
+    (An earlier revision of this test pointed the target at `<repo>/tools/evil` -- INSIDE the
+    repo -- which under the beneath-or-equal guard is beneath repo in BOTH the abspath and the
+    resolve forms, so it passed regardless of which the guard used and no longer pinned the
+    abspath-vs-resolve property. The target must live outside the repo to keep this a real
+    regression guard.)"""
     import pytest as _pytest
 
     from tensor_grep.cli import apply_policy
 
     repo = tmp_path / "untrusted-repo"
     repo.mkdir()
-    tools = repo / "tools"
-    tools.mkdir()
-    payload = _write_fake_executable(tools, "evil", "pwned")
+    # Target OUTSIDE the repo: only .resolve() (which follows the link) would land here; abspath
+    # keeps the resolved path at the in-repo link location.
+    outside = tmp_path / "outside"
+    payload = _write_fake_executable(outside, "evil", "pwned")
     shadow = repo / "ruff.cmd"
     try:
         shadow.symlink_to(payload)
@@ -1419,7 +1437,10 @@ def test_run_policy_command_rejects_symlink_shadow_resolving_outside_cwd(
 
     result = apply_policy._run_policy_command("test", "ruff --check", repo, timeout=10)
 
-    assert result["passed"] is False, "a symlink shadow resolving into the repo must be rejected"
+    assert result["passed"] is False, (
+        "the in-repo symlink shadow must be rejected on its abspath (un-followed) location; a "
+        "regression to .resolve() would follow the link outside the repo and let it spawn"
+    )
     assert not spawn_calls, "the symlink shadow must never be spawned"
     assert "refusing a repo-local executable shadow" in str(result["detail"])
 
