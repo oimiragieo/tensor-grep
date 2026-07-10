@@ -34,23 +34,57 @@ def test_fresh_stale_lock_is_reclaimed_before_the_waiter_gives_up(tmp_path: Path
 
     Pre-fix ratio (timeout_s=0.5 < stale_after_s=1.0) would ALWAYS time out here:
     age + timeout = 0.3 + 0.5 = 0.8 < 1.0, so the lock can never reach the staleness
-    threshold before the waiter's deadline fires. Post-fix ratio (timeout_s=1.2 >
-    stale_after_s=1.0) guarantees reclaim: the lock reaches staleness at age=1.0 (elapsed
-    0.7s from the waiter's start), comfortably inside the 1.2s deadline.
+    threshold before the waiter's deadline fires (the ratio invariant itself is pinned by
+    ``test_default_timeout_exceeds_stale_threshold`` above). Post-fix ratio
+    (timeout_s=1.2 > stale_after_s=1.0) guarantees reclaim: the lock reaches staleness at
+    age=1.0 (elapsed ~0.7s from the waiter's start), comfortably inside the 1.2s deadline.
+
+    Release-blocking flake fixed here: this test used to ALSO assert a hardcoded
+    ``elapsed < 1.2`` wall-clock bound. A loaded macOS CI runner measured 1.68s and failed
+    it -- not because reclaim was broken, but because ``index_lock``'s acquire loop checks
+    staleness *before* it checks its own deadline: the ``except FileExistsError`` branch
+    ``continue``s straight back to the top of the loop on a stale hit, skipping the
+    deadline check for that iteration entirely. A single overshot
+    ``time.sleep(poll_interval_s)`` on a starved scheduler can push real wall-clock past
+    ``timeout_s`` while that very wake-up still finds the lock stale and reclaims it
+    correctly -- correct self-healing, misread as a failure by a tight wall-clock assert.
+
+    The real H9 invariant -- "reclaimed before giving up", not a specific latency -- is now
+    asserted as an OUTCOME instead of a stopwatch reading:
+      1. no ``IndexLockTimeoutError`` escapes the ``with`` (a never-reclaims regression
+         raises here and fails the test before the body below ever runs);
+      2. the lock's owner inside the ``with`` is THIS process, not the planted fake pid
+         99999 (proves a reclaim actually happened, not merely that some file exists);
+      3. the lock file is gone after release.
+    A generous, CI-jitter-tolerant wall-clock ceiling remains as a backstop against a
+    "technically reclaims, but pathologically slow" regression in the reclaim path itself
+    (which -- unlike the plain wait above -- is NOT bounded by ``timeout_s``, per the
+    ``continue`` above): several multiples of the waiter's own give-up deadline, so routine
+    CI scheduling jitter (the observed 1.68s against a 1.2s bound, ~1.4x) can never trip it.
     """
     index_path = tmp_path / "index.json"
     lock_path = _index_lock._lock_path_for(index_path)
     lock_path.write_text("99999\n", encoding="utf-8")
-    fresh_mtime = time.time() - 0.3  # "crashed" 0.3s ago: well under stale_after_s (1.0s)
+    stale_after_s = 1.0
+    timeout_s = 1.2  # H9 ratio: must exceed stale_after_s -- see module docstring above
+    fresh_mtime = time.time() - 0.3  # "crashed" 0.3s ago: well under stale_after_s
     os.utime(lock_path, (fresh_mtime, fresh_mtime))
 
     start = time.monotonic()
-    with _index_lock.index_lock(index_path, timeout_s=1.2, stale_after_s=1.0):
-        pass
+    # A never-reclaims (or reclaims-only-after-giving-up) regression raises
+    # IndexLockTimeoutError out of __enter__ here, failing the test before the body runs.
+    with _index_lock.index_lock(index_path, timeout_s=timeout_s, stale_after_s=stale_after_s):
+        # The reclaim genuinely happened: THIS process's pid displaced the planted fake
+        # "dead holder" pid (99999), not just "a lock file happens to exist".
+        owner_pid = lock_path.read_text(encoding="utf-8").splitlines()[0]
+        assert owner_pid == str(os.getpid())
     elapsed = time.monotonic() - start
 
-    assert elapsed < 1.2
     assert not lock_path.exists()
+    # Generous CI-jitter backstop (secondary -- see docstring): catches a "reclaims, but
+    # pathologically slow" regression in the reclaim path itself, which the deadline check
+    # above does not bound.
+    assert elapsed < timeout_s * 5
 
 
 # --------------------------------------------------------------------------------------
