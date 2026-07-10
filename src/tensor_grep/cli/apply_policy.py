@@ -386,6 +386,32 @@ def _path_is_under(path: Path, root: Path) -> bool:
         return False
 
 
+def _abspath_beneath_or_equal(path: Path, root: Path) -> bool:
+    """True if ``path`` is ``root`` itself or nested anywhere beneath it (any depth).
+
+    Deliberately independent of ``_path_is_under()``/``Path.relative_to()``: the
+    shadow-executable guard in ``_run_policy_command`` must run this check on an
+    ``os.path.abspath``'d path that has NOT been passed through ``Path.resolve()`` --
+    resolve() follows symlinks, which is exactly how the audit #35 / #453 symlink
+    shadow (`repo/tool.cmd -> repo/sub/evil.cmd`) escaped an earlier version of this
+    guard (its resolved target's parent no longer lexically starts with the repo
+    root). Callers must pass the same abspath-only ``path`` value used for spawning.
+
+    Comparison uses ``os.path.normcase(os.path.normpath(...))`` on both sides (not
+    ``Path`` equality/``relative_to``) so a Windows case or separator mismatch between
+    the PATH-resolved directory and the untrusted root can't produce a false
+    "outside root" negative. The beneath check requires a ``os.sep`` boundary after
+    the root prefix, so a sibling directory that merely shares a string prefix with
+    the root (e.g. ``repo-other`` next to ``repo``) is never wrongly treated as
+    nested inside it.
+    """
+    normalized_path = os.path.normcase(os.path.normpath(str(path)))
+    normalized_root = os.path.normcase(os.path.normpath(str(root)))
+    if normalized_path == normalized_root:
+        return True
+    return normalized_path.startswith(normalized_root + os.sep)
+
+
 def _policy_file_arg(path_value: object, *, working_root: Path) -> str | None:
     if not isinstance(path_value, (str, os.PathLike)):
         return None
@@ -460,8 +486,8 @@ def _policy_command_instances(
 
 
 def _search_path_without_cwd() -> str:
-    """Build the ``path=`` string passed to ``shutil.which()``, with cwd-equivalent
-    PATH entries stripped.
+    """Build the ``path=`` string passed to ``shutil.which()``, with cwd-equivalent AND
+    cwd-nested PATH entries stripped.
 
     Defense-in-depth only -- see the load-bearing guard in ``_run_policy_command``.
     On Python < 3.12 + Windows, ``shutil.which()`` unconditionally re-inserts the
@@ -471,7 +497,16 @@ def _search_path_without_cwd() -> str:
     cpython#91558). So stripping "." from our own PATH cannot, by itself, stop that
     implicit prepend. It still closes a narrower, distinct vector: an untrusted
     entry planted directly in the *environment* PATH string itself (an explicit
-    ``.`` / empty / cwd-resolving segment), rather than the implicit Windows search.
+    ``.`` / empty / cwd-resolving, OR cwd-nested, segment), rather than the implicit
+    Windows search.
+
+    codex audit H2 follow-up: originally only an entry resolving EXACTLY to cwd was
+    stripped. An untrusted repo's own dependency-manager shim directory --
+    ``<repo>/node_modules/.bin``, ``<repo>/.venv/Scripts``, and similar -- is an
+    extremely common PATH entry (many build/lint tools prepend it) and is just as
+    untrusted as cwd itself, so it must be stripped too. ``_path_is_under()`` covers
+    both cases (it treats an exact match as trivially "under" itself as well as any
+    depth of descendant), so the two checks collapse into one.
     """
     raw_path = os.environ.get("PATH", "")
     if not raw_path:
@@ -487,7 +522,7 @@ def _search_path_without_cwd() -> str:
             continue
         if cwd is not None:
             try:
-                if Path(entry).resolve() == cwd:
+                if _path_is_under(Path(entry), cwd):
                     continue
             except (OSError, RuntimeError, ValueError):
                 pass
@@ -523,7 +558,17 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
     #   2) reject the resolution outright if it lands inside the untrusted target root (`cwd`) --
     #      the load-bearing guard. It compares os.path.abspath, NOT Path.resolve: resolve() FOLLOWS
     #      symlinks, which let a `repo/tool.cmd -> repo/sub/evil.cmd` symlink land its parent
-    #      OUTSIDE cwd and slip the parent==cwd check (caught by the adversarial security gate).
+    #      OUTSIDE cwd and slip a parent==cwd check (caught by the adversarial security gate).
+    #
+    # codex audit H2 (CWE-427 further refinement): "lands inside cwd" means BENEATH cwd at any
+    # depth, not merely "cwd is its immediate parent". An earlier version of this guard checked
+    # `resolved_path.parent == untrusted_root`, which only catches a shadow planted directly at
+    # the repo root -- a shadow resolved to `<repo>/nested/dir/tool.exe` has
+    # `.parent == <repo>/nested/dir`, never equal to `<repo>`, so it slipped through to
+    # subprocess.run. _abspath_beneath_or_equal() checks the full resolved_path (not just its
+    # parent) against untrusted_root using relative-containment, so any depth is caught; it keeps
+    # operating on the same abspath-only (non-symlink-following) resolved_path as before, so the
+    # #453 symlink-escape fix above still holds.
     resolved_executable = shutil.which(argv[0], path=_search_path_without_cwd()) if argv else None
     if resolved_executable is None:
         return _command_result(
@@ -535,7 +580,7 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
         untrusted_root = cwd.resolve()
     except OSError:
         untrusted_root = cwd
-    if os.path.normcase(str(resolved_path.parent)) == os.path.normcase(str(untrusted_root)):
+    if _abspath_beneath_or_equal(resolved_path, untrusted_root):
         return _command_result(
             passed=False,
             detail=(

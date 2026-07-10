@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -1220,8 +1221,19 @@ def test_run_policy_command_resolves_relative_executable_to_absolute(
 ) -> None:
     # CWE-427: a relative argv[0] must be resolved to an absolute PATH binary before spawning,
     # so Windows CreateProcess never searches the untrusted target-repo cwd for a shadow tool.
+    #
+    # `repo` (the cwd/untrusted_root passed to _run_policy_command) is a SUBDIRECTORY of
+    # tmp_path, and the trusted binary lives at a SIBLING path (tmp_path/trusted-bin) --
+    # genuinely outside `repo`. Before the H2 beneath-or-equal fix this test passed `tmp_path`
+    # itself as cwd with the "trusted" binary nested one level under it, which the old
+    # immediate-parent-equality guard happened not to flag; under the corrected beneath-or-equal
+    # guard that fixture would itself BE the nested-shadow vulnerability, not a legitimate
+    # outside-root binary, so it must live outside the untrusted root to keep testing what its
+    # name says it tests.
     from tensor_grep.cli import apply_policy
 
+    repo = tmp_path / "repo"
+    repo.mkdir()
     fake_abs = str(tmp_path / "trusted-bin" / "ruff")
     monkeypatch.setattr(
         apply_policy.shutil,
@@ -1237,7 +1249,7 @@ def test_run_policy_command_resolves_relative_executable_to_absolute(
         return _sp.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(apply_policy.subprocess, "run", _fake_run)
-    result = apply_policy._run_policy_command("lint", "ruff check .", tmp_path, timeout=10)
+    result = apply_policy._run_policy_command("lint", "ruff check .", repo, timeout=10)
 
     assert captured["argv"][0] == fake_abs  # absolute, PATH-resolved — not a cwd search
     assert result["passed"] is True
@@ -1369,19 +1381,37 @@ def test_run_policy_command_prefers_trusted_path_entry_over_cwd_shadow(
 def test_run_policy_command_rejects_symlink_shadow_resolving_outside_cwd(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Regression (adversarial security gate): a repo-local shadow that is a SYMLINK into a subdir
-    must still be rejected. The guard compares os.path.abspath, NOT Path.resolve -- resolve()
-    follows the symlink and would put the parent (repo/tools) outside cwd, slipping the parent==cwd
-    check and spawning the payload."""
+    """Regression (adversarial security gate, #453): a repo-local shadow that is a SYMLINK whose
+    TARGET points OUTSIDE the repo must still be rejected, because the guard confines on
+    os.path.abspath (a purely lexical normalization that does NOT follow the symlink's final
+    component), NOT Path.resolve (which follows the link out of the repo).
+
+    This test's whole job is to go RED if the guard is ever regressed from abspath to .resolve()
+    -- the exact change that would re-open the #453 RCE. That property is only pinned when the
+    symlink target is OUTSIDE the repo:
+
+      * CURRENT (correct) abspath guard: `shutil.which` yields the in-repo link `<repo>/ruff.cmd`;
+        abspath keeps it at `<repo>/ruff.cmd` (link not followed) -> BENEATH repo -> REJECTED
+        (this test passes).
+      * REGRESSED .resolve() guard: the link resolves to `<tmp>/outside/evil.cmd` -> NOT beneath
+        repo -> the beneath-or-equal check would NOT reject -> it would reach subprocess.run and
+        the shadow would be spawned (this test would FAIL on the assertions below).
+
+    (An earlier revision of this test pointed the target at `<repo>/tools/evil` -- INSIDE the
+    repo -- which under the beneath-or-equal guard is beneath repo in BOTH the abspath and the
+    resolve forms, so it passed regardless of which the guard used and no longer pinned the
+    abspath-vs-resolve property. The target must live outside the repo to keep this a real
+    regression guard.)"""
     import pytest as _pytest
 
     from tensor_grep.cli import apply_policy
 
     repo = tmp_path / "untrusted-repo"
     repo.mkdir()
-    tools = repo / "tools"
-    tools.mkdir()
-    payload = _write_fake_executable(tools, "evil", "pwned")
+    # Target OUTSIDE the repo: only .resolve() (which follows the link) would land here; abspath
+    # keeps the resolved path at the in-repo link location.
+    outside = tmp_path / "outside"
+    payload = _write_fake_executable(outside, "evil", "pwned")
     shadow = repo / "ruff.cmd"
     try:
         shadow.symlink_to(payload)
@@ -1407,6 +1437,162 @@ def test_run_policy_command_rejects_symlink_shadow_resolving_outside_cwd(
 
     result = apply_policy._run_policy_command("test", "ruff --check", repo, timeout=10)
 
-    assert result["passed"] is False, "a symlink shadow resolving into the repo must be rejected"
+    assert result["passed"] is False, (
+        "the in-repo symlink shadow must be rejected on its abspath (un-followed) location; a "
+        "regression to .resolve() would follow the link outside the repo and let it spawn"
+    )
     assert not spawn_calls, "the symlink shadow must never be spawned"
     assert "refusing a repo-local executable shadow" in str(result["detail"])
+
+
+def test_run_policy_command_rejects_nested_repo_shadow_executable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """H2 (CWE-427 refinement, codex audit): the shadow-executable guard used to reject a
+    resolved executable ONLY when its IMMEDIATE parent equaled the untrusted repo root
+    exactly (`resolved_path.parent == untrusted_root`). A binary resolved to
+    `<repo>/nested/dir/tool.cmd` has `.parent == <repo>/nested/dir`, which never equals
+    `<repo>` -- so the old guard let it through to subprocess.run. The guard must reject
+    ANY resolution beneath the untrusted root, at any depth, not just a direct child."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    nested = repo / "nested" / "dir"
+    shadow = _write_fake_executable(nested, "pytest", "shadow-pwned")
+
+    monkeypatch.setattr(
+        apply_policy.shutil,
+        "which",
+        lambda cmd, path=None: str(shadow) if cmd == "pytest" else None,
+    )
+    spawn_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        apply_policy.subprocess,
+        "run",
+        lambda argv, **kwargs: spawn_calls.append(list(argv)),
+    )
+
+    result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
+
+    assert result["passed"] is False, "a nested repo-local shadow must be rejected"
+    assert not spawn_calls, "the nested shadow binary must never be spawned"
+    assert "refusing a repo-local executable shadow" in str(result["detail"])
+    assert str(shadow) in str(result["detail"])
+
+
+def test_run_policy_command_rejects_deeply_nested_repo_shadow_executable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Same as above at greater depth (node_modules/.bin-style), proving the guard is a
+    true beneath-or-equal confinement check and not merely a two-level special case."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    nested = repo / "a" / "b" / "c" / "d"
+    shadow = _write_fake_executable(nested, "pytest", "shadow-pwned")
+
+    monkeypatch.setattr(
+        apply_policy.shutil,
+        "which",
+        lambda cmd, path=None: str(shadow) if cmd == "pytest" else None,
+    )
+    spawn_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        apply_policy.subprocess,
+        "run",
+        lambda argv, **kwargs: spawn_calls.append(list(argv)),
+    )
+
+    result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
+
+    assert result["passed"] is False
+    assert not spawn_calls
+    assert "refusing a repo-local executable shadow" in str(result["detail"])
+
+
+def test_abspath_beneath_or_equal_matches_root_and_nested_descendants(tmp_path: Path) -> None:
+    from tensor_grep.cli.apply_policy import _abspath_beneath_or_equal
+
+    root = tmp_path / "repo"
+    assert _abspath_beneath_or_equal(root, root) is True
+    assert _abspath_beneath_or_equal(root / "tool.exe", root) is True
+    assert _abspath_beneath_or_equal(root / "nested" / "dir" / "tool.exe", root) is True
+
+
+def test_abspath_beneath_or_equal_rejects_unrelated_and_sibling_prefix_paths(
+    tmp_path: Path,
+) -> None:
+    """A sibling directory that merely shares a string PREFIX with the root (e.g.
+    `repo-other` vs `repo`) must NOT be treated as beneath it -- a naive
+    ``str.startswith(root)`` without a path-separator boundary would wrongly match this."""
+    from tensor_grep.cli.apply_policy import _abspath_beneath_or_equal
+
+    root = tmp_path / "repo"
+    assert _abspath_beneath_or_equal(tmp_path / "unrelated" / "tool.exe", root) is False
+    assert _abspath_beneath_or_equal(tmp_path / "repo-other" / "tool.exe", root) is False
+    assert _abspath_beneath_or_equal(tmp_path / "repository" / "tool.exe", root) is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows case-insensitive path semantics")
+def test_abspath_beneath_or_equal_is_case_insensitive_on_windows(tmp_path: Path) -> None:
+    from tensor_grep.cli.apply_policy import _abspath_beneath_or_equal
+
+    root = tmp_path / "repo"
+    upper = Path(str(tmp_path).upper()) / "REPO" / "NESTED" / "tool.EXE"
+    assert _abspath_beneath_or_equal(upper, root) is True
+
+
+def test_search_path_without_cwd_strips_entries_nested_under_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Widen (H2 follow-up, codex audit): _search_path_without_cwd previously stripped only
+    PATH entries that resolved EXACTLY to cwd. A PATH entry NESTED under cwd (e.g. the
+    extremely common `<repo>/node_modules/.bin` or `<repo>/.venv/Scripts`) must also be
+    stripped -- an untrusted repo's own dependency-manager shim directory should not be
+    handed to shutil.which() as a searchable, quasi-trusted PATH entry."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    nested_bin = repo / "node_modules" / ".bin"
+    nested_bin.mkdir(parents=True)
+    venv_scripts = repo / ".venv" / "Scripts"
+    venv_scripts.mkdir(parents=True)
+    unrelated = tmp_path / "trusted-bin"
+    unrelated.mkdir()
+
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join([str(nested_bin), str(venv_scripts), str(unrelated), str(repo)]),
+    )
+
+    filtered = apply_policy._search_path_without_cwd()
+    filtered_entries = filtered.split(os.pathsep) if filtered else []
+
+    assert str(nested_bin) not in filtered_entries
+    assert str(venv_scripts) not in filtered_entries
+    assert str(repo) not in filtered_entries  # pre-existing exact-match behavior, still holds
+    assert str(unrelated) in filtered_entries
+
+
+def test_search_path_without_cwd_keeps_sibling_prefix_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A PATH entry that merely shares a string prefix with cwd (e.g. `repo-tools` next to
+    `repo`) must NOT be stripped -- mirrors the separator-boundary check on the executable
+    guard, applied here to the PATH-filtering defense-in-depth layer."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sibling_prefix = tmp_path / "repo-tools"
+    sibling_prefix.mkdir()
+
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", str(sibling_prefix))
+
+    filtered = apply_policy._search_path_without_cwd()
+    filtered_entries = filtered.split(os.pathsep) if filtered else []
+
+    assert str(sibling_prefix) in filtered_entries
