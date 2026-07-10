@@ -93,17 +93,25 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Unscoped search on a vendored root refuses instantly; it no longer just "hangs then times out."** `tg search PATTERN` with no path against a root whose top level contains a vendored dir (`node_modules`, `vendor`, `external_repos`, `third_party`) is refused in **under 1 second** (exit 2) by a top-level-only directory probe that never starts a walk (`_should_refuse_unbounded_vendored_root_scan`). When the root has no such top-level dir but is still large/unscoped, the native per-file search walk carries its own wall-clock bound and returns a flagged partial (`result_incomplete` + a stderr warning) instead of hanging; the rg-passthrough path is separately bounded by `TG_RG_TIMEOUT_SECONDS` (default 60 s, lowered from 600 s in #288). These bounds fire *before* the 60 s timeout on the common case, so don't present "fails fast after ~60 s" as the primary behavior. WORKAROUND (still the right default habit): always scope to a path — `tg search PATTERN C:\repo` completes in ~0.4 s and skips all of the above entirely.
+**Unscoped search on a multi-project workspace often hangs until the 60s ripgrep timeout (v1.58.9 dogfood).** Skills previously claimed vendored-root refusal in <1s; on `/mnt/c/dev/projects` (which has a top-level `node_modules`) `tg search TODO` still burned the full timeout with no early refuse message. Always scope to a path — `tg search PATTERN REPO` completes in under a second on typical repos.
 
 **Scoped file dependencies (`tg imports` / `tg importers`, shipped #74).** Use `tg imports FILE` for forward edges (O(1) — parses one file) and `tg importers FILE [ROOT]` for reverse edges (bounded repo scan). Do **not** pay for whole-repo `tg map`/`tg orient` when the question is "what does this file import?" or "who imports this file?".
 
-**`--deadline` is best-effort, not a hard SLA (v1.54.x dogfood).** Graph scans may still exceed the requested budget, but v1.54.6 improved materially (callers `--deadline 10` ~13–22s on tensor-grep vs ~6 min on v1.54.0). Treat `partial`/`result_incomplete` in JSON as the honesty signal; branch on exit `2` for incomplete symbol scans. Narrow `PATH` to a subdirectory or warm `tg session daemon start` before trusting caller graphs on large trees.
+**`--deadline` is best-effort, not a hard SLA (v1.58.x dogfood).** Graph scans may still exceed the requested budget. On v1.58.9, `callers`/`blast-radius`/`impact` with `--deadline 15–20` typically finish in ~17–24s and correctly exit `2` with `partial: true` when truncated. Treat `partial`/`result_incomplete` as the honesty signal. Narrow `PATH` or warm `tg session daemon start` before trusting caller graphs on large trees.
+
+**Workspace-root `tg inventory --deadline` can return zero files (v1.58.9 dogfood).** On a multi-project parent like `/mnt/c/dev/projects`, a short `--deadline` may expire before any files are counted (`totals.files=0`, `truncation_cause=deadline`). Prefer `tg inventory REPO` per project, or raise the deadline substantially for the workspace parent.
+
+**Unscoped search on this workspace still hits the 60s ripgrep timeout (v1.58.9).** Even with a top-level `node_modules`, `tg search TODO` from `/mnt/c/dev/projects` timed out at ~60s (exit 124) instead of refusing in <1s. Always scope to a repo path.
 
 **WSL + `/mnt/c/` path quirks.** Some native-backend searches report `path_not_found` for absolute `/mnt/c/dev/...` paths even when the directory exists; relative paths from the repo cwd often work. If `tg search` returns `path_not_found`, `cd` into the parent and pass a relative path.
 
-**`tg importers` path resolution (v1.54.6 dogfood).** When `ROOT` is a relative repo name and `FILE` is also repo-relative, tg may double-resolve (`tensor-grep/tensor-grep/src/...`). Prefer absolute paths for both `FILE` and `ROOT`, or `cd` into `ROOT` and pass `FILE` relative to that cwd only.
+**`tg importers` path resolution.** Prefer absolute paths for both `FILE` and `ROOT` (v1.58.9 dogfood: absolute paths succeed; relative `FILE`+`ROOT` from a parent cwd can still double-resolve). Or `cd` into `ROOT` and pass `FILE` relative to that cwd only.
 
-**AST scan on WSL when ast-grep is a Windows npm shim.** `tg scan` may fail with exit 127 if `doctor` resolves `ast-grep` to a Windows path (`/mnt/c/Users/.../npm/ast-grep`) whose shebang cannot execute under WSL. Install a Linux-native `ast-grep` on PATH or run scan from Windows.
+**`tg classify` takes `FILE_PATH` only — no `--json` flag.** Default `--format` is already `json`. Do not pass `--json` (Typer usage error). There is no stdin/`--text` mode yet.
+
+**`tg checkpoint create` on a whole large repo can fail** when the tree contains awkward paths (v1.58.9: `Is a directory` under `benchmarks/external_repos/chalk`). Scope the checkpoint to `src/` or a narrower editable subtree.
+
+**AST scan on WSL when ast-grep is a Windows npm shim.** `tg scan` may fail with exit 127 if `doctor` resolves `ast-grep` to a Windows path (`/mnt/c/Users/.../npm/ast-grep`) whose shebang cannot execute under WSL. Install a Linux-native `ast-grep` on PATH or run scan from Windows. Doctor may still report `ast_grep.available: true` — availability ≠ runnable under WSL.
 
 ## Provider Modes
 
