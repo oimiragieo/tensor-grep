@@ -71,6 +71,9 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         no_multiline_dotall: false,
         patterns: Vec::new(),
         paths: Vec::new(),
+        // tg-search-fast requires `positionals.len() >= 2` below (pattern + at least one path)
+        // -- the path is always explicit here, never inferred/defaulted.
+        path_was_implicit: false,
         no_ignore_vcs: false,
         pcre2: false,
         no_pcre2: false,

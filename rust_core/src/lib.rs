@@ -291,6 +291,17 @@ impl RustBackend {
             no_multiline_dotall: false,
             patterns,
             paths: vec![path],
+            // KNOWN_GAP (audit #100): this PyO3 FFI method is only reachable from the Python
+            // CLI's own RustBackend caller, which already resolves an explicit `path` string
+            // before crossing the FFI boundary -- `path` here is a required (non-Optional)
+            // parameter, never inferred from an implicit/defaulted root the way the native
+            // frontdoor's argv parsing can be. `false` is the safe, conservative value: it never
+            // suppresses a legitimate result, and Python callers are independently protected by
+            // `bootstrap.py::_requires_full_cli`, which routes any `--glob`/`-t`/`-T`/`--iglob`
+            // combination to the full CLI (with its own implicit-path handling) rather than this
+            // fast FFI path. If a future Python caller starts forwarding "no path given" through
+            // this method, this must be wired to the real value instead of hardcoded `false`.
+            path_was_implicit: false,
             pcre2,
             no_pcre2: false,
             pcre2_unicode: false,

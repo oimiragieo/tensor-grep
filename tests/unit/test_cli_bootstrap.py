@@ -473,6 +473,14 @@ def test_requires_full_cli_routes_every_walk_scope_filter_form() -> None:
     test_cli_modes use ``CliRunner().invoke(app, ...)``, which enters the Typer app past the
     bootstrap front door (the CliRunner trap in AGENTS.md) and would stay green even if this
     routing were reverted; they do NOT guard the fix. This does.
+
+    Audit #100: the ``-e``-combined cases below pin that ``-e``/``--regexp`` riding alongside a
+    walk-scope filter is caught identically to the positional-pattern form -- ``_requires_full_cli``
+    scans every token for a walk-scope flag regardless of how the pattern itself was supplied, so
+    pip installs were never exposed to the native-frontdoor ``-e`` bypass audit #100 found on the
+    standalone binary (that bypass was native-binary-direct only; see
+    ``docs/plans/design-tensor-grep-100-walk-ceiling-hoist-2026-07-10.md``). These cases close the
+    test-matrix gap so that fact is pinned, not just asserted in a design doc.
     """
     must_route = [
         ["-t", "py"],
@@ -492,6 +500,14 @@ def test_requires_full_cli_routes_every_walk_scope_filter_form() -> None:
         ["-gsrc/**/*.py"],
         ["-itpy"],  # mid-bundle: -i then -t py
         ["-ig*.py"],  # mid-bundle: -i then -g *.py
+        # -e/--regexp-combined forms (audit #100 test-matrix gap):
+        ["-e", "TODO", "-t", "py"],
+        ["-e", "TODO", "--type", "py"],
+        ["-e", "TODO", "-g", "*.py"],
+        ["-e", "TODO", "--glob", "*.py"],
+        ["-e", "TODO", "--glob=*.py"],
+        ["--regexp", "TODO", "--iglob", "*.py"],
+        ["-e", "TODO", "-tpy"],  # bundled attached-value short form + -e
     ]
     for args in must_route:
         assert bootstrap._requires_full_cli(args), f"walk-scope form not routed to full CLI: {args}"
