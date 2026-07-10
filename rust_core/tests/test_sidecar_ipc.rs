@@ -619,6 +619,178 @@ fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_i
     );
 }
 
+/// A stand-in for `python` that never responds to the general one-shot Python passthrough
+/// dispatch (`execute_python_passthrough_command_inner`, audit H5). Unlike the JSON sidecar
+/// path, passthrough has no `TG_SIDECAR_SCRIPT` override -- the only way to control what
+/// "python" does for this code path is to swap out the interpreter itself via
+/// `TG_SIDECAR_PYTHON`, mirroring `write_wedged_python_script` above. On non-Windows it also
+/// records its own pid (via the `WEDGE_PID_FILE` env var the caller sets) so a test can assert
+/// the wedged child was actually reaped, not merely that tg's wait loop gave up on it.
+/// `sleep_seconds` is a caller-chosen bound: long (~20s) for the kill-at-deadline test where
+/// the process must never be allowed to finish naturally, short (~3s) for the daemon-exemption
+/// test where the test itself owns cleanup and a long-lived orphan process would be wasteful.
+fn write_wedged_passthrough_python_script(dir: &Path, name: &str, sleep_seconds: u32) -> PathBuf {
+    if cfg!(windows) {
+        let script = dir.join(format!("{name}.cmd"));
+        // `ping -n N` performs N probes with a ~1s gap, so it sleeps ~(N-1) seconds.
+        fs::write(
+            &script,
+            format!(
+                "@echo off\r\nping -n {} 127.0.0.1 >nul\r\n",
+                sleep_seconds + 1
+            ),
+        )
+        .unwrap();
+        script
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = dir.join(format!("{name}.sh"));
+            fs::write(
+                &script,
+                format!("#!/bin/sh\necho $$ > \"$WEDGE_PID_FILE\"\nsleep {sleep_seconds}\n"),
+            )
+            .unwrap();
+            let mut perms = fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            fs::set_permissions(&script, perms).unwrap();
+            script
+        }
+        #[cfg(not(unix))]
+        unreachable!("non-windows, non-unix target")
+    }
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_passthrough_timeout_kills_wedged_child_and_reports_error() {
+    // audit H5 RED->GREEN (a): a one-shot passthrough command (`doctor` -- not in the daemon
+    // exemption list) whose child never exits must be KILLED at the configured deadline and
+    // report a clear timeout error, instead of hanging the whole `tg` invocation forever (the
+    // pre-fix bug: execute_python_passthrough_command_inner called a raw, unbounded
+    // `child.wait()`). Pre-fix, this test fails by exhausting run_with_timeout's own 8s budget
+    // (a bounded RED failure, per the anti-hang-test-protocol -- it never hangs the suite).
+    let dir = tempdir().unwrap();
+    let pid_file = dir.path().join("wedged_passthrough.pid");
+    let wedge_script =
+        write_wedged_passthrough_python_script(dir.path(), "wedged_passthrough_python", 20);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("doctor")
+        .env("TG_SIDECAR_PYTHON", &wedge_script)
+        .env("WEDGE_PID_FILE", &pid_file)
+        .env("TG_PASSTHROUGH_TIMEOUT_MS", "300");
+
+    let started = Instant::now();
+    let output = run_with_timeout(tg, Duration::from_secs(8));
+    let elapsed = started.elapsed();
+
+    assert!(
+        !output.status.success(),
+        "expected the wedged passthrough child to fail closed, not hang forever; stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("timed out"), "stderr={stderr}");
+    assert!(stderr.contains("terminated"), "stderr={stderr}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "TG_PASSTHROUGH_TIMEOUT_MS=300 was not honored -- the wedged child sleeps ~20s, so this \
+         elapsed={elapsed:?} is consistent with the deadline never firing (the pre-fix bare \
+         child.wait() bug)"
+    );
+
+    if !cfg!(windows) {
+        let pid = wait_for_pid_file(&pid_file, sidecar_test_timeout());
+        assert!(
+            wait_for_process_exit(pid, Duration::from_secs(2)),
+            "expected the wedged passthrough child pid {pid} to be terminated, not left running"
+        );
+    }
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_passthrough_fast_command_completes_unaffected_by_new_timeout() {
+    // audit H5 (b): a legitimate, fast, one-shot passthrough command must complete exactly as
+    // before -- the new bounded wait-or-kill machinery must not change behavior, output, or
+    // exit code for the common (non-wedged) case. `audit` with no args is a handful of
+    // typer.echo calls (main.py:11215-11223) with no repo scanning, so it is fast regardless of
+    // machine load.
+    if !repo_python_has_module("typer") {
+        return;
+    }
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("audit")
+        .env("TG_SIDECAR_PYTHON", repo_python());
+    configure_repo_python_env(&mut tg);
+
+    let started = Instant::now();
+    let output = run_with_timeout(tg, Duration::from_secs(40));
+    let elapsed = started.elapsed();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Audit commands:"), "stdout={stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("timed out"), "stderr={stderr}");
+    assert!(
+        elapsed < Duration::from_secs(20),
+        "a trivial, side-effect-free passthrough command should complete quickly; elapsed={elapsed:?}"
+    );
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_passthrough_exempts_mcp_server_launch_from_timeout() {
+    // audit H5 RED->GREEN (c) -- the load-bearing daemon-exemption case: `tg mcp` starts the
+    // MCP server and must NEVER be killed on a timer, even with an aggressively short
+    // TG_PASSTHROUGH_TIMEOUT_MS configured. Uses a SHORT wedge (~3s, not the ~20s used by the
+    // kill test above) purely so this test's own cleanup is fast and deterministic; the
+    // assertion below only needs the process to still be alive shortly after the 300ms deadline
+    // would have fired if the exemption were broken.
+    let dir = tempdir().unwrap();
+    let wedge_script = write_wedged_passthrough_python_script(dir.path(), "wedged_mcp_python", 3);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("mcp")
+        .env("TG_SIDECAR_PYTHON", &wedge_script)
+        .env("TG_PASSTHROUGH_TIMEOUT_MS", "300")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = tg.spawn().expect("failed to spawn `tg mcp`");
+
+    // Sleep comfortably past the configured 300ms deadline. If the daemon exemption were NOT
+    // honored, execute_python_passthrough_command_inner would already have killed the wedged
+    // child at ~300ms via wait_for_passthrough_or_kill, and `tg mcp` itself would already have
+    // exited with a timeout error (handle_python_passthrough calls exit_with_sidecar_error on
+    // any Err) well before this point.
+    thread::sleep(Duration::from_millis(1500));
+    assert!(
+        matches!(child.try_wait(), Ok(None)),
+        "expected `tg mcp` to still be running 1.5s past its 300ms TG_PASSTHROUGH_TIMEOUT_MS \
+         deadline -- the mcp server-launch exemption did not hold and it was killed by the timer"
+    );
+
+    // Bounded, deterministic cleanup: kill + reap rather than waiting out the wedge's sleep.
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 #[cfg(not(feature = "cuda"))]
 #[test]
 fn test_gpu_search_schema_invalid_json_reports_clear_error() {
