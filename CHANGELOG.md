@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v1.58.1 (2026-07-10)
+
+### Bug Fixes
+
+- **rust**: Bound the native-CPU engine's implicit-huge-root walk (audit #105, the #100 gate
+  residual) ([#493](https://github.com/oimiragieo/tensor-grep/pull/493),
+  [`d4e5be5`](https://github.com/oimiragieo/tensor-grep/commit/d4e5be521cf01c1302d723c931a5695cac2d40dc))
+
+* fix(rust): bound the native-CPU engine's implicit-huge-root walk (audit #105, the #100 Opus-gate
+  residual)
+
+PR #491 (audit #100) hoisted a walk-ceiling gate into execute_ripgrep_search so the rg-passthrough
+  engine refuses an unscoped implicit-path walk on a huge root (exit 2, no hang). That PR's own
+  left-behind comment flagged the native-CPU engine (run_native_search, reached via --json /
+  --force-cpu / single-pattern --fixed-strings / rg-unavailable routing) as an untouched residual:
+  NativeSearchConfig had no path_was_implicit field at all, so a bare `tg search -e PATTERN --json`
+  with no path still walked an implicit huge root unbounded through this engine.
+
+Adds the native-CPU sibling of check_implicit_walk_ceiling (check_native_implicit_walk_ ceiling in
+  native_search.rs), reusing #100's shared probe/message helpers from rg_passthrough.rs, and calls
+  it as the first statement of both search_walk_roots_parallel and collect_walked_files -- the only
+  two functions that ever hand a root to WalkBuilder in this module, so every native-CPU walk entry
+  point (including the multi-pattern AhoCorasick fast path, which calls collect_walked_files
+  directly) is covered from one chokepoint instead of relying on each of main.rs's several dispatch
+  sites to remember it.
+
+Threads path_was_implicit through NativeSearchConfig and every production construction site
+  (native_search_config_for_positional, native_search_config_for_command, and the explicit
+  --gpu-device-ids CPU-fallback path via a new GpuSearchParams field) -- the signal did not exist
+  anywhere on this engine before this change. Also fixes a pre-existing mislabeled
+  path_was_implicit: false in the GPU-explicit rg-fallback args that incorrectly assumed "exactly
+  one path root" implies explicit (an implicit default is itself a single "." root), and normalizes
+  collect_native_multi_pattern_matches's own ceiling refusal to the same exit-2 contract every other
+  native-CPU route already gets (it used to propagate via ? all the way to main()'s default exit-1).
+
+Tests: 5 new unit tests in native_search.rs (refuse/allow matrix + a hermetic
+  refuse-before-enumerate test mirroring #100's own bounded test), 3 in main.rs (signal threading
+  through both config builders + the multi-pattern exit-code predicate), 1 in rg_passthrough.rs (the
+  shared refusal-message recognizer). Full cargo test suite green: 76 lib tests, 74 bin tests, and
+  all 26 integration test files, 0 failures.
+
+Dogfooded against the real built binary: `tg search -e TODO --json` with no path, run from
+  C:/dev/projects (~390K files), now refuses in 200ms with exit code 2 instead of walking unbounded.
+  The same command with an explicit oversized path (tensor-grep/, itself well over the 1500-file
+  ceiling) completes normally in 179ms with exit code 0 and correct JSON results, proving the
+  explicit-path fail-open contract is unaffected.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+* style(rust): cargo fmt the audit #105 walk-ceiling additions (fixes the CI Formatting and Linting
+  gate)
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.58.0 (2026-07-10)
 
 ### Features
