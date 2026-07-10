@@ -5477,7 +5477,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         // check is redundant -- deleted rather than left to drift out of sync with the hoisted
         // one. The hoisted gate also drops the `--glob`/`--file_type` requirement this block had
         // (fires on `path_was_implicit` alone, still bounded by the same 1500-file ceiling walk),
-        // closing #105 (a bare unfiltered implicit-path search on a huge root) too.
+        // closing #105 FOR THE RG-PASSTHROUGH ENGINE only (a bare unfiltered implicit-path search on a huge root). SCOPE CAVEAT (audit #100 Opus gate 2026-07-10): this bounds only callers of execute_ripgrep_search; the native-CPU engine (run_native_search, reached via --json / --force-cpu / word / fixed / rg-unavailable) does NOT pass through here and remains an unbounded implicit-walk vector -- tracked as the #105 residual (generalize the ceiling before engine selection, or replicate it at the native-CPU entry).
         if args.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());
         }
