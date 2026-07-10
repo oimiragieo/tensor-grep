@@ -2098,12 +2098,37 @@ def tg_ruleset_scan(
             ruleset=ruleset,
             path=path,
         )
-    except BackendExecutionError as exc:
-        # Backend Fail-Closed Contract: a runtime backend fault (e.g. ast-grep failing on an
-        # over-long pattern -- WinError 206 "command line too long" on Windows) is a RuntimeError,
-        # NOT a ValueError, so it escaped the two handlers above as a RAW TRACEBACK, violating the
-        # tool's "never a raw traceback" contract on a trivial valid payload. Surface it as a
-        # structured backend_error instead. (audit #95 Part-2 re-gate: scan-execution fail-closed.)
+    except ConfigurationError as exc:
+        # [SEC] ast-grep toolchain not available. ast-grep is NOT a declared dependency, so a
+        # DEFAULT `pip install tensor-grep` has no ast-grep binary -- and on that install a trivial
+        # one-line inline rule reaches _select_ast_backend_for_pattern, which raises
+        # ConfigurationError (a RuntimeError, NOT a ValueError/BackendExecutionError). It was
+        # escaping as a RAW TRACEBACK on the common default-install path. Surface it structured.
+        # (audit #95 Part-2 round-4 gate; mirrors tg_ast_search's ConfigurationError handling.)
+        return _ruleset_scan_error(
+            str(exc),
+            code="unavailable",
+            ruleset=ruleset,
+            path=path,
+        )
+    except OSError as exc:
+        # [SEC] a caller-supplied baseline_path/suppressions_path that is unreadable (a directory,
+        # permission-denied, a race-deleted file) makes _load_ruleset_baseline/_load_ruleset_
+        # suppressions' read_text raise OSError/PermissionError/IsADirectoryError (NOT a
+        # ValueError) -- was a raw traceback. Fail closed. (audit #95 Part-2 round-4 gate.)
+        return _ruleset_scan_error(
+            f"unreadable scan path: {exc}",
+            code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+    except RuntimeError as exc:
+        # [SEC] Backend Fail-Closed backstop: BackendExecutionError (e.g. ast-grep failing on an
+        # over-long pattern, WinError 206) AND any OTHER runtime-fault sibling must be a structured
+        # error, never a raw traceback. Broadened from a BackendExecutionError-only catch to the
+        # whole RuntimeError class, mirroring the CLI twin's `except (ValueError, RuntimeError)`
+        # (main.py). Logic bugs (KeyError/TypeError/AttributeError) are NOT RuntimeError and still
+        # surface. (audit #95 Part-2 round-4 gate: BLOCK on the incomplete fault class.)
         return _ruleset_scan_error(
             f"scan backend failed: {exc}",
             code="backend_error",

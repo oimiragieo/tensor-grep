@@ -1887,6 +1887,55 @@ def test_tg_ruleset_scan_backend_execution_error_fails_closed(tmp_path, monkeypa
     assert "Traceback" not in payload["error"]["message"]
 
 
+def test_tg_ruleset_scan_configuration_error_fails_closed(tmp_path, monkeypatch):
+    """[SEC] round-4 gate: ast-grep is NOT a declared dependency, so on a DEFAULT
+    `pip install tensor-grep` a trivial one-line inline rule reaches
+    _select_ast_backend_for_pattern, which raises ConfigurationError (a RuntimeError, NOT a
+    ValueError/BackendExecutionError). That escaped tg_ruleset_scan as a RAW TRACEBACK on the
+    common default-install path. Must fail closed as a structured 'unavailable'."""
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.core.pipeline import ConfigurationError
+
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(*a, **k):
+        raise ConfigurationError("ast-grep binary not found on PATH; install ast-grep")
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _boom)
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            inline_rules="rules:\n  - id: x\n    pattern: print($A)\n", path=".", language="python"
+        )
+    )
+
+    assert payload["error"]["code"] == "unavailable"
+    assert "Traceback" not in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_baseline_io_error_fails_closed(tmp_path, monkeypatch):
+    """[SEC] round-4 gate: an unreadable caller-supplied baseline/suppressions path (e.g. a
+    directory) makes _load_ruleset_baseline's read_text raise OSError/IsADirectoryError (NOT a
+    ValueError). That escaped as a RAW TRACEBACK. Must fail closed structured, never a traceback."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(*a, **k):
+        raise IsADirectoryError("[Errno 21] Is a directory: 'baseline'")
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _boom)
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            inline_rules="rules:\n  - id: x\n    pattern: print($A)\n", path=".", language="python"
+        )
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Traceback" not in payload["error"]["message"]
+
+
 def test_tg_ruleset_scan_inline_rules_at_length_boundary_still_parses(monkeypatch, tmp_path):
     """Boundary correctness for the length bound: a payload AT the cap must still reach the
     parser (not be off-by-one refused) and behave exactly like any other invalid-but-in-budget
