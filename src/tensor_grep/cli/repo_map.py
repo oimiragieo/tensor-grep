@@ -7101,6 +7101,8 @@ def _build_context_pack_from_map(
     query: str,
     *,
     _test_source_limit: int | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "context_scoring"):
@@ -7126,6 +7128,15 @@ def _build_context_pack_from_map(
 
         scored_symbols: list[dict[str, Any]] = []
         for symbol in payload["symbols"]:
+            # task #103: this loop iterates every symbol in the scanned repo -- the single
+            # largest repo-size-proportional loop in context-pack construction (profiled at
+            # ~13% of a `tg callers`/`tg impact` call) -- and ran fully unbounded regardless of
+            # --deadline before this fix. Mirror the same pre-iteration deadline check
+            # _preferred_definition_files/_relevant_tests_for_symbol already use.
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                break
             score = _score_symbol(symbol, symbol_terms)
             if score <= 0:
                 continue
@@ -12628,6 +12639,8 @@ def build_context_pack_from_map(
     query: str,
     *,
     _test_source_limit: int | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
@@ -12641,6 +12654,8 @@ def build_context_pack_from_map(
         payload,
         query,
         _test_source_limit=_test_source_limit,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
         _profiling_collector=_profiling_collector,
     )
     return _attach_profiling(payload, _profiling_collector)
@@ -13852,9 +13867,15 @@ def build_symbol_impact_from_map(
         payload["provider_status"] = dict(default_status)
         _copy_lsp_evidence_status(payload, defs_payload)
         return _attach_profiling(payload, _profiling_collector)
+    # task #103 Fix 2: thread the shared deadline into context-pack's own symbol-scoring loop too
+    # -- previously unbounded even when this same deadline_monotonic already gated the sibling
+    # scans just below (the #52 fix (loop C) comment).
+    context_pack_deadline_hit = _DeadlineBreakFlag()
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=context_pack_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
     # #52 fix (loop C): build_symbol_impact_from_map previously threaded NO deadline at all into
@@ -14004,7 +14025,13 @@ def build_symbol_impact_from_map(
     # definition scoring + related-test matching, both unbounded before this fix) into partial --
     # mirrors the callers/blast-radius fold-in pattern (task #61) so a --deadline-truncated impact
     # result is never silently reported as complete.
-    if preferred_definition_deadline_hit.hit or related_tests_deadline_hit.hit:
+    # task #103 Fix 2: context_pack_deadline_hit joins the same fold-in -- the context-pack
+    # symbol-scoring loop is a THIRD sibling scan sharing this deadline_monotonic.
+    if (
+        preferred_definition_deadline_hit.hit
+        or related_tests_deadline_hit.hit
+        or context_pack_deadline_hit.hit
+    ):
         payload["partial"] = True
         payload["deadline_limit"] = {"deadline_exceeded": True}
     _copy_scan_limit(payload, defs_payload)
@@ -15165,9 +15192,14 @@ def build_symbol_callers_from_map(
     import_graph_consumer_files = sorted(
         dict.fromkeys(str(current["file"]) for current in import_graph_consumers)
     )
+    # task #103 Fix 2: thread the shared deadline into context-pack's own symbol-scoring loop too
+    # -- previously unbounded even though it feeds the same 4-way partial fold-in just below.
+    context_pack_deadline_hit = _DeadlineBreakFlag()
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=context_pack_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
     # #52 fix (loop B): this sibling loop used to be unbounded even though it feeds the
@@ -15224,13 +15256,15 @@ def build_symbol_callers_from_map(
     # task #61 / #52 fix (loop B): fold ALL sibling loops' early-break signal in alongside the main
     # caller-scan loop's own flag -- a central symbol can finish the bounded main scan inside budget
     # while any sibling loop (import-graph-consumers, preferred-definition-file scoring,
-    # related-test matching) pushes wall-clock well past --deadline. Any one of the four breaking
-    # early makes this result partial.
+    # related-test matching, context-pack symbol scoring) pushes wall-clock well past --deadline.
+    # Any one of the five breaking early makes this result partial.
+    # task #103 Fix 2: context_pack_deadline_hit joins the same fold-in.
     if (
         caller_scan_deadline_hit
         or import_graph_consumers_deadline_hit.hit
         or preferred_definition_deadline_hit.hit
         or related_tests_deadline_hit.hit
+        or context_pack_deadline_hit.hit
     ):
         # moat P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
         # holds what was found before the budget). graph_completeness downgrades so an agent does not

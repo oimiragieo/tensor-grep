@@ -8931,8 +8931,11 @@ def impact(
     """Return likely impacted files and tests for a symbol change."""
     from tensor_grep.cli.repo_map import (
         _apply_symbol_token_budget,
-        build_symbol_callers,
-        build_symbol_impact,
+        _copy_partial_signal,
+        _deadline_monotonic_from_seconds,
+        build_repo_map,
+        build_symbol_callers_from_map,
+        build_symbol_impact_from_map,
     )
 
     try:
@@ -8942,26 +8945,41 @@ def impact(
             symbol_option=symbol,
             command_name="impact",
         )
-        payload = build_symbol_impact(
-            resolved_symbol,
+        # task #103: build the repo_map and convert --deadline to an absolute monotonic
+        # timestamp ONCE, then share both across the impact + callers passes below -- mirrors
+        # build_symbol_blast_radius's own shared-map pattern (repo_map.py's build_repo_map(...)
+        # once + two `_from_map` calls against it) and the daemon/MCP server, which already
+        # share one repo_map across multiple `_from_map` calls in a session. Previously each of
+        # the two independent wrapper calls (build_symbol_impact + build_symbol_callers) built
+        # its OWN repo_map from scratch -- parsing the whole repo twice -- AND independently
+        # re-derived deadline_monotonic from a fresh time.monotonic() at its own start, so
+        # --deadline silently allowed up to ~2x the requested budget for `tg impact`.
+        deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
+        repo_map = build_repo_map(
             resolved_path,
-            semantic_provider=provider,
             max_repo_files=max_repo_files,
-            deadline_seconds=deadline,
+            deadline_monotonic=deadline_monotonic,
+        )
+        payload = build_symbol_impact_from_map(
+            repo_map,
+            resolved_symbol,
+            semantic_provider=provider,
+            deadline_monotonic=deadline_monotonic,
             max_tests=max_tests,
         )
+        _copy_partial_signal(payload, repo_map)
         # H5: impact previously surfaced only definition/import-derived `files` and so
         # under-reported call sites relative to `tg callers` (which finds the CLI
         # handler, RPC handler, and tests). Populate a top-level `callers` key from the
         # same caller pass so impact is a superset, not a subset, of callers.
         if not payload.get("no_match"):
-            callers_payload = build_symbol_callers(
+            callers_payload = build_symbol_callers_from_map(
+                repo_map,
                 resolved_symbol,
-                resolved_path,
                 semantic_provider=provider,
-                max_repo_files=max_repo_files,
-                deadline_seconds=deadline,
+                deadline_monotonic=deadline_monotonic,
             )
+            _copy_partial_signal(callers_payload, repo_map)
             payload["callers"] = list(callers_payload.get("callers", []))
             # Propagate the caller-scan's --deadline partial signal (cursor review 1.40.0): impact's
             # second pass can be deadline-truncated even when the first pass wasn't, so carry partial +

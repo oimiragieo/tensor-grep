@@ -908,3 +908,161 @@ def test_step52_high_fan_out_symbol_no_deadline_still_completes(tmp_path: Path) 
 
     assert "partial" not in result
     assert result["graph_completeness"] == "moderate"
+
+
+# =================================================================================================
+# Task #103 Fix 2: build_context_pack_from_map / _build_context_pack_from_map accepted NO deadline
+# parameter at all and ran their full symbol-scoring cost unconditionally -- called from BOTH
+# build_symbol_impact_from_map (repo_map.py:~13855) and build_symbol_callers_from_map
+# (repo_map.py:~15168), so --deadline leaked wall-clock through this shared helper on every
+# impact/callers/blast-radius call (profiled at ~13% of callers' cost). Mirrors the #52/#61
+# _DeadlineBreakFlag idiom exactly: gate the symbol-scoring loop (the single largest
+# repo-size-proportional loop in context-pack construction), fold the early-break signal into
+# `partial` at both call sites.
+# =================================================================================================
+
+
+def _make_many_symbols_repo(root: Path, count: int) -> None:
+    src = root / "src"
+    src.mkdir(parents=True)
+    for index in range(count):
+        (src / f"m{index}.py").write_text(
+            f"def widget_{index}():\n    return {index}\n", encoding="utf-8"
+        )
+
+
+def test_step103_context_pack_honors_already_expired_deadline(tmp_path: Path) -> None:
+    _make_many_symbols_repo(tmp_path, 8)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    flag = repo_map._DeadlineBreakFlag()
+
+    result = repo_map.build_context_pack_from_map(
+        rm, "widget", deadline_monotonic=time.monotonic() - 1.0, deadline_hit=flag
+    )
+
+    assert flag.hit is True
+    assert isinstance(result, dict)  # returns a valid (partial) payload -- does not raise or hang
+
+
+def test_step103_context_pack_none_deadline_is_unaffected(tmp_path: Path) -> None:
+    # Golden-parity guard: deadline_monotonic=None (the default, and every pre-existing call site's
+    # behavior) never trips the new gate.
+    _make_many_symbols_repo(tmp_path, 8)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    flag = repo_map._DeadlineBreakFlag()
+
+    repo_map.build_context_pack_from_map(rm, "widget", deadline_hit=flag)
+
+    assert flag.hit is False
+
+
+def test_step103_context_pack_loop_breaks_mid_scan_not_just_pre_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The sharper claim: the deadline crosses WHILE the scoring loop is running, not merely
+    # pre-expired -- proves a PARTIAL (not zero, not full) symbol set was scored.
+    _make_many_symbols_repo(tmp_path, 10)
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(repo_map.time, "monotonic", lambda: clock["t"])
+    original_score = repo_map._score_symbol
+    call_count = {"n": 0}
+
+    def _advancing_score(*args, **kwargs):
+        call_count["n"] += 1
+        clock["t"] += 1.0
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_score_symbol", _advancing_score)
+    flag = repo_map._DeadlineBreakFlag()
+
+    repo_map.build_context_pack_from_map(
+        rm, "widget", deadline_monotonic=base + 4.0, deadline_hit=flag
+    )
+
+    assert flag.hit is True
+    assert 0 < call_count["n"] < 10  # cut short mid-scan, not exhausted
+
+
+def test_step103_impact_marks_partial_on_context_pack_timeout_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Isolation test (mirrors test_step52_impact_from_map_marks_partial_on_relevant_tests_timeout_
+    # alone above): _score_symbol is unique to the context-pack scoring loop (no other sibling loop
+    # in build_symbol_impact_from_map calls it), so hooking it isolates the context-pack loop as the
+    # SOLE source of the partial signal.
+    _make_many_symbols_repo(tmp_path, 10)
+    (tmp_path / "src" / "target.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(repo_map.time, "monotonic", lambda: clock["t"])
+    original_score = repo_map._score_symbol
+    call_count = {"n": 0}
+
+    def _advancing_score(*args, **kwargs):
+        call_count["n"] += 1
+        clock["t"] += 1.0
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_score_symbol", _advancing_score)
+
+    result = repo_map.build_symbol_impact_from_map(rm, "shared", deadline_monotonic=base + 3.0)
+
+    assert call_count["n"] > 0  # the context-pack scoring loop actually ran
+    assert result.get("partial") is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_step103_callers_marks_partial_on_context_pack_timeout_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _make_many_symbols_repo(tmp_path, 10)
+    (tmp_path / "src" / "target.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(repo_map.time, "monotonic", lambda: clock["t"])
+    original_score = repo_map._score_symbol
+    call_count = {"n": 0}
+
+    def _advancing_score(*args, **kwargs):
+        call_count["n"] += 1
+        clock["t"] += 1.0
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_score_symbol", _advancing_score)
+
+    result = repo_map.build_symbol_callers_from_map(rm, "shared", deadline_monotonic=base + 3.0)
+
+    assert call_count["n"] > 0  # the context-pack scoring loop actually ran
+    assert result.get("partial") is True
+    assert result["graph_completeness"] == "partial"
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_step103_impact_no_deadline_context_pack_stays_complete(tmp_path: Path) -> None:
+    # Golden-parity companion: without --deadline, behavior is unchanged.
+    _make_many_symbols_repo(tmp_path, 6)
+    (tmp_path / "src" / "target.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    result = repo_map.build_symbol_impact_from_map(rm, "shared")  # no deadline
+
+    assert "partial" not in result
+    assert "deadline_limit" not in result
+
+
+def test_step103_callers_no_deadline_context_pack_stays_complete(tmp_path: Path) -> None:
+    _make_many_symbols_repo(tmp_path, 6)
+    (tmp_path / "src" / "target.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    result = repo_map.build_symbol_callers_from_map(rm, "shared")  # no deadline
+
+    assert "partial" not in result
+    assert result["graph_completeness"] == "moderate"
