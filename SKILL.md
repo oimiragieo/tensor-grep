@@ -7,9 +7,9 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-release_docs_current_tag: v1.58.3
+release_docs_current_tag: v1.58.4
 
-As of 2026-06-25, the current tagged version is `v1.58.3`, and the latest complete public PyPI/release-asset distribution is also `v1.58.3`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, capsule validation-trust fixes, explicit language/file-name ranking, quoted Windows validation commands, docs governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternatives, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, broad multi-project workspace-root scan guardrails, `tg doctor` Windows shell escaping diagnostics, and long-lived agent-loop memory/cache caps are in the public `v1.58.3` GitHub asset and PyPI release line.
+As of 2026-06-25, the current tagged version is `v1.58.4`, and the latest complete public PyPI/release-asset distribution is also `v1.58.4`. Stable installer, PyPI metadata refresh, release-native asset publication, managed-native front-door refresh after `tg upgrade`, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity for advertised public flags, Windows `.cmd` quoted-pattern launcher handling, native-first Windows PATH ordering, top-level validation-command JSON, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, the opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, capsule validation-trust fixes, explicit language/file-name ranking, quoted Windows validation commands, docs governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternatives, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, broad multi-project workspace-root scan guardrails, `tg doctor` Windows shell escaping diagnostics, and long-lived agent-loop memory/cache caps are in the public `v1.58.4` GitHub asset and PyPI release line.
 
 Recent v1.13.40-v1.13.42 hardening (newest behavior agents should rely on):
 
@@ -21,9 +21,9 @@ Recent v1.13.40-v1.13.42 hardening (newest behavior agents should rely on):
 
 Current release facts:
 
-- Current release tag: `v1.58.3`.
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.58.3>.
-- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.58.3 tg --version` reports `tensor-grep 1.58.3`.
+- Current release tag: `v1.58.4`.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.58.4>.
+- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.58.4 tg --version` reports `tensor-grep 1.58.4`.
 - Full per-version release history and CI/release proofs: see `CHANGELOG.md` and <https://github.com/oimiragieo/tensor-grep/releases> (this skill records the current release facts, not a hand-maintained proof ledger).
 
 
@@ -256,7 +256,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.58.3` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. `tg dogfood` wraps the same gate with a compact verdict and JSON report. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.58.4` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. `tg dogfood` wraps the same gate with a compact verdict and JSON report. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

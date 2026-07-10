@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v1.58.4 (2026-07-10)
+
+### Bug Fixes
+
+- **backends**: Route the UTF-8-fallback retry through the ReDoS gate (audit #111, fail-closed)
+  ([#497](https://github.com/oimiragieo/tensor-grep/pull/497),
+  [`4cb45b6`](https://github.com/oimiragieo/tensor-grep/commit/4cb45b60abbf08073eeb7f9c8acc5895d79fd963))
+
+Audit #111 (a third ReDoS-gate bypass, sibling to #6/#16): two residual paths of CPUBackend.search's
+  "simple pattern" route fell through to unbounded Python `re` -- (1) the _RustUtf8DecodeMismatch
+  retry (Rust returned empty on a non-UTF-8 file), on the premise "Rust already ran the pattern in
+  O(n), so it's ReDoS-safe"; and (2) the generic `except Exception` branch on a non-syntax Rust
+  runtime fault, which fell open "for robustness". Both premises are the same one already refuted
+  for --pcre2: a pattern Rust runs in guaranteed linear time can still catastrophically backtrack
+  under Python's backtracking engine (Rust has no catastrophic-backtracking failure mode for any
+  pattern it accepts, so its success proves nothing about Python-re safety).
+
+The adversarial Opus security gate BLOCKED the first fix attempt (a static "no quantifier metachar
+  *+?{" allow-list) as provably unsound: catastrophic backtracking has a second source besides
+  repetition -- variable-length ALTERNATION. `(a|aa)(a|aa)...(a|aa)b` (i.e. "(a|aa)"*k + "b")
+  contains no quantifier char at all yet backtracks 2^k (measured pure-Python re: k=24 -> 6.19s,
+  clean 2^k), letting an attacker dial severity via pattern length on a tiny non-UTF-8 file. No
+  static pattern analysis can be the gate.
+
+Fix: gate both paths (and the existing --pcre2 residual) on the new
+  CPUBackend._fallback_pattern_is_provably_linear, which admits ONLY fixed_strings -- re.escape'd in
+  _compile_regexes into a literal automaton with no quantifier and no alternation, provably linear
+  regardless of the raw pattern text. Every other pattern fails closed with BackendExecutionError,
+  matching the -w/-x/-C/--ltl/--pcre2 siblings which already fail closed on any Rust failure. This
+  deliberately fails closed a legit non-ASCII regex on a non-UTF-8 file (e.g. cafe-with-accent + \d+
+  on latin-1) -- the endorsed security-over-availability trade; such users pass --fixed-strings or
+  use ripgrep (a genuine byte-safe engine). Genuine Rust ABSENCE (ImportError) still falls open --
+  Python is then the only engine, a dev/broken-install condition, not the shipped MCP-reachable
+  binary.
+
+Reproduced empirically before the fix (both bombs): `(a+)+$` and the alternation bomb on a non-UTF-8
+  file each pegged a CPU core in catastrophic backtracking (needed a forced OS-level kill).
+  Regression tests bound each in a real subprocess (subprocess.run timeout) -- Python's _sre engine
+  holds the GIL for the entire match attempt, so an in-process thread-join watchdog cannot reliably
+  bound it (a sibling thread stuck in backtracking can starve the main thread's own timeout wait
+  too); only an OS-level process kill is reliable.
+
+Also updates the two skill docs (code-search-and-retrieval-reference,
+  tensor-grep-architecture-contract) to describe the fixed_strings-only fail-closed gate and record
+  the alternation-bomb lesson (no static pattern-char analysis is a sound ReDoS gate).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.3 (2026-07-10)
 
 ### Bug Fixes
