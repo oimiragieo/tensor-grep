@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.58.5 (2026-07-10)
+
+### Bug Fixes
+
+- **mcp**: Default tg_repo_map max_repo_files to 2000 like its siblings (audit #114, silent
+  512-truncation) ([#499](https://github.com/oimiragieo/tensor-grep/pull/499),
+  [`0913df7`](https://github.com/oimiragieo/tensor-grep/commit/0913df7319f50cf599c555e94336466185f8b013))
+
+tg_repo_map's signature hardcoded `max_repo_files: int | None = 512` while every sibling MCP scan
+  tool (tg_symbol_defs, tg_edit_plan, tg_context_pack, etc.) defaults to the shared
+  `_DEFAULT_MCP_REPO_SCAN_LIMIT` (2000). The effective-limit calc `max_repo_files or
+  DEFAULT_AGENT_REPO_MAP_LIMIT` only falls through to 2000 when a caller explicitly passes `None` --
+  the 512 signature default was truthy, so omitting the param (the normal agent-call case) silently
+  capped the scan at 512 instead of 2000. Same class of bug audit #57 fixed for the CLI; this closes
+  the one MCP tool it missed. tg_session_open intentionally keeps its 512 default ("agent-safe cold
+  opens") and is untouched.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.4 (2026-07-10)
 
 ### Bug Fixes
