@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 from mcp import types
@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
 from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 
+from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.backends.cpu_backend import (
     compute_native_walk_deadline,
@@ -28,14 +29,19 @@ from tensor_grep.backends.cpu_backend import (
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
+    _apply_semantic_rerank,
+    _build_doctor_payload,
     _build_rulesets_payload,
     _format_unbounded_large_root_scan_error,
     _format_unbounded_vendored_root_scan_error,
+    _load_inline_rule_specs,
     _run_ast_scan_payload,
     _search_with_cpu_fallback,
+    _set_semantic_rank_fallback_reason,
     _should_refuse_unbounded_large_root_scan,
     _should_refuse_unbounded_vendored_root_scan,
 )
+from tensor_grep.cli.orient_capsule import build_orient_capsule_json
 from tensor_grep.cli.repo_map import (
     _apply_context_token_budget,
     build_context_pack,
@@ -69,15 +75,22 @@ def _mcp_server_version() -> str:
 
 
 # Stable contract version for the tg MCP server surface.
-# Bump only on intentional breaking changes to the MCP tool/resource shape.
+# Bump on intentional breaking changes to the MCP tool/resource shape, OR (round-9) on a
+# tool-SET shape change (new tools / new params) worth flagging to a version-pinning client.
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
-# 1.0.0 -> 1.1.0 (round-8, audit #95): every tool's PRIMARY path/root param is now
+# 1.0.0 -> 1.1.0 (round-8, audit #95 Part 1): every tool's PRIMARY path/root param is now
 # confined to _mcp_root() (default cwd, override via TG_MCP_ROOT) -- a caller that
 # previously relied on an out-of-cwd path succeeding (e.g. a monorepo fleet pointing an
 # MCP tool at a sibling repo) now gets a structured invalid_input refusal instead of a
 # result, unless TG_MCP_ROOT is set to widen the anchor. Breaking-behavior change, not a
 # breaking shape change -- bump per the gate's should-fix.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.1.0"
+# 1.1.0 -> 1.2.0 (round-9, audit #95 Part 2): additive tool-set shape change, not a breaking
+# one -- 2 new tools (tg_orient, tg_doctor) and new optional params on existing tools
+# (tg_search rank/semantic, the 5 symbol/file-dependency tools' deadline, tg_ruleset_scan's
+# inline_rules + ruleset now optional). Every existing caller's behavior is unchanged when
+# the new params are simply not passed; bumped anyway because `tg_mcp_capabilities()`'s
+# `tools[]` array itself grew, which a version-pinning client may reasonably want to detect.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.2.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -114,6 +127,8 @@ _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_rulesets",
     "tg_ruleset_scan",
     "tg_repo_map",
+    "tg_orient",
+    "tg_doctor",
     "tg_context_pack",
     "tg_edit_plan",
     "tg_context_render",
@@ -518,7 +533,7 @@ def _review_bundle_error(message: str, *, code: str, routing_reason: str) -> str
     return json.dumps(payload, indent=2)
 
 
-def _ruleset_scan_error(message: str, *, code: str, ruleset: str, path: str) -> str:
+def _ruleset_scan_error(message: str, *, code: str, ruleset: str | None, path: str) -> str:
     payload = _envelope_base(
         routing_backend="AstBackend",
         routing_reason="builtin-ruleset-scan",
@@ -1226,7 +1241,7 @@ def execute_rewrite_apply_json(
     if audit_manifest is not None:
         try:
             audit_manifest = str(
-                _confine_write_path(audit_manifest, Path.cwd(), label="audit_manifest")
+                _confine_write_path(audit_manifest, _mcp_root(), label="audit_manifest")
             )
         except ValueError as exc:
             return _rewrite_error(str(exc), code="invalid_input"), 1
@@ -1814,27 +1829,43 @@ def _confine_mcp_path(candidate: str, *, label: str) -> Path:
 
     Thin wrapper over `_confine_read_path` anchored at `_mcp_root()` (instead of a
     per-tool-hardcoded `Path.cwd()`), so the one `TG_MCP_ROOT` override relocates the anchor
-    of every tool confined THROUGH THIS HELPER together. NOTE: a residual set of round-6/7
-    file/manifest/bundle params (tg_file_imports/importers `file`, tg_classify_logs
-    `file_path`, the tg_audit_*/tg_review_bundle_* manifest+bundle params, tg_rewrite_apply
-    `audit_manifest`) still anchor directly at `Path.cwd()` and do NOT yet move with a
-    `TG_MCP_ROOT` that narrows/relocates relative to cwd -- bounded to the server cwd
-    (fail-closed, never arbitrary-FS; identical to `_mcp_root()` in the default unset
-    config), tracked to route through `_mcp_root()` before TG_MCP_ROOT is advertised as the
-    fleet boundary. Raises ``ValueError`` (fail closed) on an
-    out-of-root candidate; callers MUST forward the resolved ``Path`` this returns
+    of every tool confined THROUGH THIS HELPER together. Raises ``ValueError`` (fail closed)
+    on an out-of-root candidate; callers MUST forward the resolved ``Path`` this returns
     (`str()`'d) as their new ``path``, and MUST do so as the very first operation in the
     tool body, BEFORE any secondary anchor (session_root, scan_root, policy_anchor, ...) is
     derived from ``path`` -- otherwise that secondary anchor still derives from the raw,
     unconfined candidate and the confinement is cosmetic (this exact bug was the gate's
     LIVE VULN finding on `tg_session_file_importers`'s `session_root`).
+
+    ROUND-9 (audit #95 Part 2 / #102 fold-in): the round-6/7 residual set this docstring
+    used to name as still anchored directly at `Path.cwd()` (tg_file_imports/importers
+    `file`, tg_classify_logs `file_path`, the tg_audit_*/tg_review_bundle_* manifest+bundle
+    params, tg_rewrite_apply `audit_manifest`) now ALSO route through `_mcp_root()` via
+    `_confine_read_path`/`_confine_write_path` directly (they do not call this specific
+    wrapper since they anchor to `_mcp_root()` without the PRIMARY-path semantics this
+    function documents, but the anchor itself is the same `_mcp_root()` call) -- every
+    confined param in this file now moves uniformly with `TG_MCP_ROOT`. See
+    test_round8_residual_cwd_params_move_with_tg_mcp_root for the regression coverage.
     """
     return _confine_read_path(candidate, _mcp_root(), label=label)
 
 
+# [SEC] audit #95 Part 2: bound the raw `inline_rules` string BEFORE it ever reaches
+# yaml.safe_load. PyYAML's SafeLoader still resolves anchors/aliases (`&`/`*`); a small
+# document can construct a "billion laughs"-style combinatorial blowup in memory even
+# without executing arbitrary code, and the MCP surface accepts this string directly from an
+# (LLM/attacker-influenceable) tool call rather than a human-typed CLI argv. This length cap
+# is a cheap, unconditional first line of defense -- it does not fully close an anchor/alias
+# expansion bomb (that needs a depth/complexity-limited loader), but it blunts the attack
+# surface and matches the codebase's existing `_MAX_MCP_STDIO_MESSAGE_BYTES` precedent for
+# bounding an untrusted MCP-supplied payload before it is parsed.
+_MAX_INLINE_RULES_CHARS = 64 * 1024
+
+
 @mcp.tool()  # type: ignore
 def tg_ruleset_scan(
-    ruleset: str,
+    ruleset: str | None = None,
+    inline_rules: str | None = None,
     path: str = ".",
     language: str | None = None,
     glob: str | None = None,
@@ -1851,16 +1882,26 @@ def tg_ruleset_scan(
     max_evidence_snippet_chars: int = 120,
 ) -> str:
     """
-    Execute a built-in ruleset scan and return structured findings.
+    Execute a built-in or inline-YAML ast-grep ruleset scan and return structured findings.
 
     This tool is read-only by default. Some optional parameters write files to disk
     when supplied: ``write_baseline`` and ``write_suppressions`` create or overwrite
     the file at the given path. Leave them unset for a pure read-only scan.
 
+    Exactly one of ``ruleset`` or ``inline_rules`` is required.
+
     Args:
-        ruleset: Built-in ruleset name to execute.
+        ruleset: Built-in ruleset name to execute. Mutually exclusive with ``inline_rules``.
+        inline_rules: Inline ast-grep rule YAML (one or more `---`-separated documents,
+            each with `id`/`rule.pattern`/optional `language`/`severity`/`message`) to
+            execute WITHOUT a built-in pack or any file I/O -- mirrors the CLI's
+            ``--inline-rules``. Mutually exclusive with ``ruleset``. Bounded to
+            64KiB to blunt a YAML anchor/alias expansion-bomb before it reaches the
+            parser; fails closed (a structured ``invalid_input`` error, never a raw
+            traceback) on invalid YAML or a language ast-grep does not support.
         path: Root path to scan.
-        language: Optional language override for the ruleset.
+        language: Optional language override for the ruleset, or the default language
+            for any inline rule that does not specify its own.
         glob: Optional include/exclude glob for bounded scans.
         file_type: Optional extension/type filter for bounded scans.
         max_depth: Optional traversal depth limit for broad roots.
@@ -1894,7 +1935,6 @@ def tg_ruleset_scan(
         # the scan itself -- an unconfined path was a full arbitrary-directory scan/read
         # (and, via write_baseline/write_suppressions, write) primitive over the MCP surface.
         path = str(_confine_mcp_path(path, label="path"))
-        ruleset_meta, rules = resolve_rule_pack(ruleset, language)
     except ValueError as exc:
         return _ruleset_scan_error(
             str(exc),
@@ -1903,13 +1943,80 @@ def tg_ruleset_scan(
             path=path,
         )
 
-    project_cfg: dict[str, object] = {
-        "config_path": f"builtin:{ruleset_meta['name']}",
-        "root_dir": Path(path).expanduser().resolve(),
-        "rule_dirs": [],
-        "test_dirs": [],
-        "language": ruleset_meta["language"],
-    }
+    # Mirrors main.py scan()'s mutual-exclusivity guard (`--rule`/`--inline-rules`/`--ruleset`)
+    # narrowed to the two sources this MCP tool exposes today -- `--rule` (a single rule FILE)
+    # and `--config` sgconfig are deliberately deferred (the latter does an unconfined
+    # recursive rglob over ruleDirs/testDirs; confining only the top-level path is
+    # insufficient, see _confine_mcp_path's sibling design doc).
+    inline_source_count = sum(item is not None for item in (ruleset, inline_rules))
+    if inline_source_count == 0:
+        return _ruleset_scan_error(
+            "Exactly one of ruleset or inline_rules is required.",
+            code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+    if inline_source_count > 1:
+        return _ruleset_scan_error(
+            "ruleset and inline_rules are mutually exclusive.",
+            code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+
+    if inline_rules is not None:
+        # [SEC] bound BEFORE parsing -- see _MAX_INLINE_RULES_CHARS docstring.
+        if len(inline_rules) > _MAX_INLINE_RULES_CHARS:
+            return _ruleset_scan_error(
+                f"inline_rules exceeds the {_MAX_INLINE_RULES_CHARS}-character limit "
+                f"({len(inline_rules)} chars).",
+                code="invalid_input",
+                ruleset=ruleset,
+                path=path,
+            )
+        try:
+            rules = _load_inline_rule_specs(inline_rules, default_language=language)
+        except ValueError as exc:
+            return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
+        if not rules:
+            return _ruleset_scan_error(
+                "No valid inline rules were found.",
+                code="invalid_input",
+                ruleset=ruleset,
+                path=path,
+            )
+        inferred_language = (
+            normalize_ast_language(language) if language else str(rules[0]["language"])
+        )
+        project_cfg: dict[str, object] = {
+            "config_path": "inline-rules",
+            "root_dir": Path(path).expanduser().resolve(),
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": inferred_language,
+        }
+        scan_ruleset_name: str | None = None
+        scan_routing_reason = "ast-inline-rules-scan"
+    else:
+        try:
+            ruleset_meta, rules = resolve_rule_pack(cast(str, ruleset), language)
+        except ValueError as exc:
+            return _ruleset_scan_error(
+                str(exc),
+                code="invalid_input",
+                ruleset=ruleset,
+                path=path,
+            )
+        project_cfg = {
+            "config_path": f"builtin:{ruleset_meta['name']}",
+            "root_dir": Path(path).expanduser().resolve(),
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": ruleset_meta["language"],
+        }
+        scan_ruleset_name = ruleset_meta["name"]
+        scan_routing_reason = "builtin-ruleset-scan"
+
     # round-4/5 security: confine the two write paths to the scan root before any scan/write —
     # unconfined, they are an arbitrary-file-write primitive reachable from any MCP client.
     # round-5: consume the RESOLVED absolute path (not the raw candidate) below so the
@@ -1942,8 +2049,8 @@ def tg_ruleset_scan(
         payload = _run_ast_scan_payload(
             project_cfg,
             rules,
-            routing_reason="builtin-ruleset-scan",
-            ruleset_name=ruleset_meta["name"],
+            routing_reason=scan_routing_reason,
+            ruleset_name=scan_ruleset_name,
             scan_globs=[glob] if glob else None,
             scan_types=[file_type] if file_type else None,
             scan_max_depth=max_depth,
@@ -2033,6 +2140,151 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = 512) -> str:
             "message": str(exc),
             "retryable": False,
         }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_orient(
+    path: str = ".",
+    max_tokens: int = 3000,
+    max_central_files: int = 10,
+    ignore: list[str] | None = None,
+) -> str:
+    """
+    Call FIRST for orientation: return a one-call codebase orientation capsule.
+
+    Mirrors `tg orient` (build_orient_capsule_json): the most central files by import-graph
+    centrality, heuristically detected entry points, a symbol map, and bounded AST-boundary
+    source snippets within a token budget. Pure-CPU, no API key, no GPU. Prefer this before
+    tg_repo_map/tg_context_pack/tg_agent_capsule when orienting on an unfamiliar repo for the
+    first time -- it answers "what is this codebase and where do I start" in one call.
+
+    Args:
+        path: File or directory to orient on. Confined to the MCP server root (cwd, or
+            TG_MCP_ROOT if set); a path outside it is refused.
+        max_tokens: Snippet token budget for the capsule. Defaults to 3000.
+        max_central_files: Number of top central files to surface. Defaults to 10.
+        ignore: Glob(s) to exclude from the centrality ranking (basename or repo-relative
+            path), e.g. ["seo/**", "core/skills/**"]. Excludes vendor/skill CODE trees that
+            otherwise rank as "central" on a harness repo.
+    """
+    # round-9 security (audit #95 Part 2): confine the primary path/root param to the MCP
+    # root before any scan -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="orient",
+            include_schema_version=False,
+        )
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
+    try:
+        return _inject_mcp_contract_fields(
+            build_orient_capsule_json(
+                path,
+                max_tokens=max_tokens,
+                max_central_files=max_central_files,
+                ignore=tuple(ignore or ()),
+            )
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        # Mirrors the CLI `orient` command's except clause (main.py) -- a bad path or
+        # unresolvable root must return a clean structured error, never a raw traceback.
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="orient",
+            include_schema_version=False,
+        )
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="orient",
+            include_schema_version=False,
+        )
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = _sanitized_tool_error("tg_orient", exc)
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_doctor(
+    path: str = ".",
+    config: str | None = "sgconfig.yml",
+    with_lsp: bool = True,
+) -> str:
+    """
+    Return system, GPU, cache, AST, daemon, shell-escaping, and LSP-provider diagnostics.
+
+    Mirrors `tg doctor` (_build_doctor_payload). Provider availability
+    (lsp_provider_items/lsp_providers) is not navigation proof -- inspect health_status/
+    health_check before trusting an LSP-confirmed evidence label.
+
+    Args:
+        path: Workspace root to inspect. Confined to the MCP server root (cwd, or
+            TG_MCP_ROOT if set); a path outside it is refused.
+        config: Path to an ast-grep root config, resolved relative to path when not
+            absolute. Confined to the (already-confined) path; a config that legitimately
+            lives outside path must be copied in first (fail-closed, not a silent drop).
+            Defaults to "sgconfig.yml".
+        with_lsp: Include external LSP provider diagnostics. Defaults to true.
+    """
+    # round-9 security (audit #95 Part 2): confine the primary path/root param to the MCP
+    # root before any probe -- see tg_repo_map for the systemic-finding rationale.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend="Doctor",
+            routing_reason="doctor",
+            include_schema_version=False,
+        )
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
+    # New hardening (beyond the design's literal "wrap it" ask): `config` is a SECONDARY
+    # param that `_build_doctor_payload` uses to relocate its own `root` (config's resolved
+    # parent directory) for every downstream diagnostic probe -- unconfined, a caller could
+    # point every probe at an arbitrary directory via `config=/some/other/place/x.yml`, the
+    # same "secondary anchor derived from an unconfined param" class the #95 gate's MUST-FIX
+    # #3 closed for tg_session_file_importers. Confine to the already-confined `path`,
+    # mirroring tg_ruleset_scan's baseline_path/suppressions_path anchor-to-scan-root
+    # pattern. `if config:` (not `is not None`) matches _build_doctor_payload's OWN
+    # truthiness check so an empty string is treated identically to "not provided" on both
+    # sides -- confining "" would otherwise turn a no-op default into a real (and wrong)
+    # root-parent relocation.
+    if config:
+        try:
+            config = str(_confine_read_path(config, Path(path), label="config"))
+        except ValueError as exc:
+            payload = _envelope_base(
+                routing_backend="Doctor",
+                routing_reason="doctor",
+                include_schema_version=False,
+            )
+            payload["path"] = path
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
+
+    try:
+        return _inject_mcp_contract_fields(
+            json.dumps(_build_doctor_payload(path, config=config, with_lsp=with_lsp), indent=2)
+        )
+    except Exception as exc:  # propagate as structured error, never a raw exception
+        payload = _envelope_base(
+            routing_backend="Doctor",
+            routing_reason="doctor",
+            include_schema_version=False,
+        )
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = _sanitized_tool_error("tg_doctor", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -3165,13 +3417,18 @@ def tg_symbol_source(
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> str:
+def tg_symbol_impact(
+    symbol: str, path: str = ".", provider: str = "native", deadline: float | None = None
+) -> str:
     """
     Return likely impacted files and tests for a symbol change.
 
     Args:
         symbol: Exact symbol name to evaluate.
         path: File or directory to inventory.
+        deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
+            exceeded, the scan stops and returns a flagged partial result instead of running
+            unbounded.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -3196,6 +3453,7 @@ def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> 
                     path,
                     semantic_provider=provider,
                     max_repo_files=_DEFAULT_MCP_REPO_SCAN_LIMIT,
+                    deadline_seconds=deadline,
                 ),
                 indent=2,
             )
@@ -3235,6 +3493,7 @@ def tg_symbol_refs(
     path: str = ".",
     provider: str = "native",
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
 ) -> str:
     """
     Return Python-first symbol references across the inventory root.
@@ -3243,6 +3502,9 @@ def tg_symbol_refs(
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
+        deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
+            exceeded, the scan stops and returns a flagged partial result instead of running
+            unbounded.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -3263,7 +3525,11 @@ def tg_symbol_refs(
         return _inject_mcp_contract_fields(
             json.dumps(
                 build_symbol_refs(
-                    symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                    deadline_seconds=deadline,
                 ),
                 indent=2,
             )
@@ -3303,6 +3569,7 @@ def tg_symbol_callers(
     path: str = ".",
     provider: str = "native",
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
 ) -> str:
     """
     Return Python-first symbol call sites and likely impacted tests.
@@ -3311,6 +3578,9 @@ def tg_symbol_callers(
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
+        deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
+            exceeded, the scan stops and returns a flagged partial result instead of running
+            unbounded.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -3331,7 +3601,11 @@ def tg_symbol_callers(
         return _inject_mcp_contract_fields(
             json.dumps(
                 build_symbol_callers(
-                    symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                    deadline_seconds=deadline,
                 ),
                 indent=2,
             )
@@ -3385,7 +3659,7 @@ def tg_file_imports(file: str) -> str:
     # tg_classify_logs.file_path above. Forward the RESOLVED path so build_file_imports sees
     # the same anchor-validated location this check validated.
     try:
-        file = str(_confine_read_path(file, Path.cwd(), label="file"))
+        file = str(_confine_read_path(file, _mcp_root(), label="file"))
     except ValueError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -3425,6 +3699,7 @@ def tg_file_importers(
     file: str,
     path: str = ".",
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
 ) -> str:
     """
     Return the files that import a single FILE (the reverse #74 file-dependency primitive).
@@ -3438,11 +3713,14 @@ def tg_file_importers(
             not a silent drop).
         path: Root to scan for importers.
         max_repo_files: Maximum repository files to scan before resolving importers.
+        deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
+            exceeded, the scan stops and returns a flagged partial result instead of running
+            unbounded.
     """
     # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
     # (cwd) before any read, same class/rationale as tg_file_imports above.
     try:
-        file = str(_confine_read_path(file, Path.cwd(), label="file"))
+        file = str(_confine_read_path(file, _mcp_root(), label="file"))
     except ValueError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -3473,7 +3751,9 @@ def tg_file_importers(
     try:
         return _inject_mcp_contract_fields(
             json.dumps(
-                build_file_importers(file, path, max_repo_files=max_repo_files),
+                build_file_importers(
+                    file, path, max_repo_files=max_repo_files, deadline_seconds=deadline
+                ),
                 indent=2,
             )
         )
@@ -3509,6 +3789,7 @@ def tg_symbol_blast_radius(
     max_depth: int = 3,
     provider: str = "native",
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
 ) -> str:
     """
     Return exact callers plus a transitive file/test blast radius for a symbol.
@@ -3518,6 +3799,9 @@ def tg_symbol_blast_radius(
         path: File or directory to inventory.
         max_depth: Maximum reverse-import depth to include.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
+        deadline: Optional wall-clock budget in seconds for the underlying graph traversal.
+            When exceeded, the scan stops and returns a flagged partial result instead of
+            running unbounded.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -3544,6 +3828,7 @@ def tg_symbol_blast_radius(
                     max_depth=max_depth,
                     semantic_provider=provider,
                     max_repo_files=max_repo_files,
+                    deadline_seconds=deadline,
                 ),
                 indent=2,
             )
@@ -3694,9 +3979,11 @@ def tg_search(
     query: str | None = None,
     structured_json: bool = True,
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    rank: bool = False,
+    semantic: bool = False,
 ) -> str:
     """
-    Search files for a regex pattern using tensor-grep's high-speed GPU or CPU engine.
+    Search files for a regex pattern, with GPU acceleration when applicable.
 
     Args:
         pattern: A regular expression or exact string used for searching.
@@ -3719,6 +4006,13 @@ def tg_search(
             ripgrep (rg absent / GPU / hybrid / python-regex). Ignored when RipgrepBackend
             handles the whole-path search natively. Protects against an unscoped full-repo
             per-file search loop.
+        rank: Re-rank results by BM25 lexical relevance to the query terms instead of grep
+            order (pure-CPU ranking; no API key, no model download).
+        semantic: Re-rank results by a hybrid of BM25 + local CPU dense-embedding relevance
+            (RRF fusion), instead of grep order. No API key, no GPU. Requires the `semantic`
+            extra and a fetched model; falls back to BM25-only (visibly, never silently, via
+            `rank_fallback_reason`) when either is missing. Takes priority over `rank` when
+            both are set.
     """
     search_pattern = pattern or query
     if not search_pattern:
@@ -3860,6 +4154,48 @@ def tg_search(
         )
         _finalize_aggregate_result(all_results)
 
+        # audit #95 Part 2: mirror main.py search_command's --rank/--semantic post-processing
+        # (`if config.semantic_rank: ... elif config.rank_bm25 and all_results.matches:`) so an
+        # MCP agent caller gets the same BM25/hybrid-semantic relevance reordering as the CLI.
+        # Applied once here, before the empty/count/full-result branches below, so every render
+        # path sees the same reranked all_results -- matches main.py's ordering (rerank runs
+        # before any output-mode branching, not duplicated per branch).
+        if semantic:
+            if all_results.matches:
+                try:
+                    all_results = _apply_semantic_rerank(all_results, search_pattern)
+                except BackendExecutionError as exc:
+                    # Backend Fail-Closed Contract boundary (mirrors main.py's search_command):
+                    # _apply_semantic_rerank deliberately does NOT catch a genuine dense-backend
+                    # fault (e.g. a corrupt model directory) -- it must surface here as a
+                    # distinguishable structured error, never fall through to the generic
+                    # internal_error catch-all at the bottom of this tool, which would lose the
+                    # fail-closed signal (an agent needs to tell "the backend broke" apart from
+                    # an ordinary internal_error).
+                    if structured_json:
+                        error_payload = {
+                            "pattern": search_pattern,
+                            "path": path,
+                            "error": {
+                                "code": "semantic_backend_error",
+                                "message": str(exc),
+                                "retryable": False,
+                            },
+                        }
+                        return json.dumps(error_payload, indent=2)
+                    return f"Search failed: semantic backend error: {exc}"
+            else:
+                # F16 parity (main.py _set_semantic_rank_fallback_reason): probe dense-leg
+                # availability even on a 0-match search so rank_fallback_reason is set whenever
+                # the leg is unavailable, regardless of match count.
+                _set_semantic_rank_fallback_reason(all_results)
+        elif rank and all_results.matches:
+            from tensor_grep.core.reranker import rerank_by_bm25
+
+            all_results = rerank_by_bm25(
+                all_results, search_pattern, all_results.matched_file_paths
+            )
+
         empty_scan_capped = bool(scan_limit_payload and scan_limit_payload["possibly_truncated"])
         if all_results.is_empty:
             if structured_json:
@@ -3882,6 +4218,11 @@ def tg_search(
                 }
                 if scan_limit_payload is not None:
                     payload["scan_limit"] = scan_limit_payload
+                # `--semantic` fail-closed degrade signal (audit #95 Part 2): emitted ONLY when
+                # set, mirroring json_fmt.py's own "omitted entirely, not null" rule so every
+                # OTHER (non-rank/non-semantic) search's envelope shape stays byte-identical.
+                if all_results.rank_fallback_reason:
+                    payload["rank_fallback_reason"] = all_results.rank_fallback_reason
                 return json.dumps(payload, indent=2)
             capped_note = (
                 f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
@@ -3910,6 +4251,8 @@ def tg_search(
                 }
                 if scan_limit_payload is not None:
                     count_payload["scan_limit"] = scan_limit_payload
+                if all_results.rank_fallback_reason:
+                    count_payload["rank_fallback_reason"] = all_results.rank_fallback_reason
                 return json.dumps(count_payload, indent=2)
             return (
                 f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
@@ -3969,6 +4312,8 @@ def tg_search(
             }
             if scan_limit_payload is not None:
                 payload["scan_limit"] = scan_limit_payload
+            if all_results.rank_fallback_reason:
+                payload["rank_fallback_reason"] = all_results.rank_fallback_reason
             return json.dumps(payload, indent=2)
 
         # Format the results into a readable string for the LLM
@@ -4350,7 +4695,7 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     # are echoed back verbatim in anomalies[].text below). Forward the RESOLVED path so the
     # downstream read below sees the same anchor-validated location this check validated.
     try:
-        file_path = str(_confine_read_path(file_path, Path.cwd(), label="file_path"))
+        file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
     except ValueError as exc:
         if structured_json:
             return json.dumps(
@@ -4679,10 +5024,10 @@ def tg_audit_manifest_verify(
     # the same anchor-validated location this check validated (closes the discard/TOCTOU
     # class), mirroring the write-side _confine_write_path precedent (round-4/5).
     try:
-        manifest_path = str(_confine_write_path(manifest_path, Path.cwd(), label="manifest_path"))
+        manifest_path = str(_confine_write_path(manifest_path, _mcp_root(), label="manifest_path"))
         if previous_manifest is not None:
             previous_manifest = str(
-                _confine_write_path(previous_manifest, Path.cwd(), label="previous_manifest")
+                _confine_write_path(previous_manifest, _mcp_root(), label="previous_manifest")
             )
     except ValueError as exc:
         return _audit_manifest_error(str(exc), code="invalid_input")
@@ -4758,10 +5103,10 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
     # tg_audit_manifest_verify above / _confine_write_path docstring).
     try:
         previous_manifest = str(
-            _confine_write_path(previous_manifest, Path.cwd(), label="previous_manifest")
+            _confine_write_path(previous_manifest, _mcp_root(), label="previous_manifest")
         )
         current_manifest = str(
-            _confine_write_path(current_manifest, Path.cwd(), label="current_manifest")
+            _confine_write_path(current_manifest, _mcp_root(), label="current_manifest")
         )
     except ValueError as exc:
         return _audit_diff_error(str(exc), code="invalid_input")
@@ -4820,12 +5165,12 @@ def tg_review_bundle_create(
     # audit_manifest.py see the same anchor-validated locations this check validated
     # (closes the discard/TOCTOU class), mirroring the output_path write-confinement below.
     try:
-        manifest_path = str(_confine_write_path(manifest_path, Path.cwd(), label="manifest_path"))
+        manifest_path = str(_confine_write_path(manifest_path, _mcp_root(), label="manifest_path"))
         if scan_path is not None:
-            scan_path = str(_confine_write_path(scan_path, Path.cwd(), label="scan_path"))
+            scan_path = str(_confine_write_path(scan_path, _mcp_root(), label="scan_path"))
         if previous_manifest is not None:
             previous_manifest = str(
-                _confine_write_path(previous_manifest, Path.cwd(), label="previous_manifest")
+                _confine_write_path(previous_manifest, _mcp_root(), label="previous_manifest")
             )
     except ValueError as exc:
         return _review_bundle_error(
@@ -4841,7 +5186,7 @@ def tg_review_bundle_create(
     # validated (closes the discard/TOCTOU class).
     if output_path is not None:
         try:
-            output_path = str(_confine_write_path(output_path, Path.cwd(), label="output_path"))
+            output_path = str(_confine_write_path(output_path, _mcp_root(), label="output_path"))
         except ValueError as exc:
             return _review_bundle_error(
                 str(exc),
@@ -4900,7 +5245,7 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
     # unconfined it is an arbitrary-file-read/exfil primitive (see the audit #7 note on
     # tg_review_bundle_create above / _confine_write_path docstring).
     try:
-        bundle_path = str(_confine_write_path(bundle_path, Path.cwd(), label="bundle_path"))
+        bundle_path = str(_confine_write_path(bundle_path, _mcp_root(), label="bundle_path"))
     except ValueError as exc:
         return _review_bundle_error(
             str(exc),

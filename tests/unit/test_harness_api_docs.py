@@ -216,6 +216,41 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert '"command":"context"' in doc
     assert "invalid_request" in doc
     assert "--refresh-on-stale" in doc
+    assert "tg_orient" in doc
+    assert "tg_doctor" in doc
+
+
+def test_harness_api_doc_lists_every_registered_mcp_tool_name() -> None:
+    """Hardened gate (audit #95 Part 2): the coverage test above hand-lists specific tool
+    names as individual `assert "tg_x" in doc` lines -- a substring check that silently
+    tolerates a NEW tool never being added to the doc. That is exactly how 7 tools (tg_search,
+    tg_ast_search, tg_classify_logs, tg_devices, tg_file_imports, tg_file_importers,
+    tg_session_file_importers) went undocumented for multiple releases before this test
+    existed. Derive the tool name list from the LIVE MCP tool registry instead (the same
+    source test_mcp_server.py's hard capabilities gate uses) and assert every single one has
+    a `` `name(...)` `` bullet entry in the doc's "Current tool set" list, so a newly
+    added/renamed tool that isn't documented fails CI immediately instead of silently
+    drifting again.
+    """
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    doc = DOC_PATH.read_text(encoding="utf-8")
+    live_tool_names = {tool.name for tool in asyncio.run(mcp_server.mcp.list_tools())}
+
+    assert live_tool_names, "the live MCP tool registry returned zero tools -- broken probe"
+
+    # Match `name(` (backtick + exact name + immediate open-paren) rather than a bare
+    # substring: several tool names are prefixes of others (tg_symbol_blast_radius vs
+    # tg_symbol_blast_radius_plan/_render), and a bare `name in doc` check would false-pass a
+    # tool that is only ever mentioned as part of a LONGER sibling name's entry.
+    missing = sorted(name for name in live_tool_names if f"`{name}(" not in doc)
+    assert not missing, (
+        f"harness_api.md's 'Current tool set' is missing {len(missing)} live MCP tool(s): "
+        f"{missing}. Add a `name(...)` bullet entry under '## MCP Tool Responses' -> "
+        "'Current tool set'."
+    )
 
 
 def test_harness_api_doc_links_failure_mode_examples() -> None:

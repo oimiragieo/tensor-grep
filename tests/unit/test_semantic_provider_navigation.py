@@ -1807,7 +1807,7 @@ def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_impact",
-        lambda symbol, path, semantic_provider="native", max_repo_files=None: {
+        lambda symbol, path, semantic_provider="native", max_repo_files=None, deadline_seconds=None: {
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
