@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.58.8 (2026-07-10)
+
+### Bug Fixes
+
+- **test**: De-flake test_fresh_stale_lock_is_reclaimed_before_the_waiter_gives_up (release-blocker)
+  ([#505](https://github.com/oimiragieo/tensor-grep/pull/505),
+  [`6186953`](https://github.com/oimiragieo/tensor-grep/commit/61869534a9830b9d17c6acff234be06b08bfccbf))
+
+A loaded macOS CI runner measured 1.68s against this test's hardcoded `assert elapsed < 1.2` and
+  failed it, skipping the test-python gate and blocking the v1.58.5 release. Reclaim was NOT broken:
+  `index_lock`'s acquire loop (_index_lock.py, the `except FileExistsError` branch) checks staleness
+  before it checks its own deadline, and a stale hit `continue`s straight back to the top of the
+  loop, skipping the deadline check for that iteration entirely. A single overshot
+  `time.sleep(poll_interval_s)` on a starved scheduler can push real wall-clock past `timeout_s`
+  while that very wake-up still finds the lock stale and reclaims it correctly -- correct
+  self-healing, misread as a failure by a tight wall-clock assert tied to a value the implementation
+  never actually promised.
+
+Replace the raw wall-clock assertion with the real H9 invariant, asserted as an outcome: 1. no
+  IndexLockTimeoutError escapes the `with` (a never-reclaims regression still fails the test here);
+  2. the lock's owner inside the `with` is this process, not the planted fake pid 99999 (proves a
+  reclaim actually happened, not merely that some file exists); 3. the lock file is gone after
+  release. A generous (5x timeout_s), CI-jitter-tolerant wall-clock ceiling remains as a secondary
+  backstop against a "technically reclaims, but pathologically slow" regression in the reclaim path
+  itself, which is not bounded by timeout_s the way the plain wait is.
+
+Verified: target test green x20 in a loop; full test_index_lock.py + test_index_lock_concurrency.py
+  green (23/23); ruff check + ruff format --preview --check + mypy clean. Confirmed the fix still
+  catches regressions: (a) temporarily inverted the timeout/stale ratio to the documented pre-fix
+  broken values (timeout_s=0.5 < stale_after_s=1.0) -- IndexLockTimeoutError raised, test fails, as
+  expected; (b) a scratch script that monkeypatches Path.unlink to sleep 8s inside the
+  reclaim/release path shows the outcome checks all still pass (reclaim was genuinely correct) while
+  the new wall-clock backstop is the one assertion that fails -- proving it is live, not vestigial.
+
+Test-only change; src/tensor_grep/cli/_index_lock.py is untouched.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.7 (2026-07-10)
 
 ### Bug Fixes
