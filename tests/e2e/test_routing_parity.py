@@ -47,6 +47,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "audit-history",
     "audit-diff",
     "review-bundle",
+    "evidence",
     "devices",
     "context",
     "lsp",
@@ -381,6 +382,7 @@ COMMAND_CASES = [
     (["audit-history", "--help"], 0, assert_text_lines, no_check),
     (["audit-diff", "--help"], 0, assert_text_lines, no_check),
     (["review-bundle", "--help"], 0, assert_text_lines, no_check),
+    (["evidence", "--help"], 0, assert_text_lines, no_check),
 ]
 
 

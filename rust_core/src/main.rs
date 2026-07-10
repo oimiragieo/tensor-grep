@@ -1095,6 +1095,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Emit a versioned EvidenceReceipt aggregating existing tg outputs
+    #[command(name = "evidence", disable_help_flag = true)]
+    Evidence {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// List GPU devices and routing readiness
     #[command(name = "devices", disable_help_flag = true)]
     Devices {
@@ -4322,6 +4328,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::AuditHistory { args } => handle_python_passthrough("audit-history", args),
         Commands::AuditDiff { args } => handle_python_passthrough("audit-diff", args),
         Commands::ReviewBundle { args } => handle_python_passthrough("review-bundle", args),
+        Commands::Evidence { args } => handle_python_passthrough("evidence", args),
         Commands::Devices { args } => handle_python_passthrough("devices", args),
         Commands::Context { args } => handle_python_passthrough("context", args),
         Commands::PythonPassthrough(args) => {
