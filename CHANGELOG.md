@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v1.54.6 (2026-07-10)
+
+### Performance Improvements
+
+- **repo-map**: Raise CALLER_SCAN_FILE_CEILING 512 -> 2000 (backlog #57)
+  ([#483](https://github.com/oimiragieo/tensor-grep/pull/483),
+  [`e687bfd`](https://github.com/oimiragieo/tensor-grep/commit/e687bfdd6091cbbf20245db171c03ca51fc76239))
+
+Matches DEFAULT_AGENT_REPO_MAP_LIMIT now that #478's --deadline hard-bound closed the task #52 hang
+  risk that originally kept the caller-scan ceiling frozen below the map default. Not a naive bump
+  -- 4 companion fixes ship in the same commit, per the verified design
+  (docs/plans/design-tensor-grep-57-caller-cap-raise-2026-07-09.md):
+
+1. CALLER_SCAN_FILE_CEILING 512 -> 2000 (repo_map.py). 2. _PARSE_PRODUCT_CACHE_MAXSIZE 1024 -> 2048
+  -- the FIFO parse-product cache was smaller than the new ceiling, so a >1024-eligible-file
+  callers+refs pass would silently thrash (RED-verified empirically: reverting to 1024 made a
+  1100-file callers+refs pass balloon from 1100 to 3299 real parses). 3. Retired the two stale
+  "ceiling left at 512 on purpose, raising reintroduces #52's hang" comments (module docblock +
+  _cap_caller_scan_files docstring); replaced with the #478/#57 rationale. 4.
+  build_file_importers_from_map's ceiling branch now calls _mark_result_incomplete (matching its
+  callers/refs siblings) instead of setting caller_scan_limit alone, so a non-CLI consumer sees the
+  same result_incomplete/scan_remediation honesty signal the CLI's exit-2 gate already read out of
+  caller_scan_limit. Fixing this surfaced a real ordering bug: _copy_scan_limit ran AFTER the
+  ceiling-hit block and clobbered scan_remediation with the (always-None-when-complete) value from
+  the source repo_map -- reordered to match build_symbol_callers_from_map's precedent
+  (_copy_scan_limit before the ceiling-hit mark).
+
+Governance pins updated (tests/unit/test_cap_fix_chokepoint.py): -
+  test_constants_locked_to_the_plan: literal 512 -> 2000. - 8 more tests whose fixtures were sized
+  relative to the OLD 512 ceiling (and would silently stop exercising truncation at the new 2000)
+  now monkeypatch CALLER_SCAN_FILE_CEILING (and, where relevant, the derived
+  CALLER_SCAN_ORDER_PROBE_CEILING) down to a small test-local value, mirroring the
+  test_parse_product_cache.py::test_oversize_file_bypasses_parse_product_cache precedent of
+  shrinking a production constant rather than inflating fixtures.
+
+New coverage: - Golden-parity: a <=512-file repo's caller result is byte-identical across the raise
+  (old-512 vs new-2000 run diffed directly). - The motivating dogfood regression: a caller past
+  file-index 512 in an ~805-file repo is absent/incomplete at a simulated 512 ceiling, present and
+  complete at 2000. - build_file_importers_from_map's ceiling branch (zero coverage before this). -
+  Truncation past the new, REAL 2000 ceiling with a 2500-file corpus (direct + CLI exit-2), with a
+  loose (<30s) wall-clock smoke. - Cache-capacity regression: >1024 JS/TS files stay at exactly one
+  real parse per file through a full callers+refs pass.
+
+Verified: uv run --no-sync pytest on test_cap_fix_chokepoint.py, test_parse_product_cache.py,
+  test_repo_map_deadline.py, test_file_deps.py, test_repo_map_graph.py (111 passed) plus a broader
+  26-file thematically-adjacent sweep (573 passed, 1 skipped). ruff check, ruff format --preview
+  --check, and mypy src/tensor_grep/cli/repo_map.py all clean.
+
+Owed at harvest: the real-repo Measure-Command latency proof (with --deadline and flag-less) -- this
+  worktree has no large real repo to measure against.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.54.5 (2026-07-10)
 
 ### Bug Fixes
