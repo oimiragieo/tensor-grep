@@ -973,7 +973,8 @@ mod tests {
         // error` verbatim for its own refusal (audit #105), and main.rs's multi-pattern call
         // sites use this predicate to normalize that refusal to exit code 2. Both directions must
         // hold: the real generated message is recognized, and an unrelated error is not.
-        let refusal = format_unbounded_implicit_search_walk_error(IMPLICIT_SEARCH_WALK_FILE_CEILING);
+        let refusal =
+            format_unbounded_implicit_search_walk_error(IMPLICIT_SEARCH_WALK_FILE_CEILING);
         assert!(is_unbounded_implicit_search_walk_refusal(&refusal));
         assert!(!is_unbounded_implicit_search_walk_refusal(
             "native search path does not exist: /nope"

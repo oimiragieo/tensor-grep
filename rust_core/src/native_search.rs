@@ -1030,7 +1030,10 @@ fn should_use_parallel_walk_search(config: &NativeSearchConfig) -> bool {
 /// gating at this shared low-level pair, rather than in `run_native_search` alone, protects
 /// every native-CPU walk entry point in one place instead of relying on each of main.rs's
 /// several dispatch sites (positional CLI, `tg search`, GPU-CPU-fallback) to remember it.
-fn check_native_implicit_walk_ceiling(config: &NativeSearchConfig, roots: &[PathBuf]) -> Option<String> {
+fn check_native_implicit_walk_ceiling(
+    config: &NativeSearchConfig,
+    roots: &[PathBuf],
+) -> Option<String> {
     if !config.path_was_implicit {
         return None;
     }
