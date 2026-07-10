@@ -451,3 +451,179 @@ def test_session_importers_matches_cold_importers(tmp_path: Path) -> None:
     assert set(warm["importer_files"]) == set(cold["importer_files"])
     assert warm["importer_count"] == cold["importer_count"]
     assert warm["importer_count"] > 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Dogfood #104 (P0, CEO 1.54.6/WSL2): `tg importers` FILE-relative-to-ROOT path DOUBLING.
+#
+# `build_file_importers_from_map` used to assume ANY non-absolute FILE arg was meant relative to
+# ROOT (`repo_root / resolved_file`). From a PARENT cwd, a FILE arg typed relative to CWD (the
+# normal shell convention -- and therefore naturally prefixed with ROOT's own directory name,
+# e.g. `myrepo/src/util.js` when ROOT is `myrepo`) got joined onto ROOT a SECOND time, producing
+# a doubled, nonexistent path (`myrepo/myrepo/src/util.js`) and a false "not found". FILE must
+# resolve independently against cwd -- exactly like `tg imports FILE` (which takes no ROOT arg
+# at all, and was therefore never subject to this bug) -- while ROOT stays only the scan
+# boundary, never a prefix FILE gets joined onto.
+# ---------------------------------------------------------------------------------------------
+
+
+def _make_js_importer_fixture(base: Path) -> tuple[Path, Path, Path]:
+    """A tiny repo: BASE/repo/src/{util.js, consumer.js}; consumer imports util. Returns
+    (repo_dir, target_file, importer_file)."""
+    repo_dir = base / "repo"
+    src = repo_dir / "src"
+    src.mkdir(parents=True)
+    target = src / "util.js"
+    target.write_text("export function foo() {}\n", encoding="utf-8")
+    importer = src / "consumer.js"
+    importer.write_text('import { foo } from "./util";\n', encoding="utf-8")
+    return repo_dir, target, importer
+
+
+def test_build_file_importers_relative_file_and_root_from_parent_cwd_no_doubling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact #104 bug shape: FILE and ROOT both given relative to a PARENT cwd, so FILE is
+    naturally prefixed with ROOT's own directory name. Must resolve to the real file, not
+    `root/root/...`-doubled."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _repo_dir, target, importer = _make_js_importer_fixture(workspace)
+    monkeypatch.chdir(workspace)
+
+    payload = repo_map.build_file_importers("repo/src/util.js", "repo")
+
+    assert payload["file"] == str(target.resolve())
+    assert payload["importer_count"] == 1
+    assert str(importer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_file_relative_to_root_from_inside_repo_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FILE relative to ROOT, invoked from INSIDE the repo (ROOT='.'): the common case, must
+    keep working exactly as before."""
+    repo_dir, target, importer = _make_js_importer_fixture(tmp_path)
+    monkeypatch.chdir(repo_dir)
+
+    payload = repo_map.build_file_importers("src/util.js", ".")
+
+    assert payload["file"] == str(target.resolve())
+    assert payload["importer_count"] == 1
+    assert str(importer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_absolute_file_and_root_cwd_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absolute FILE + absolute ROOT must resolve identically regardless of cwd."""
+    repo_dir, target, importer = _make_js_importer_fixture(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    payload = repo_map.build_file_importers(str(target), str(repo_dir))
+
+    assert payload["file"] == str(target.resolve())
+    assert payload["importer_count"] == 1
+    assert str(importer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_absolute_file_relative_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absolute FILE + relative ROOT (from the parent cwd) must resolve identically too --
+    this combination already worked pre-fix (the join was skipped for an absolute FILE), so
+    this pins it stays correct."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _repo_dir, target, importer = _make_js_importer_fixture(workspace)
+    monkeypatch.chdir(workspace)
+
+    payload = repo_map.build_file_importers(str(target), "repo")
+
+    assert payload["file"] == str(target.resolve())
+    assert payload["importer_count"] == 1
+    assert str(importer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_outside_root_file_returns_no_importers_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file that genuinely exists but lives OUTSIDE root must resolve to its real (correct)
+    path, and honestly report zero importers -- not crash, and not silently claim a false
+    importer via a coincidentally-real doubled path (the confinement/not_found contract)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _make_js_importer_fixture(workspace)
+    outside_dir = workspace / "other"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "thing.js"
+    outside_file.write_text("export function bar() {}\n", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+
+    payload = repo_map.build_file_importers("other/thing.js", "repo")
+
+    assert payload["file"] == str(outside_file.resolve())
+    assert payload["importer_count"] == 0
+    assert payload["importer_files"] == []
+
+
+def test_importers_cli_relative_file_and_root_from_parent_cwd_no_doubling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CLI-level repro of the literal reported command:
+    `tg importers repo/src/util.js repo --json` run from the parent directory."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _repo_dir, target, importer = _make_js_importer_fixture(workspace)
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(app, ["importers", "repo/src/util.js", "repo", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["not_found"] is False
+    assert payload["file"] == str(target.resolve())
+    assert payload["importer_count"] == 1
+    assert str(importer.resolve()) in set(payload["importer_files"])
+
+
+def test_importers_cli_outside_root_file_exits_1_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CLI-level confinement/not_found contract: a real file outside ROOT reports honestly
+    (exit 1, not_found:true, correct `file` path) instead of crashing on a doubled path."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _make_js_importer_fixture(workspace)
+    outside_dir = workspace / "other"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "thing.js"
+    outside_file.write_text("export function bar() {}\n", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(app, ["importers", "other/thing.js", "repo", "--json"])
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["not_found"] is True
+    assert payload["importer_count"] == 0
+    assert payload["file"] == str(outside_file.resolve())
+
+
+def test_imports_relative_file_from_parent_cwd_already_resolves_correctly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reference behavior: `tg imports` takes no ROOT arg at all, so a cwd-relative FILE
+    (prefixed with what would be a sibling ROOT's directory name) was never subject to the
+    doubling bug -- pin it as the correct baseline `tg importers` must match."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _repo_dir, target, _importer = _make_js_importer_fixture(workspace)
+    monkeypatch.chdir(workspace)
+
+    payload = repo_map.build_file_imports("repo/src/util.js")
+
+    assert payload["file"] == str(target.resolve())
+    assert payload["result_incomplete"] is False

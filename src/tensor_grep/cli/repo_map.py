@@ -14668,6 +14668,16 @@ def build_file_importers_from_map(
     *,
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
+    # A relative `file_path` here is resolved against `repo_map`'s own root, NOT process cwd --
+    # deliberate for this function's OTHER callers: `session_file_importers` and the raw
+    # `file_importers` daemon-socket command (session_store.py) pass a `file` straight from a
+    # remote/persistent-daemon request, where the daemon process's own cwd is meaningless and
+    # "relative to the session root" is the only sane interpretation (round-7 security audit
+    # #81 deliberately anchors the MCP confinement check the same way; see
+    # `tg_session_file_importers` in mcp_server.py). `build_file_importers` (the CLI/cold-tier
+    # entry point, dogfood #104) instead pre-resolves FILE to an absolute cwd-anchored path
+    # BEFORE calling here, so this join is a no-op for that caller -- do not "fix" this function
+    # to resolve against cwd instead, that would silently break the session/daemon contract.
     repo_root = Path(str(repo_map["path"])).resolve()
     resolved_file = Path(file_path).expanduser()
     if not resolved_file.is_absolute():
@@ -14761,8 +14771,21 @@ def build_file_importers(
     Cold tier: builds (or reuses a cached) repo map over ROOT, then confirms candidate importer
     edges precisely. See ``session_file_importers`` in session_store.py for the zero-reparse
     session tier, which calls ``build_file_importers_from_map`` directly on a cached map.
+
+    Dogfood #104 fix: FILE is resolved to an absolute path independently, against cwd -- the
+    SAME rule ``build_file_imports`` (``tg imports``, which takes no ROOT arg at all) already
+    uses -- before ``build_file_importers_from_map`` ever sees it. ROOT is only the scan
+    boundary. Without this, a cwd-relative FILE arg (the normal shell convention; from a parent
+    directory it is naturally prefixed with ROOT's own directory name, e.g.
+    ``myrepo/src/util.py`` when ROOT is ``myrepo``) got silently re-joined onto ROOT a second
+    time inside ``build_file_importers_from_map`` (``repo_root / resolved_file``), doubling the
+    path (``myrepo/myrepo/src/util.py``) and raising a spurious "not found". An already-absolute
+    FILE is unaffected (``.resolve()`` on an absolute path just normalizes it), so this is a
+    no-op for every caller that already passes an absolute FILE (both MCP tools always do, via
+    ``_confine_read_path``) -- only the previously-buggy cwd-relative case changes.
     """
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    resolved_file_path = Path(file_path).expanduser().resolve()
     repo_map = build_repo_map(
         root,
         max_repo_files=max_repo_files,
@@ -14771,7 +14794,7 @@ def build_file_importers(
     )
     result = build_file_importers_from_map(
         repo_map,
-        file_path,
+        resolved_file_path,
         deadline_monotonic=deadline_monotonic,
     )
     _copy_partial_signal(result, repo_map)
