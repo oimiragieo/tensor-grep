@@ -1730,12 +1730,14 @@ def test_tg_ruleset_scan_inline_rules_honors_explicit_language_override(monkeypa
 
 
 def test_tg_ruleset_scan_inline_rules_rejects_oversized_input(tmp_path, monkeypatch):
-    """[SEC] YAML expansion-bomb DoS mitigation: SafeLoader still parses anchors/aliases, so a
-    small document can still expand combinatorially in memory. Bounding the raw string length
-    before it ever reaches the YAML loader is a cheap, unconditional first line of defense --
+    """[SEC] YAML expansion-bomb DoS -- DEFENSE-IN-DEPTH layer 1 (the length cap). Bounding the
+    raw string length before it reaches the YAML loader is a cheap, unconditional guard --
     verify the tool actually enforces the cap (not merely documents it) and that the rejection
     happens BEFORE any YAML parsing (a bomb payload well past the cap must still be refused
-    fast, not hang trying to parse it)."""
+    fast, not hang trying to parse it). NOTE: the length cap ALONE does NOT stop the bomb -- an
+    aliased payload detonates by depth ~9 while the cap admits depth ~1000, so the real fix is
+    the loader-level alias rejection; see test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb
+    (audit #95 Part-2 Opus-gate BLOCK)."""
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)
@@ -1746,6 +1748,63 @@ def test_tg_ruleset_scan_inline_rules_rejects_oversized_input(tmp_path, monkeypa
     assert payload["error"]["code"] == "invalid_input"
     assert "exceeds" in payload["error"]["message"].lower()
     assert str(mcp_server._MAX_INLINE_RULES_CHARS) in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb(tmp_path, monkeypatch):
+    """[SEC] YAML alias-expansion DoS (billion-laughs) -- audit #95 Part-2 Opus-gate BLOCK.
+
+    SafeLoader SHARES alias nodes, so the load itself is linear -- but the downstream ``str()``
+    coercions on ``id``/``severity``/``message`` in ``_load_inline_rule_specs`` deep-walk that
+    shared graph and expand it ~9^depth. A sub-64 KiB nested-alias payload therefore detonates by
+    depth ~9 (the gate proved a 469-byte payload hung >15s), completely under the length cap
+    (which admits depth ~1000). The fix rejects YAML aliases at the loader level
+    (``_NoAliasSafeLoader.compose_node`` raises on the first ``AliasEvent``, before any expansion),
+    so the bomb is refused as ``invalid_input`` fast.
+
+    Kept SHALLOW (depth 5) on purpose: the fix rejects at the FIRST alias regardless of depth, so
+    shallow still proves it, and if the loader-level rejection ever regresses this test FAILS FAST
+    on the assertion (the scan returns a non-``invalid_input`` result) instead of OOM/hanging the
+    suite. A watchdog thread is the belt-and-suspenders anti-hang guard (anti-hang-test-protocol).
+    """
+    import threading
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    # Nested YAML aliases -- the billion-laughs vector. a0 is the anchored seed; each level
+    # aliases the previous 9x. WELL under _MAX_INLINE_RULES_CHARS, so ONLY the _NoAliasSafeLoader
+    # alias rejection -- not the length bound -- can stop it. The `severity: *a4` reaches the
+    # str()-coercion detonation point.
+    lines = ['a0: &a0 ["lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol"]']
+    for depth in range(1, 5):
+        refs = ", ".join([f"*a{depth - 1}"] * 9)
+        lines.append(f"a{depth}: &a{depth} [{refs}]")
+    lines += ["rules:", '  - pattern: "print($X)"', "    severity: *a4"]
+    bomb = "\n".join(lines)
+    assert len(bomb) < mcp_server._MAX_INLINE_RULES_CHARS, (
+        "payload must be sub-cap to test the loader, not the length bound"
+    )
+
+    result: dict[str, str] = {}
+
+    def _run() -> None:
+        result["payload"] = mcp_server.tg_ruleset_scan(inline_rules=bomb, path=".")
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout=15.0)
+    assert not worker.is_alive(), (
+        "tg_ruleset_scan HUNG on a sub-64 KiB YAML alias bomb -- the _NoAliasSafeLoader alias "
+        "rejection regressed; the _MAX_INLINE_RULES_CHARS length cap alone does NOT stop this DoS."
+    )
+
+    payload = json.loads(result["payload"])
+    assert payload.get("error", {}).get("code") == "invalid_input", (
+        f"alias bomb must be refused as invalid_input (loader-level alias rejection); got: {payload}"
+    )
+    assert "YAML" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
 
 
 def test_tg_ruleset_scan_inline_rules_at_length_boundary_still_parses(monkeypatch, tmp_path):

@@ -4639,11 +4639,34 @@ def _load_inline_rule_specs(
 ) -> list[dict[str, str]]:
     import yaml
 
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    class _NoAliasSafeLoader(yaml.SafeLoader):
+        """SafeLoader that REJECTS YAML aliases. Inline ast-grep rules never legitimately
+        need anchors/aliases, and an aliased node graph is a billion-laughs
+        memory-exhaustion vector: the downstream ``str()`` coercions on ``id``/``severity``/
+        ``message`` (below) deep-walk the SHARED alias graph and expand it ~9^depth. Audit
+        #95 Part-2 Opus gate BLOCK proved a 469-byte aliased payload hangs >15s -- the
+        ``_MAX_INLINE_RULES_CHARS`` length cap admits depth ~1000 while detonation is at
+        depth ~9, so the length cap alone is insufficient; reject at the loader level. This
+        shared helper guards BOTH the MCP ``tg_ruleset_scan(inline_rules=...)`` tool and the
+        CLI ``--inline-rules`` twin (identical mechanism). Uses the pure-Python SafeLoader
+        (not CSafeLoader) so ``compose_node`` is overridable -- inline payloads are small
+        (length-capped) so the perf cost is negligible."""
+
+        def compose_node(self, parent, index):  # type: ignore[override]
+            if self.check_event(yaml.events.AliasEvent):
+                event = self.get_event()
+                raise yaml.composer.ComposerError(
+                    None,
+                    None,
+                    "YAML aliases are not allowed in inline rules",
+                    event.start_mark,
+                )
+            return super().compose_node(parent, index)
+
     specs: list[dict[str, str]] = []
 
     try:
-        documents = list(yaml.load_all(inline_rules_text, Loader=loader))
+        documents = list(yaml.load_all(inline_rules_text, Loader=_NoAliasSafeLoader))
     except yaml.YAMLError as exc:
         detail = str(exc).splitlines()[0] if str(exc).strip() else "parse error"
         raise ValueError(f"Invalid inline rules YAML: {detail}") from exc
