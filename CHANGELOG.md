@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v1.56.1 (2026-07-10)
+
+### Bug Fixes
+
+- **repo-map**: Resolve `tg importers` FILE against cwd, not ROOT (dogfood #104)
+  ([#487](https://github.com/oimiragieo/tensor-grep/pull/487),
+  [`55c4b8f`](https://github.com/oimiragieo/tensor-grep/commit/55c4b8f51301392879975cf675b267714415f44b))
+
+Root cause: `build_file_importers_from_map` assumed ANY non-absolute FILE arg was meant relative to
+  ROOT (`repo_root / resolved_file`). From a PARENT cwd, a FILE arg typed relative to cwd (the
+  normal shell convention -- and therefore naturally prefixed with ROOT's own directory name, e.g.
+  `tensor-grep/src/...` when ROOT is `tensor-grep`) got joined onto ROOT a second time, producing a
+  doubled, nonexistent path (`tensor-grep/tensor-grep/src/...`) and a spurious "not found". `tg
+  imports FILE` (no ROOT arg at all) was never subject to this, since it just resolves FILE via
+  `.expanduser().resolve()` against cwd.
+
+Fix: `build_file_importers` now resolves FILE to an absolute path independently against cwd (the
+  same rule `build_file_imports` already uses) before `build_file_importers_from_map` ever sees it,
+  so the downstream `repo_root / resolved_file` join becomes a no-op. ROOT remains only the scan
+  boundary. `build_file_importers_from_map` itself is intentionally left unchanged (only documented)
+  -- its root-relative join is still load-bearing for `session_file_importers` / the daemon-socket
+  `file_importers` command, where "relative to the session root" is the deliberate,
+  round-7-security-reviewed contract (a persistent daemon's own cwd is meaningless). Both MCP tools
+  already pre-resolve FILE to an absolute path via `_confine_read_path` before calling down, so they
+  are unaffected by this change either way.
+
+Also clarifies the `tg importers --help` text (FILE resolves against cwd, never joined onto ROOT) so
+  this can't silently regress into the same confusion again.
+
+Test matrix added to tests/unit/test_file_deps.py (RED-verified against the pre-fix code): file+root
+  both relative from a parent cwd (the bug repro), file relative-to-root from inside the repo,
+  absolute file+root (cwd-independent), absolute file+relative root, a CLI-level repro of the
+  literal reported command, an outside-root file (confinement/not_found contract preserved: exit 1,
+  not_found:true, correct non-doubled `file` field, no crash), and a `tg imports` reference test
+  pinning the already-correct baseline behavior.
+
+Verified against the real installed binary (editable venv) from a genuine parent working directory:
+  before the fix, `tg importers <relfile> <relroot> --json` raised "File not found" on the doubled
+  path (exit 1); after the fix it returns `not_found:false` with the real importer edge (exit 0).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.56.0 (2026-07-10)
 
 ### Features
