@@ -242,12 +242,16 @@ def _assert_warm_matches_cold(warm: dict[str, Any], cold: dict[str, Any]) -> Non
     # routing_reason exists on BOTH arms with a DIFFERENT value by design: build_symbol_*_from_map
     # (shared by both the cold builder and the daemon dispatch) stamps "symbol-defs"; the daemon
     # dispatch (_serve_session_request_from_payload) then overwrites it to "session-defs" to make
-    # the response's origin visible. Strip all three from BOTH sides -- a .pop on an absent key is
-    # a no-op -- so this proves the actual ANSWER is byte-identical, not that the daemon adds zero
-    # provenance metadata (it is expected to add/override session_id/routing_reason/serve_cache).
+    # the response's origin visible. audit #113: daemon_response_cache is ALSO daemon-transport-
+    # only (its hit/miss/entries/hits/misses counters are cache-instance state, not part of the
+    # answer, and will legitimately differ between the warm and cold arms -- cold never touches
+    # the response cache at all). Strip all four from BOTH sides -- a .pop on an absent key is a
+    # no-op -- so this proves the actual ANSWER is byte-identical, not that the daemon adds zero
+    # provenance metadata (it is expected to add/override session_id/routing_reason/serve_cache/
+    # daemon_response_cache).
     warm = dict(warm)
     cold = dict(cold)
-    for extra_key in ("session_id", "routing_reason", "serve_cache"):
+    for extra_key in ("session_id", "routing_reason", "serve_cache", "daemon_response_cache"):
         warm.pop(extra_key, None)
         cold.pop(extra_key, None)
     # token_budget.estimated_tokens is a byte-size ESTIMATE of the payload at the moment
