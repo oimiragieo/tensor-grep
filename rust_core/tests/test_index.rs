@@ -1144,3 +1144,191 @@ fn test_tg_search_explicit_index_no_ignore_flip_on_to_off_does_not_leak_gitignor
         "default query must rebuild the index and exclude the gitignored file, not leak it"
     );
 }
+
+// -- H1e: smart-case (-S) silently dropped on --index --json/--ndjson (2026-07-10) --------
+//
+// The 5th silent-false-negative of the same class as H1a-d, found by the adversarial gate.
+// In JSON/ndjson mode `search_requires_ripgrep_passthrough` gates `smart_case` behind
+// `!json && !ndjson` (main.rs), so `-S` is NOT diverted to ripgrep; route_search picks
+// TrigramIndex; run_index_query passed only `args.ignore_case` (=false for `-S`) to
+// index.search -> case-SENSITIVE -> an all-lowercase `-S` pattern silently missed
+// uppercase matches (exit 0). Fixed by HONORING smart-case (it is index-doable): resolve
+// case-sensitivity per-pattern before calling index.search.
+
+#[test]
+fn test_tg_search_explicit_index_smart_case_lowercase_pattern_matches_native() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.txt"),
+        "foo one\nFOO two\nfoo three\nbar unrelated\n",
+    )
+    .unwrap();
+
+    // Native smart-case: an all-lowercase pattern is case-INSENSITIVE, so `foo` matches
+    // foo/FOO/foo = 3 lines. This is the ground truth --index must match.
+    let native = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    let native_json: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(
+        native_json["total_matches"], 3,
+        "sanity: smart-case lowercase pattern is case-insensitive in native"
+    );
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--json")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // BEFORE fix: run_index_query passed ignore_case=false -> case-sensitive -> 2 matches
+    // (silently drops the uppercase FOO line). AFTER fix: honors smart-case -> 3, == native.
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let indexed_json: Value = serde_json::from_slice(&indexed.stdout).unwrap();
+    assert_eq!(
+        indexed_json["total_matches"], native_json["total_matches"],
+        "--index -S (all-lowercase pattern) must honor smart-case case-insensitivity like native, not silently return fewer matches"
+    );
+    assert_eq!(match_tuples(&indexed_json), match_tuples(&native_json));
+}
+
+#[test]
+fn test_tg_search_explicit_index_smart_case_uppercase_pattern_stays_case_sensitive() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.txt"),
+        "foo one\nFOO two\nfoo three\nbar unrelated\n",
+    )
+    .unwrap();
+
+    // Native smart-case: a pattern containing an uppercase char is case-SENSITIVE, so
+    // `FOO` matches only the uppercase line = 1. Regression guard: proves the honor fix
+    // does NOT over-broadly make every -S query case-insensitive (which would return 3).
+    let native = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("-S")
+        .arg("FOO")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    let native_json: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(
+        native_json["total_matches"], 1,
+        "sanity: smart-case upper-case pattern is case-sensitive in native"
+    );
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--json")
+        .arg("-S")
+        .arg("FOO")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let indexed_json: Value = serde_json::from_slice(&indexed.stdout).unwrap();
+    assert_eq!(
+        indexed_json["total_matches"], native_json["total_matches"],
+        "--index -S (upper-case pattern) must stay case-sensitive like native"
+    );
+    assert_eq!(match_tuples(&indexed_json), match_tuples(&native_json));
+}
+
+#[test]
+fn test_tg_search_warm_auto_index_smart_case_lowercase_pattern_matches_native() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.txt"),
+        "foo one\nFOO two\nfoo three\nbar unrelated\n",
+    )
+    .unwrap();
+
+    // Compute the native ground truth BEFORE any .tg_index exists -- once a warm index is
+    // built, EVERY subsequent query in this dir auto-routes to it, so a "native" query run
+    // afterward would be contaminated (it would hit the index too, making the parity check
+    // vacuous). With no index present, `--json -S foo` routes to NativeCpu.
+    assert!(!dir.path().join(".tg_index").exists());
+    let native = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    let native_json: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(
+        native_json["total_matches"], 3,
+        "sanity: native smart-case lowercase pattern is case-insensitive = 3"
+    );
+    assert!(
+        !dir.path().join(".tg_index").exists(),
+        "a cold native --json query must not create an index"
+    );
+
+    // Now build a warm index (plain, no -S) so the -S query below auto-routes to it.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+    assert!(dir.path().join(".tg_index").exists());
+
+    // Warm auto-routing (NO --index) with --json -S foo must ALSO honor smart-case -- the
+    // query flows through the same run_index_query chokepoint as explicit --index, so a
+    // single fix covers both. --verbose lets us confirm it truly routed to the index (else
+    // the parity assertion would be vacuous, e.g. if it fell through to native/ripgrep).
+    let warm = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("--verbose")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        warm.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+    let warm_stderr = String::from_utf8_lossy(&warm.stderr);
+    assert!(
+        warm_stderr.contains("TrigramIndex"),
+        "expected warm auto-routing to the trigram index: stderr={warm_stderr}"
+    );
+    let warm_json: Value = serde_json::from_slice(&warm.stdout).unwrap();
+    assert_eq!(
+        warm_json["total_matches"], native_json["total_matches"],
+        "warm auto-routed -S (all-lowercase) must honor smart-case like native"
+    );
+    assert_eq!(match_tuples(&warm_json), match_tuples(&native_json));
+}

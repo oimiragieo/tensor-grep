@@ -72,6 +72,17 @@ itself, *after* routing, before running the query:
   `TrigramIndex::search` falls back to scanning every indexed file directly instead of trusting an
   empty/mismatched trigram candidate set as "no match" (`index.rs`,
   `fixed_string_candidate_selection`).
+- **`--smart-case` (`-S`) honored per pattern:** `-S` is not diverted to ripgrep in JSON/NDJSON
+  output mode (`search_requires_ripgrep_passthrough` gates it behind `!json && !ndjson`), so it
+  reaches the index. `run_index_query` resolves case-sensitivity per pattern
+  (`args.ignore_case || (args.smart_case && smart_case_pattern_is_case_insensitive(pattern))`)
+  before calling `index.search`, so an all-lowercase `-S` pattern searches case-insensitively
+  (matching an uppercase occurrence) and a pattern containing an uppercase char stays
+  case-sensitive -- identical to native smart-case. This is honored rather than refused because
+  it is index-doable and reuses the same `ignore_case` path (and its H1b/H1c full-scan safety
+  nets); before this fix `-S` was silently dropped to a case-sensitive query (a false negative,
+  exit 0). Covers both explicit `--index` and warm auto-routing, since both reach
+  `run_index_query`.
 - **`--no-ignore` mode tracking:** the on-disk index format records the `no_ignore` mode it was
   built with (`INDEX_FORMAT_VERSION` 4). A query whose `--no-ignore` request disagrees with the
   stored build mode is treated as stale and triggers a rebuild under the query's requested mode --
