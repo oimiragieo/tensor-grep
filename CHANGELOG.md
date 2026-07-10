@@ -1,6 +1,46 @@
 # CHANGELOG
 
 
+## v1.58.0 (2026-07-10)
+
+### Features
+
+- **daemon**: Default-off warm-daemon fast path for the 5 symbol commands (task #94 Part A, Tier-1)
+  ([#492](https://github.com/oimiragieo/tensor-grep/pull/492),
+  [`cbd685e`](https://github.com/oimiragieo/tensor-grep/commit/cbd685e9238f401959243167d67250b9de707fd6))
+
+Wire defs/impact/refs/callers/blast-radius to an OPTIONAL warm session-daemon route, gated
+  end-to-end behind the net-new TG_SESSION_DAEMON_AUTOSTART env flag. DEFAULT OFF => today's
+  cold-path behavior is byte-for-byte unchanged; flipping the default ON is a later, conscious CEO
+  call (design-gate verdict: SHIP-WITH-CHANGES).
+
+All 7 mandatory must-fixes baked in:
+
+1. CORE SCOPE-FIX: extend the daemon's implicit-session guard (_implicit_session_id_for_request +
+  _implicit_session_max_repo_files) to cover the 5 symbol commands, not just
+  context_render/edit_plan. Without it a symbol command with no explicit session_id hit
+  get_session("", path) -> FileNotFoundError -> a permanent cold fallback (zero speedup). Verified
+  the daemon now SERVES defs/callers/blast_radius on a fresh no-session invocation. 2. Used the
+  corrected HEAD seams (the design doc's line numbers had drifted). 3. Non-blocking spawn:
+  maybe_autostart_session_daemon_nonblocking Popens the daemon fire-and-forget (lock held only
+  across Popen, no 5s wait-loop). Cold call #1 runs cold and never blocks on warmup; ephemeral-port
+  + last-daemon-wins + idle-reap bound the residual double-spawn race. 4. DEFAULT-OFF via
+  TG_SESSION_DAEMON_AUTOSTART; auto-forced OFF under CI/GITHUB_ACTIONS. 5. Route with
+  refresh_on_stale=True so warm output == cold output on a changed tree; warm-vs-cold byte-identity
+  + exit-2 fault-injection tests for all 5 commands. 6. Many-repos fan-out (N roots => up to N
+  resident daemons) documented; the 900s idle-reaper is the backstop (no new mechanism). 7.
+  Lazy-import ast_backend + lsp_provider_setup in main.py so the cold path does not eat ~54ms+ of
+  eager import.
+
+DEFER Tier 2 (orient/agent daemon server handlers) as instructed.
+
+New tests: tests/unit/test_symbol_daemon_autostart.py (23 cases). Adapted 3 test_cli_modes.py
+  monkeypatch sites to the now-lazy install_managed_lsp_providers import (patch the source module,
+  not main).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.57.1 (2026-07-10)
 
 ### Bug Fixes
