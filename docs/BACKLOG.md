@@ -22,13 +22,13 @@ Always run the common-sense gate before pending a question to the CEO.
 ## SHIPPING — open PRs (drain one-per-publish)
 | PR | Fix | Files | Verified |
 |----|-----|-------|----------|
-| #484 | **#95 Part 1** — confine every MCP tool's primary `path=`/`root=`/`file=` to the server root (+ new `TG_MCP_ROOT` override); closes an arbitrary-directory READ across ~35 tools + the `tg_session_file_importers` `/etc` LIVE VULN | mcp_server + 7 test files | 3924 unit + 363 MCP + 2 integration pass, ruff/mypy clean; **adversarial Opus gate = SHIP** (fail-closed, no escape found, 55-case runtime ratchet, `/etc` traced-closed, contract 1.1.0) |
+| #487 | **#104** — resolve `tg importers` FILE against cwd not ROOT (dogfood path-doubling P0: a relative FILE from a parent cwd double-joined onto ROOT) | repo_map.py, main.py, test_file_deps | 27 real-venv + real-binary before/after (doubled→resolved, importer_count:1); left `build_file_importers_from_map` UNCHANGED (round-7 session/daemon confined-path contract); non-security |
 
-**Push-race (2026-07-10):** **v1.54.6 mid-publish** (from #483/#57 caller-cap). #484 waits for the `chore(release): v1.54.6` stamp + PyPI, then drains one-per-publish. #484 is a deliberate behavior change (out-of-cwd MCP reads now rejected → set `TG_MCP_ROOT`); shipped `feat`/minor with a reviewer-override note, NOT a major bump.
+**Push-race (2026-07-10):** **v1.56.0 mid-publish** (#484 MCP confinement, feat→minor). #487 waits for v1.56.0 on PyPI, then drains one-per-publish.
 
-**SHIPPED this session (live on PyPI):** **v1.54.4** (#480 glob/`-t`/`-T`/`--iglob` walk-DoS, 4 adversarial gate rounds) · **v1.54.5** (#482 launcher-shim ~150ms/call) · **v1.54.6 releasing** (#483/#57 `CALLER_SCAN_FILE_CEILING` 512→2000 + 2 latent bugs fixed; real-repo measured +1.8s/~10% for a complete scan). Earlier: v1.54.2 (#84), v1.54.3 (#478/#52 --deadline hard bound).
+**SHIPPED this session (live on PyPI):** v1.54.2 (#84) · v1.54.3 (#478/#52 --deadline hard bound) · **v1.54.4** (#480 glob/`-t`/`-T`/`--iglob` walk-DoS, 4 gate rounds) · **v1.54.5** (#482 launcher-shim ~150ms) · **v1.54.6** (#483/#57 caller-cap 512→2000) · **v1.55.0** (#486/#96 answer-first payloads — dogfood-proven **90-97% payload cut**) · **v1.56.0 releasing** (#484/#95-Part-1 MCP path-confinement security fix — recovered from a session-limit-killed agent, Opus-gated SHIP, Linux-CI ratchet-fixed).
 
-**BUILDING (background agents):** **#96** answer-first payloads (`--max-tests`/`--max-tokens` + omissions envelope; root-cause = defs/refs dump the whole-repo test manifest) · **#86** late-rerank T7-T10.
+**BUILDING (background agents):** **#100** walk-ceiling hoist (**RE-CLASSIFIED NIT → HIGH SECURITY** — a live, default-on `-e`-form native-binary walk-DoS bypass of #480; also closes dogfood #105; → mandatory Opus gate) · **#86** late-rerank T7-T10. **#95 Part 2** (MCP features: tg_orient / `--rank`/`--semantic` / doctor-deadline / inline_rules[SEC]) UNBLOCKED by #484 — fires when a build slot frees.
 
 **RECOVERY NOTE (2026-07-10):** #95's build agent DIED on a session-usage limit mid-build; its 1268 uncommitted lines were preserved → harvested → real-venv re-verified → gated → PR #484. Session-limit death ≠ lost work.
 
