@@ -127,3 +127,80 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
 
 def test_tg_mcp_stdio_accepts_content_length_initialize_frame() -> None:
     asyncio.run(_stdio_content_length_initialize_roundtrip())
+
+
+def _frame(payload: dict[str, object]) -> bytes:
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    encoded = body.encode("utf-8")
+    return f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii") + encoded
+
+
+async def _stdio_content_length_multibyte_utf8_does_not_desync_next_message() -> None:
+    """Audit #49: a Content-Length-framed message with a multi-byte UTF-8 body must not desync the
+    framed stream -- the FOLLOWING pipelined message must still parse and execute correctly. Uses a
+    real subprocess and real OS pipes (not an in-memory buffer) for maximum fidelity."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "tensor_grep",
+        "mcp",
+        cwd=REPO_ROOT,
+        env=_mcp_env(),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    try:
+        # "e" with an acute accent (\u00e9) and "i" with a circumflex (\u00ee) are each 2 UTF-8
+        # bytes but 1 character -- escape sequences keep this source file ASCII-only (house rule).
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "t\u00e9st-cl\u00eent-\u00e9\u00e9\u00e9",
+                    "version": "1.0.0",
+                },
+            },
+        }
+        process.stdin.write(_frame(initialize))
+        await process.stdin.drain()
+        initialize_response = await _read_jsonrpc_line(process)
+        assert initialize_response["id"] == 1
+        assert "result" in initialize_response, initialize_response
+
+        # Pipeline a notification (no response expected) then a real follow-up request, all via
+        # the same Content-Length-framed path. If the first (multi-byte) body were read as
+        # characters instead of bytes, the stream would already be desynced here.
+        process.stdin.write(_frame({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        await process.stdin.drain()
+        process.stdin.write(
+            _frame({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        )
+        await process.stdin.drain()
+
+        tools_response = await _read_jsonrpc_line(process)
+        assert tools_response["id"] == 2, tools_response
+        result = tools_response["result"]
+        assert isinstance(result, dict)
+        tools = result["tools"]
+        assert isinstance(tools, list)
+        tool_names = {tool["name"] for tool in tools}
+        assert "tg_mcp_capabilities" in tool_names
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+            await process.stdin.wait_closed()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except TimeoutError:
+            process.terminate()
+            await process.wait()
+
+
+def test_tg_mcp_stdio_multibyte_utf8_body_does_not_desync_next_message() -> None:
+    asyncio.run(_stdio_content_length_multibyte_utf8_does_not_desync_next_message())
