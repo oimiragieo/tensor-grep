@@ -1936,6 +1936,31 @@ def test_tg_ruleset_scan_baseline_io_error_fails_closed(tmp_path, monkeypatch):
     assert "Traceback" not in payload["error"]["message"]
 
 
+def test_tg_ruleset_scan_inline_rules_bad_language_override_fails_closed(tmp_path, monkeypatch):
+    """[SEC] round-5 gate: a rule carrying its OWN valid `language:` short-circuits the loader's
+    guarded default_language normalization, so an unsupported top-level `language=` override reaches
+    normalize_ast_language (mcp_server.py:2008) UNGUARDED -- it was a raw ValueError traceback on a
+    valid-but-bogus payload. Must fail closed as structured invalid_input. (The control -- a rule
+    that OMITS its own language -- was already caught by the loader; this is the short-circuit gap.)
+    """
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    # rule sets language=python (so the loader succeeds) + a bogus top-level override reaches 2008.
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            inline_rules="rules:\n  - id: x\n    language: python\n    pattern: print($A)\n",
+            path=".",
+            language="zzznotalang",
+        )
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Unsupported AST language" in payload["error"]["message"]
+    assert "Traceback" not in payload["error"]["message"]
+
+
 def test_tg_ruleset_scan_inline_rules_at_length_boundary_still_parses(monkeypatch, tmp_path):
     """Boundary correctness for the length bound: a payload AT the cap must still reach the
     parser (not be off-by-one refused) and behave exactly like any other invalid-but-in-budget

@@ -2005,9 +2005,18 @@ def tg_ruleset_scan(
                 ruleset=ruleset,
                 path=path,
             )
-        inferred_language = (
-            normalize_ast_language(language) if language else str(rules[0]["language"])
-        )
+        try:
+            inferred_language = (
+                normalize_ast_language(language) if language else str(rules[0]["language"])
+            )
+        except ValueError as exc:
+            # [SEC] normalize_ast_language raises ValueError on an unsupported `language` override.
+            # A rule carrying its OWN valid `language:` short-circuits the loader's guarded
+            # default_language normalization (mcp_server.py:1986-1989), so an invalid top-level
+            # `language=` override reaches here UNGUARDED -- a raw traceback on a valid-but-bogus
+            # payload, violating the tool's fail-closed contract. (audit #95 Part-2 round-5 gate:
+            # demonstrated with language="zzznotalang" + a rule that sets its own language.)
+            return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
         project_cfg: dict[str, object] = {
             "config_path": "inline-rules",
             "root_dir": Path(path).expanduser().resolve(),
