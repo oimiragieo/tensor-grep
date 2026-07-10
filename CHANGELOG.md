@@ -1,6 +1,77 @@
 # CHANGELOG
 
 
+## v1.55.0 (2026-07-10)
+
+### Documentation
+
+- Bank the 4 audit design docs (57/94/95/96) + reconcile BACKLOG to the v1.54.6 drain state
+  ([#485](https://github.com/oimiragieo/tensor-grep/pull/485),
+  [`0d069f7`](https://github.com/oimiragieo/tensor-grep/commit/0d069f7ad29dc6c4ab2ec29defdf88894426d30a))
+
+- Commit the previously-uncommitted design docs (durability): caller-cap #57, latency/daemon #94,
+  MCP moat/confinement #95 (with the Opus gate-verdict section), answer-first payloads #96. -
+  BACKLOG SHIPPING: v1.54.4/5 live + v1.54.6 releasing; #484 (#95 Part-1 confinement, Opus gate
+  SHIP) is the sole open PR; #96/#86 building. - Mark #57 shipped; #94 Part B shipped / Part A
+  designed; #95 Part 1 PR'd / Part 2 remains; clear the stale #480 collision note.
+
+### Features
+
+- **repo-map**: Answer-first payloads + --max-tests/--max-tokens on defs/refs/callers/impact (audit
+  #96) ([#486](https://github.com/oimiragieo/tensor-grep/pull/486),
+  [`b5a23e3`](https://github.com/oimiragieo/tensor-grep/commit/b5a23e3434a383b1fe928c81d475feebad55ebf7))
+
+Root cause: build_symbol_defs_from_map shallow-copied the WHOLE-REPO test manifest into `tests`
+  (duplicated a second time into `related_paths`) regardless of relevance to the requested symbol --
+  the "69KB for a 1-symbol answer" bug. refs/source inherit the same dump since they build on defs'
+  payload. callers/impact already computed real relevance via _relevant_tests_for_symbol but never
+  count-capped it. blast-radius was the one command already fixed
+  (_apply_blast_radius_output_limits) -- this generalizes that precedent instead of reinventing it.
+
+Changes: - Root cause: swap defs' raw-copy for _relevant_tests_for_symbol (repo_map.py), so
+  defs/refs/ source stop dumping the whole manifest. related_paths is rebuilt from the now-filtered
+  tests in all touched sites (defs/refs/callers/impact) so the bytes cannot leak back via the second
+  field. - New _apply_symbol_field_output_limit: a shared, field-name-generic cap + output_limit
+  stamper (mirrors _apply_blast_radius_output_limits, but with dedicated
+  tests_truncated/total_tests/ omitted_tests keys instead of blast-radius's --max-files-conflated
+  shape). Wired as a new --max-tests on defs/refs/callers/impact, on-by-default (25) like
+  blast-radius's own precedent. - New _apply_symbol_token_budget: a universal --max-tokens (default
+  16000, 0=unbounded) with an answer-first shrink order -- secondary fields (tests/related_paths,
+  plus their *_matches companions) are cleared first; only if still over budget is the PRIMARY
+  answer array (definitions/references/callers/files) trimmed, floored at 1 entry (never 0, so a
+  budget trim can never masquerade as _emit_symbol_command_result's not_found/exit-1 "confident
+  false zero"). - New _attach_symbol_omissions: an additive `omissions` envelope mirroring the agent
+  capsule's omissions:{token_budget, omitted_section_count, omitted_sections[], follow_up_reads[]}
+  shape, with a SELF-referential follow-up command (re-run this same command with a bigger
+  --max-tests/ --max-tokens) since there is no other command to point at here. - Contract safety:
+  the new output_limit/token_budget/omissions keys are deliberately named so
+  main._scan_truncation_warning never recognizes them (it only checks callers_truncated/
+  files_truncated/possibly_truncated) -- an output-cap trim stays exit-0 and never sets
+  result_incomplete/partial/caller_scan_limit. JSON_OUTPUT_VERSION stays 1 (purely additive).
+
+Verification: - TDD: tests/unit/test_answer_first_symbol_payloads.py, 18 new tests, RED-verified
+  before the fix (relevance-filter regression, count-cap + output_limit shape, related_paths
+  non-leak on both the relevance-filter and count-cap axes, --max-tokens secondary-before-primary
+  shrink order, the negative contract that a trim never flips result_incomplete/partial, and the
+  omissions self-referential follow-up). - Full sweep green: test_cli_modes.py,
+  test_main_cli_contracts.py, test_repo_map_graph.py, test_file_deps.py, test_mcp_server.py,
+  test_mcp_caps.py, test_edit_plan_seed.py, test_result_incomplete_payload_layer.py,
+  test_cap_fix_chokepoint.py (868 tests) plus the full unit suite (3872 passed; 2 pre-existing
+  failures are an unrelated missing model2vec extra). - ruff check / ruff format --preview --check /
+  mypy: clean on all 3 changed files. - Perf: defs on gotcontext-main (830 test files) went from
+  ~60ms (raw copy) to ~460-600ms mean (worst-case ~2.7s cold) for the new relevance filter -- but
+  callers/impact ALREADY pay 6.5-15.8 SECONDS for the identical underlying computation today
+  (pre-existing, unrelated to this change, since they call caller_files=... which additionally
+  triggers PageRank/reverse-importer graph work defs skips). defs' new cost is 10-20x cheaper than
+  that existing, already-shipped precedent, so no lazy/fallback mitigation was applied. -
+  Real-subprocess dogfood (published binary via `uv run tg`, not CliRunner): `tg defs
+  gotcontext-main require_admin --json` went from 155,671 bytes (830 test paths dumped twice) to
+  3,831 bytes (the one real relevant test file, plus output_limit/omissions/token_budget) -- a 97.5%
+  reduction, matching the audit's "95% payload filler" framing almost exactly.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.54.6 (2026-07-10)
 
 ### Performance Improvements
