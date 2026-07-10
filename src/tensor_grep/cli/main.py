@@ -201,6 +201,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.
 - `TG_FORCE_CPU`: Force CPU routing for search commands.
 - `TG_SIDECAR_TIMEOUT_MS`: Timeout for sidecar-backed commands.
+- `TG_HELP_PROBE_TIMEOUT_MS`: Timeout for the native front door's `--help` passthrough probe to this rich Python help before it falls back to the condensed native help (default 3000ms).
 - `TENSOR_GREP_DEVICE_IDS`: Comma-separated GPU IDs available to tensor-grep.
 - `TENSOR_GREP_CLASSIFY_PROVIDER`: Set to `cybert` to opt into CyBERT/Triton classification.
 - `TENSOR_GREP_TRITON_TIMEOUT_SECONDS`: Timeout for Triton-backed NLP probes.
