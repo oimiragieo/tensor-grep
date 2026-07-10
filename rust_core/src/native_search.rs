@@ -148,6 +148,18 @@ pub struct NativeSearchConfig {
     pub max_depth: Option<usize>,
     pub glob: Vec<String>,
     pub hidden: bool,
+    /// Whether the caller omitted an explicit PATH positional (the search root defaulted to `.`
+    /// instead of a user-supplied path). Gates `check_native_implicit_walk_ceiling`, this
+    /// engine's own refuse-before-enumerate guard (audit #105 -- the native-CPU sibling of
+    /// `RipgrepSearchArgs::path_was_implicit`, audit #100). An explicit, deliberately-scoped PATH
+    /// must never be refused regardless of its size. Every production construction site
+    /// (`native_search_config_for_positional`, `native_search_config_for_command`,
+    /// `native_search_config_for_gpu_params` in main.rs) must set this correctly and is covered
+    /// by a dedicated regression test -- `Default`'s `false` is NOT a safe fallback for the walk
+    /// guard itself (it means "never refuse"), it only exists so ad hoc test fixtures that build
+    /// via `NativeSearchConfig::default()` and don't care about this field get deterministic,
+    /// non-refusing behavior, mirroring `RipgrepSearchArgs`'s convention.
+    pub path_was_implicit: bool,
     pub text: bool,
     pub null_data: bool,
     pub count: bool,
@@ -188,6 +200,7 @@ impl Default for NativeSearchConfig {
             max_depth: None,
             glob: Vec::new(),
             hidden: false,
+            path_was_implicit: false,
             text: false,
             null_data: false,
             count: false,
@@ -1001,10 +1014,57 @@ fn should_use_parallel_walk_search(config: &NativeSearchConfig) -> bool {
         && config.max_count.is_none()
 }
 
+/// Bounded refuse-before-enumerate gate for the native-CPU engine's own root walk -- the
+/// native-CPU sibling of `rg_passthrough::check_implicit_walk_ceiling` (audit #100). Audit #105
+/// found #100's hoist covered only `execute_ripgrep_search`'s callers (the rg-passthrough
+/// engine); `run_native_search` (reached via `--json`, `--force-cpu`, single-pattern
+/// `--fixed-strings`, and rg-unavailable routing) had NO ceiling at all, so a bare implicit-path
+/// search on a huge root still walked unbounded through this engine.
+///
+/// Only meaningful when `config.path_was_implicit` -- an explicit, deliberately-scoped PATH is
+/// never refused regardless of size. Called as the FIRST statement of both
+/// `search_walk_roots_parallel` and `collect_walked_files`: those are the only two functions
+/// that ever hand a root to `WalkBuilder` in this module (`build_walk_builder`'s only two
+/// callers), and `collect_walked_files` is also called directly by
+/// `run_native_fixed_multi_pattern_search` (the AhoCorasick multi-pattern fast path) -- so
+/// gating at this shared low-level pair, rather than in `run_native_search` alone, protects
+/// every native-CPU walk entry point in one place instead of relying on each of main.rs's
+/// several dispatch sites (positional CLI, `tg search`, GPU-CPU-fallback) to remember it.
+fn check_native_implicit_walk_ceiling(
+    config: &NativeSearchConfig,
+    roots: &[PathBuf],
+) -> Option<String> {
+    if !config.path_was_implicit {
+        return None;
+    }
+    let probe_roots: Vec<String> = roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    if crate::rg_passthrough::implicit_search_walk_exceeds_ceiling(
+        &probe_roots,
+        config.max_depth,
+        config.no_ignore,
+        config.hidden,
+        crate::rg_passthrough::IMPLICIT_SEARCH_WALK_FILE_CEILING,
+    ) {
+        Some(
+            crate::rg_passthrough::format_unbounded_implicit_search_walk_error(
+                crate::rg_passthrough::IMPLICIT_SEARCH_WALK_FILE_CEILING,
+            ),
+        )
+    } else {
+        None
+    }
+}
+
 fn search_walk_roots_parallel(
     config: &NativeSearchConfig,
     roots: &[PathBuf],
 ) -> Result<SearchStats> {
+    if let Some(refusal) = check_native_implicit_walk_ceiling(config, roots) {
+        return Err(anyhow!(refusal));
+    }
     let shared_stats = Arc::new(Mutex::new(SearchStats::default()));
     let shared_error = Arc::new(Mutex::new(None));
     let should_quit = Arc::new(AtomicBool::new(false));
@@ -1358,6 +1418,9 @@ fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
 }
 
 fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    if let Some(refusal) = check_native_implicit_walk_ceiling(config, roots) {
+        return Err(anyhow!(refusal));
+    }
     let builder = build_walk_builder(config, roots)?;
     let walked_files = Arc::new(Mutex::new(Vec::new()));
     let shared_files = Arc::clone(&walked_files);
@@ -2030,4 +2093,136 @@ fn display_search_path(paths: &[PathBuf]) -> String {
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Audit #105: native-CPU implicit-walk-ceiling gate ----------------------------------
+    // Mirrors rg_passthrough.rs's audit #100 test suite for `check_implicit_walk_ceiling`. #100
+    // hoisted a walk-ceiling gate into `execute_ripgrep_search` (the rg-passthrough engine) but
+    // left `run_native_search` (reached via `--json`, `--force-cpu`, single-pattern
+    // `--fixed-strings`, and rg-unavailable routing) with NO ceiling at all -- `NativeSearchConfig`
+    // did not even have a `path_was_implicit` field, so a bare implicit-path search on a huge
+    // root walked unbounded through `search_walk_roots_parallel`/`collect_walked_files`.
+
+    fn make_stub_file_dir(dir: &Path, file_count: usize) {
+        for index in 0..file_count {
+            fs::write(
+                dir.join(format!("stub_{index}.py")),
+                "nothing interesting\n",
+            )
+            .unwrap();
+        }
+    }
+
+    fn config_with_paths(paths: Vec<PathBuf>, path_was_implicit: bool) -> NativeSearchConfig {
+        NativeSearchConfig {
+            pattern: "TODO".to_string(),
+            paths,
+            path_was_implicit,
+            ..NativeSearchConfig::default()
+        }
+    }
+
+    #[test]
+    fn check_native_implicit_walk_ceiling_refuses_oversized_implicit_walk() {
+        // RED-before-fix: this is the exact shape of the #105 bypass -- an implicit-path search
+        // (no explicit PATH positional) on a root over the 1500-file ceiling.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let roots = vec![dir.path().to_path_buf()];
+        let config = config_with_paths(roots.clone(), true);
+
+        let refusal = check_native_implicit_walk_ceiling(&config, &roots);
+
+        assert!(
+            refusal.is_some(),
+            "an oversized implicit-path walk must be refused"
+        );
+    }
+
+    #[test]
+    fn check_native_implicit_walk_ceiling_allows_explicit_path_even_when_oversized() {
+        // Non-regression (Trap #3 parity, mirrors rg_passthrough.rs): an EXPLICIT,
+        // deliberately-scoped PATH must never be refused regardless of size.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let roots = vec![dir.path().to_path_buf()];
+        let config = config_with_paths(roots.clone(), false);
+
+        let refusal = check_native_implicit_walk_ceiling(&config, &roots);
+
+        assert!(
+            refusal.is_none(),
+            "an explicit path must run uninhibited even when the walk exceeds the ceiling"
+        );
+    }
+
+    #[test]
+    fn check_native_implicit_walk_ceiling_allows_implicit_path_under_ceiling() {
+        // Normal-case non-regression: an implicit path under the ceiling is unaffected -- a
+        // typical repo must never be refused.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 50);
+        let roots = vec![dir.path().to_path_buf()];
+        let config = config_with_paths(roots.clone(), true);
+
+        let refusal = check_native_implicit_walk_ceiling(&config, &roots);
+
+        assert!(
+            refusal.is_none(),
+            "a 50-file implicit root must not be refused"
+        );
+    }
+
+    #[test]
+    fn run_native_search_refuses_oversized_implicit_walk_before_enumerating() {
+        // Hermetic end-to-end test of the actual `run_native_search` entry point the #105 audit
+        // named. Bounded per anti-hang-test-protocol: run on a joined worker thread with an
+        // explicit timeout so a regression (the gate silently stops firing, or stops running
+        // before the real walk) that falls through to the unbounded parallel walk cannot hang
+        // the test runner -- it fails fast with a clear panic message instead.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let config = config_with_paths(vec![dir.path().to_path_buf()], true);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = run_native_search(config).map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(10)).expect(
+            "run_native_search must return well within 10s -- a hang here means the \
+             walk-ceiling gate did not fire before an unbounded parallel walk",
+        );
+
+        let err = result.expect_err("an oversized implicit-path walk must be refused, not Ok");
+        assert!(
+            crate::rg_passthrough::is_unbounded_implicit_search_walk_refusal(&err),
+            "unexpected error (expected the walk-ceiling refusal): {err}"
+        );
+    }
+
+    #[test]
+    fn run_native_search_does_not_refuse_explicit_oversized_path() {
+        // Non-regression: an explicit PATH (even oversized) must complete normally, not be
+        // refused -- fail-open for explicit scoping is the whole point of the guard (Trap #3
+        // parity). Bounded per anti-hang-test-protocol.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let config = config_with_paths(vec![dir.path().to_path_buf()], false);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = run_native_search(config).map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("run_native_search must return well within 20s for an explicit path");
+
+        result.expect("an explicit oversized path must not be refused");
+    }
 }
