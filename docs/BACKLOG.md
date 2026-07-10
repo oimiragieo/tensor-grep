@@ -22,25 +22,28 @@ Always run the common-sense gate before pending a question to the CEO.
 ## SHIPPING — open PRs (drain one-per-publish)
 | PR | Fix | Files | Verified |
 |----|-----|-------|----------|
-| #479 | #37 — make public-docs governance reads cwd-independent (kills the ordering-pollution flake) | test_public_docs_governance | 43t repo-root AND foreign-cwd (reproduced then fixed the flake) |
-| #480 | #88 — bound the bare `--glob` walk when no PATH given (broad globs refuse fast, were exit-124 hangs) | main.rs, main.py, mcp_server | 684 py + 70 rust + real-binary dogfood; **adversarial Opus gate RUNNING** (touches mcp_server) |
+| #484 | **#95 Part 1** — confine every MCP tool's primary `path=`/`root=`/`file=` to the server root (+ new `TG_MCP_ROOT` override); closes an arbitrary-directory READ across ~35 tools + the `tg_session_file_importers` `/etc` LIVE VULN | mcp_server + 7 test files | 3924 unit + 363 MCP + 2 integration pass, ruff/mypy clean; **adversarial Opus gate = SHIP** (fail-closed, no escape found, 55-case runtime ratchet, `/etc` traced-closed, contract 1.1.0) |
 
-**Push-race (2026-07-09):** **v1.54.3 mid-publish** (from #478/#52 deadline). #479/#480 wait for the `chore(release): v1.54.3` stamp + PyPI. #480 ALSO waits on its Opus gate PASS.
+**Push-race (2026-07-10):** **v1.54.6 mid-publish** (from #483/#57 caller-cap). #484 waits for the `chore(release): v1.54.6` stamp + PyPI, then drains one-per-publish. #484 is a deliberate behavior change (out-of-cwd MCP reads now rejected → set `TG_MCP_ROOT`); shipped `feat`/minor with a reviewer-override note, NOT a major bump.
 
-**MERGED this session (live/publishing):** #84 (validation-plan parity → v1.54.2) · #476 (docs/backlog reconcile + AGENTS.md doc-drift + skill accuracy) · #477 (#64 index-lock flake-harden) · **#478 (#52 --deadline hard wall-clock bound, 354s→10s, real-binary proven → v1.54.3)**.
+**SHIPPED this session (live on PyPI):** **v1.54.4** (#480 glob/`-t`/`-T`/`--iglob` walk-DoS, 4 adversarial gate rounds) · **v1.54.5** (#482 launcher-shim ~150ms/call) · **v1.54.6 releasing** (#483/#57 `CALLER_SCAN_FILE_CEILING` 512→2000 + 2 latent bugs fixed; real-repo measured +1.8s/~10% for a complete scan). Earlier: v1.54.2 (#84), v1.54.3 (#478/#52 --deadline hard bound).
+
+**BUILDING (background agents):** **#96** answer-first payloads (`--max-tests`/`--max-tokens` + omissions envelope; root-cause = defs/refs dump the whole-repo test manifest) · **#86** late-rerank T7-T10.
+
+**RECOVERY NOTE (2026-07-10):** #95's build agent DIED on a session-usage limit mid-build; its 1268 uncommitted lines were preserved → harvested → real-venv re-verified → gated → PR #484. Session-limit death ≠ lost work.
 
 **Deep-dive #81 audit drain (v1.51.x) — 100% MERGED + LIVE:** #455/#457/#460-#470 (14 findings; every security PR passed the adversarial Opus gate).
 
-**Late-rerank feature (task #86, the #1 ColGrep competitive response) — T0-T6 MERGED (default-OFF behind `TG_LATE_RERANK`):** #471-#473 + #474 (#87 fetch total-deadline). **T7-T10 remaining** (golden-set ship gate is the decision).
+**Late-rerank (task #86, the #1 ColGrep competitive response) — T0-T6 MERGED (default-OFF behind `TG_LATE_RERANK`):** #471-#474. **T7-T10 building** (T8 golden-set ship gate = the decision).
 
 ---
 
 ## CURRENT LIVE BACKLOG (2026-07-09, refreshed) — action after the queue drains
 
-### Agentic audit (CEO-relayed 2026-07-09) — the "make models prefer tg" P0s + SaaS thesis. Memory: `tensor-grep-agentic-audit-saas-thesis-2026-07-09`. **Phase-0 (#94-98) = same work as the SaaS foundation.** All BUILDS collide with #480 (main.py/mcp_server.py) → gated on #480 harvest; DESIGNS proceed now (read-only).
-- `[P0, #94, DESIGN RUNNING]` **Latency — the #1 preference-killer** (6-33s/call, cold-start-dominated; empty-dir orient 6.5s vs native 63ms). (A) daemon-as-default fast path (lazy auto-start; MCP `tg_session_*` bypass it today); (B) collapse the ~270ms 2-chained-bash-shim WSL-probe launcher tax. ALSO fixes flaky #83. Design: agent aa95d03d → `docs/plans/design-tensor-grep-94-*` on return.
-- `[P0, #95, DESIGN DONE]` **MCP moat exposure** (highest-leverage): add `tg_orient` tool, `--rank`/`--semantic`/rerank on `tg_search` (+ fix GPU-oversell string), custom rules on `tg_ruleset_scan`, `tg_doctor`+`deadline`. **SECURITY: ~35 MCP tools' primary `path=` UNCONFINED** — build confinement FIRST as the safety floor. Design: `docs/plans/design-tensor-grep-95-mcp-moat-exposure-2026-07-09.md`. NEXT: Opus gate on the design → build.
-- `[P0, #96]` **Answer-first payloads + universal `--max-tokens`** on defs/refs/callers (callers = 200KB/464 entries, no output cap; --max-tokens inconsistent). Apply the capsule's omissions/follow_up_reads pattern.
+### Agentic audit (CEO-relayed 2026-07-09) — the "make models prefer tg" P0s + SaaS thesis. Memory: `tensor-grep-agentic-audit-saas-thesis-2026-07-09`. **Phase-0 (#94-98) = same work as the SaaS foundation.** The #480 collision cleared (merged as v1.54.4); builds now proceed one-per-file (repo_map.py, mcp_server.py, main.py held by different in-flight items).
+- `[P0, #94, Part B SHIPPED / Part A designed]` **Latency — the #1 preference-killer** (6-33s/call). (B) launcher-shim ~150ms tax — **SHIPPED (#482 → v1.54.5).** (A) daemon-as-default fast path — DESIGNED (`docs/plans/design-tensor-grep-94-*`), load-bearing → council/Opus gate; sequenced AFTER Part B gets real-world mileage. ALSO fixes flaky #83.
+- `[P0, #95, Part 1 PR'd / Part 2 remains]` **MCP moat exposure** (highest-leverage). **Part 1 = the security floor: global path-confinement — PR #484 (Opus gate SHIP), drains after v1.54.6.** Part 2 (the FEATURES, build after #484 merges): `tg_orient` tool, `--rank`/`--semantic` on `tg_search` (+ GPU-oversell string fix), `tg_doctor`+`deadline`, `inline_rules` custom rules. Design: `docs/plans/design-tensor-grep-95-mcp-moat-exposure-2026-07-09.md`. Gate follow-ups → task #102.
+- `[P0, #96, BUILDING]` **Answer-first payloads + universal `--max-tokens`** on defs/refs/callers (callers = 200KB/464 entries, no output cap). Root cause: defs/refs COPY the whole-repo test manifest verbatim (2×). Fix: relevance-filter + extract blast-radius's output-limit helper + omissions envelope. Design: `docs/plans/design-tensor-grep-96-answer-first-payloads-2026-07-09.md`. Build agent running (unblocked by #57 merge).
 - `[P0/P1, #97]` **help-stability + P1 batch:** bare `tg --help` renders 2 docs (clap vs Typer); exit-2-on-partial ambiguity; GPU-oversell string; `--model` silent no-op; harness_api doc-gen (38/45 tools); MCP path confinement (overlaps #95).
 - `[P2, #98]` MCP tool consolidation (45→~10 task-shaped) + git-aware staleness receipts + workspace/multi-repo + the $0 Sverklo file-deps re-run. (AGENTS.md doc-drift half DONE in #476.)
 - `[CEO-gated, #99]` **SaaS thesis** — local-first code-intel + governance plane for agent fleets. **CI-bot vs SAST wedge = the CEO's call** (needs design partners). npm never published (registry 404 — public-ship gate).
@@ -54,7 +57,7 @@ Always run the common-sense gate before pending a question to the CEO.
 
 ### Feature / other
 - `[P1, #86]` **Late-rerank T7-T10** (fresh-session, heavy): T7 latency receipt · **T8 golden-set ship/no-ship gate** (the decision) · T9 8-site `--rerank` registration · T10 docs+NOTICE. Design: `docs/plans/design-tensor-grep-late-rerank-2026-07-09.md`.
-- `[P0, #57]` raise the 512 `CALLER_SCAN_FILE_CEILING` — **now SAFE (the #52 deadline bound makes the larger scan interruptible)**; build on top of #478.
+- `[done, #57]` raise the 512 `CALLER_SCAN_FILE_CEILING` → 2000 — **SHIPPED (#483 → v1.54.6);** real-repo measured +1.8s for a complete (was falsely-truncated) scan; +cache-maxsize 1024→2048 + 2 latent bugs fixed.
 - `[re-verify]` #78 ReDoS simple-path residual + #76-pt2 islice giant-line bound (batch, gated). **#76 read-path exfil DONE** (#464/#469). #52/#64/#37/#84 DONE.
 - `[P3]` flaky #83 (root cause = native startup latency, fixed by #94 — sidecar-timeout hypothesis REFUTED).
 - `[CEO-gated]` #72 benchmark publish · #77 tg-ledger go/no-go.
