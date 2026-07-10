@@ -1836,6 +1836,57 @@ def test_tg_ruleset_scan_inline_rules_rejects_deep_nested_yaml(tmp_path, monkeyp
     assert "Traceback" not in payload["error"]["message"]
 
 
+def test_tg_ruleset_scan_inline_rules_rejects_excessive_rule_count(tmp_path, monkeypatch):
+    """[SEC] Unbounded scan fan-out DoS -- audit #95 Part-2 re-gate. Each inline rule is a SEPARATE
+    ast-grep pass (~40 ms/rule), so a payload UNDER the 64 KiB length cap can still drive a
+    multi-minute scan (~1000 rules -> a >40s hang). The rule COUNT cap (_MAX_INLINE_RULES) is the
+    binding bound; a payload exceeding it must be refused fast as invalid_input, BEFORE any scan
+    (no ast-grep is invoked -- the count check precedes _run_ast_scan_payload)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    # _MAX_INLINE_RULES + 1 valid rules, well under the 64 KiB length cap.
+    n = mcp_server._MAX_INLINE_RULES + 1
+    rules_yaml = "rules:\n" + "".join(
+        f"  - id: r{i}\n    pattern: print($A{i})\n" for i in range(n)
+    )
+    assert len(rules_yaml) < mcp_server._MAX_INLINE_RULES_CHARS
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(inline_rules=rules_yaml, path=".", language="python")
+    )
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert str(n) in payload["error"]["message"]
+    assert str(mcp_server._MAX_INLINE_RULES) in payload["error"]["message"]
+
+
+def test_tg_ruleset_scan_backend_execution_error_fails_closed(tmp_path, monkeypatch):
+    """[SEC] Backend Fail-Closed Contract -- audit #95 Part-2 re-gate. A runtime backend fault
+    (BackendExecutionError, a RuntimeError -- e.g. ast-grep failing on an over-long pattern,
+    WinError 206) was escaping tg_ruleset_scan's `except (BroadScanRefusedError, ValueError)` as a
+    RAW TRACEBACK on a valid payload. It must surface as a structured backend_error instead."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise BackendExecutionError("ast-grep failed: [WinError 206] the filename is too long")
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _boom)
+
+    inline_rules = "rules:\n  - id: x\n    pattern: print($A)\n"
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(inline_rules=inline_rules, path=".", language="python")
+    )
+
+    assert payload["error"]["code"] == "backend_error"
+    assert "backend failed" in payload["error"]["message"].lower()
+    assert "Traceback" not in payload["error"]["message"]
+
+
 def test_tg_ruleset_scan_inline_rules_at_length_boundary_still_parses(monkeypatch, tmp_path):
     """Boundary correctness for the length bound: a payload AT the cap must still reach the
     parser (not be off-by-one refused) and behave exactly like any other invalid-but-in-budget

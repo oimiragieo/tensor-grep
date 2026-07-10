@@ -1861,6 +1861,15 @@ def _confine_mcp_path(candidate: str, *, label: str) -> Path:
 # bounding an untrusted MCP-supplied payload before it is parsed.
 _MAX_INLINE_RULES_CHARS = 64 * 1024
 
+# [SEC] Cap the NUMBER of inline rules, not just the total byte length. Each inline rule is scanned
+# as a SEPARATE ast-grep invocation (~40 ms/rule), so an attacker-influenceable payload that stays
+# well under _MAX_INLINE_RULES_CHARS can still drive an unbounded multi-minute scan fan-out (~1000
+# tiny rules -> a >40 s hang; a ~33 KB payload is a multi-minute scan). The length cap admits ~4000
+# minimal rules, so it is NOT the binding bound on fan-out -- this count cap is. Legitimate ad-hoc
+# inline scanning uses a handful of rules; a large trusted rule set belongs in a named `ruleset=`
+# pack, not inline. (audit #95 Part-2 re-gate: unbounded inline-rules scan fan-out DoS.)
+_MAX_INLINE_RULES = 100
+
 
 @mcp.tool()  # type: ignore
 def tg_ruleset_scan(
@@ -1985,6 +1994,17 @@ def tg_ruleset_scan(
                 ruleset=ruleset,
                 path=path,
             )
+        # [SEC] bound the scan fan-out -- each rule is a separate ast-grep pass; see
+        # _MAX_INLINE_RULES. Reject a rule COUNT the length cap alone would admit into a
+        # multi-minute scan.
+        if len(rules) > _MAX_INLINE_RULES:
+            return _ruleset_scan_error(
+                f"inline_rules has {len(rules)} rules, exceeding the {_MAX_INLINE_RULES}-rule "
+                "limit (each rule is a separate scan pass). Use a named ruleset or split the scan.",
+                code="invalid_input",
+                ruleset=ruleset,
+                path=path,
+            )
         inferred_language = (
             normalize_ast_language(language) if language else str(rules[0]["language"])
         )
@@ -2075,6 +2095,18 @@ def tg_ruleset_scan(
         return _ruleset_scan_error(
             str(exc),
             code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+    except BackendExecutionError as exc:
+        # Backend Fail-Closed Contract: a runtime backend fault (e.g. ast-grep failing on an
+        # over-long pattern -- WinError 206 "command line too long" on Windows) is a RuntimeError,
+        # NOT a ValueError, so it escaped the two handlers above as a RAW TRACEBACK, violating the
+        # tool's "never a raw traceback" contract on a trivial valid payload. Surface it as a
+        # structured backend_error instead. (audit #95 Part-2 re-gate: scan-execution fail-closed.)
+        return _ruleset_scan_error(
+            f"scan backend failed: {exc}",
+            code="backend_error",
             ruleset=ruleset,
             path=path,
         )
