@@ -14668,16 +14668,25 @@ def _resolve_raw_import_entry(
     else:
         resolved, external, provenance, confidence = None, True, [], 0.0
 
-    return {
+    result: dict[str, Any] = {
         "module": module,
         "line": line,
         "resolved": resolved,
         "provenance": provenance,
         "resolution_confidence": confidence,
         "external": external,
-        "dynamic": dynamic,
-        "dynamic_unresolved": dynamic_unresolved,
     }
+    if dynamic:
+        # Payload-bloat fix (#93 SUB-1 follow-up): only stamp the dynamic markers on an entry
+        # that is ACTUALLY dynamic. Stamping "dynamic": false / "dynamic_unresolved": false on
+        # every static entry (the overwhelming majority) conveys nothing and tipped
+        # `tg importers`' payload past the <10%-of-`tg map` token-economy guard (a MOAT
+        # invariant -- see test_importers_payload_is_far_smaller_than_map). Presence of
+        # "dynamic" now itself MEANS "this is a dynamic import" -- callers must use
+        # `.get("dynamic", False)`, not a hard subscript.
+        result["dynamic"] = dynamic
+        result["dynamic_unresolved"] = dynamic_unresolved
+    return result
 
 
 def build_file_imports(file_path: str | Path) -> dict[str, Any]:
@@ -14811,7 +14820,7 @@ def _confirm_import_edges(
             continue
         seen_lines.add(line)
         provenance = "parser-backed" if language_id == "python" else "heuristic"
-        edges.append({
+        edge: dict[str, Any] = {
             "file": str(candidate_importer),
             "line": line,
             "text": _source_line_text(candidate_importer, line),
@@ -14820,12 +14829,17 @@ def _confirm_import_edges(
             "module": module,
             "provenance": provenance,
             "resolution_confidence": _import_graph_resolution_confidence(provenance),
-            # #93 SUB-1: preserve the dynamic markers instead of silently dropping them -- a
-            # `tg importers` consumer needs to know this edge came from a dynamic call, not a
-            # static import statement.
-            "dynamic": dynamic,
-            "dynamic_unresolved": dynamic_unresolved,
-        })
+        }
+        if dynamic:
+            # Payload-bloat fix (#93 SUB-1 follow-up, same rationale as
+            # _resolve_raw_import_entry): preserve the dynamic markers on an edge that IS
+            # dynamic -- a `tg importers` consumer needs to know this edge came from a dynamic
+            # call, not a static import statement -- but a static edge (the majority) gains
+            # nothing from two always-False keys, and that bloat tipped the importers payload
+            # past the <10%-of-map guard.
+            edge["dynamic"] = dynamic
+            edge["dynamic_unresolved"] = dynamic_unresolved
+        edges.append(edge)
     return edges
 
 

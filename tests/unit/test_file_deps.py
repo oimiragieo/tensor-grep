@@ -816,7 +816,10 @@ def test_build_file_imports_static_require_unaffected_by_dynamic_detection(
 
     matches = [current for current in payload["imports"] if current["module"] == "./util"]
     assert len(matches) == 1
-    assert matches[0]["dynamic"] is False
+    # Payload-bloat fix: a static entry omits the "dynamic"/"dynamic_unresolved" keys entirely
+    # rather than stamping always-False markers (see test_importers_payload_is_far_smaller_than_map).
+    assert "dynamic" not in matches[0]
+    assert "dynamic_unresolved" not in matches[0]
     assert matches[0]["resolved"] == str(util_path.resolve())
 
 
