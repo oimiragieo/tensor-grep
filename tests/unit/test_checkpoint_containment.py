@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -234,3 +235,149 @@ def test_select_retained_checkpoints_prunes_by_created_at_not_insert_position(
     # created_at-based (fixed) pruning must keep the two NEWEST: {"newest", "middle"}.
     assert retained_ids == {"newest", "middle"}
     assert "oldest" not in retained_ids
+
+
+# ---------------------------------------------------------------------------
+# H3: snapshot SOURCE containment (symlinked/junctioned ancestor directory)
+# ---------------------------------------------------------------------------
+#
+# S1 (above) confines the undo TARGET (`root / rel_path`) via `_resolve_within_root`.
+# The snapshot SOURCE composition (`snapshot_dir / rel_path`) had no equivalent guard:
+# `shutil.copy2(source, ..., follow_symlinks=False)` only refuses a symlink at the FINAL
+# path component. A snapshot tree whose ANCESTOR directory is a symlink (or, on Windows, a
+# directory junction) pointing outside the snapshot is transparently traversed by the OS --
+# `tg checkpoint undo` then reads host-file content THROUGH the link and copies it into an
+# otherwise validly-confined working-tree target: arbitrary-file-read-into-working-tree. A
+# malicious repo can ship a pre-crafted `.tensor-grep/checkpoints/<id>/` (metadata.json +
+# a snapshot tree with a symlinked ancestor) that a victim's `tg checkpoint undo <id>`
+# then reads through.
+
+
+def test_undo_refuses_source_with_symlinked_ancestor_directory(tmp_path: Path) -> None:
+    """A symlinked ANCESTOR dir inside the snapshot tree must be refused, not traversed."""
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    outside = tmp_path / "outside_secret_dir"
+    outside.mkdir()
+    (outside / "id_rsa").write_text("-----BEGIN PRIVATE KEY-----\nSECRET\n", encoding="utf-8")
+
+    checkpoint_id = "ckpt-evil-ancestor-symlink"
+    snapshot_dir = checkpoint_store._snapshot_path(root, checkpoint_id)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    evil_ancestor = snapshot_dir / "subdir"
+    try:
+        evil_ancestor.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+    # `subdir/id_rsa` is itself a perfectly ordinary, non-traversal, in-root TARGET path --
+    # S1's target containment alone has nothing to object to here.
+    _write_metadata(root, checkpoint_id, {"subdir/id_rsa": True})
+
+    with pytest.raises(ValueError):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+
+    # The host secret must never have been copied into the working tree.
+    leaked_target = root / "subdir" / "id_rsa"
+    assert not leaked_target.exists(), "host file content was copied into the working tree"
+
+
+def test_undo_refuses_source_with_junctioned_ancestor_directory(tmp_path: Path) -> None:
+    """Windows variant: a directory JUNCTION as the snapshot ancestor.
+
+    Junctions are the more realistic Windows attack surface than symlinks: creating one
+    needs no elevated privilege / Developer Mode (unlike `CreateSymbolicLink`), so this
+    works for any local attacker on any Windows box. `Path.resolve()` follows a junction
+    exactly like a symlink (both are NTFS reparse points resolved the same way by
+    `GetFinalPathNameByHandle`), but `Path.is_symlink()` returns False for a junction -- so
+    any guard that only checked `is_symlink()` on an ancestor would silently miss this.
+    Proves the fix (`_resolve_within_root` via `Path.resolve()`) catches both mechanisms.
+    """
+    if os.name != "nt":
+        pytest.skip("junctions are a Windows-only reparse-point mechanism")
+
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    outside = tmp_path / "outside_secret_dir"
+    outside.mkdir()
+    (outside / "id_rsa").write_text("SECRET-VIA-JUNCTION\n", encoding="utf-8")
+
+    checkpoint_id = "ckpt-evil-junction"
+    snapshot_dir = checkpoint_store._snapshot_path(root, checkpoint_id)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    evil_ancestor = snapshot_dir / "subdir"
+
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(evil_ancestor), str(outside)],
+        check=True,
+        capture_output=True,
+    )
+    assert not evil_ancestor.is_symlink(), "sanity: a junction must NOT read as is_symlink()"
+
+    _write_metadata(root, checkpoint_id, {"subdir/id_rsa": True})
+
+    with pytest.raises(ValueError):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+
+    leaked_target = root / "subdir" / "id_rsa"
+    assert not leaked_target.exists(), (
+        "host file content was copied into the working tree via a junction"
+    )
+
+
+def test_undo_refuses_source_escape_without_touching_other_valid_entries(tmp_path: Path) -> None:
+    """A malicious entry must abort the WHOLE undo before mutating any file -- including
+    other, perfectly legitimate entries in the same checkpoint (matches the H2 all-or-nothing
+    pre-flight contract: undo must not partially apply)."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    legit_target = root / "legit.py"
+    legit_target.write_text("ORIGINAL\n", encoding="utf-8")
+
+    outside = tmp_path / "outside_secret_dir"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("SECRET\n", encoding="utf-8")
+
+    checkpoint_id = "ckpt-mixed-legit-and-evil"
+    snapshot_dir = checkpoint_store._snapshot_path(root, checkpoint_id)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    (snapshot_dir / "legit.py").write_text("SNAPSHOTTED\n", encoding="utf-8")
+    evil_ancestor = snapshot_dir / "subdir"
+    try:
+        evil_ancestor.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+    _write_metadata(
+        root,
+        checkpoint_id,
+        {"legit.py": True, "subdir/secret.txt": True},
+    )
+
+    with pytest.raises(ValueError):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+
+    # The legit file must be untouched -- the whole undo aborted pre-flight.
+    assert legit_target.read_text(encoding="utf-8") == "ORIGINAL\n"
+    assert not (root / "subdir" / "secret.txt").exists()
+
+
+def test_undo_still_restores_normal_nested_snapshot_after_source_containment_fix(
+    tmp_path: Path,
+) -> None:
+    """Baseline: an ordinary multi-level nested checkpoint (no symlinks anywhere) must keep
+    round-tripping after source containment is enforced -- the fix must not be over-strict."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    nested = root / "a" / "b" / "c" / "deep.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("deep-original\n", encoding="utf-8")
+
+    created = checkpoint_store.create_checkpoint(str(root))
+    nested.write_text("deep-MUTATED\n", encoding="utf-8")
+
+    result = checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert result.restored_files == 1
+    assert nested.read_text(encoding="utf-8") == "deep-original\n"
