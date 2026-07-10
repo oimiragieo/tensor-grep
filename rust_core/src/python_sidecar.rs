@@ -159,6 +159,37 @@ fn execute_python_passthrough_command_inner(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
+    // audit H5 (Opus gate must-fix): place the child in its own process group on Unix so
+    // terminate_passthrough_process's killpg(child.id(), SIGKILL) actually signals the whole
+    // subtree on timeout. WITHOUT this, the child inherits tg's PGID, no process group with
+    // id == child.id() exists, killpg returns ESRCH (swallowed, and the POSIX branch has no
+    // child.kill() fallback), the wedged child is never signaled, and terminate's own
+    // child.wait() blocks forever -- i.e. the hang would just move from the old bare wait to
+    // the new one on Linux/macOS. The setpgid closure is byte-identical to invoke_sidecar's
+    // audit-I8 block above; only the `if !is_daemon_launch` gate differs.
+    //
+    // The gate is deliberate, not incidental: only the bounded path is ever killpg'd, so only
+    // it needs its own group. The daemon-exempt launches (mcp / session serve / lsp) take the
+    // unbounded wait below (never killpg'd) AND read an inherited stdin, so leaving them in
+    // tg's process group preserves today's TTY behavior -- a child in a NEW background process
+    // group that reads the controlling terminal would take SIGTTIN and stop. The bounded
+    // commands that reach here do not read a TTY stdin (analysis commands take args; the only
+    // stdin-piping caller, `run`, uses Stdio::piped(), which is not a TTY), so this is
+    // SIGTTIN-safe by construction. The `#[cfg(unix)] unsafe { child.pre_exec(...) }` wrapper
+    // is byte-identical to invoke_sidecar's audit-I8 block above; only the inner
+    // `if !is_daemon_launch` guard is added.
+    #[cfg(unix)]
+    unsafe {
+        if !is_daemon_launch {
+            child.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
     let mut child = child
         .spawn()
         .map_err(|err| map_python_spawn_error(&python, err))?;
@@ -250,7 +281,13 @@ fn is_long_running_passthrough_command(command: &str, args: &[String]) -> bool {
     match command {
         "mcp" => true,
         "session" => args.first().map(String::as_str) == Some("serve"),
-        "lsp" => !args.iter().any(|arg| arg == "--debug-trace"),
+        // Both the space form (`--debug-trace python`) and Click's equals form
+        // (`--debug-trace=python`, a single trailing_var_arg token) turn `tg lsp` into a
+        // one-shot health probe that returns instead of starting the server -- both MUST stay
+        // bounded, so neither may count as a server launch.
+        "lsp" => !args
+            .iter()
+            .any(|arg| arg == "--debug-trace" || arg.starts_with("--debug-trace=")),
         _ => false,
     }
 }
@@ -1420,6 +1457,24 @@ mod tests {
     #[test]
     fn lsp_debug_trace_is_not_exempt() {
         let args = vec!["--debug-trace".to_string(), "python".to_string()];
+        assert!(!is_long_running_passthrough_command("lsp", &args));
+    }
+
+    #[test]
+    fn lsp_debug_trace_equals_form_is_not_exempt() {
+        // Click accepts the equals form, which trailing_var_arg passes through as a single
+        // token -- it must NOT be mistaken for a server launch and left unbounded.
+        let args = vec!["--debug-trace=python".to_string()];
+        assert!(!is_long_running_passthrough_command("lsp", &args));
+    }
+
+    #[test]
+    fn lsp_debug_trace_equals_form_after_other_flags_is_not_exempt() {
+        let args = vec![
+            "--provider".to_string(),
+            "native".to_string(),
+            "--debug-trace=rust".to_string(),
+        ];
         assert!(!is_long_running_passthrough_command("lsp", &args));
     }
 
