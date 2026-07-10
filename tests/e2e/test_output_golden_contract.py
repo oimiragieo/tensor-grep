@@ -49,8 +49,15 @@ GOLDEN_CASES = [
     ("line_number_single_file", ["-n", "hello"], TEXT_FILE1_TARGET),
     ("binary_single_file", ["hello"], ["file3.bin"]),
     ("binary_text_flag", ["-a", "hello"], ["file3.bin"]),  # Treat binary as text
-    ("json_multi_file", ["--json", "hello"], TEXT_DIR_TARGET),
-    ("ndjson_multi_file", ["--ndjson", "hello"], TEXT_DIR_TARGET),
+    # Pinned to --cpu (same mechanism as cpu_multi_file/cpu_single_file below): --json/--ndjson
+    # emit an optional `submatches` field only when the RipgrepBackend supplies rg's byte-offset
+    # data (json_fmt.py:_match_payload -- "omit the key entirely ... for non-rg backends"), so an
+    # unpinned backend choice here is nondeterministic across environments (rg-on-PATH vs
+    # rg-absent) even though the match set, files, counts, and text are identical either way.
+    # Pinning keeps the JSON *shape* this case is testing fixed instead of silently depending on
+    # whether `rg` happens to be installed on the runner (was flaky on CI Windows legs).
+    ("json_multi_file", ["--cpu", "--json", "hello"], TEXT_DIR_TARGET),
+    ("ndjson_multi_file", ["--cpu", "--ndjson", "hello"], TEXT_DIR_TARGET),
 ]
 
 EXACT_OUTPUT_CASES = {
