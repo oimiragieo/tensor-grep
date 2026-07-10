@@ -1813,8 +1813,15 @@ def _confine_mcp_path(candidate: str, *, label: str) -> Path:
     #95 gate must-fix #1/#2/#3).
 
     Thin wrapper over `_confine_read_path` anchored at `_mcp_root()` (instead of a
-    per-tool-hardcoded `Path.cwd()`), so the one `TG_MCP_ROOT` override relocates every
-    primary-path tool's anchor together. Raises ``ValueError`` (fail closed) on an
+    per-tool-hardcoded `Path.cwd()`), so the one `TG_MCP_ROOT` override relocates the anchor
+    of every tool confined THROUGH THIS HELPER together. NOTE: a residual set of round-6/7
+    file/manifest/bundle params (tg_file_imports/importers `file`, tg_classify_logs
+    `file_path`, the tg_audit_*/tg_review_bundle_* manifest+bundle params, tg_rewrite_apply
+    `audit_manifest`) still anchor directly at `Path.cwd()` and do NOT yet move with a
+    `TG_MCP_ROOT` that narrows/relocates relative to cwd -- bounded to the server cwd
+    (fail-closed, never arbitrary-FS; identical to `_mcp_root()` in the default unset
+    config), tracked to route through `_mcp_root()` before TG_MCP_ROOT is advertised as the
+    fleet boundary. Raises ``ValueError`` (fail closed) on an
     out-of-root candidate; callers MUST forward the resolved ``Path`` this returns
     (`str()`'d) as their new ``path``, and MUST do so as the very first operation in the
     tool body, BEFORE any secondary anchor (session_root, scan_root, policy_anchor, ...) is
