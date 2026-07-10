@@ -444,11 +444,34 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
         "--stats",
         "-l",
         "-r",
+        # audit #69 (re-do of #441): the separately-compiled native binary has its OWN,
+        # independent multi-pattern bugs (verified via direct invocation: a `-f` pattern
+        # file is silently never read at all -- an even more severe flood than the pre-fix
+        # Python bug -- and multiple `-e` patterns are not deduplicated when a single line
+        # matches more than one). This outer argv fast path must never delegate `-e`/`-f`
+        # searches to it; route them through the full CLI instead, which now combines
+        # multi-pattern correctly and already refuses this exact case in its OWN inner
+        # native-delegation gate (`regexp`/`file_patterns` are both in
+        # `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, cli/main.py) -- excluding them
+        # here too keeps the two front doors in parity for -e/-f, even a single one.
+        "-e",
+        "--regexp",
+        "-f",
+        "--file",
     }
-    unsupported_prefixes = ("--format=", "--lang=", "--replace=")
-    return not any(
-        arg in unsupported_flags or arg.startswith(unsupported_prefixes) for arg in search_args
-    )
+    unsupported_prefixes = ("--format=", "--lang=", "--replace=", "--regexp=", "--file=")
+    if any(arg in unsupported_flags or arg.startswith(unsupported_prefixes) for arg in search_args):
+        return False
+    # Attached short-flag value form (`-efoo` == `-e foo`, `-fpats.txt` == `-f pats.txt`).
+    # The bare `-e`/`-f` tokens are already covered by `unsupported_flags` above; `-F`
+    # (fixed-strings, uppercase) and `--file`/`--regexp=...` (double-dash) are untouched by
+    # this lowercase single-dash prefix check.
+    if any(
+        arg.startswith(("-e", "-f")) and not arg.startswith("--") and arg not in {"-e", "-f"}
+        for arg in search_args
+    ):
+        return False
+    return True
 
 
 def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
