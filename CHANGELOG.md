@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.58.6 (2026-07-10)
+
+### Bug Fixes
+
+- **rust**: Refuse symlink/reparse-point on the audit-manifest write to close the cross-process
+  TOCTOU (audit #110) ([#500](https://github.com/oimiragieo/tensor-grep/pull/500),
+  [`120df8f`](https://github.com/oimiragieo/tensor-grep/commit/120df8faa592153c87d3aeea9bc678ce499dc85b))
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.5 (2026-07-10)
 
 ### Bug Fixes
