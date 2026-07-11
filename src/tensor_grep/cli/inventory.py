@@ -39,6 +39,13 @@ INVENTORY_SCHEMA_VERSION = 1
 # files and defeat the "whole-repo manifest" purpose.
 DEFAULT_MAX_INVENTORY_FILES = 50_000
 _LARGEST_FILES_LIMIT = 10
+# #130(a): the walk phase (_iter_repo_files) and the per-file stat/categorize loop below used to
+# share ONE deadline. On a big tree the walk alone can burn the entire --deadline budget, so the
+# per-file loop's very first `time.monotonic() >= deadline` check fires before it processes a
+# single file -- totals.files stays 0 even though the walk DID discover files (a misleading
+# silent-empty result). Reserving a fraction of the budget for the walk phase guarantees the
+# per-file loop always gets a real slice of wall-clock time to work with.
+_WALK_PHASE_DEADLINE_FRACTION = 0.7
 
 # Extension -> language label. Kept LOCAL rather than reusing repo_map._target_language_for_path
 # (python/js/ts/rust only, with 10 narrow symbol-navigation callers we must not perturb).
@@ -200,7 +207,19 @@ def build_inventory(
     # --deadline budget before the per-file loop further down even started (the 76s dogfood gap
     # on `tg inventory --deadline 30`). walk_deadline_hit folds into the per-file loop's own
     # deadline_hit local below, just like build_repo_map folds in its own walk-phase flag.
-    deadline = time.monotonic() + deadline_seconds if deadline_seconds is not None else None
+    #
+    # #130(a) fix: the walk phase gets only a FRACTION of the budget (walk_deadline), not the
+    # full deadline -- reserving the remainder for the per-file stat/categorize loop below, which
+    # still checks the FULL deadline. Without this split, a walk that (worst case) consumes its
+    # entire allotted time before returning leaves the per-file loop zero budget, so its first
+    # deadline check fires immediately and totals.files reads 0 despite a non-empty walk result.
+    start = time.monotonic()
+    deadline = start + deadline_seconds if deadline_seconds is not None else None
+    walk_deadline = (
+        start + deadline_seconds * _WALK_PHASE_DEADLINE_FRACTION
+        if deadline_seconds is not None
+        else None
+    )
     walk_deadline_hit = _DeadlineBreakFlag()
 
     # Probe one file past the cap: _iter_repo_files' bucketed early-stop (repo_map.py)
@@ -210,7 +229,10 @@ def build_inventory(
     # max_files files exist" apart from "more files exist" for the truncation notice,
     # without ever walking further than one file past the cap.
     walked = _iter_repo_files(
-        root, max_files=max_files + 1, deadline_monotonic=deadline, deadline_hit=walk_deadline_hit
+        root,
+        max_files=max_files + 1,
+        deadline_monotonic=walk_deadline,
+        deadline_hit=walk_deadline_hit,
     )
     possibly_truncated = False
     truncation_cause: str | None = None

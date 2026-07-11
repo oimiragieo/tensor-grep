@@ -7455,8 +7455,15 @@ def inventory(
 
     if json_output:
         typer.echo(_json.dumps(payload))
-        return
-    typer.echo(render_inventory_text(payload))
+    else:
+        typer.echo(render_inventory_text(payload))
+
+    # #130(a) optional bundle: mirror `map`'s exit-2-on-scan-truncation contract (:7418-7419)
+    # -- a truncated scan (scan_limit.possibly_truncated, e.g. a fired --deadline) previously
+    # always exited 0, indistinguishable from a genuinely complete inventory. _scan_incomplete
+    # already checks exactly this payload's scan_limit.possibly_truncated shape.
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 @app.command(name="docs-coverage")
