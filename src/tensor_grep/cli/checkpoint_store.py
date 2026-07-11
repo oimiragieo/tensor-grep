@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -158,6 +158,10 @@ class CheckpointCreateResult:
     file_count: int
     undo_argv: list[str]
     undo_command: str
+    # audit #130d: paths skipped because they are a nested repo (a git submodule / embedded
+    # repo tracked as a gitlink, mode 160000) rather than a plain tracked file. Additive
+    # field, default-empty, so every existing caller/serializer stays backward-compatible.
+    skipped_nested_repos: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -534,7 +538,26 @@ def _write_index(root: Path, records: list[CheckpointRecord]) -> None:
     _write_json_atomic(index_path, [asdict(record) for record in records])
 
 
-def _git_snapshot_entries(root: Path) -> dict[str, bool]:
+def _git_snapshot_entries(root: Path) -> tuple[dict[str, bool], list[str]]:
+    """Return (entries, skipped_nested_repos) for a git-worktree-snapshot checkpoint scope.
+
+    audit #130d: `git ls-files` reports a submodule / embedded repo (any path tracked as a
+    gitlink, mode 160000 -- e.g. `benchmarks/external_repos/chalk`) as ONE path; it is never
+    expanded into the nested repo's own tracked files. That path is a real DIRECTORY on disk,
+    so treating it like an ordinary file entry marks a directory as an existing entry, and
+    `create_checkpoint`'s copy loop then calls `shutil.copy2()` on a directory and crashes
+    (`IsADirectoryError` on POSIX, `PermissionError` on Windows). Skip any entry that is a
+    real directory on disk -- it can never be a plain tracked file -- and report it separately
+    so the gap is DISCLOSED (never a silent under-cover), instead of raising or silently
+    dropping it with no trace.
+
+    The directory check excludes symlinks (`is_dir() and not is_symlink()`): a tracked
+    SYMLINK whose target happens to be a directory is a normal file entry (git stores it as a
+    mode-120000 blob, not a gitlink) and was already handled correctly by the copy loop's
+    `shutil.copy2(..., follow_symlinks=False)`, which copies the link itself rather than
+    opening its target. Treating that case as a "nested repo" would silently drop a
+    legitimately tracked path instead of skipping only genuine gitlink directories.
+    """
     git_timeout = configured_git_timeout_seconds()
     tracked = run_subprocess(
         ["git", "-C", str(root), "ls-files", "-z"],
@@ -552,14 +575,19 @@ def _git_snapshot_entries(root: Path) -> dict[str, bool]:
     ).stdout.split(b"\x00")
 
     entries: dict[str, bool] = {}
+    skipped_nested_repos: list[str] = []
     for raw in [*tracked, *untracked]:
         if not raw:
             continue
         rel = raw.decode("utf-8", errors="surrogateescape")
         if _CHECKPOINT_DIRNAME in Path(rel).parts:
             continue
-        entries[rel] = (root / rel).exists()
-    return dict(sorted(entries.items()))
+        candidate = root / rel
+        if candidate.is_dir() and not candidate.is_symlink():
+            skipped_nested_repos.append(rel)
+            continue
+        entries[rel] = candidate.exists()
+    return dict(sorted(entries.items())), sorted(skipped_nested_repos)
 
 
 def _filesystem_snapshot_entries(root: Path) -> dict[str, bool]:
@@ -585,12 +613,19 @@ def _filesystem_snapshot_entries(root: Path) -> dict[str, bool]:
     return dict(sorted(entries.items()))
 
 
-def _snapshot_entries(scope: _CheckpointScope) -> dict[str, bool]:
+def _snapshot_entries(scope: _CheckpointScope) -> tuple[dict[str, bool], list[str]]:
+    """Return (entries, skipped_nested_repos) for the given checkpoint scope.
+
+    Only the git-worktree-snapshot path can produce a nonempty ``skipped_nested_repos``
+    (audit #130d) -- a single-file scope has nothing to skip, and the filesystem-snapshot
+    walk (`os.walk`, non-git-toplevel scopes) only ever adds filenames, never a gitlink-shaped
+    directory entry, so it has no equivalent hazard.
+    """
     if scope.target_relative is not None:
-        return {scope.target_relative.as_posix(): (scope.root / scope.target_relative).exists()}
+        return {scope.target_relative.as_posix(): (scope.root / scope.target_relative).exists()}, []
     if scope.mode == "git-worktree-snapshot":
         return _git_snapshot_entries(scope.root)
-    return _filesystem_snapshot_entries(scope.root)
+    return _filesystem_snapshot_entries(scope.root), []
 
 
 def _checkpoint_dir(root: Path, checkpoint_id: str) -> Path:
@@ -630,6 +665,11 @@ def _write_checkpoint_metadata(
         "created_at": result.created_at,
         "file_count": result.file_count,
         "entries": entries,
+        # audit #130d: disclose what create_checkpoint skipped (nested repos / submodules)
+        # so `tg checkpoint create --json` and a later `load_checkpoint_metadata` never
+        # silently under-cover -- mirrors the honesty culture of resolution_gaps /
+        # deadline_limit / possibly_truncated elsewhere in this codebase.
+        "skipped_nested_repos": result.skipped_nested_repos,
         "active": True,
     }
     _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload)
@@ -789,7 +829,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     mode = scope.mode
     created_at = datetime.now(UTC).isoformat()
     checkpoint_id = f"ckpt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
-    entries = _snapshot_entries(scope)
+    entries, skipped_nested_repos = _snapshot_entries(scope)
 
     # audit H4: refuse BEFORE any snapshot directory exists if the copy would blow a
     # configured size/free-space budget -- see _check_checkpoint_disk_budget.
@@ -830,6 +870,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         file_count=len(entries),
         undo_argv=_undo_argv(scope, checkpoint_id),
         undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
+        skipped_nested_repos=skipped_nested_repos,
     )
     _write_checkpoint_metadata(
         root,
@@ -1219,7 +1260,11 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     if scope_kind == "file":
         current_entries: dict[str, bool] = {}
     elif mode == "git-worktree-snapshot":
-        current_entries = _git_snapshot_entries(root)
+        # audit #130d: the is_dir() gitlink skip lives inside _git_snapshot_entries itself
+        # (not just the create-time copy loop), so a nested-repo directory is excluded from
+        # this re-scan too -- otherwise it would show up as "in the tree but not in the
+        # snapshot" below and the removal branch would try to unlink() a directory.
+        current_entries, _skipped_nested_repos_now = _git_snapshot_entries(root)
     else:
         current_entries = _filesystem_snapshot_entries(root)
     expected_paths = set(entries.keys())

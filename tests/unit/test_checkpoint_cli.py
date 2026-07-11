@@ -914,3 +914,207 @@ def test_checkpoint_create_and_undo_reports_git_mode(tmp_path: Path) -> None:
     assert restored["mode"] == "git-worktree-snapshot"
     assert source_file.read_text(encoding="utf-8") == "print('before')\n"
     assert not untracked.exists()
+
+
+# --- audit #130d: checkpoint create on a repo containing a git submodule / embedded repo ---
+#
+# `git ls-files` reports a submodule (or any nested repo tracked as a gitlink, mode 160000)
+# as ONE path -- it never expands into the submodule's own tracked files -- and that path is
+# a real directory on disk (e.g. `benchmarks/external_repos/chalk` in this very repo). Before
+# the fix, `_git_snapshot_entries` had no `is_dir()` guard, so the gitlink path was recorded
+# as an existing entry and `create_checkpoint`'s copy loop tried `shutil.copy2()` on a
+# directory, crashing (`IsADirectoryError` on POSIX, `PermissionError` on Windows -- the OS
+# error class differs by platform, but both are avoided entirely by skipping the entry).
+
+
+def _init_git_repo(path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "tg@example.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "tensor-grep"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_commit_all(path: Path, message: str) -> None:
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _add_nested_repo_as_gitlink(project: Path, rel_path: str) -> Path:
+    """Create a standalone nested git repo at ``project/rel_path`` and register it in
+    ``project``'s index as a gitlink (mode 160000) -- the same on-disk shape as a real
+    ``git submodule add`` (a tracked directory containing its own ``.git``), without needing
+    submodule/protocol machinery in the test fixture.
+
+    Reproduces the ``benchmarks/external_repos/chalk``-style embedded-repo layout that
+    crashes ``checkpoint create`` (audit #130d): the gitlink path is a real directory on
+    disk that ``git ls-files`` reports as a single tracked path, never expanded.
+    """
+    nested = project / rel_path
+    nested.mkdir(parents=True)
+    _init_git_repo(nested)
+    (nested / "file.txt").write_text("nested\n", encoding="utf-8")
+    _git_commit_all(nested, "nested-init")
+    nested_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=nested,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "update-index", "--add", "--cacheinfo", f"160000,{nested_sha},{rel_path}"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return nested
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_create_checkpoint_skips_git_submodule_without_crashing(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "tracked.py").write_text("print('hi')\n", encoding="utf-8")
+    _init_git_repo(project)
+    _git_commit_all(project, "init")
+    _add_nested_repo_as_gitlink(project, "vendor/nested_repo")
+    _git_commit_all(project, "add gitlink")
+
+    from tensor_grep.cli import checkpoint_store
+
+    result = checkpoint_store.create_checkpoint(str(project))
+
+    assert result.mode == "git-worktree-snapshot"
+    assert result.file_count == 1
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_create_checkpoint_discloses_skipped_nested_repo(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "tracked.py").write_text("print('hi')\n", encoding="utf-8")
+    _init_git_repo(project)
+    _git_commit_all(project, "init")
+    _add_nested_repo_as_gitlink(project, "vendor/nested_repo")
+    _git_commit_all(project, "add gitlink")
+
+    from tensor_grep.cli import checkpoint_store
+
+    result = checkpoint_store.create_checkpoint(str(project))
+
+    assert result.skipped_nested_repos == ["vendor/nested_repo"]
+
+    metadata = checkpoint_store.load_checkpoint_metadata(result.checkpoint_id, str(project))
+    assert metadata["skipped_nested_repos"] == ["vendor/nested_repo"]
+    # The excluded entry must never reach `entries` -- that's what `undo_checkpoint`'s
+    # pre-flight iterates, and a phantom directory entry there would choke it on undo.
+    assert "vendor/nested_repo" not in metadata["entries"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_create_checkpoint_scoped_to_subdir_still_captures_all_files(tmp_path: Path) -> None:
+    """Regression: checkpointing a subdirectory (not git top-level) takes the
+    filesystem-snapshot path (_filesystem_snapshot_entries), which the new is_dir() gitlink
+    skip in _git_snapshot_entries never touches -- it must keep capturing every file exactly
+    as it did before this fix."""
+    project = tmp_path / "repo"
+    project.mkdir()
+    source_dir = project / "src"
+    source_dir.mkdir()
+    (source_dir / "a.py").write_text("print('a')\n", encoding="utf-8")
+    (source_dir / "b.py").write_text("print('b')\n", encoding="utf-8")
+    nested_dir = source_dir / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "c.py").write_text("print('c')\n", encoding="utf-8")
+    _init_git_repo(project)
+    _git_commit_all(project, "init")
+
+    from tensor_grep.cli import checkpoint_store
+
+    result = checkpoint_store.create_checkpoint(str(source_dir))
+
+    assert result.mode == "filesystem-snapshot"
+    assert result.file_count == 3
+    metadata = checkpoint_store.load_checkpoint_metadata(result.checkpoint_id, str(source_dir))
+    assert sorted(metadata["entries"].keys()) == ["a.py", "b.py", "nested/c.py"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_create_checkpoint_then_undo_is_clean_with_skipped_submodule(tmp_path: Path) -> None:
+    """e2e: the excluded gitlink entry is absent from metadata, so undo_checkpoint's
+    pre-flight (which iterates every metadata entry) never chokes on a phantom directory --
+    and undo's restore/removal sweep must leave the nested repo itself untouched."""
+    project = tmp_path / "repo"
+    project.mkdir()
+    tracked_file = project / "tracked.py"
+    tracked_file.write_text("print('before')\n", encoding="utf-8")
+    _init_git_repo(project)
+    _git_commit_all(project, "init")
+    _add_nested_repo_as_gitlink(project, "vendor/nested_repo")
+    _git_commit_all(project, "add gitlink")
+
+    from tensor_grep.cli import checkpoint_store
+
+    result = checkpoint_store.create_checkpoint(str(project))
+    tracked_file.write_text("print('after')\n", encoding="utf-8")
+
+    restored = checkpoint_store.undo_checkpoint(result.checkpoint_id, str(project))
+
+    assert restored.mode == "git-worktree-snapshot"
+    assert tracked_file.read_text(encoding="utf-8") == "print('before')\n"
+    assert (project / "vendor" / "nested_repo" / "file.txt").exists()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+def test_create_checkpoint_does_not_skip_tracked_symlink_to_directory(tmp_path: Path) -> None:
+    """The is_dir() gitlink-skip guard must not swallow a legitimately tracked SYMLINK whose
+    target happens to be a directory -- git stores that as a mode-120000 blob (a normal file
+    entry), not a gitlink, and it was already handled correctly by the copy loop's
+    `shutil.copy2(..., follow_symlinks=False)` (copies the link itself). Only a genuine
+    nested-repo directory (no .git-boundary symlink involved) should ever be skipped."""
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "tracked.py").write_text("print('hi')\n", encoding="utf-8")
+    outside_target = tmp_path / "outside_target"
+    outside_target.mkdir()
+    (outside_target / "inner.txt").write_text("target content\n", encoding="utf-8")
+    try:
+        (project / "link_to_dir").symlink_to(outside_target, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+    _init_git_repo(project)
+    _git_commit_all(project, "init")
+
+    from tensor_grep.cli import checkpoint_store
+
+    result = checkpoint_store.create_checkpoint(str(project))
+
+    assert result.skipped_nested_repos == []
+    assert result.file_count == 2
+
+    snapshot = checkpoint_store._snapshot_path(project, result.checkpoint_id)
+    snapshotted_link = snapshot / "link_to_dir"
+    assert snapshotted_link.is_symlink()
+    # audit HIGH (symlink disclosure, pre-existing contract): the snapshot must never contain
+    # the out-of-root target's content under a regular file.
+    for path in snapshot.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            assert "target content" not in path.read_text(encoding="utf-8", errors="ignore")
