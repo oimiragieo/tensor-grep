@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.63.1 (2026-07-11)
+
+### Bug Fixes
+
+- **evidence**: Nudge `tg evidence <path>` toward the `emit` subcommand (dogfood)
+  ([#529](https://github.com/oimiragieo/tensor-grep/pull/529),
+  [`90ccdd4`](https://github.com/oimiragieo/tensor-grep/commit/90ccdd45a2c4105583e061f8c9619602b65346f6))
+
+* fix(evidence): nudge `tg evidence <path>` toward the `emit` subcommand (dogfood v1.61.2)
+
+Dogfood trap: an agent reaches for `tg evidence <PATH> <query>` by analogy with `tg defs` / `tg
+  orient` (which take a path directly), but `evidence` is a command GROUP whose only action is
+  `emit`. Click's default "No such command 'src/...'" is correct (exit 2) but unhelpful -- the
+  caller has to re-read `--help` to discover `emit`.
+
+Wrap `evidence_app` in a `TyperGroup` subclass whose `resolve_command` catches the UsageError and,
+  when the unknown subcommand looks like a filesystem path (contains a separator or resolves on
+  disk), appends a concrete hint: `Did you mean 'tg evidence emit <path>'?`. Exit code stays 2; a
+  genuine non-path subcommand typo (e.g. `tg evidence boguscmd`) gets the standard error with no
+  hint noise.
+
+Validated on the REAL front door (`bootstrap:main_entry`, not just CliRunner): `tg evidence src/...
+  search` -> exit 2 + emit hint; `tg evidence boguscmd` -> exit 2, no hint. `tg evidence emit` and
+  `tg evidence --help` unchanged.
+
+Tests: 2 TDD cases in test_cli_modes.py (hint fires for a path-like token / no hint for a plain
+  typo).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(evidence): raise a fresh UsageError for the emit hint (UsageError.message is Final -> mypy)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.63.0 (2026-07-11)
 
 ### Features
