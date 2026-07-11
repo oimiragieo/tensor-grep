@@ -62,8 +62,8 @@ With the software complete, we need to ensure the enterprise GitHub Actions buil
 
 - [ ] **Step 4.1: Final Integration Test Pass**
   - Run the full suite (`pytest tests/ -v`) to guarantee the advanced features didn't break baseline ripgrep parity. Ensure code coverage remains above 75%.
-- [ ] **Step 4.2: Build Distroless GPU Container**
-  - Ensure `Dockerfile.gpu` builds cleanly and publishes to GitHub Container Registry (ghcr.io).
+- [ ] **Step 4.2: Build Distroless GPU Container** (deferred -- GPU program paused)
+  - `Dockerfile.gpu` was removed (2026-07: broken multi-stage COPY that never shipped `/app/src` into the runtime stage, and it was never CI-built) while the GPU program is paused. Re-add a verified, CI-smoke-tested Dockerfile if/when the GPU path ships.
 - [ ] **Step 4.3: Tag and Trigger**
   - Create a git tag `v1.0.0-rc1` (Release Candidate 1).
   - Push the tag to GitHub (`git push origin v1.0.0-rc1`) to trigger `.github/workflows/release.yml`.
