@@ -11910,6 +11910,7 @@ def build_context_render(
     profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
     ignore: tuple[str, ...] = (),
+    include_suggested_scope: bool = False,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     repo_map = build_repo_map(path, max_repo_files=max_repo_files, _profiling_collector=collector)
@@ -11920,7 +11921,7 @@ def build_context_render(
         from tensor_grep.cli.orient_capsule import _apply_ignore_globs
 
         repo_map = _apply_ignore_globs(repo_map, ignore)
-    return build_context_render_from_map(
+    render = build_context_render_from_map(
         repo_map,
         query,
         max_files=max_files,
@@ -11936,6 +11937,22 @@ def build_context_render(
         profile=profile,
         _profiling_collector=collector,
     )
+    if include_suggested_scope:
+        # suggested_scope (audit #93 SUB-2 / #133 dogfood): the SAME centrality-weighted directory
+        # rollup `tg orient` emits, computed from the raw map we ALREADY built above -- no second
+        # scan. Gated on the map's OWN `scan_limit.possibly_truncated` (a complete scan has nothing
+        # left to narrow), mirroring orient_capsule's gate. Reuses orient's tested helper; the local
+        # import avoids the module-level cycle (orient_capsule imports this module), exactly like the
+        # `_apply_ignore_globs` reuse above. Additive + conditional: absent unless the scan was
+        # truncated AND a clear winner exists, so a non-truncated render stays byte-identical.
+        scan_limit = repo_map.get("scan_limit")
+        if isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"):
+            from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
+
+            suggested_scope = _suggested_scope_from_map(repo_map)
+            if suggested_scope is not None:
+                render["suggested_scope"] = suggested_scope
+    return render
 
 
 def _fallback_file_source(

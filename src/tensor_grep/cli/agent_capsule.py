@@ -1855,6 +1855,7 @@ def build_agent_capsule(
         render_profile="full",
         semantic_provider=effective_semantic_provider,
         ignore=ignore,
+        include_suggested_scope=True,
     )
     # PR-1 (1D): whether the underlying repo scan itself (not the capsule's own snippet/token
     # output budget) was truncated -- gates the exit-2-on-scan-truncation contract below and
@@ -2292,6 +2293,14 @@ def build_agent_capsule(
             result["deadline_limit"] = dict(deadline_limit)
     if scan_truncated:
         result["result_incomplete"] = True
+    # suggested_scope (#133 dogfood): the same centrality-weighted directory narrowing `tg orient`
+    # offers, carried onto the agent capsule from the inner render (`build_context_render` computed
+    # it from the raw map it already built, gated on scan truncation -- NO second scan). Additive +
+    # conditional (same shape as scan_limit/result_incomplete above): present only when the scan was
+    # truncated AND a clear winner exists, so a complete-scan capsule stays byte-identical.
+    suggested_scope = payload.get("suggested_scope")
+    if suggested_scope:
+        result["suggested_scope"] = suggested_scope
     # DAR: additive CONDITIONAL keys, same pattern as scan_limit/partial above -- zero deps (or
     # the kill-switch, or a fail-safe early return inside `_collect_outbound_dependencies`) means
     # `outbound_dependencies` is `[]`, and BOTH keys are omitted so the capsule stays
