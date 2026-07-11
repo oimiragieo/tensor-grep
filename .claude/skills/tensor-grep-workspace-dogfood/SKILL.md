@@ -59,37 +59,45 @@ tg search "export" "$ROOT/some-js-repo/src" --glob "*.js" --max-count 5
 | `routing_backend` | Native vs sidecar vs rg passthrough |
 | stderr tail | Refusal messages, timeout warnings, SyntaxWarnings |
 
-## Latest sweep results (2026-07-10, tg 1.54.6, `/mnt/c/dev/projects`)
+## Latest sweep results (2026-07-10 evening, tg 1.58.9, `/mnt/c/dev/projects`)
 
 | Category | Pass | Notes |
 | --- | --- | --- |
-| Diagnostics (`doctor`, `devices`, `ast-info`, `rulesets`) | ✅ | doctor ~15s |
-| Workspace inventory/orient | ✅ | inventory ~30s; orient ~33s |
-| Scoped search (py/js/rust + `--rank`) | ✅ | sub-second to 10s |
-| Symbol (`defs`, `source`) | ✅ | ~9s |
-| File deps (`imports`) | ✅ | ~2s, 31 edges on `main.py` |
-| Agent loop (`agent`, `context*`, `edit-plan`, `session`) | ✅ | agent hit `session_daemon.py`, confidence 0.75, 4 validation cmds |
-| AST read (`tg run`) | ✅ | ~0.6s |
-| `docs-coverage` | ✅ | ~2.5s |
-| Graph scans (`callers`, `blast-radius`, `impact`) | ⚠️ | exit `2` + incomplete for generic symbol `main`; deadline improved |
-| `tg map` at workspace scale | ⚠️ | 512-file cap; use per-repo |
-| Unscoped search | ❌ | 60s timeout (exit 124) — scope paths |
+| Diagnostics (`doctor`, `devices`, `ast-info`, `rulesets`) | ✅ | doctor ~18s; launcher native-exe; rust version matches |
+| Per-repo inventory | ✅ | `tg inventory tensor-grep` → 864 files |
+| Workspace inventory + `--deadline` | ❌ | returns `files=0` with `truncation_cause=deadline` |
+| Orient (workspace + saddle) | ✅ | 28s / 2.5s |
+| Scoped search (py/js/ts/rust + `--rank`) | ✅ | 0.5–19s across tensor-grep, gotcontext-*, omega-main |
+| Symbol (`defs`, `source`) | ✅ | ~13s for `open_session` |
+| File deps (`imports` / `importers` abs paths) | ✅ | 29 imports / 1 importer; path-doubling avoided with abs paths |
+| Agent loop (`agent`, `context*`, `edit-plan`, `session`) | ✅ | agent → `session_daemon.py`, conf 0.75, 5 validation cmds |
+| AST read (`tg run`) | ✅ | ~0.7s |
+| `docs-coverage` | ✅ | ~2s |
+| Graph scans (`callers`, `blast-radius`, `impact`) | ⚠️ | exit `2` + `partial`; callers found 3 sites in ~17s |
+| `tg map` | ⚠️ | 512-file cap → exit 2 incomplete |
+| `tg refs` | ❌ | timed out at 45s on `open_session` |
+| Unscoped search | ❌ | 60s timeout (exit 124) despite top-level `node_modules` |
 | `tg scan` on WSL | ❌ | ast-grep Windows shim exit 127 |
-| `classify` stdin | ❌ | file-path only |
+| `classify --json` | ❌ | no `--json` flag — use default format or `--format json` |
+| `checkpoint create` whole repo | ❌ | fails on `benchmarks/external_repos/chalk`; scope to `src/` |
 | GPU search | ❌ | experimental (`search_ready: false`) |
+| Harness-repo agent (`gotcontext-saddle`) | ⚠️ | wrong primary + `tie_requires_confirmation` + 0 validation cmds |
 
-Full TSV: `/tmp/tg-dogfood-v2/report.tsv`
+Full TSV: `/tmp/tg-dogfood-v3/report.tsv` (28 PASS / 5 INCOMPLETE / 3 FAIL / 2 TIMEOUT)
 
-## Known workspace pitfalls (2026-07-10 dogfood, tg 1.54.6)
+## Known workspace pitfalls (2026-07-10, tg 1.58.9)
 
 1. **WSL `/mnt/c/` absolute paths** — native backend may return `path_not_found` for paths that `ls` shows; retry with `cd ROOT` + relative paths.
-2. **`--deadline` on graph scans** — improved since 2026-07-09 (callers `--deadline 10` now ~13–22s vs ~6 min on v1.54.0) but still may exceed the requested budget; treat exit `2` + `partial`/`result_incomplete` as incomplete, not absent.
-3. **`tg map` truncation** — workspace root and large single repos hit the 512-file cap (`possibly_truncated: true`); map one repo at a time for full symbol graphs.
-4. **`tg importers FILE ROOT` path doubling** — relative `FILE` + relative `ROOT` from a parent cwd can resolve to `ROOT/ROOT/FILE`; use absolute paths or `cd ROOT` first.
-5. **`tg scan`** — requires a working `ast-grep` binary on the **same OS** as `tg`; Windows npm shims break under WSL (exit 127).
-6. **Unscoped search** — still hits 60s `TG_RG_TIMEOUT_SECONDS` on this workspace (exit 124); always scope to a repo/path.
-7. **GPU** — `doctor` reports `search_ready: false`; text/AST paths are unaffected.
-8. **`tg orient` without `--ignore`** — skill/vendor trees can rank as "central" on harness repos; use the same `--ignore` globs as `orient`/`agent`.
+2. **`--deadline` on graph scans** — usually honored within ~1–2× budget now; still exit `2` + `partial` when truncated.
+3. **Workspace-root inventory + short deadline → zero files** — do not trust `totals.files=0` as empty; inventory per repo instead.
+4. **`tg map` truncation** — 512-file default cap; map one repo at a time.
+5. **`tg importers FILE ROOT`** — use absolute paths (relative pairs can double-resolve).
+6. **`tg scan`** — Windows npm ast-grep shim breaks under WSL (exit 127); doctor `available: true` is not proof it runs.
+7. **Unscoped search** — still 60s timeout on this workspace; always scope to a repo/path.
+8. **`tg classify`** — `FILE_PATH` required; default output is JSON; **no `--json` flag**.
+9. **`tg checkpoint create` on huge trees** — can fail on awkward paths under `external_repos`; scope to `src/`.
+10. **GPU** — `search_ready: false`; text/AST unaffected.
+11. **`tg orient` / `tg agent` without `--ignore`** — skill/vendor trees can rank as central or primary on harness repos; use `--ignore` and honor `ambiguity.status=tie_requires_confirmation`.
 
 ## Pass / fail rubric
 
