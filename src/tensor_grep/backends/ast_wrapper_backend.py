@@ -89,10 +89,19 @@ class AstGrepWrapperBackend(ComputeBackend):
     def _get_binary_name(self) -> str:
         import shutil
 
+        # #130(b): every which()-resolved candidate must PROBE-RUN before being
+        # trusted, not just the sg/sg.exe aliases. A broken npm shim literally
+        # named `ast-grep`/`ast-grep.exe` (e.g. a Windows shim invoked under
+        # WSL/Linux, exiting 127) previously resolved via shutil.which() alone
+        # on the first two branches with no probe -- making is_available() (and
+        # therefore `tg doctor`) report available:true for a binary that cannot
+        # actually run. Gate all four branches on the same probe used below.
         if ast_grep_path := shutil.which("ast-grep"):
-            return ast_grep_path
+            if _is_ast_grep_sg_binary(ast_grep_path):
+                return ast_grep_path
         if ast_grep_exe_path := shutil.which("ast-grep.exe"):
-            return ast_grep_exe_path
+            if _is_ast_grep_sg_binary(ast_grep_exe_path):
+                return ast_grep_exe_path
         if sg_exe_path := shutil.which("sg.exe"):
             if _is_ast_grep_sg_binary(sg_exe_path):
                 return sg_exe_path
