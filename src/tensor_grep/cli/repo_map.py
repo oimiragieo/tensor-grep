@@ -11968,7 +11968,7 @@ def _fallback_file_source(
 
 
 _COMPACT_CONTEXT_RENDER_PROFILES = {"compact", "llm"}
-_COMPACT_CONTEXT_RENDER_OMITTED_KEYS = ("symbols", "imports", "related_paths")
+_COMPACT_CONTEXT_RENDER_OMITTED_KEYS = ("symbols", "imports", "related_paths", "deweighted_trees")
 _LLM_CONTEXT_RENDER_OMITTED_KEYS = (
     "candidate_edit_targets",
     "coverage",
