@@ -13,7 +13,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
-import time
+import threading
 from collections import defaultdict
 
 from tensor_grep.core.result import SearchResult
@@ -212,26 +212,55 @@ def rerank_hybrid(
         )
         budget_ms = _int_env(_RERANK_BUDGET_MS_ENV, _DEFAULT_RERANK_BUDGET_MS)
         head = fused_order[:pool_k]
-        late_rerank_start = time.perf_counter()
-        try:
-            reranked_head = late_reranker.rerank(query, [chunks[i].text for i in head], head)
-        except LateRerankUnavailableError as exc:
-            # RECOVERABLE (e.g. a malformed embedding shape from the injected encoder): degrade
-            # to the plain RRF order for this pool, never crash. A genuine BackendExecutionError
-            # (a real encode-time fault) is deliberately NOT caught here -- it propagates to the
-            # CLI boundary (cli/main.py ~:6804-6813) per the Backend Fail-Closed Contract.
-            late_rank_fallback_reason = str(exc)
-            sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
-        else:
-            elapsed_ms = (time.perf_counter() - late_rerank_start) * 1000.0
-            if elapsed_ms > budget_ms:
-                late_rank_fallback_reason = (
-                    "late rerank unavailable: budget exceeded "
-                    f"({elapsed_ms:.0f}ms > {budget_ms}ms at pool_k={pool_k})"
+        # Real wall-clock deadline (A3, external audit 2026-07-11): the previous post-hoc
+        # `elapsed > budget` check could only DISCARD a rerank that had already RETURNED -- a HUNG
+        # encoder (a wedged model, an infinite loop in the injected reranker) never returns, so
+        # `late_reranker.rerank` blocked `tg search --rank` indefinitely with no bound. Run it on a
+        # daemon thread and `join` on the budget: if it overruns, abandon the thread (it dies with
+        # this short-lived CLI process) and degrade. The Backend Fail-Closed Contract is PRESERVED
+        # across the thread boundary -- a LateRerankUnavailableError (recoverable) degrades to the
+        # plain RRF order; ANYTHING ELSE (a genuine BackendExecutionError encode fault, or a
+        # KeyboardInterrupt/SystemExit user-abort) is re-raised on this thread so it still
+        # propagates to the CLI boundary (cli/main.py ~:6804-6813), exactly as the synchronous
+        # version did. Capturing BaseException (not just Exception) is deliberate: it keeps a
+        # user-abort from being silently swallowed into an RRF degrade AND guarantees exactly one
+        # of the two result holders is populated when the worker finishes (so the `else` splice
+        # below can never IndexError on an empty result).
+        rerank_result: list[list[int]] = []
+        rerank_error: list[BaseException] = []
+
+        def _run_late_rerank() -> None:
+            try:
+                rerank_result.append(
+                    late_reranker.rerank(query, [chunks[i].text for i in head], head)
                 )
+            except BaseException as exc:  # classified + re-raised (if non-recoverable) by the caller
+                rerank_error.append(exc)
+
+        worker = threading.Thread(target=_run_late_rerank, name="tg-late-rerank", daemon=True)
+        worker.start()
+        worker.join(timeout=budget_ms / 1000.0)
+
+        if worker.is_alive():
+            # Still running at the deadline (hung or merely too slow): do NOT wait -- abandon the
+            # daemon thread and degrade. This is the only branch that bounds a genuinely HUNG
+            # encoder; the old post-hoc check could never run for one.
+            late_rank_fallback_reason = (
+                f"late rerank unavailable: budget exceeded (>{budget_ms}ms at pool_k={pool_k})"
+            )
+            sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
+        elif rerank_error:
+            exc = rerank_error[0]
+            if isinstance(exc, LateRerankUnavailableError):
+                # RECOVERABLE (e.g. a malformed embedding shape): degrade, never crash.
+                late_rank_fallback_reason = str(exc)
                 sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
             else:
-                fused_order = reranked_head + fused_order[pool_k:]
+                # A genuine encode-time fault -> propagate (Backend Fail-Closed Contract): never
+                # silently degrade a real error into a plausible-but-wrong ranking.
+                raise exc
+        else:
+            fused_order = rerank_result[0] + fused_order[pool_k:]
 
     # Position in the fused order is a monotonic proxy for the underlying RRF score: RRF ties are
     # already broken by ascending chunk index before this list is built, so using position
