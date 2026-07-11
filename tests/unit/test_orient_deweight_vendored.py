@@ -161,3 +161,25 @@ def test_skips_graph_invisible_subproject_with_no_import_edges(tmp_path: Path) -
         {},  # no resolvable import edges anywhere (Rust files; the Python stem graph is blind)
     )
     assert _detect_vendored_subtrees(rm) == {}
+
+
+def test_deeply_nested_subtree_file_counts_as_a_member(tmp_path: Path) -> None:
+    # A file NESTED several levels inside a detected subtree (`bundled/pkg/mod.py`) must be counted as
+    # a tree member. The import-island verdict here HINGES on it: `lib.py` imports `mod` (an internal
+    # edge) so the island fires ONLY if the nested `mod.py` is in `tree_files`. Guards the lexical
+    # tuple-prefix membership test (`parts[:depth] == prefix`) that replaced the per-file, per-subtree
+    # `_path_is_relative_to` resolve() check (perf, 2026-07-11) -- a prefix bug that dropped nested
+    # files would silently turn this island into a non-island.
+    root = tmp_path.resolve()
+    (root / "bundled" / "pkg").mkdir(parents=True)
+    (root / "bundled" / "pyproject.toml").write_text("[project]\nname = 'bundled'\n")
+    rm = _rm(
+        root,
+        [root / "app.py", root / "bundled" / "lib.py", root / "bundled" / "pkg" / "mod.py"],
+        {
+            root / "bundled" / "lib.py": ["mod"]
+        },  # internal edge lib -> pkg/mod (both inside bundled/)
+    )
+    trees = _detect_vendored_subtrees(rm)
+    assert str(root / "bundled") in trees
+    assert "import-island" in trees[str(root / "bundled")]["reasons"]
