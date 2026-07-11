@@ -533,46 +533,62 @@ fn write_wedged_python_script(dir: &Path) -> PathBuf {
 }
 
 #[cfg(not(feature = "cuda"))]
-#[test]
-fn test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python() {
-    // audit #97 item 1: TG_HELP_PROBE_TIMEOUT_MS must override the (now-3000ms) default help-probe
-    // timeout, mirroring how TG_SIDECAR_TIMEOUT_MS overrides resolve_sidecar_timeout() (see the
-    // sibling test_sidecar_timeout_kills_child_and_reports_error above). A short override must make
-    // the native --help fallback trigger fast even against a Python that never responds.
-    //
-    // The elapsed-time bound below is intentionally generous (measured real-world: ~450-500ms for
-    // this exact scenario run in isolation) to stay robust under parallel-test subprocess-spawn
-    // contention (empirically observed to inflate wall-clock timing by ~1.5-2x when multiple
-    // subprocess-spawning tests race for process-creation resources in the same `cargo test` run).
-    // It still clearly discriminates "override honored" from "override silently ignored, fell
-    // through to the raised 3000ms default" (~3.2s+ in isolation).
-    let dir = tempdir().unwrap();
-    let wedge_script = write_wedged_python_script(dir.path());
-
+fn run_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str) -> Duration {
+    // Run `tg --help` against a wedged (never-responding) Python with the given help-probe timeout
+    // override; assert the native fallback still succeeds with enriched help; return wall-clock
+    // elapsed. The override-honored test COMPARES a short vs long override via this helper: both runs
+    // pay identical spawn + fallback overhead, so their DIFFERENCE is robust to CI subprocess-spawn
+    // contention (#136), unlike an absolute wall-clock bound.
     let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
     tg.current_dir(repo_root())
         .arg("--help")
-        .env("TG_SIDECAR_PYTHON", &wedge_script)
-        .env("TG_HELP_PROBE_TIMEOUT_MS", "250");
+        .env("TG_SIDECAR_PYTHON", wedge_script)
+        .env("TG_HELP_PROBE_TIMEOUT_MS", probe_timeout_ms);
 
     let started = Instant::now();
-    let output = run_with_timeout(tg, Duration::from_secs(8));
+    // Generous outer hang-guard: guards only against a truly-hung command, NOT the timing assertion
+    // (the short-vs-long comparison lives in the caller). 30s tolerates heavy CI runner starvation.
+    let output = run_with_timeout(tg, Duration::from_secs(30));
     let elapsed = started.elapsed();
 
     assert!(
         output.status.success(),
-        "expected the native fallback to still exit 0; stderr={}",
+        "expected the native fallback to still exit 0 (probe={probe_timeout_ms}ms); stderr={}",
         String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        elapsed < Duration::from_secs(3),
-        "TG_HELP_PROBE_TIMEOUT_MS=250 override was not honored -- fallback took {elapsed:?}, \
-         consistent with the override being ignored and the raised 3000ms default being used instead"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("AI agent moat commands"),
-        "expected the enriched native fallback help; stdout={stdout}"
+        "expected the enriched native fallback help (probe={probe_timeout_ms}ms); stdout={stdout}"
+    );
+    elapsed
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python() {
+    // audit #97 item 1: TG_HELP_PROBE_TIMEOUT_MS must override the (3000ms) default help-probe
+    // timeout, mirroring how TG_SIDECAR_TIMEOUT_MS overrides resolve_sidecar_timeout(). A short
+    // override must make the native --help fallback trigger fast against a Python that never responds.
+    //
+    // #136: this asserted an ABSOLUTE `elapsed < 3s`, which false-failed under extreme GitHub-runner
+    // starvation (spawn overhead alone exceeded the bound, blocking the v1.63.4 release). Instead RUN
+    // IT TWICE -- a 250ms override vs a 3000ms override -- on the same host and COMPARE: the wedged
+    // Python never responds, so each run waits its full probe timeout then falls back, and the short
+    // run must finish ~2750ms sooner. Both runs pay identical spawn/fallback overhead, so the
+    // DIFFERENCE is robust to CI contention (which inflates both equally); only the ~2750ms of
+    // probe-wait the short run skips is measured -- never an absolute wall-clock.
+    let dir = tempdir().unwrap();
+    let wedge_script = write_wedged_python_script(dir.path());
+
+    let elapsed_short = run_wedged_help_probe(&wedge_script, "250");
+    let elapsed_long = run_wedged_help_probe(&wedge_script, "3000");
+
+    assert!(
+        elapsed_short + Duration::from_millis(1500) < elapsed_long,
+        "TG_HELP_PROBE_TIMEOUT_MS=250 was not honored -- the 250ms-override run took {elapsed_short:?} \
+         but the 3000ms-override run took only {elapsed_long:?}; honoring 250ms should save ~2750ms of \
+         probe-wait (require >=1500ms of that gap to survive timing jitter)"
     );
 }
 
