@@ -6779,14 +6779,24 @@ def search_command(
     # carries a project marker, e.g. a workspace dir with a package.json) would otherwise hand the
     # whole unbounded `.` walk to the rg passthrough / native delegation below. Mirror the native
     # binary's WALK-ceiling guard here so the full CLI refuses fast too. Gated on `paths_defaulted`
-    # (an explicit, deliberately-scoped PATH still runs uninhibited -- Trap #3) and on a glob/type
-    # filter being present (the flag combo that routes an unscoped search into the rg passthrough);
-    # `--max-depth` and `--allow-broad-generated-scan` bypass it (a genuinely bounded walk / opt-in).
+    # (an explicit, deliberately-scoped PATH still runs uninhibited -- Trap #3); `--max-depth` and
+    # `--allow-broad-generated-scan` bypass it (a genuinely bounded walk / an opt-in override).
+    #
+    # P0-1 (dogfood + external audit 2026-07-11): fire for an unscoped search that carries NO
+    # glob/type filter too, not just the glob/type combo. The plain fast-path search is already
+    # bounded upstream -- the bootstrap front door delegates it to the native binary (whose own
+    # walk-ceiling guard refuses) or to rg passthrough -- so a bare `tg search PATTERN` never
+    # reaches this Python guard when a native/rg engine exists. The gap this closes is the
+    # FULL-CLI path: a query that carries a TG-only flag (`--rank`/`--semantic`/`--cpu`, ...) is
+    # forced to the full CLI where NO fast native/rg engine can serve it, and if no glob/type
+    # rode along, the old gate let it fall through to the unbounded per-file Python loop and burn
+    # the wall-clock deadline (dogfood-reproduced: `tg search PATTERN --rank` on a >1500-file
+    # unscoped root did the full walk instead of refusing). The probe strips glob/type anyway, so
+    # it counts every walked file (early-stopping at the ceiling) regardless of the filter flags.
     if (
         paths_defaulted
         and not allow_broad_generated_scan
         and config.max_depth is None
-        and (config.glob or config.iglob or config.file_type or config.type_not)
         and _implicit_glob_search_walk_exceeds_ceiling(
             paths_to_search, config, _LARGE_ROOT_SCAN_FILE_CEILING
         )
