@@ -1,6 +1,54 @@
 # CHANGELOG
 
 
+## v1.58.15 (2026-07-11)
+
+### Bug Fixes
+
+- **lsp**: Bound the unbounded header-skip loop in the external LSP provider reader (audit #116)
+  ([#507](https://github.com/oimiragieo/tensor-grep/pull/507),
+  [`ffc651e`](https://github.com/oimiragieo/tensor-grep/commit/ffc651e4094195710dcf68b3f52555f05c938bd6))
+
+_read_message (lsp_external_provider.py) framed JSON-RPC responses from a spawned language-server
+  subprocess with a header-skip loop that had no cap on the number of header lines or on a single
+  line's length -- the same unbounded-header-skip shape as the MCP stdio reader bug (audit #49).
+  Note: #49's fix lives on the unmerged branch fix/mcp-stdio-content-length-framing-49 (commit
+  3e66b1d), not yet on main as of this worktree's HEAD (6186953) -- the pattern was read directly
+  off that branch as the mirror target since this file has no dependency on mcp_server.py. A
+  malformed or malicious language-server subprocess streaming a single giant no-newline header line,
+  or endless small header lines with no blank-line terminator, could force an unbounded single-line
+  read or an unbounded loop iteration count before the existing Content-Length body-size cap
+  (_MAX_LSP_MESSAGE_BYTES) ever got a chance to run.
+
+Mirrors the #49 pattern, adapted for this reader being a plain synchronous function (not an
+  anyio.AsyncFile): a named _read_bounded_line(stream, limit) helper forwards a size bound directly
+  into the stream's own readline(size) (bytes and text streams both support this natively, so no
+  async reach-into-.wrapped trick is needed here); two new module-level constants
+  _MAX_LSP_HEADER_LINES=128 and _MAX_LSP_HEADER_BYTES=64*1024 (same magnitudes as #49) bound the
+  header preamble via three fail-closed checks: a hard iteration cap on the loop (Python for/else),
+  a per-line check that fails closed when a line hits the byte cap with no trailing newline, and a
+  cumulative byte-budget check across the whole preamble. Any breach returns None, which the
+  existing caller (_reader_loop, lsp_external_provider.py) already treats as a clean stream-close:
+  it calls _broadcast_closed() and returns, ending the reader thread without a hang or an unhandled
+  exception -- no caller changes needed.
+
+TDD: 2 new tests using real BytesIO streams with stream.tell() boundedness assertions (not just an
+  is-None check, which would also pass pre-fix once the finite test buffer hit EOF) -- both RED
+  pre-fix (giant line: consumed the full 4x buffer, 262144 bytes vs the 65536-byte cap;
+  too-many-lines: consumed all 512 lines, 5120 bytes vs the 1280-byte bound) and GREEN post-fix. The
+  existing oversized/malformed Content-Length tests and a new multi-header happy-path parse test are
+  unaffected/green throughout (regression-verified). The existing _FakeStream test double's
+  readline() gained an ignored size parameter to match the real stream interface _read_message now
+  calls through _read_bounded_line.
+
+Gates: ruff check, ruff format --preview --check, mypy src/tensor_grep (77 files, 0 issues), and the
+  full lsp_external_provider test family (test_lsp_external_provider.py,
+  test_lsp_external_provider_hardening.py, test_lsp_start_race.py, test_lsp_readiness_gate.py,
+  test_lsp_hygiene.py) all green (53 passed, 1 skipped).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.14 (2026-07-11)
 
 ### Bug Fixes
