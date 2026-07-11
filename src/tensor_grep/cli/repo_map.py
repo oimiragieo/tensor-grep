@@ -933,7 +933,7 @@ def _iter_repo_bucket_files(
     # the ancestor stack, so a nested subdir/.gitignore is honored -- not just the repo root's.
     # _load_gitignore_matcher is lru_cached per directory, so re-walks stay cheap.
     own = _load_gitignore_matcher(str(root))
-    stack = ancestor_stack + (own,) if own.has_rules else ancestor_stack
+    stack = (*ancestor_stack, own) if own.has_rules else ancestor_stack
     try:
         entries = list(os.scandir(root))
     except OSError:
