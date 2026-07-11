@@ -206,7 +206,14 @@ def test_receipt_top_level_blocks_are_all_present_even_when_every_source_is_abse
         assert block_name in receipt, f"missing stable block: {block_name}"
 
 
-def test_build_evidence_receipt_json_matches_python_payload(git_repo: Path) -> None:
+def test_build_evidence_receipt_json_matches_python_payload(git_repo: Path, monkeypatch) -> None:
+    # Freeze the timestamp: the dict build and the JSON build are two SEPARATE calls, each
+    # stamping created_at = _utc_now_iso() at its own moment. Under CI load the two calls can
+    # straddle a clock-tick, giving different created_at values -> the dicts differ and the
+    # equality assertion fails intermittently (observed on windows-latest py3.12, blocking a
+    # release). Pinning _utc_now_iso makes both builds deterministic without weakening the check.
+    monkeypatch.setattr(evidence_receipt, "_utc_now_iso", lambda: "2026-01-01T00:00:00+00:00")
+
     receipt = evidence_receipt.build_evidence_receipt(git_repo)
     receipt_json = evidence_receipt.build_evidence_receipt_json(git_repo)
 
