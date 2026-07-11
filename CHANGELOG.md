@@ -1,6 +1,78 @@
 # CHANGELOG
 
 
+## v1.58.13 (2026-07-11)
+
+### Bug Fixes
+
+- **apply-policy**: Confine validation-command executables beneath-or-equal the repo root (RCE,
+  audit H2, Opus-gated) ([#509](https://github.com/oimiragieo/tensor-grep/pull/509),
+  [`e10c91d`](https://github.com/oimiragieo/tensor-grep/commit/e10c91d2d139c2916b9d026472a794450ae0ab3b))
+
+* fix(apply): reject a nested repo-local executable shadow, not just a direct child (CWE-427, audit
+  H2)
+
+The shadow-executable guard in _run_policy_command rejected a resolved validation-command executable
+  only when its IMMEDIATE parent equaled the untrusted repo root exactly. A binary resolved to
+  <repo>/nested/dir/tool.exe has `.parent == <repo>/nested/dir`, which never equals `<repo>`, so it
+  slipped past the guard and reached subprocess.run -- code execution with operator privileges
+  against an untrusted checkout.
+
+Fix: replace the parent-equality check with _abspath_beneath_or_equal(), a beneath-or-equal
+  confinement check (normcase/normpath string comparison with an os.sep-bounded prefix test, so a
+  sibling like `repo-other` is never mistaken for `repo`). It runs on the same os.path.abspath'd
+  (NOT Path.resolve()'d) resolved_path as before, preserving the #453 fix that keeps a
+  `repo/tool.cmd -> repo/sub/evil.cmd` symlink from escaping the guard by resolving outside the
+  lexical root.
+
+Also widen _search_path_without_cwd() (defense-in-depth PATH filtering ahead of shutil.which) to
+  strip PATH entries NESTED under cwd, not just exact matches -- <repo>/node_modules/.bin and
+  <repo>/.venv/Scripts are extremely common PATH entries and are just as untrusted as cwd itself.
+  Reuses the existing _path_is_under() helper, which already treats an exact match as trivially
+  "under" itself.
+
+Tests (TDD, tests/unit/test_apply_policy.py): two new RED->GREEN cases prove the nested-shadow
+  bypass at depth 1 and depth 4 (pre-fix these crashed reaching the mocked subprocess.run, proving
+  the shadow was never rejected); boundary tests on the new helper cover exact-root, nested,
+  unrelated, and same-prefix-sibling paths plus Windows case-insensitivity; a new PATH-widening test
+  proves node_modules/.bin and .venv/Scripts entries are now stripped while a sibling-prefix PATH
+  entry is kept. Also corrected one pre-existing test whose fixture put the "trusted" binary inside
+  the cwd it passed as the untrusted root (accidentally exercising the very bug fixed here rather
+  than a legitimate outside-root binary).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(apply): repoint the #453 symlink-shadow regression target OUTSIDE the repo so it genuinely
+  pins abspath-vs-.resolve() (Opus gate must-fix)
+
+The #453 regression test (test_run_policy_command_rejects_symlink_shadow_resolving_outside_cwd)
+  exists to go RED if the shadow-executable guard is ever regressed from os.path.abspath to
+  Path.resolve() -- the exact change that would re-open the #453 symlink-shadow RCE.
+
+Under the old parent==cwd guard, pointing the symlink target one level deep INSIDE the repo
+  (repo/tools/evil) was enough to distinguish the two: resolve() moved the immediate parent to
+  repo/tools (!= repo) and slipped the check. But the H2 fix (commit 446340a) replaced
+  parent-equality with a beneath-or-equal confinement check, under which repo/tools/evil is beneath
+  repo in BOTH the abspath form AND the resolve-target form -- so the test passed whether the guard
+  used abspath or resolve, silently losing its regression-guard purpose (flagged by the adversarial
+  Opus gate).
+
+Fix (test-only): repoint the symlink target OUTSIDE the repo (tmp_path/outside/evil). Now the
+  abspath guard keeps the resolved path at the in-repo link location (<repo>/ruff.cmd, beneath repo
+  -> rejected), while a .resolve() regression follows the link to tmp_path/outside/evil (NOT beneath
+  repo -> not rejected -> spawned). Proven both directions in the worktree venv: GREEN with the
+  shipped abspath guard; flipping the guard to Path(resolved_executable).resolve() makes this test
+  FAIL (result["passed"] is True, i.e. the shadow spawned), then reverted the guard (src
+  byte-identical to 446340a).
+
+Guard logic unchanged; the parent-canonicalization hardening (8.3/junction/\?\ edges) is
+  intentionally NOT applied here -- it is a tracked fast-follow.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.12 (2026-07-10)
 
 ### Bug Fixes
