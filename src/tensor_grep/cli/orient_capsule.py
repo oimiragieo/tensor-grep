@@ -194,10 +194,27 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
     _code_files, _resolved_imports, reverse_importers = _code_files_and_import_graph(rm)
     code_file_set = set(_code_files)
 
+    # Precompute each code file's path-parts relative to root ONCE, on the SAME lexical basis the
+    # candidate_dirs scan above used (`Path(f).relative_to(root)`; root is already resolved). Subtree
+    # membership is then a cheap tuple-prefix test -- NO per-(subtree, file) filesystem resolve. The
+    # old `_path_is_relative_to(Path(f), abs_dir)` did two `.resolve()` (realpath) syscalls per pair,
+    # i.e. O(subtrees x files) realpath calls: ~15% of `tg agent` wall on an 872-file repo and
+    # pathological on WSL 9p mounts (profile 2026-07-11). A file not lexically under root never
+    # contributed a candidate dir, so it cannot belong to any detected subtree -- skipping it here is
+    # consistent with how the subtrees were found.
+    code_rel_parts: list[tuple[str, tuple[str, ...]]] = []
+    for f in code_file_set:
+        try:
+            code_rel_parts.append((f, Path(f).relative_to(root).parts))
+        except ValueError:
+            continue
+
     result: dict[str, dict[str, Any]] = {}
     for rel_dir in subtree_rel_roots:
         abs_dir = root / rel_dir
-        tree_files = {f for f in code_file_set if _repo_map._path_is_relative_to(Path(f), abs_dir)}
+        prefix = rel_dir.parts
+        depth = len(prefix)
+        tree_files = {f for f, parts in code_rel_parts if parts[:depth] == prefix}
         if not tree_files:
             continue
         # An import-island needs POSITIVE evidence of an internally-cohesive-but-externally-isolated
