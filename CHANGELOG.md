@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.59.3 (2026-07-11)
+
+### Bug Fixes
+
+- **checkpoint**: Skip and disclose nested-repo gitlinks instead of crashing (audit #130d)
+  ([#517](https://github.com/oimiragieo/tensor-grep/pull/517),
+  [`fad9c2e`](https://github.com/oimiragieo/tensor-grep/commit/fad9c2e063fe85d9ae5c3730f71bf7d850cea109))
+
+`tg checkpoint create` on a repo containing a git submodule / embedded repo (a gitlink, mode 160000,
+  e.g. benchmarks/external_repos/chalk) crashed: `git ls-files` reports the submodule as a single
+  tracked path that is a real directory on disk, and _git_snapshot_entries had no is_dir() guard, so
+  create_checkpoint's copy loop called shutil.copy2() on a directory (IsADirectoryError on POSIX,
+  PermissionError on Windows). #508 made the failure non-littering (cleanup + re-raise) but did not
+  fix the crash itself.
+
+Fix at the source in _git_snapshot_entries (shared by create_checkpoint and undo_checkpoint's
+  current-tree re-scan, so both call sites are protected): skip any entry that is a real,
+  non-symlink directory on disk and record it in a new additive skipped_nested_repos field on
+  CheckpointCreateResult + metadata.json, so `--json` output DISCLOSES the gap instead of silently
+  under-covering -- matching this codebase's honesty culture around
+  resolution_gaps/deadline_limit/possibly_truncated. The directory check excludes symlinks (is_dir()
+  and not is_symlink()) so a legitimately tracked symlink-to-directory -- already handled correctly
+  by the copy loop's shutil.copy2(..., follow_symlinks=False) -- is never wrongly reclassified as a
+  nested repo and dropped.
+
+Adds 5 tests to tests/unit/test_checkpoint_cli.py: the crash-reproduction + disclosure RED tests, a
+  subdir-scoping regression (filesystem-snapshot path is untouched), an e2e create-then-undo proving
+  the excluded entry never reaches undo's pre-flight, and a symlink-to-directory preservation
+  regression for the new is_dir()/is_symlink() guard.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.59.2 (2026-07-11)
 
 ### Bug Fixes
