@@ -9609,7 +9609,13 @@ def imports(
                 target = "external"
             else:
                 target = "unresolved"
-            typer.echo(f"  {entry['line']}: {entry['module']} -> {target}")
+            # #93 SUB-1: a dynamic call (`importlib.import_module(...)` / `import(...)`) with a
+            # non-literal argument has no module name to print -- label it instead of an empty
+            # string, and flag every dynamic entry so a human reader can tell it apart from a
+            # static import statement.
+            module_label = entry["module"] or "<dynamic>"
+            suffix = " [dynamic]" if entry.get("dynamic") else ""
+            typer.echo(f"  {entry['line']}: {module_label} -> {target}{suffix}")
 
     _emit_symbol_command_result(
         payload,

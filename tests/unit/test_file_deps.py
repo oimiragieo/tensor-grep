@@ -627,3 +627,265 @@ def test_imports_relative_file_from_parent_cwd_already_resolves_correctly(
 
     assert payload["file"] == str(target.resolve())
     assert payload["result_incomplete"] is False
+
+
+# ---------------------------------------------------------------------------------------------
+# Dynamic-import awareness (#93 SUB-1): `importlib.import_module(...)` / `__import__(...)` /
+# bare `import_module(...)` (Python) and dynamic `import(...)` call-form / bare-or-non-literal
+# `require(...)` (JS/TS) are invisible to the static-only extractors -- these are `ast.Call`
+# nodes (Python) or call-form expressions (JS/TS) that can appear ANYWHERE (inside a function, a
+# conditional), not just as a top-level import statement. Recall fix on both directions: forward
+# (`tg imports`, `build_file_imports`) AND reverse (`tg importers`, `build_file_importers`), since
+# the reverse primitive's prefilter (`_reverse_importers`) depends on the SAME per-file imports
+# list the forward primitive's summary is built from.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_imports_detects_dynamic_importlib_import_module(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        'import importlib\n\ndef load():\n    return importlib.import_module("pkg.helpers")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+    assert entry["resolved"] == str(helpers_path.resolve())
+    assert entry["external"] is False
+    assert entry["line"] == 4
+
+
+def test_build_file_imports_detects_dunder_import(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    consumer = project / "app.py"
+    consumer.write_text('mod = __import__("json")\n', encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "json")
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+    assert entry["external"] is True
+
+
+def test_build_file_imports_detects_bare_import_module_call(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    consumer = project / "app.py"
+    consumer.write_text(
+        'from importlib import import_module\nmod = import_module("json")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [
+        current
+        for current in payload["imports"]
+        if current["module"] == "json" and current.get("dynamic")
+    ]
+    assert len(dynamic_entries) == 1
+    assert dynamic_entries[0]["dynamic_unresolved"] is False
+
+
+def test_build_file_imports_marks_non_literal_python_dynamic_import_as_unresolved(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    consumer = project / "app.py"
+    consumer.write_text(
+        "import importlib\n\ndef load(name):\n    return importlib.import_module(name)\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [current for current in payload["imports"] if current.get("dynamic")]
+    assert len(dynamic_entries) == 1
+    entry = dynamic_entries[0]
+    assert entry["dynamic_unresolved"] is True
+    assert entry["module"] == ""
+    assert entry["resolved"] is None
+    assert entry["external"] is False
+    # never fabricate a module name in the flat `unresolved` summary for an import whose name
+    # we don't actually know
+    assert "" not in payload["unresolved"]
+
+
+def test_build_file_imports_detects_dynamic_import_call_literal(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    util_path = src / "util.js"
+    util_path.write_text("export function foo() {}\n", encoding="utf-8")
+    consumer = src / "consumer.js"
+    consumer.write_text(
+        'async function load() {\n  return import("./util");\n}\n', encoding="utf-8"
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "./util")
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+    assert entry["resolved"] == str(util_path.resolve())
+    assert entry["line"] == 2
+
+
+def test_build_file_imports_marks_non_literal_dynamic_import_call_as_unresolved(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    consumer = src / "consumer.js"
+    consumer.write_text(
+        "async function load(name) {\n  return import(name);\n}\n", encoding="utf-8"
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [current for current in payload["imports"] if current.get("dynamic")]
+    assert len(dynamic_entries) == 1
+    entry = dynamic_entries[0]
+    assert entry["dynamic_unresolved"] is True
+    assert entry["module"] == ""
+    assert entry["resolved"] is None
+    assert "" not in payload["unresolved"]
+
+
+def test_build_file_imports_detects_bare_require_without_assignment(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    util_path = src / "util.js"
+    util_path.write_text("module.exports = {};\n", encoding="utf-8")
+    consumer = src / "consumer.js"
+    consumer.write_text('require("./util");\n', encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "./util")
+    assert entry["resolved"] == str(util_path.resolve())
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+
+
+def test_build_file_imports_marks_non_literal_require_as_unresolved(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    consumer = src / "consumer.js"
+    consumer.write_text("function load(name) {\n  return require(name);\n}\n", encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [current for current in payload["imports"] if current.get("dynamic")]
+    assert len(dynamic_entries) == 1
+    entry = dynamic_entries[0]
+    assert entry["dynamic_unresolved"] is True
+    assert entry["module"] == ""
+
+
+def test_build_file_imports_static_require_unaffected_by_dynamic_detection(
+    tmp_path: Path,
+) -> None:
+    """The pre-existing assignment-anchored `require(...)` regex path is untouched -- a normal
+    `const x = require("y")` line must still yield exactly ONE entry (not two, from also
+    matching the new broader dynamic-require fallback)."""
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    util_path = src / "util.js"
+    util_path.write_text("module.exports = {};\n", encoding="utf-8")
+    consumer = src / "consumer.js"
+    consumer.write_text('const util = require("./util");\n', encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    matches = [current for current in payload["imports"] if current["module"] == "./util"]
+    assert len(matches) == 1
+    # Payload-bloat fix: a static entry omits the "dynamic"/"dynamic_unresolved" keys entirely
+    # rather than stamping always-False markers (see test_importers_payload_is_far_smaller_than_map).
+    assert "dynamic" not in matches[0]
+    assert "dynamic_unresolved" not in matches[0]
+    assert matches[0]["resolved"] == str(util_path.resolve())
+
+
+def test_build_file_importers_recalls_dynamic_importlib_import_module(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text(
+        'import importlib\n\ndef load():\n    return importlib.import_module("pkg.helpers")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    importer_files = set(payload["importer_files"])
+    assert importer_files == {str(consumer.resolve())}
+    edge = payload["importers"][0]
+    assert edge["dynamic"] is True
+    assert edge["dynamic_unresolved"] is False
+    assert edge["module"] == "pkg.helpers"
+
+
+def test_build_file_importers_recalls_dynamic_import_call(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    target = src / "util.js"
+    target.write_text("export function foo() {}\n", encoding="utf-8")
+    consumer = src / "consumer.js"
+    consumer.write_text(
+        'async function load() {\n  return import("./util");\n}\n', encoding="utf-8"
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    importer_files = set(payload["importer_files"])
+    assert importer_files == {str(consumer.resolve())}
+    edge = payload["importers"][0]
+    assert edge["dynamic"] is True
+    assert edge["dynamic_unresolved"] is False
+    assert edge["module"] == "./util"
+
+
+def test_build_file_importers_never_asserts_edge_for_unresolved_dynamic_import(
+    tmp_path: Path,
+) -> None:
+    """Precision: an `importlib.import_module(name)` call whose argument is a variable must
+    NEVER be reported as a confirmed importer of any file -- there is no literal module name to
+    compare, so asserting an edge here would be a fabricated (over-reported) result."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text(
+        "import importlib\n\ndef load(name):\n    return importlib.import_module(name)\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert payload["importer_files"] == []
+    assert payload["importer_count"] == 0
