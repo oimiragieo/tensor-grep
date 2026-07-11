@@ -1661,12 +1661,29 @@ def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
     return entries
 
 
+@lru_cache(maxsize=2048)
+def _cached_ast_parse(source: str) -> ast.Module:
+    """Content-addressed AST parse cache. `build_agent_capsule` parses each Python file 2-3x
+    across phases -- once in the map-build imports/symbols pass and again in the caller/blast-radius
+    consumer scan (and the `tg imports`/`importers` extractors) -- all on the SAME source read the
+    same way (`path.read_text(encoding="utf-8")`). Profiling `tg agent` on an 872-file repo (2026-
+    07-11) showed ~40% of the wall in `ast.parse` + `ast.walk` over those duplicate parses (1512
+    parses for ~783 files). Keying on the source TEXT (not the path) is staleness-free: an edited
+    file has different content -> a fresh key -> a fresh parse, so this stays correct even under the
+    reused session-daemon process (no mtime races). Callers only ever READ the tree (`tree.body` /
+    `ast.walk` + `isinstance`, no mutation -- audited), so sharing one parsed tree is safe. Raises
+    on invalid syntax exactly like `ast.parse` (lru_cache does not cache the exception, so a
+    syntax-error file simply re-raises + re-parses each time -- the caller's try/except is
+    unchanged). Bounded at 2048 entries to cap resident memory in the long-lived daemon."""
+    return ast.parse(source)
+
+
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix != ".py":
         return [], []
 
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return [], []
 
@@ -3119,7 +3136,7 @@ def _python_file_imports_symbol_from_definition(
     repo_root: Path | str | None = None,
 ) -> bool:
     try:
-        tree = ast.parse(source)
+        tree = _cached_ast_parse(source)
     except SyntaxError:
         return False
 
@@ -3314,7 +3331,7 @@ def _python_import_update_target(
         return None
 
     try:
-        tree = ast.parse(source)
+        tree = _cached_ast_parse(source)
     except SyntaxError:
         return None
 
@@ -4197,7 +4214,7 @@ def _python_references_and_calls(
 
     try:
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = _cached_ast_parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError):
         return [], []
 
@@ -4264,7 +4281,7 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
 
     try:
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = _cached_ast_parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError):
         return []
 
@@ -5207,7 +5224,7 @@ def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
 
     try:
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = _cached_ast_parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError):
         return []
 
@@ -5674,7 +5691,7 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if file_size > _max_parse_bytes():
         return []
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return []
 
@@ -8973,7 +8990,7 @@ def _best_test_function_candidate(
 def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return ()
 
@@ -8996,7 +9013,7 @@ def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
 def _python_parametrized_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return ()
 
