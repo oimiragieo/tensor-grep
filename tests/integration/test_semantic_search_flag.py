@@ -214,6 +214,44 @@ def test_search_semantic_corpus_chunk_cap_exceeded_degrades_to_bm25(
     assert semantic_files == rank_files
 
 
+def test_search_semantic_cap_fallback_does_not_rechunk_full_corpus(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A2 (external audit 2026-07-11): when the corpus-chunk cap trips, the BM25-only degrade must
+    reuse the chunks already accumulated -- NOT fall into rerank_hybrid's `bm25_index=None` branch,
+    which re-reads + re-chunks the FULL matched-file set UNCAPPED, turning the safety guard into the
+    expensive op it exists to prevent. Regression: with the cap forced to 1, no file may be chunked
+    a SECOND time by the degrade path (mirrors the F1 retry's "reuse the SAME bm25_index")."""
+    monkeypatch.setattr("tensor_grep.core.retrieval_dense.dense_available", lambda: (True, None))
+    monkeypatch.setattr("tensor_grep.cli.main._SEMANTIC_CORPUS_CHUNK_CAP", 1)
+
+    from tensor_grep.core import retrieval_chunker
+
+    real_chunk_file = retrieval_chunker.chunk_file
+    calls: list[str] = []
+
+    def _counting_chunk_file(path: str, **kwargs: object):
+        calls.append(str(path))
+        return real_chunk_file(path, **kwargs)
+
+    # Patch BOTH bind sites: a re-chunk regression would call reranker.py's module-level name.
+    monkeypatch.setattr("tensor_grep.core.retrieval_chunker.chunk_file", _counting_chunk_file)
+    monkeypatch.setattr("tensor_grep.core.reranker.chunk_file", _counting_chunk_file)
+
+    for i in range(3):
+        (tmp_path / f"f{i}.py").write_text(
+            f"def make_invoice_{i}(invoice_id):\n    return invoice_id\n", encoding="utf-8"
+        )
+
+    result = CliRunner().invoke(app, ["search", "--semantic", "--json", "invoice", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    payload = json.loads(result.stdout)
+    assert "corpus chunk cap" in payload.get("rank_fallback_reason", "")
+    # The fix: the cap degrade reuses the accumulated chunks, so no file is chunked a SECOND time.
+    assert len(calls) == len(set(calls)), f"a file was re-chunked after the cap tripped: {calls}"
+
+
 def test_search_semantic_chunker_runtime_error_degrades_to_bm25(
     tmp_path: Path, monkeypatch
 ) -> None:

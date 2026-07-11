@@ -3636,7 +3636,15 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
             all_results.rank_fallback_reason = _maybe_append_late_skip(str(exc))
             sys.stderr.write(f"tg: {exc}\n")
             return rerank_hybrid(
-                all_results, pattern, all_results.matched_file_paths, dense_index=None
+                all_results,
+                pattern,
+                all_results.matched_file_paths,
+                # A2 (external audit 2026-07-11): reuse the chunks accumulated so far (already bounded
+                # by the corpus cap / the file that raised) -- passing a prebuilt index stops
+                # rerank_hybrid re-reading + re-chunking the FULL corpus UNCAPPED, which turned this
+                # safety guard into the expensive op it exists to prevent. Mirrors the F1 retry below.
+                bm25_index=Bm25Index(chunks),
+                dense_index=None,
             )
         chunks.extend(file_chunks)
         if len(chunks) > _SEMANTIC_CORPUS_CHUNK_CAP:
@@ -3648,7 +3656,15 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
             all_results.rank_fallback_reason = _maybe_append_late_skip(reason)
             sys.stderr.write(f"tg: {reason}\n")
             return rerank_hybrid(
-                all_results, pattern, all_results.matched_file_paths, dense_index=None
+                all_results,
+                pattern,
+                all_results.matched_file_paths,
+                # A2 (external audit 2026-07-11): reuse the chunks accumulated so far (already bounded
+                # by the corpus cap / the file that raised) -- passing a prebuilt index stops
+                # rerank_hybrid re-reading + re-chunking the FULL corpus UNCAPPED, which turned this
+                # safety guard into the expensive op it exists to prevent. Mirrors the F1 retry below.
+                bm25_index=Bm25Index(chunks),
+                dense_index=None,
             )
 
     bm25_index = Bm25Index(chunks)
