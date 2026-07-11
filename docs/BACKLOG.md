@@ -23,6 +23,17 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## ⭐ CURRENT STATE (2026-07-11) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+
+- **0 open PRs** (`gh pr list` = 0, the source of truth). Live PyPI **v1.61.2**; **v1.62.0 releasing** (main `d812749` `chore(release): v1.62.0`; #525 orient auto-deweight). **WIP=0.**
+- **The authoritative current backlog is the CLI task store; two live CEO-relayed fix-queues:**
+  - **#134 External audit 2026-07-11** — correctness batch [A1 explicit-`--index` silently drops CLI options / A2 semantic-corpus-cap self-bypass (DoS) / A3 late-rerank real cancellation / A4 index-persistence load-once+atomic+lock / A5 = this refresh] + GPU capability/packaging integrity (remove the NVIDIA-artifact-without-native-CUDA matrix) + doc regressions. Gate-free now: A2/A3/A5/P0-1. Opus-gated → Jul-13: A1/A4/GPU-cap. CEO-gated: GPU resident engine + distribution.
+  - **#133 v1.61.2 dogfood** — P0 unscoped-search refuse-fast (root-caused: the rg-passthrough self-walks the whole tree; fix = bounded pre-passthrough probe) · P1 evidence-UX / suggested_scope-in-agent / edit-plan structured validation_plan / dynamic-imports.
+- **SHIPPED since v1.57.1:** v1.58.x (daemon Tier-1 #492; flaky+moat+multi-pattern #499-#505; tg_repo_map 2000-cap #114) · v1.59-1.60 (codex-audit HIGH security wave #508-#512, all Opus-gated; EvidenceReceipt `tg evidence emit` #510) · **v1.61.0** (#498 daemon symbol-cache = #113 latency) · **v1.61.1** (#522 search nested-gitignore) · **v1.61.2** (#523 orient nested-gitignore + #524) · **v1.62.0 releasing** (#525 auto-deweight, 3 CI-caught fixes). No-release batch: #514 (GPU PFAC doc-honesty correction) · #520 (GPU dead-code) · #521 (#129 de-flake) · #513.
+- **Strategic (audit):** near-term product = **signed PR evidence + change-governance**; GPU offered later for batch security/compliance scans; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
+
+---
+
 ## SHIPPING — 8 open PRs (drain security-first, one-per-publish) — task #117
 
 | PR | Fix | Gate |
