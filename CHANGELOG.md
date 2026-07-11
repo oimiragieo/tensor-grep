@@ -1,6 +1,75 @@
 # CHANGELOG
 
 
+## v1.58.16 (2026-07-11)
+
+### Bug Fixes
+
+- **repo_map**: Dynamic-import recall in imports/importers (importlib/__import__/import()) — audit
+  #93 SUB-1 ([#504](https://github.com/oimiragieo/tensor-grep/pull/504),
+  [`b02f4a9`](https://github.com/oimiragieo/tensor-grep/commit/b02f4a976341fb504516f2db959cf8370f3c7bc1))
+
+* fix(cli): dynamic-import awareness in imports/importers (audit #93 SUB-1)
+
+`tg imports`/`tg importers` only walked top-level `ast.Import`/`ast.ImportFrom` (Python) and a
+  static `import ... from` / assignment-anchored `require(...)` regex (JS/TS), so a
+  dynamically-declared import was invisible in both directions of the #74 file-dependency primitive:
+
+- Python: `importlib.import_module("x")`, `__import__("x")`, and a bare `import_module("x")` are
+  `ast.Call` expressions that can appear anywhere (inside a function, a conditional) -- never
+  visited by the tree.body-only static scan. - JS/TS: dynamic `import("x")` call-form and a
+  `require(...)` not shaped like `const x = require("y")` (bare, chained, or a sub-expression
+  argument) were never matched.
+
+Adds a dynamic-call sub-pass to both extraction paths (the coarse alias-graph list used by the
+  reverse `tg importers` prefilter, and the per-statement line-tracked list used by both `tg
+  imports` and the precise `_confirm_import_edges` confirm step), and threads `dynamic`/
+  `dynamic_unresolved` markers through `_resolve_raw_import_entry` and `_confirm_import_edges`
+  (which previously dropped them) end to end into the JSON payload.
+
+Fails closed on precision: when the import target isn't a static string literal (e.g.
+  `import_module(name)`), the entry is marked `dynamic_unresolved: true` with no module name, and
+  resolution/edge-confirmation is skipped entirely rather than guessing -- over-reporting an edge
+  would be a regression in a moat feature.
+
+Reuses the existing "parser-backed"/"heuristic" provenance split (no new enum): Python dynamic
+  entries resolve through the same AST-derived resolver as static Python imports; JS/TS dynamic
+  entries through the same regex-heuristic resolver as static JS/TS imports.
+
+Tests: 12 new cases in tests/unit/test_file_deps.py covering forward detection (literal and
+  non-literal argument, both languages), the static-require-not-double-counted regression guard, and
+  reverse recall + precision (a file that only reaches a target via a resolvable dynamic call is now
+  discoverable by `tg importers`; an unresolvable one never fabricates an edge).
+
+* fix(cli): omit dynamic markers on static import/importer entries (#93 SUB-1 payload-bloat
+  regression)
+
+test_importers_payload_is_far_smaller_than_map failed on CI (ubuntu py3.11/py3.12 + test-gpu): 966B
+  is not <0.1x the 9616B map payload (bound 961.6B). Root cause: _resolve_raw_import_entry
+  (build_file_imports emit site) and _confirm_import_edges (build_file_importers emit site)
+  unconditionally copied "dynamic"/"dynamic_unresolved" from the raw entry into every output dict,
+  including static ones where both are always False -- pure bloat that tipped `tg importers`'
+  payload past the <10%-of-`tg map` token-economy guard (a moat invariant).
+
+Fix: emit "dynamic"/"dynamic_unresolved" only when the entry is actually dynamic. Static entries
+  (the majority) are now byte-identical to pre-SUB-1 output; presence of "dynamic" itself now means
+  "this is a dynamic import". The two raw-entry-construction sites that hard-code "dynamic": True
+  for detected importlib/import() calls (_python_dynamic_import_entries, _js_ts_imports_with_lines)
+  are untouched -- only the two copy-into-output sites changed.
+
+No consumer needed conversion to .get(): every existing reader already used entry.get("dynamic",
+  False) on the RAW pre-emit entry. Only one test hard-subscripted the built output on a static
+  entry (test_build_file_imports_static_require_unaffected_by_dynamic_detection); updated it to
+  assert absence instead. All other SUB-1 dynamic-entry assertions are unchanged since dynamic
+  entries still carry both keys.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.15 (2026-07-11)
 
 ### Bug Fixes
