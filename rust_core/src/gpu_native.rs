@@ -591,6 +591,9 @@ enum SearchLaunchMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct SearchExecutionOptions {
+    // Default-off in production (`Default` => false). Exercised on demand by the
+    // `tg gpu-cuda-graphs` benchmark path (benchmark_cuda_graph_search_paths runs
+    // both false and true); pending promotion to a production default once validated.
     use_cuda_graphs: bool,
 }
 

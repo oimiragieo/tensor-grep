@@ -3,6 +3,11 @@ from typing import Any
 
 
 class DStorageReader:
+    """Experimental DirectStorage reader spike -- NOT wired into the production
+    read path (see ``KvikIOReader``); retained behind its own unit test only and
+    is not constructed at runtime.
+    """
+
     def is_available(self) -> bool:
         try:
             import importlib.util

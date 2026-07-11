@@ -127,6 +127,10 @@ class MemoryManager:
         ]
 
     def should_use_pinned_memory(self) -> bool:
+        # Experimental: no production caller today. The pinned-vs-GDS-vs-mmap
+        # decision is not yet wired into cudf_backend/pipeline (which use
+        # get_vram_budget_mb / get_device_chunk_plan_mb). Retained as the intended
+        # hook for the experimental GDS readers (KvikIOReader / DStorageReader).
         if self.detector.has_gds():
             return False
         return True

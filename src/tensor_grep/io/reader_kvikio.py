@@ -1,4 +1,10 @@
 class KvikIOReader:
+    """Experimental GPU Direct Storage reader spike -- NOT wired into the
+    production read path. Production GPU reads use the Rust FFI
+    ``read_mmap_to_arrow_chunked`` via ``cudf_backend``; this class is retained
+    behind its own unit test only and is not constructed at runtime.
+    """
+
     def is_available(self) -> bool:
         try:
             import importlib.util
