@@ -257,12 +257,16 @@ class _EvidenceGroup(TyperGroup):
                 and not token.startswith("-")
                 and ("/" in token or "\\" in token or Path(token).exists())
             ):
-                exc.message = (
-                    f"{exc.message}\n"
+                # Re-raise a NEW UsageError with the hint appended -- `UsageError.message` is a
+                # Final attribute (cannot be reassigned in place); a fresh error carrying the same
+                # `ctx` renders identically (Usage + "Try --help" + Error:) and keeps exit code 2.
+                raise click.exceptions.UsageError(
+                    f"{exc.format_message()}\n"
                     "Hint: `tg evidence` is a command group; its receipt action is "
                     f"`emit`. Did you mean `tg evidence emit {token}`? "
-                    "(run `tg evidence emit --help`)"
-                )
+                    "(run `tg evidence emit --help`)",
+                    ctx=exc.ctx,
+                ) from exc
             raise
 
 
