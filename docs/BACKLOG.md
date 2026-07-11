@@ -23,31 +23,23 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
-## ⭐ CURRENT STATE (2026-07-11) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+## ⭐ CURRENT STATE (2026-07-12) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **0 open PRs** (`gh pr list` = 0, the source of truth). Live PyPI **v1.61.2**; **v1.62.0 releasing** (main `d812749` `chore(release): v1.62.0`; #525 orient auto-deweight). **WIP=0.**
-- **The authoritative current backlog is the CLI task store; two live CEO-relayed fix-queues:**
-  - **#134 External audit 2026-07-11** — correctness batch [A1 explicit-`--index` silently drops CLI options / A2 semantic-corpus-cap self-bypass (DoS) / A3 late-rerank real cancellation / A4 index-persistence load-once+atomic+lock / A5 = this refresh] + GPU capability/packaging integrity (remove the NVIDIA-artifact-without-native-CUDA matrix) + doc regressions. Gate-free now: A2/A3/A5/P0-1. Opus-gated → Jul-13: A1/A4/GPU-cap. CEO-gated: GPU resident engine + distribution.
-  - **#133 v1.61.2 dogfood** — P0 unscoped-search refuse-fast (root-caused: the rg-passthrough self-walks the whole tree; fix = bounded pre-passthrough probe) · P1 evidence-UX / suggested_scope-in-agent / edit-plan structured validation_plan / dynamic-imports.
-- **SHIPPED since v1.57.1:** v1.58.x (daemon Tier-1 #492; flaky+moat+multi-pattern #499-#505; tg_repo_map 2000-cap #114) · v1.59-1.60 (codex-audit HIGH security wave #508-#512, all Opus-gated; EvidenceReceipt `tg evidence emit` #510) · **v1.61.0** (#498 daemon symbol-cache = #113 latency) · **v1.61.1** (#522 search nested-gitignore) · **v1.61.2** (#523 orient nested-gitignore + #524) · **v1.62.0 releasing** (#525 auto-deweight, 3 CI-caught fixes). No-release batch: #514 (GPU PFAC doc-honesty correction) · #520 (GPU dead-code) · #521 (#129 de-flake) · #513.
-- **Strategic (audit):** near-term product = **signed PR evidence + change-governance**; GPU offered later for batch security/compliance scans; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
+- **0 open PRs** (`gh pr list` = 0, the source of truth). **WIP=0 — drain FULLY CLEAR.** Live PyPI **v1.63.1**; **v1.63.2 releasing** (main `36da19d`; #531 late-rerank real deadline).
+- **This session drained the full v1.61.2-dogfood + external-audit batch — 5 releases (v1.62.2 → v1.63.2), zero broken releases, every fix real-binary-verified (not just CliRunner):**
+  - **v1.62.0** (#525 orient auto-deweight) · **v1.62.1** (#527 = audit **A2** semantic-cap self-bypass DoS) · **v1.62.2** (#528 = dogfood **P0** unscoped-search refuse-fast — the FULL-CLI `--rank`/`--semantic` path; the native binary already guarded the plain path, corrected by real-binary dogfood) · **v1.63.0** (#530 = `suggested_scope` on the agent capsule, no second scan) · **v1.63.1** (#529 = `tg evidence <path>` → `emit` UX hint) · **v1.63.2 releasing** (#531 = audit **A3** late-rerank REAL wall-clock deadline; a hung encoder no longer blocks `tg search --rank` forever; Fail-Closed Contract preserved across the thread boundary).
+- **Remaining backlog (authoritative; gated as noted):**
+  - **#134 external audit** — SHIPPED: A2 (#527), A3 (#531). **Opus-gated → Jul-13** (weekly limit; mandatory adversarial gate before load-bearing security code): A1 (explicit `--index` drops CLI options / default-deny validator, rust_core), A4 (index-persistence load-once+atomic+lock, index.rs), GPU capability-validator + NVIDIA-artifact-without-native-CUDA packaging-matrix removal.
+  - **#133 v1.61.2 dogfood** — P0/UX DRAINED. Remaining polish-tail: edit-plan `validation_plan` (verified gap = `tg context` surface only; `tg agent` already emits it → marginal), dynamic-imports (extends #93). Held per the CEO's churn steer.
+  - **#94 latency (the #1 "make models prefer tg" lever)** — warm-daemon default fast path. **Opus-gated → Jul-13** (session_daemon surface).
+- **CEO-gated (the CEO's call):** benchmark publish #72 (the 7.5x-fewer-tokens-than-grep proof) · `tg ledger` #77 (local agent coordination) · GPU multi-week rebuild #131 (conflicts with no-SaaS).
+- **Strategic (audit + CEO steer 2026-07-11):** tool WORKS (477 releases, moat = **7.5x fewer tokens than grep on definition-lookup**, benchmark-proven); near-term product = signed PR evidence + change-governance; finish the moat (latency) + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
 
 ---
 
-## SHIPPING — 8 open PRs (drain security-first, one-per-publish) — task #117
+## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-| PR | Fix | Gate |
-|----|-----|------|
-| #512 | **H5** subprocess-hang: bound Rust→Python passthrough + POSIX `setpgid` (gate caught a Linux/macOS killpg no-op) | SHIP (2-round) — NEXT |
-| #509 | **H2** apply_policy RCE: beneath-or-equal exec confinement | SHIP+must-fix |
-| #511 | **H1** `--index` 5 silent-wrong-results + gitignore secret-leak (fail-closed) | SHIP+must-fix |
-| #507 | **#116** LSP unbounded-header DoS | no-gate |
-| #504 | **#93 SUB-1** dynamic-import recall (importlib/`import()`) | no-gate |
-| #506 | **#93 SUB-2** orient `suggested_scope` (degrade-to-null) | no-gate (feat) |
-| #510 | **P1** EvidenceReceipt `tg evidence emit` (CEO wire-able feature) | no-gate (feat) |
-| #498 | **#113** daemon symbol-response cache (20.9x callers/16.8x blast) | SHIP (feat) — LAST → then flip #94 |
-
-Push-race: v1.58.11 releasing (for #508). Poller re-armed per merge; merge #512 when 1.58.11 on /simple.
+**0 open PRs — WIP=0, drain FULLY CLEAR.** The v1.61.2-dogfood + external-audit batch drained in full this session (v1.62.2 → v1.63.2, one-per-publish, zero broken releases). New builds resume when the Opus weekly-limit reopens (**Jul-13**) for the high-value gated items (#94 latency, #134 A1/A4/GPU); the gate-free remainder is polish-tail held per the CEO's churn steer.
 
 ## SHIPPED — live on PyPI up to **v1.58.10**; v1.58.11 releasing
 
