@@ -90,12 +90,51 @@ def _configured_positive_int(env_var: str, default: int) -> int:
 # provider cannot declare a huge Content-Length and force an unbounded read/allocation.
 _MAX_LSP_MESSAGE_BYTES = 64 * 1024 * 1024
 
+# Audit #116 (DoS): bound the header preamble itself -- mirrors mcp_server.py's audit #49 fix
+# for the identical unbounded-header-skip shape in the MCP stdio reader. A malformed or
+# malicious language-server subprocess that streams endless header lines, or a single giant
+# line with no newline terminator, or one that never sends the blank-line terminator, must not
+# hang the reader or exhaust memory BEFORE the Content-Length size check below ever runs.
+# Three caps apply, fail-closed on any breach: a hard iteration cap on the NUMBER of header
+# lines (_MAX_LSP_HEADER_LINES), a hard byte cap on any SINGLE line (enforced by the bounded
+# readline() below), and a cumulative byte cap across the whole preamble -- the two byte caps
+# reuse one constant (_MAX_LSP_HEADER_BYTES), mirroring #49's reuse of a single constant for
+# both roles.
+_MAX_LSP_HEADER_LINES = 128
+_MAX_LSP_HEADER_BYTES = 64 * 1024
+
+
+def _read_bounded_line(stream: Any, limit: int) -> Any:
+    """``stream.readline()``, but never buffer more than ``limit`` bytes/chars for one line.
+
+    Named to mirror mcp_server.py's ``_read_bounded_line`` (audit #49). That MCP reader wraps
+    an ``anyio.AsyncFile``, whose ``readline()`` does not forward a size bound -- it needs a
+    reach-into-``.wrapped`` thread trick to get one. ``_read_message`` here is a plain
+    synchronous function reading a subprocess pipe (or a test double), and both
+    ``io.BufferedReader.readline(size)`` and text-stream ``readline(size)`` already accept a
+    size bound directly, so this is a direct pass-through -- kept as a named helper purely to
+    mirror the #49 shape for anyone diffing the two readers.
+    """
+    return stream.readline(limit)
+
 
 def _read_message(stream: Any) -> dict[str, Any] | None:
     headers: dict[str, str] = {}
-    while True:
-        line = stream.readline()
+    header_bytes_total = 0
+    for _ in range(_MAX_LSP_HEADER_LINES):
+        line = _read_bounded_line(stream, _MAX_LSP_HEADER_BYTES)
         if line in ("", b""):
+            return None
+        ends_with_newline = line.endswith(b"\n") if isinstance(line, bytes) else line.endswith("\n")
+        if len(line) >= _MAX_LSP_HEADER_BYTES and not ends_with_newline:
+            # Fail closed: this single line reached the per-line read cap with no newline
+            # terminator -- a giant or never-terminating header line. A complete line exactly
+            # at the cap still ends in "\n", so a legitimate message is never truncated.
+            return None
+        header_bytes_total += len(line)
+        if header_bytes_total > _MAX_LSP_HEADER_BYTES:
+            # Fail closed: too many header lines summed past the cumulative byte budget
+            # before a blank-line terminator ever showed up.
             return None
         if line in ("\r\n", "\n", b"\r\n", b"\n"):
             break
@@ -105,6 +144,9 @@ def _read_message(stream: Any) -> dict[str, Any] | None:
             continue
         key, value = line.split(":", 1)
         headers[key.strip().lower()] = value.strip()
+    else:
+        # Fail closed: too many header lines without a blank-line terminator.
+        return None
     try:
         content_length = int(headers.get("content-length", "0"))
     except (TypeError, ValueError):
