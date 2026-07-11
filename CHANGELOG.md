@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v1.59.0 (2026-07-11)
+
+### Features
+
+- **orient**: Add suggested_scope hint to the orient capsule on truncated scans (audit #93 SUB-2)
+  ([#506](https://github.com/oimiragieo/tensor-grep/pull/506),
+  [`f04589a`](https://github.com/oimiragieo/tensor-grep/commit/f04589ad6b2cc21f43726d824618150c672009b7))
+
+`tg orient` on a large repo whose scan was truncated gave an agent an incomplete map with no
+  guidance on how to narrow it. Add a `suggested_scope` hint that rolls each scanned code file's
+  composite centrality (the same score `central_files` ranks on) up to its top-level directory and
+  suggests the clear winner.
+
+- Gate: only computed when the underlying repo map's OWN scan_limit dict
+  (rm["scan_limit"]["possibly_truncated"], set by repo_map.build_repo_map) is true -- NOT the orient
+  capsule's own simplified `scan_limit` int, and NOT the unrelated snippet/ token-budget `truncated`
+  flag. A complete scan has nothing to narrow -> null. - confidence: "heuristic" on the field, per
+  the ranking-safety-floor discipline (it inherits the flat, no-IDF-style composite scorer's
+  fragility). - Degrade-to-null when the top two directories are tied/near-tied or the signal is
+  entirely flat (all-zero) -- a wrong scope guess actively misdirects an agent, which is worse than
+  no hint. Verified live against a real 2000+ file multi-project workspace, where the signal was
+  genuinely ambiguous and the feature correctly emitted null. - Additive schema only;
+  `_central_files_from_map` refactored to share its centrality computation via a new
+  `_file_centrality_scores` helper (byte-identical behavior, existing tests unchanged) so
+  central_files and suggested_scope never drift onto different scores. - docs/harness_api.md's
+  Orient Capsule JSON table updated with the new field.
+
+Real-binary dogfood (bootstrap main_entry, not CliRunner): a synthetic 2250-file repo with a
+  dominant hot/ subdirectory correctly suggests hot/ (confidence=heuristic) even though the
+  top-level `truncated` flag is False, proving the gate reads the correct signal; a 2-file repo
+  correctly omits any suggestion (null).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.58.16 (2026-07-11)
 
 ### Bug Fixes
