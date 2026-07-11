@@ -749,28 +749,30 @@ class _GitignoreMatcher:
     def has_rules(self) -> bool:
         return bool(self._rules)
 
-    def is_ignored(self, path: Path, *, is_dir: bool) -> bool:
-        # Match the path AS WALKED — never ``resolve()`` here. ``self._root`` is resolved
-        # once in __init__ and the walk descends from it, so every entry is already
-        # absolute and under the root. Calling ``path.resolve()`` per entry would add a
-        # stat/symlink syscall for every file in the tree — an O(files) regression that
-        # melts down on large roots (~384k files on a workspace root) and would also
-        # follow symlinks, which is not how gitignore matches paths.
+    def check(self, path: Path, *, is_dir: bool) -> bool | None:
+        # Tri-state result so nested .gitignore specs can be stacked with correct git
+        # precedence: True = matched an ignore, False = matched a negated re-include, None =
+        # no rule matched (this spec has no opinion). Match the path AS WALKED — never
+        # ``resolve()`` here. ``self._root`` is resolved once in __init__ and the walk descends
+        # from it, so every entry is already absolute and under the root. Calling
+        # ``path.resolve()`` per entry would add a stat/symlink syscall for every file in the
+        # tree — an O(files) regression on large roots (~384k files) and would follow symlinks,
+        # which is not how gitignore matches paths.
         candidate = path if path.is_absolute() else (self._root / path)
         try:
             relative = candidate.relative_to(self._root)
         except ValueError:
-            return False
+            return None
         rel_posix = relative.as_posix()
         if not rel_posix or rel_posix == ".":
-            return False
+            return None
         # A dir-only pattern (``dist/``) ignores the directory *and everything
         # inside it*. Test the path itself plus each ancestor segment-prefix so
         # files under an ignored directory are recognised even when checked in
         # isolation (the walk also prunes such directories during traversal).
         segments = rel_posix.split("/")
         ancestor_prefixes = ["/".join(segments[: index + 1]) for index in range(len(segments) - 1)]
-        ignored = False
+        decision: bool | None = None
         for compiled, negated, dir_only in self._rules:
             if dir_only:
                 matched = any(compiled.match(prefix) for prefix in ancestor_prefixes)
@@ -783,8 +785,11 @@ class _GitignoreMatcher:
                     # directory it matched (e.g. ``build`` matching ``build/x``).
                     matched = any(compiled.match(prefix) for prefix in ancestor_prefixes)
             if matched:
-                ignored = not negated
-        return ignored
+                decision = not negated
+        return decision
+
+    def is_ignored(self, path: Path, *, is_dir: bool) -> bool:
+        return bool(self.check(path, is_dir=is_dir))
 
 
 @lru_cache(maxsize=64)
@@ -907,10 +912,28 @@ def _scan_limit_cause(
     return "project-files" if project_file_found else "vendor-cache"
 
 
+def _stack_ignored(path: Path, *, is_dir: bool, stack: tuple[_GitignoreMatcher, ...]) -> bool:
+    # Apply the ancestor .gitignore matchers shallowest-first; the DEEPEST matcher with an opinion
+    # wins (git precedence: a nested .gitignore overrides a parent's). check()'s tri-state
+    # (True ignore / False negated-reinclude / None no-opinion) lets a deeper `!re-include`
+    # correctly override a parent's ignore.
+    decision: bool | None = None
+    for matcher in stack:
+        result = matcher.check(path, is_dir=is_dir)
+        if result is not None:
+            decision = result
+    return bool(decision)
+
+
 def _iter_repo_bucket_files(
     root: Path,
-    gitignore: _GitignoreMatcher | None = None,
+    ancestor_stack: tuple[_GitignoreMatcher, ...] = (),
 ) -> Iterator[Path]:
+    # Nested-.gitignore support (MED-5 part B): load THIS directory's own matcher and push it onto
+    # the ancestor stack, so a nested subdir/.gitignore is honored -- not just the repo root's.
+    # _load_gitignore_matcher is lru_cached per directory, so re-walks stay cheap.
+    own = _load_gitignore_matcher(str(root))
+    stack = ancestor_stack + (own,) if own.has_rules else ancestor_stack
     try:
         entries = list(os.scandir(root))
     except OSError:
@@ -924,12 +947,12 @@ def _iter_repo_bucket_files(
                 directory = Path(entry.path)
                 if _should_skip_repo_dir(directory):
                     continue
-                if gitignore is not None and gitignore.is_ignored(directory, is_dir=True):
+                if _stack_ignored(directory, is_dir=True, stack=stack):
                     continue
                 dir_paths.append(directory)
             elif entry.is_file(follow_symlinks=False):
                 file_path = Path(entry.path)
-                if gitignore is not None and gitignore.is_ignored(file_path, is_dir=False):
+                if _stack_ignored(file_path, is_dir=False, stack=stack):
                     continue
                 file_paths.append(file_path)
         except OSError:
@@ -941,10 +964,10 @@ def _iter_repo_bucket_files(
     other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
 
     for directory in source_dirs:
-        yield from _iter_repo_bucket_files(directory, gitignore)
+        yield from _iter_repo_bucket_files(directory, stack)
     yield from file_paths
     for directory in other_dirs:
-        yield from _iter_repo_bucket_files(directory, gitignore)
+        yield from _iter_repo_bucket_files(directory, stack)
 
 
 def _iter_repo_files(
@@ -985,7 +1008,7 @@ def _iter_repo_files(
                             continue
                         buckets.append((
                             _repo_walk_bucket_sort_key(path, normalized_root),
-                            _iter_repo_bucket_files(path, gitignore),
+                            _iter_repo_bucket_files(path, (gitignore,)),
                         ))
                     elif entry.is_file(follow_symlinks=False):
                         path = Path(entry.path)
@@ -1035,7 +1058,7 @@ def _iter_repo_files(
             return selected
 
         walk_deadline_exceeded = False
-        for current in _iter_repo_bucket_files(normalized_root, gitignore):
+        for current in _iter_repo_bucket_files(normalized_root, ()):
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
                 walk_deadline_exceeded = True
                 break
