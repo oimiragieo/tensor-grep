@@ -36,11 +36,9 @@ use tensor_grep_rs::gpu_native::{
     probe_device_allocation, GpuNativeSearchConfig, GpuNativeSearchStats, GpuPipelineStats,
 };
 use tensor_grep_rs::index::TrigramIndex;
-#[cfg(feature = "cuda")]
-use tensor_grep_rs::native_search::smart_case_pattern_is_case_insensitive;
 use tensor_grep_rs::native_search::{
-    run_native_fixed_multi_pattern_search, run_native_search, NativeOutputTarget,
-    NativeSearchConfig, SearchStats,
+    run_native_fixed_multi_pattern_search, run_native_search,
+    smart_case_pattern_is_case_insensitive, NativeOutputTarget, NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
@@ -4904,7 +4902,11 @@ fn detect_warm_index_state(
     match TrigramIndex::load(&index_path) {
         Ok(index) => IndexRoutingState {
             exists: true,
-            is_stale: index.is_stale(),
+            // H1d (audit): a query's --no-ignore mode that disagrees with the mode this
+            // index was built under must be treated as stale so auto-routing does not
+            // silently serve gitignored content the query didn't ask for (or silently
+            // omit gitignored content a --no-ignore query did ask for).
+            is_stale: index.is_stale(args.no_ignore),
             pattern_compatible: true,
         },
         Err(_) => IndexRoutingState {
@@ -5884,6 +5886,45 @@ fn handle_index_search(
     if request.paths.len() != 1 {
         anyhow::bail!("index search currently supports exactly one path root");
     }
+
+    // Backend Fail-Closed Contract (audit H1a): route_search() (routing.rs) selects
+    // TrigramIndex for --index before any compatibility checks run, and run_index_query()
+    // below only ever reads pattern/ignore_case/fixed_strings -- every other search flag
+    // was silently dropped instead of honored or refused (e.g. --index -v used to return
+    // the NON-inverted set with exit 0). Mirror the same compatibility subset
+    // detect_warm_index_state already enforces for warm-index auto-routing and fail
+    // closed instead of silently running the query without them. Deliberately excludes
+    // the pattern-length and non-ASCII-ignore-case checks detect_warm_index_state also
+    // has -- those (H1b/H1c) are handled as a transparent full-scan fallback inside
+    // TrigramIndex::search/fixed_string_candidate_selection instead of a refusal, since
+    // the index can still honor them correctly, just without the trigram prefilter.
+    let mut unsupported_with_index: Vec<&str> = Vec::new();
+    if args.invert_match {
+        unsupported_with_index.push("-v/--invert-match");
+    }
+    if search_has_context(args) {
+        unsupported_with_index.push("-C/-A/-B (context)");
+    }
+    if args.max_count.is_some() {
+        unsupported_with_index.push("-m/--max-count");
+    }
+    if args.word_regexp {
+        unsupported_with_index.push("-w/--word-regexp");
+    }
+    if !args.globs.is_empty() {
+        unsupported_with_index.push("-g/--glob");
+    }
+    if request.patterns.len() != 1 {
+        unsupported_with_index.push("multiple patterns (-e)");
+    }
+    if !unsupported_with_index.is_empty() {
+        anyhow::bail!(
+            "--index does not support {} yet; rerun without --index (or without the \
+             flag(s) above) to search without the trigram index accelerator",
+            unsupported_with_index.join(", ")
+        );
+    }
+
     let search_path = Path::new(request.primary_path());
     if !search_path.exists() {
         anyhow::bail!(
@@ -5917,7 +5958,7 @@ fn handle_index_search(
                 return run_index_query(args, request, query, &fresh);
             }
         };
-        if let Some(reason) = loaded.staleness_reason() {
+        if let Some(reason) = loaded.staleness_reason(args.no_ignore) {
             if args.verbose {
                 eprintln!("[index] stale: {reason}");
             }
@@ -5990,7 +6031,18 @@ fn run_index_query(
     let include_pattern_metadata = request.patterns.len() > 1;
     let mut matches = Vec::new();
     for (pattern_id, pattern) in request.patterns.iter().enumerate() {
-        let results = index.search(pattern, args.ignore_case, args.fixed_strings)?;
+        // H1e (audit): resolve smart-case (-S) per pattern before querying the index.
+        // -S is NOT diverted to ripgrep in JSON/ndjson mode (search_requires_ripgrep_
+        // passthrough gates it behind !json && !ndjson), so it reaches the index here;
+        // passing only args.ignore_case (false for -S) would search case-sensitively and
+        // silently miss uppercase matches an all-lowercase -S pattern must find. Honoring
+        // it (smart-case IS index-doable) rather than refusing avoids a UX regression, and
+        // reuses the same ignore_case path -- including the H1b/H1c full-scan safety nets
+        // in index.rs -- for the resolved case. This single chokepoint covers BOTH explicit
+        // --index and warm auto-routing (both reach run_index_query).
+        let ignore_case = args.ignore_case
+            || (args.smart_case && smart_case_pattern_is_case_insensitive(pattern));
+        let results = index.search(pattern, ignore_case, args.fixed_strings)?;
         matches.extend(results.into_iter().map(|result| SearchMatchJson {
             file: result.file.to_string_lossy().into_owned(),
             line: result.line,

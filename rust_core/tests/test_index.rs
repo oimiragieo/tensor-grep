@@ -26,6 +26,24 @@ fn write_corpus(dir: &std::path::Path) {
     .unwrap();
 }
 
+/// `TrigramIndex`'s file walker (`collect_file_entries` / `staleness_reason`) does not set
+/// `.require_git(false)`, so it inherits the `ignore` crate's default of only honoring
+/// `.gitignore` inside a directory the crate recognizes as an actual git repository. A bare
+/// `tempdir()` has no `.git`, so `.gitignore` is silently a no-op there regardless of
+/// `--no-ignore` -- returns `false` (and the caller should skip the test) when `git` itself
+/// isn't on PATH, mirroring the existing precedent in test_ast_rewrite.rs.
+fn init_git_repo(dir: &std::path::Path) -> bool {
+    if Command::new("git").arg("--version").output().is_err() {
+        return false;
+    }
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    status.status.success()
+}
+
 fn write_regex_prefilter_corpus(dir: &std::path::Path) {
     fs::write(
         dir.join("alternation.txt"),
@@ -623,7 +641,7 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
     let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
     assert_eq!(&rebuilt[0..4], b"TGI\x00");
     assert_eq!(
-        rebuilt[4], 3,
+        rebuilt[4], 4,
         "expected rebuilt index to use the new format"
     );
 
@@ -757,4 +775,560 @@ fn test_tg_search_index_survives_repeated_mutation_cycles() {
 
     fs::remove_file(dir.path().join("a.txt")).unwrap();
     expect_count(3);
+}
+
+// -- H1 audit fail-closed regressions (2026-07-10) --------------------------------------
+//
+// `--index` used to win routing before any compatibility checks and hand the query
+// straight to `run_index_query`, which only ever consulted `pattern`/`ignore_case`/
+// `fixed_strings` -- silently dropping every other search flag instead of honoring or
+// refusing it. These tests pin the fixed, fail-closed contract for each confirmed gap.
+
+#[test]
+fn test_tg_search_explicit_index_invert_match_fails_closed_instead_of_dropping_v() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Build the index first so a missing/stale index cannot itself explain a non-zero exit.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-v")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1a (audit #79/#10): route_search() returned TrigramIndex for --index before
+    // consulting the same invert_match/context/max_count/word_regexp/glob/multi-pattern
+    // compatibility checks detect_warm_index_state already enforces for warm-index
+    // auto-routing, so run_index_query() silently ignored -v and printed the
+    // NON-inverted count with exit 0. --index combined with -v must fail closed
+    // (non-zero exit, error naming the flag) instead of silently returning the exact
+    // opposite result set.
+    assert!(
+        !indexed.status.success(),
+        "expected --index -v to fail closed instead of silently ignoring -v; stdout={} stderr={}",
+        String::from_utf8_lossy(&indexed.stdout),
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&indexed.stderr).to_lowercase();
+    assert!(
+        stderr.contains("invert") || stderr.contains("-v"),
+        "error should name the incompatible flag: stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_word_regexp_fails_closed_instead_of_dropping_w() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-w")
+        .arg("--count")
+        .arg("hell")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1a: -w (word_regexp) is one of the compatibility checks detect_warm_index_state
+    // enforces for auto-routing; run_index_query() never consulted it at all, so
+    // "hell" (a substring of "hello", not a whole word) would have silently matched via
+    // plain substring search instead of either honoring word boundaries or refusing.
+    assert!(
+        !indexed.status.success(),
+        "expected --index -w to fail closed instead of silently ignoring -w; stdout={} stderr={}",
+        String::from_utf8_lossy(&indexed.stdout),
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_max_count_fails_closed_instead_of_dropping_m() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-m")
+        .arg("1")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1a: -m/--max-count is silently dropped by run_index_query today (it never reads
+    // args.max_count), so a request to cap matches per file was ignored outright.
+    assert!(
+        !indexed.status.success(),
+        "expected --index -m to fail closed instead of silently ignoring -m; stdout={} stderr={}",
+        String::from_utf8_lossy(&indexed.stdout),
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_glob_fails_closed_instead_of_dropping_g() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-g")
+        .arg("*.log")
+        .arg("--count")
+        .arg("error")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1a: -g/--glob is silently dropped by run_index_query today (it never reads
+    // args.globs), so a request scoped to *.log would have silently searched every
+    // indexed file instead.
+    assert!(
+        !indexed.status.success(),
+        "expected --index -g to fail closed instead of silently ignoring -g; stdout={} stderr={}",
+        String::from_utf8_lossy(&indexed.stdout),
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_short_fixed_string_matches_plain_search() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Cross-backend parity must go through --json's total_matches/matches, not --count:
+    // the plain/native path prints rg-compatible "path:count" per matching file, while
+    // run_index_query's --count prints a single aggregate number -- different shapes, not
+    // a bug, just not directly comparable (see match_tuples/total_matches usage elsewhere
+    // in this file for the established parity-check convention).
+    let plain_output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("ok")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(plain_output.status.success());
+    let plain_json: Value = serde_json::from_slice(&plain_output.stdout).unwrap();
+    assert_eq!(
+        plain_json["total_matches"], 1,
+        "sanity: fixture should contain exactly one line matching 'ok'"
+    );
+
+    let indexed_output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("ok")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1b (audit): index.rs::search() hardwired fixed_strings to
+    // RegexCandidateSelection::Indexed unconditionally, even for patterns shorter than
+    // TRIGRAM_LEN (3 bytes) whose empty trigram set makes query_candidates_fixed return
+    // zero candidates -- producing a false "0 matches" instead of falling back to a full
+    // scan the way the regex branch already does via regex_candidate_selection's
+    // FullScan arm.
+    assert!(
+        indexed_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed_output.stderr)
+    );
+    let indexed_json: Value = serde_json::from_slice(&indexed_output.stdout).unwrap();
+    assert_eq!(
+        indexed_json["total_matches"], plain_json["total_matches"],
+        "short fixed-string --index search must fall back to a full scan, not silently return 0"
+    );
+    assert_eq!(match_tuples(&indexed_json), match_tuples(&plain_json));
+}
+
+#[test]
+fn test_tg_search_explicit_index_unicode_ignore_case_matches_plain_search() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("unicode.txt"),
+        "Bienvenue au CAFÉ du coin\n",
+    )
+    .unwrap();
+
+    let plain_output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-i")
+        .arg("--json")
+        .arg("café")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(plain_output.status.success());
+    let plain_json: Value = serde_json::from_slice(&plain_output.stdout).unwrap();
+    assert_eq!(
+        plain_json["total_matches"], 1,
+        "sanity: fixture line should case-insensitively contain 'café'"
+    );
+
+    let indexed_output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-i")
+        .arg("--json")
+        .arg("café")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1c (audit): extract_file_trigrams (build side) lowercases with to_ascii_lowercase,
+    // a no-op on multi-byte UTF-8, but query_candidates_fixed (query side) lowercases
+    // with Unicode-aware str::to_lowercase -- so a non-ASCII ignore-case fixed string's
+    // query trigrams can never line up with the index's build-time trigrams for "CAFÉ",
+    // producing a false "0 matches".
+    assert!(
+        indexed_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed_output.stderr)
+    );
+    let indexed_json: Value = serde_json::from_slice(&indexed_output.stdout).unwrap();
+    assert_eq!(
+        indexed_json["total_matches"], plain_json["total_matches"],
+        "non-ASCII ignore-case --index search must fall back to a full scan, not silently return 0"
+    );
+    assert_eq!(match_tuples(&indexed_json), match_tuples(&plain_json));
+}
+
+#[test]
+fn test_tg_search_explicit_index_no_ignore_flip_off_to_on_finds_newly_included_files() {
+    let dir = tempdir().unwrap();
+    if !init_git_repo(dir.path()) {
+        return;
+    }
+    fs::write(dir.path().join(".gitignore"), "secret.txt\n").unwrap();
+    fs::write(dir.path().join("visible.txt"), "shared_needle visible\n").unwrap();
+    fs::write(dir.path().join("secret.txt"), "shared_needle secret\n").unwrap();
+
+    // Build the index WITHOUT --no-ignore: secret.txt must not be indexed.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("shared_needle")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+    let build_count: usize = String::from_utf8_lossy(&build.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        build_count, 1,
+        "sanity: only visible.txt should be indexed by default"
+    );
+
+    // Re-query the SAME index directory, now WITH --no-ignore.
+    let requeried = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--no-ignore")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("shared_needle")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1d/D1 (audit): the on-disk index format never recorded the no_ignore mode it was
+    // built with, and staleness_reason()'s new-file scan was hardcoded .git_ignore(true)
+    // regardless of the current query's --no-ignore request -- so a --no-ignore query
+    // against an index built WITHOUT --no-ignore silently reused the stale index and
+    // MISSED secret.txt instead of rebuilding to include it.
+    assert!(
+        requeried.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&requeried.stderr)
+    );
+    let requeried_count: usize = String::from_utf8_lossy(&requeried.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        requeried_count, 2,
+        "--no-ignore query must rebuild the index and include the gitignored file"
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_no_ignore_flip_on_to_off_does_not_leak_gitignored_matches() {
+    let dir = tempdir().unwrap();
+    if !init_git_repo(dir.path()) {
+        return;
+    }
+    fs::write(dir.path().join(".gitignore"), "secret.txt\n").unwrap();
+    fs::write(dir.path().join("visible.txt"), "shared_needle visible\n").unwrap();
+    fs::write(dir.path().join("secret.txt"), "shared_needle secret\n").unwrap();
+
+    // Build the index WITH --no-ignore: secret.txt is deliberately indexed.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--no-ignore")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("shared_needle")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+    let build_count: usize = String::from_utf8_lossy(&build.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        build_count, 2,
+        "sanity: --no-ignore build should index both visible.txt and secret.txt"
+    );
+
+    // Re-query the SAME index directory, now WITHOUT --no-ignore (the default).
+    let requeried = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("shared_needle")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // H1d/D2 (audit, info-disclosure): a default query (no --no-ignore) against an
+    // index built WITH --no-ignore silently reused the stale index and LEAKED
+    // secret.txt's gitignored content instead of rebuilding to exclude it.
+    assert!(
+        requeried.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&requeried.stderr)
+    );
+    let requeried_count: usize = String::from_utf8_lossy(&requeried.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        requeried_count, 1,
+        "default query must rebuild the index and exclude the gitignored file, not leak it"
+    );
+}
+
+// -- H1e: smart-case (-S) silently dropped on --index --json/--ndjson (2026-07-10) --------
+//
+// The 5th silent-false-negative of the same class as H1a-d, found by the adversarial gate.
+// In JSON/ndjson mode `search_requires_ripgrep_passthrough` gates `smart_case` behind
+// `!json && !ndjson` (main.rs), so `-S` is NOT diverted to ripgrep; route_search picks
+// TrigramIndex; run_index_query passed only `args.ignore_case` (=false for `-S`) to
+// index.search -> case-SENSITIVE -> an all-lowercase `-S` pattern silently missed
+// uppercase matches (exit 0). Fixed by HONORING smart-case (it is index-doable): resolve
+// case-sensitivity per-pattern before calling index.search.
+
+#[test]
+fn test_tg_search_explicit_index_smart_case_lowercase_pattern_matches_native() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.txt"),
+        "foo one\nFOO two\nfoo three\nbar unrelated\n",
+    )
+    .unwrap();
+
+    // Native smart-case: an all-lowercase pattern is case-INSENSITIVE, so `foo` matches
+    // foo/FOO/foo = 3 lines. This is the ground truth --index must match.
+    let native = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    let native_json: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(
+        native_json["total_matches"], 3,
+        "sanity: smart-case lowercase pattern is case-insensitive in native"
+    );
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--json")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // BEFORE fix: run_index_query passed ignore_case=false -> case-sensitive -> 2 matches
+    // (silently drops the uppercase FOO line). AFTER fix: honors smart-case -> 3, == native.
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let indexed_json: Value = serde_json::from_slice(&indexed.stdout).unwrap();
+    assert_eq!(
+        indexed_json["total_matches"], native_json["total_matches"],
+        "--index -S (all-lowercase pattern) must honor smart-case case-insensitivity like native, not silently return fewer matches"
+    );
+    assert_eq!(match_tuples(&indexed_json), match_tuples(&native_json));
+}
+
+#[test]
+fn test_tg_search_explicit_index_smart_case_uppercase_pattern_stays_case_sensitive() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.txt"),
+        "foo one\nFOO two\nfoo three\nbar unrelated\n",
+    )
+    .unwrap();
+
+    // Native smart-case: a pattern containing an uppercase char is case-SENSITIVE, so
+    // `FOO` matches only the uppercase line = 1. Regression guard: proves the honor fix
+    // does NOT over-broadly make every -S query case-insensitive (which would return 3).
+    let native = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("-S")
+        .arg("FOO")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    let native_json: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(
+        native_json["total_matches"], 1,
+        "sanity: smart-case upper-case pattern is case-sensitive in native"
+    );
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--json")
+        .arg("-S")
+        .arg("FOO")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let indexed_json: Value = serde_json::from_slice(&indexed.stdout).unwrap();
+    assert_eq!(
+        indexed_json["total_matches"], native_json["total_matches"],
+        "--index -S (upper-case pattern) must stay case-sensitive like native"
+    );
+    assert_eq!(match_tuples(&indexed_json), match_tuples(&native_json));
+}
+
+#[test]
+fn test_tg_search_warm_auto_index_smart_case_lowercase_pattern_matches_native() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.txt"),
+        "foo one\nFOO two\nfoo three\nbar unrelated\n",
+    )
+    .unwrap();
+
+    // Compute the native ground truth BEFORE any .tg_index exists -- once a warm index is
+    // built, EVERY subsequent query in this dir auto-routes to it, so a "native" query run
+    // afterward would be contaminated (it would hit the index too, making the parity check
+    // vacuous). With no index present, `--json -S foo` routes to NativeCpu.
+    assert!(!dir.path().join(".tg_index").exists());
+    let native = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    let native_json: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(
+        native_json["total_matches"], 3,
+        "sanity: native smart-case lowercase pattern is case-insensitive = 3"
+    );
+    assert!(
+        !dir.path().join(".tg_index").exists(),
+        "a cold native --json query must not create an index"
+    );
+
+    // Now build a warm index (plain, no -S) so the -S query below auto-routes to it.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+    assert!(dir.path().join(".tg_index").exists());
+
+    // Warm auto-routing (NO --index) with --json -S foo must ALSO honor smart-case -- the
+    // query flows through the same run_index_query chokepoint as explicit --index, so a
+    // single fix covers both. --verbose lets us confirm it truly routed to the index (else
+    // the parity assertion would be vacuous, e.g. if it fell through to native/ripgrep).
+    let warm = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("--verbose")
+        .arg("-S")
+        .arg("foo")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        warm.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+    let warm_stderr = String::from_utf8_lossy(&warm.stderr);
+    assert!(
+        warm_stderr.contains("TrigramIndex"),
+        "expected warm auto-routing to the trigram index: stderr={warm_stderr}"
+    );
+    let warm_json: Value = serde_json::from_slice(&warm.stdout).unwrap();
+    assert_eq!(
+        warm_json["total_matches"], native_json["total_matches"],
+        "warm auto-routed -S (all-lowercase) must honor smart-case like native"
+    );
+    assert_eq!(match_tuples(&warm_json), match_tuples(&native_json));
 }
