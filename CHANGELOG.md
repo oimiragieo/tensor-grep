@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v1.63.4 (2026-07-11)
+
+### Performance Improvements
+
+- **repo-map**: Content-addressed AST parse cache -- collapse the 2-3x duplicate Python parses on
+  the agent hot path (#94) ([#535](https://github.com/oimiragieo/tensor-grep/pull/535),
+  [`8e3e625`](https://github.com/oimiragieo/tensor-grep/commit/8e3e625a7d9150d899b47cf88ff81cbf8b4eb133))
+
+`build_agent_capsule` parses each Python file 2-3x across phases: the map-build imports/symbols
+  pass, the caller/blast-radius consumer scan, and the `tg imports`/`importers` extractors all
+  `ast.parse` the SAME source, read the same way (`path.read_text(encoding="utf-8")`).
+
+Profiling `tg agent` on an 872-file repo (post-#534): ~40% of the wall was `ast.parse` + `ast.walk`,
+  with 1512 parses for ~783 files (a ~2x double-parse).
+
+Fix: route all 9 file-parse sites in repo_map.py through a content-addressed
+  `_cached_ast_parse(source)` (functools.lru_cache, maxsize=2048). Keying on the source TEXT (not
+  the path) is staleness-free -- an edited file has different content, hence a fresh key and a fresh
+  parse -- so it stays correct under the reused session-daemon process (no mtime races). Trees are
+  only ever READ (`tree.body` / `ast.walk` + `isinstance`; audited: no mutation), so sharing one
+  parsed tree is safe. Syntax-error files re-raise + re-parse each call exactly as before (lru_cache
+  does not cache the exception); callers' try/except unchanged.
+
+Measured in-process (C:/dev/projects/tensor-grep): - Intra-call: ast.parse 1512 -> 467 calls (the
+  double-parse deduped). - Warm re-query (the session-daemon case, #94): a 2nd agent capsule on the
+  same unchanged repo re-parses ZERO files -> 11.4s -> 7.4s = 36% faster.
+
+This is the AST-parse half of the warm-daemon latency story (#94, the #1 moat lever): cached parses
+  persist across queries in the long-lived daemon process. 4 cache tests (dedup via cache_info,
+  byte-identical to ast.parse, distinct sources, cross-call hit) + 41 agent/caller/import consumer
+  tests green; full local gate clean (ruff check + ruff format --preview + mypy + pytest).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.63.3 (2026-07-11)
 
 ### Documentation
