@@ -1,6 +1,46 @@
 # CHANGELOG
 
 
+## v1.63.3 (2026-07-11)
+
+### Documentation
+
+- **agents**: Capture the full-local-gate receipt (ruff-check+pytest is not the CI gate; run
+  ruff-format-check + mypy after the final edit)
+  ([#533](https://github.com/oimiragieo/tensor-grep/pull/533),
+  [`eec7d0b`](https://github.com/oimiragieo/tensor-grep/commit/eec7d0b485b09fbd7790c17a3cf62dc23fc62d42))
+
+- **backlog**: Refresh canonical ledger to v1.63.2 (WIP=0, drain clear)
+  ([#532](https://github.com/oimiragieo/tensor-grep/pull/532),
+  [`0aeed14`](https://github.com/oimiragieo/tensor-grep/commit/0aeed1433f4ceffcd2a625cf6cc1af7ff2836c6b))
+
+### Performance Improvements
+
+- **orient**: One-pass lexical subtree membership in _detect_vendored_subtrees (dogfood #133)
+  ([#534](https://github.com/oimiragieo/tensor-grep/pull/534),
+  [`572c89f`](https://github.com/oimiragieo/tensor-grep/commit/572c89fa693dbb738141fa4820f67e78675eee12))
+
+The vendored-subtree deweight (#525, on the shared `tg agent`/`context`/`orient` hot path) matched
+  files into each detected subtree with `_path_is_relative_to(Path(f), abs_dir)` -- two filesystem
+  `.resolve()` (realpath) syscalls per (subtree x file) pair, and `abs_dir.resolve()` recomputed per
+  file.
+
+Profiling `tg agent` on an 872-file repo: `_detect_vendored_subtrees` = 5.5s = ~16% of capsule wall;
+  `_path_is_relative_to` = 7524 calls / 6.2s. On WSL /mnt/c 9p mounts each realpath is
+  pathologically slow -- the cause of the v1.63.2 whole-repo "hang" a dogfood reported (natively the
+  same commands complete in 13-48s; the reported timeout was 9p amplification, not a deadlock).
+
+Fix: precompute each code file's path-parts relative to root ONCE (the same lexical basis the
+  candidate_dirs scan already uses; root is pre-resolved), then test subtree membership with a cheap
+  tuple-prefix compare -- zero per-pair resolve(). Re-profile: `_path_is_relative_to` 7524->1876
+  calls, 6.2s->1.7s; `_detect_vendored_subtrees` drops out of the top-60. Behavior-preserving: a
+  file not lexically under root never contributed a candidate dir, so it cannot belong to a detected
+  subtree. 8 deweight tests green incl. a new nested-member guard; 71 orient + agent-capsule tests
+  green.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.63.2 (2026-07-11)
 
 ### Bug Fixes
