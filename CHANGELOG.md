@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.60.1 (2026-07-11)
+
+### Bug Fixes
+
+- **bench**: Gpu benchmark tg-extractor reads native `line` key, not `line_number` (#131 F2)
+  ([#519](https://github.com/oimiragieo/tensor-grep/pull/519),
+  [`7bbe15c`](https://github.com/oimiragieo/tensor-grep/commit/7bbe15c296ad5d20f3971e6caba177ba5e8f1ff2))
+
+The native tg search serializer (SearchMatchJson, rust_core/src/main.rs) emits the match line number
+  under the JSON key `line`; the CPU/rg-passthrough serializer uses `line_number`. The benchmark's
+  `_extract_tg_match_signatures` read only `line_number`, so on the native `--gpu-device-ids` path
+  it parsed 0 for every match line number -> the GPU-vs-baseline line-number identity check was
+  comparing all-zeros against real line numbers, silently invalidating the correctness comparison
+  the benchmark exists to prove.
+
+Fix: read `line` first, fall back to `line_number` (keeps the CPU/rg path and existing MatchLine
+  fixtures correct). The sibling rg-JSON extractor is left on `line_number` (ripgrep's --json
+  genuinely uses that key).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.60.0 (2026-07-11)
 
 ### Features
