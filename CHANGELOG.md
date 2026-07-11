@@ -1,6 +1,65 @@
 # CHANGELOG
 
 
+## v1.61.0 (2026-07-11)
+
+### Features
+
+- **daemon**: Cache symbol-command responses in the warm session (audit #113 -- warm
+  callers/blast-radius 4-5s -> sub-second)
+  ([#498](https://github.com/oimiragieo/tensor-grep/pull/498),
+  [`f986397`](https://github.com/oimiragieo/tensor-grep/commit/f9863977ad41c5d75003ebb055bacb8d00f43d24))
+
+Task #94 Part A (#492) wired defs/impact/refs/callers/blast_radius through an optional warm
+  session-daemon route, fixing the repo-map build cost (warm defs 4.98s->0.89s). Every daemon
+  request still ran the full per-symbol pipeline from scratch, so callers/blast-radius stayed 4-5.5s
+  even warm. This extends the EXISTING daemon response cache (already serving
+  context_render/context_edit_plan) to the 5 symbol commands so a repeated identical warm call is
+  served straight from cache.
+
+- New _symbol_command_response_cache_key (session_daemon.py), keyed on path/session_id/ payload
+  fingerprint/command/symbol/provider/max_tests/max_depth/max_repo_files -- shared by all 5
+  commands, so `command` itself is a required key field (a callers(foo) lookup must never serve a
+  cached defs(foo) response). - _response_cache_key_for_command now returns this key for the 5
+  symbol commands instead of None (which meant "always bypass the cache"). -
+  _serve_daemon_response_with_cache's stale gate is now command-class-aware: context_render/
+  context_edit_plan keep their existing detect_added_files=False (a cache HIT never pays for a
+  directory walk, per docs/CONTRACTS.md); the 5 symbol commands honor the request's real
+  refresh_on_stale flag (added-file detection included), because a callers/blast-radius answer that
+  silently omits a newly-added call site is a wrong answer, not just a stale one. A test-caught
+  regression during development: an earlier draft unconditionally suppressed the miss-path's
+  redundant inner stale recheck, which broke context_render's EXISTING added-file-on-miss discovery
+  (test_session_daemon_refresh_on_added_file_response_is_cached); fixed by guarding that suppression
+  on detect_added_files having actually run. - Handler observability (daemon_response_cache) now
+  attaches for all 7 cacheable commands; session_timing's build_metric naming stays scoped to
+  context_render/edit_plan (unchanged). - _DAEMON_RESPONSE_CACHE_SCOPE now names the symbol
+  commands; docs/CONTRACTS.md documents the dual-mode staleness contract.
+  _DAEMON_RESPONSE_CACHE_STALE_DETECTION/_ADDED_FILE_DETECTION values are unchanged (still pinned).
+
+New tests/unit/test_symbol_daemon_response_cache.py (13 cases): pure key-isolation coverage for
+  every field, warm-repeat hit for callers/blast_radius, invalidation on modified/added/ removed
+  files (the added-file case kills the trap-#1 hardcoded-False bug), max_tests/max_depth key
+  isolation end-to-end, truncated-snapshot hit survival with CLI exit-2, and warm-cache-HIT byte
+  identity vs cold (not just the first warm/miss call). Adapted test_symbol_daemon_autostart.py's
+  _assert_warm_matches_cold strip-list and test_session_cli.py's pinned response_cache_scope string
+  for the same reason.
+
+The truncated-snapshot exit-2 test compares the miss vs hit payloads via the established
+  _assert_warm_matches_cold discipline (byte-identical answer + identical token_budget DECISION),
+  NOT a raw byte-compare of token_budget.estimated_tokens. estimated_tokens is measured client-side
+  on the FULL received payload including the daemon transport provenance
+  (serve_cache/daemon_response_cache), whose "miss" vs "hit" status strings differ by ~2 bytes --
+  occasionally enough to cross the ceil(len/3.5) token-estimate boundary at some absolute path
+  lengths (macOS-only CI flake: long /private/var tmp paths land on the boundary). Confirmed with
+  hard data that the content, and the content-only token estimate, are byte-identical miss-vs-hit;
+  the divergence is a benign pre-existing transport-provenance artifact, not a cache content bug.
+
+Measured (real daemon, this ~458-file repo, warm map already loaded): callers 5.68s -> 0.27s
+  warm-cache-hit (20.9x); blast_radius 4.96s -> 0.30s warm-cache-hit (16.8x).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.60.1 (2026-07-11)
 
 ### Bug Fixes
