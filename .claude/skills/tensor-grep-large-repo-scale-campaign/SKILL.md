@@ -52,6 +52,21 @@ skill without beating a measurable gate and a conscious flag-flip** (Phase 4).
   a vendored tree were not auto-excluded) — that doc lags. The fix, **#400**, shipped in
   **v1.40.4** (`bb14abe`) and was hardened further by **#413** (v1.42.0) and **#428**; see
   §1 below. Do not present this as an open bug or an unmerged PR.
+- **Whole-repo GRAPH commands (agent / callers / blast-radius / orient) are SLOW AT SCALE, not
+  hung — scope to a package root.** On a big tree the graph is O(files): `tg agent .` / `tg orient .`
+  walk + parse the whole repo. Native Windows they COMPLETE (agent ~18s on an 872-file repo,
+  workspace `orient .` ~48s on 50k files) but they are not fast. The agent-honest usage on large
+  trees is a package root — `tg agent REPO/src "task"`, `tg callers REPO/src SYMBOL` — 3-5x faster.
+  Two CPU latency wins shipped 2026-07-11 (v1.63.3 deweight #534 removed a per-file `resolve()` hot
+  loop from the shared hot path; v1.63.4 parse-cache #535 deduped the 2-3x Python parse, **36%
+  faster on a warm re-query**); the remaining scan cost is inherent and is the warm-daemon's job (#94).
+- **A "whole-repo hang past 60-90s" reported from WSL over `/mnt/c` is a 9p-filesystem ARTIFACT,
+  NOT a tg deadlock.** WSL reading a Windows-mounted tree is ~3-5x slower than native NTFS at the
+  file-walk + `stat()`/`realpath()` these commands do, which tips scope-proportional work past a test
+  timeout. **Reproduce a WSL latency report NATIVELY (Windows or native Linux, not `/mnt/c`) before
+  treating it as a tg bug** — the 2026-07-11 v1.63.2 "10-timeout P0 regression" dogfood was exactly
+  this (native: every flagged command completed). Memory:
+  `tensor-grep-wsl-mnt-c-latency-artifact-2026-07-11`.
 
 ---
 
