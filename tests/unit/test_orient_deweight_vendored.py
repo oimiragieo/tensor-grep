@@ -139,3 +139,25 @@ def test_file_centrality_scores_are_raw_not_deweighted(tmp_path: Path) -> None:
     hub = str(root / "bundled" / "hub.py")
     # hub.py: fan_in=2 (a,b import it) + fan_out=0 + density=0 = 2.0, RAW (not * _DEWEIGHT_FACTOR)
     assert centrality[hub] == 2.0
+
+
+def test_skips_graph_invisible_subproject_with_no_import_edges(tmp_path: Path) -> None:
+    # A non-Python subproject -- e.g. `rust_core/` with its own Cargo.toml + .rs files -- is INVISIBLE
+    # to the Python-centric stem import graph, so it has ZERO import edges. That trivially satisfies
+    # "externally isolated" but is NOT an import island (no internal cohesion), so with a neutral name
+    # it must NOT be de-weighted -- else a legitimate Rust/Go crate at the repo root gets buried.
+    # Regression for the agent-capsule rust-language-hint hardcase (#525 CI: rust_core was falsely
+    # de-weighted, so a Python file won primary_target over src/lib.rs).
+    root = tmp_path.resolve()
+    (root / "rust_core").mkdir()
+    (root / "rust_core" / "Cargo.toml").write_text("[package]\nname = 'rc'\nversion = '0.1.0'\n")
+    rm = _rm(
+        root,
+        [
+            root / "app.py",
+            root / "rust_core" / "src" / "lib.rs",
+            root / "rust_core" / "src" / "mod.rs",
+        ],
+        {},  # no resolvable import edges anywhere (Rust files; the Python stem graph is blind)
+    )
+    assert _detect_vendored_subtrees(rm) == {}

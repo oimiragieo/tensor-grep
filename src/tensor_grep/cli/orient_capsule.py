@@ -200,7 +200,15 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
         tree_files = {f for f in code_file_set if _repo_map._path_is_relative_to(Path(f), abs_dir)}
         if not tree_files:
             continue
-        is_island = all(reverse_importers.get(f, set()) <= tree_files for f in tree_files)
+        # An import-island needs POSITIVE evidence of an internally-cohesive-but-externally-isolated
+        # cluster: some file in the subtree is imported by ANOTHER file in it, AND no file outside it
+        # imports in. A subtree with ZERO import edges -- a non-Python crate like `rust_core/`, invisible
+        # to this Python-centric stem graph -- trivially satisfies "externally isolated" but is NOT an
+        # island, just graph-invisible; it must NOT be de-weighted on STRONG-2 alone (else a legitimate
+        # Rust/Go subproject with its own manifest gets buried). It can still fire on a name prior.
+        externally_isolated = all(reverse_importers.get(f, set()) <= tree_files for f in tree_files)
+        has_internal_edge = any(reverse_importers.get(f, set()) & tree_files for f in tree_files)
+        is_island = externally_isolated and has_internal_edge
         name_hits = sorted({part.lower() for part in rel_dir.parts} & _VENDOR_NAME_PRIOR)
 
         if not (is_island or name_hits):
