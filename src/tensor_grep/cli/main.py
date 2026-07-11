@@ -230,6 +230,10 @@ review_bundle_app = typer.Typer(
     help="Create and verify enterprise review bundles.",
     no_args_is_help=True,
 )
+evidence_app = typer.Typer(
+    help="Emit a versioned EvidenceReceipt aggregating tg's existing outputs.",
+    no_args_is_help=True,
+)
 
 session_app.add_typer(session_daemon_app, name="daemon")
 
@@ -12026,6 +12030,7 @@ def lsp_setup(
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(session_app, name="session")
 app.add_typer(review_bundle_app, name="review-bundle")
+app.add_typer(evidence_app, name="evidence")
 
 
 @app.command(name="mcp")
@@ -13298,6 +13303,118 @@ def review_bundle_verify(
     )
     if not payload["valid"]:
         raise typer.Exit(code=1)
+
+
+def _evidence_error_payload(message: str, *, code: str, routing_reason: str) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "EvidenceReceipt",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
+@evidence_app.command("emit")
+def evidence_emit(
+    path: str = typer.Argument(
+        ".", help="Repository path to bind the receipt's revision identity to."
+    ),
+    query: str | None = typer.Option(None, "--query", help="Symbol/query this receipt is about."),
+    manifest_path: str | None = typer.Option(
+        None,
+        "--manifest",
+        help="Path to a prior rewrite-audit-manifest JSON (changes/validation-outcomes/rollback).",
+    ),
+    capsule_path: str | None = typer.Option(
+        None,
+        "--capsule",
+        help="Path to a prior `tg agent --json` capsule (blast-radius/ambiguity/confidence).",
+    ),
+    checkpoint_id: str | None = typer.Option(
+        None,
+        "--checkpoint-id",
+        help="Optional checkpoint ID for rollback info when --manifest has no checkpoint block.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent-id",
+        help="Caller-supplied agent identifier, recorded verbatim (never inferred). "
+        "Falls back to TG_EVIDENCE_AGENT_ID.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Caller-supplied model identifier, recorded verbatim (never inferred). "
+        "Falls back to TG_EVIDENCE_MODEL.",
+    ),
+    cost_json: str | None = typer.Option(
+        None,
+        "--cost-json",
+        help="Path to caller-supplied cost JSON, recorded verbatim (never inferred). "
+        "Falls back to TG_EVIDENCE_COST_JSON.",
+    ),
+    recompute: bool = typer.Option(
+        False,
+        "--recompute",
+        help="OPT-IN: recompute blast-radius for --query instead of aggregating only. "
+        "OFF by default (performance contract: no re-scan unless explicitly requested).",
+    ),
+    output_path: str | None = typer.Option(
+        None, "--out", help="Optional file path where the receipt JSON should be written."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the receipt as structured JSON to stdout."
+    ),
+) -> None:
+    """Emit a versioned EvidenceReceipt aggregating tg's existing outputs (no re-scan)."""
+    from tensor_grep.cli.evidence_receipt import build_evidence_receipt
+
+    try:
+        receipt = build_evidence_receipt(
+            path,
+            query=query,
+            manifest_path=manifest_path,
+            capsule_path=capsule_path,
+            checkpoint_id=checkpoint_id,
+            agent_id=agent_id,
+            model=model,
+            cost_json_path=cost_json,
+            recompute=recompute,
+        )
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _evidence_error_payload(
+                        str(exc), code="internal_error", routing_reason="evidence-receipt-emit"
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if output_path is not None:
+        resolved_output = Path(output_path).expanduser().resolve()
+        resolved_output.parent.mkdir(parents=True, exist_ok=True)
+        resolved_output.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+
+    if json_output:
+        typer.echo(json.dumps(receipt, indent=2))
+        return
+
+    target = output_path or "<stdout only>"
+    revision = cast(dict[str, object], receipt.get("revision", {}))
+    typer.echo(f"Evidence receipt ({target}):")
+    typer.echo(f"  commit_sha={revision.get('commit_sha', '<unavailable>')}")
+    typer.echo(f"  dirty={revision.get('dirty', '<unavailable>')}")
+    for block_name in ("scope", "blast_radius", "confidence", "validation", "changes", "caller"):
+        block = receipt.get(block_name)
+        status = block.get("status", "unknown") if isinstance(block, dict) else "unknown"
+        typer.echo(f"  {block_name}.status={status}")
 
 
 @app.command("update")

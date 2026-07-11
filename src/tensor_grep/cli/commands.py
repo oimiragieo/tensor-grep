@@ -40,6 +40,7 @@ KNOWN_COMMANDS = {
     "audit-history",
     "audit-diff",
     "review-bundle",
+    "evidence",
     "devices",
     "context",
     "lsp",
