@@ -1,6 +1,52 @@
 # CHANGELOG
 
 
+## v1.60.0 (2026-07-11)
+
+### Features
+
+- **evidence**: Add EvidenceReceipt v1 schema + emitter (tg evidence emit) -- Phase 1
+  ([#510](https://github.com/oimiragieo/tensor-grep/pull/510),
+  [`ec14d83`](https://github.com/oimiragieo/tensor-grep/commit/ec14d834f956dee7f189c0e6a3c9d65a01ee1780))
+
+Aggregates what tg already computes (a prior `tg agent --json` capsule, a prior
+  rewrite-audit-manifest, checkpoint metadata) into one versioned JSON receipt for external
+  consumption (e.g. gotcontext.ai). This is P1 only (schema + emitter); HMAC signing and `tg
+  evidence verify` (P2) and the MCP tool (P3) are separate PRs.
+
+Two producer gaps closed: - `_repo_revision_identity(root)`: `git rev-parse HEAD` + `git status
+  --porcelain=v1 -b` (exactly 2 subprocess calls -- the `-b` flag folds the branch name into the
+  same status call, so a third `rev-parse --abbrev-ref` call is unnecessary). Binding key =
+  commit_sha + dirty_tree_sha256. - caller-supplied agent/model/cost metadata via
+  --agent-id/--model/ --cost-json or TG_EVIDENCE_* env, recorded verbatim with
+  provenance:"caller-supplied", never invented (null when absent).
+
+Fail-closed per block (Backend Fail-Closed Contract applied to receipt emission): a missing/invalid
+  source degrades ONLY that block to {"status": "unavailable", "reason": "..."} -- never a silent
+  empty or fabricated value, and never a process crash. Verified live: an emit with zero optional
+  inputs reports 5 independently-reasoned unavailable blocks in one receipt, not a blanket failure.
+
+Performance contract: the default emit only reads already-persisted JSON plus the 2 git calls above
+  -- it never re-scans the repo. `--recompute` is an explicit opt-in that calls the already-cited
+  REUSE producer `repo_map.build_symbol_blast_radius` once, for the blast_radius block only, and
+  only when a query is also given.
+
+Registers `tg evidence emit` as a dedicated sub-app (not a search flag, per AGENTS.md's flag-leak
+  warning) across all 4 command registration sites: - KNOWN_COMMANDS (commands.py) -
+  Commands::Evidence passthrough + dispatch arm (main.rs, mirrors Commands::ReviewBundle exactly --
+  pure passthrough, no field logic in Rust) - PUBLIC_TOP_LEVEL_COMMANDS + a COMMAND_CASES entry
+  (test_routing_parity.py) - evidence_app Typer sub-app + `emit` command (main.py)
+
+Verified end-to-end against a freshly built native tg.exe: the full routing-parity suite (python-m /
+  native / bootstrap launcher parity) passes with the new command wired through the real Rust
+  passthrough, and a manual dogfood run against a real git repo with a real `tg agent --json`
+  capsule confirms the revision/scope/blast_radius/confidence/validation/changes/ caller/sources
+  blocks all populate correctly, with dirty-tree detection verified across a clean-to-dirty
+  transition on the same commit.
+
+New: src/tensor_grep/cli/evidence_receipt.py, tests/unit/test_evidence_receipt.py
+
+
 ## v1.59.4 (2026-07-11)
 
 ### Bug Fixes
