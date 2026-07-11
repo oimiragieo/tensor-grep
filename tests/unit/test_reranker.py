@@ -4,7 +4,9 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.core.reranker import rerank_by_bm25, rerank_hybrid
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.core.retrieval_chunker import Chunk
@@ -240,3 +242,70 @@ def test_late_rerank_appends_to_existing_fallback_reason() -> None:
     assert out.rank_fallback_reason is not None
     assert "model2vec not installed" in out.rank_fallback_reason
     assert "model not fetched" in out.rank_fallback_reason
+
+
+def test_late_reranker_hung_encoder_degrades_within_budget_not_blocked(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A3 real wall-clock deadline (external audit 2026-07-11): a genuinely HUNG encoder must NOT
+    block `tg search --rank` indefinitely. The old post-hoc `elapsed > budget` check could only
+    DISCARD a rerank that had already returned; a wedged encoder never returns, so it hung forever.
+    The daemon-thread `join(budget)` bounds it: the call returns near the budget and degrades to the
+    plain RRF order, never after the (here 10s) encode."""
+    monkeypatch.setenv("TG_RERANK_BUDGET_MS", "100")
+    result, bm25_index = _four_chunk_scenario()
+    baseline = rerank_hybrid(result, "q", [], bm25_index=bm25_index)
+
+    def _hung_encode(text: str) -> np.ndarray:
+        time.sleep(10.0)  # simulate a wedged encoder; the join(0.1s) MUST abandon it
+        return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    start = time.perf_counter()
+    out = rerank_hybrid(
+        result, "q", [], bm25_index=bm25_index, late_reranker=LateReranker(encode=_hung_encode)
+    )
+    elapsed = time.perf_counter() - start
+
+    # The pre-A3 code would have blocked ~10s (per hung encode); the deadline must bound it well
+    # under that. Generous margin for Windows thread-spawn contention, still far below 10s.
+    assert elapsed < 4.0, f"late rerank ignored the wall-clock deadline (took {elapsed:.1f}s)"
+    assert [m.file for m in out.matches] == [m.file for m in baseline.matches]
+    assert out.rank_fallback_reason is not None
+    assert "budget exceeded" in out.rank_fallback_reason
+
+
+def test_late_reranker_backend_execution_error_propagates_not_degrades() -> None:
+    """A3 Fail-Closed Contract ACROSS the daemon-thread boundary: a genuine BackendExecutionError
+    from the encoder (a real encode-time fault) must PROPAGATE to the caller, never be silently
+    degraded into a plausible-but-wrong ranking. Only the RECOVERABLE LateRerankUnavailableError
+    degrades; every other exception is re-raised on the worker thread's behalf."""
+    result, bm25_index = _four_chunk_scenario()
+
+    def _faulting_encode(text: str) -> np.ndarray:
+        raise BackendExecutionError("native encode fault (test stub)")
+
+    with pytest.raises(BackendExecutionError, match="native encode fault"):
+        rerank_hybrid(
+            result,
+            "q",
+            [],
+            bm25_index=bm25_index,
+            late_reranker=LateReranker(encode=_faulting_encode),
+        )
+
+
+def test_late_reranker_base_exception_user_abort_propagates_not_swallowed() -> None:
+    """A3 hardening: a BaseException (a KeyboardInterrupt user-abort / SystemExit) raised on the
+    worker thread must PROPAGATE, never be silently swallowed into an RRF degrade -- and the empty
+    result holder must never IndexError. Only LateRerankUnavailableError degrades; a Ctrl-C aborts."""
+    result, bm25_index = _four_chunk_scenario()
+
+    def _aborting_encode(text: str) -> np.ndarray:
+        raise KeyboardInterrupt("user abort (test stub)")
+
+    with pytest.raises(KeyboardInterrupt):
+        rerank_hybrid(
+            result,
+            "q",
+            [],
+            bm25_index=bm25_index,
+            late_reranker=LateReranker(encode=_aborting_encode),
+        )
