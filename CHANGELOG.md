@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.59.2 (2026-07-11)
+
+### Bug Fixes
+
+- **inventory**: Reserve stat-loop budget from the walk phase so --deadline never zeros out
+  totals.files ([#516](https://github.com/oimiragieo/tensor-grep/pull/516),
+  [`f88c2a0`](https://github.com/oimiragieo/tensor-grep/commit/f88c2a03425a6e5f23e59ab37825461f95fc2550))
+
+tg inventory PATH --deadline N on a large workspace returned totals.files=0 with
+  truncation_cause=deadline -- a misleading silent-empty result despite the walk having discovered
+  files. build_inventory() shared ONE deadline between the phase-1 file-discovery walk
+  (_iter_repo_files) and the phase-2 per-file stat/categorize loop; on a big tree phase-1 could burn
+  the entire budget, so phase-2's first "time.monotonic() >= deadline" check fired on iteration 1,
+  before it ever processed a file.
+
+Reserve a fraction (_WALK_PHASE_DEADLINE_FRACTION = 0.7) of deadline_seconds for the walk phase and
+  pass that smaller walk_deadline -- not the full deadline -- into _iter_repo_files; the per-file
+  loop keeps checking the FULL deadline, guaranteeing phase 2 a real slice of the budget. Total
+  wall-clock still caps at deadline_seconds. _iter_repo_files' signature/contract is unchanged (only
+  what build_inventory passes it), so its ~12 other call sites are unaffected.
+
+Also (optional bundle, in scope per the design-vet spec): the inventory() CLI wrapper never
+  inspected scan_limit.possibly_truncated and always exited 0. Mirror the map command's existing
+  exit-2-on-scan-truncation contract via the already-generic _scan_incomplete() helper (it already
+  checks exactly this payload's scan_limit.possibly_truncated shape), so a truncated (e.g.
+  --deadline-fired) inventory scan is agent-observable via exit code, not just the JSON payload.
+
+Live-repro confirmed end-to-end on the real binary (not CliRunner): `tg inventory C:/dev/projects
+  --deadline 5 --json` -- scanned_files went from 0 (pre-fix) to 341 (post-fix), exit code now 2
+  (was 0).
+
+RED->GREEN: 2 new tests (test_inventory_deadline_never_zero_when_files_were_discovered,
+  test_inventory_walk_phase_reserves_stat_loop_budget) fail against the unmodified tree and pass
+  after the fix. 3 more tests cover the CLI exit-2 bundle. Full inventory suite (33 tests) +
+  blast-radius (_iter_repo_files contract, 66 tests) + ruff + mypy all green.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.59.1 (2026-07-11)
 
 ### Bug Fixes
