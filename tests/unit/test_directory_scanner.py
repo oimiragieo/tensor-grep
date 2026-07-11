@@ -25,6 +25,49 @@ class TestDirectoryScanner:
 
         assert files == [str(kept)]
 
+    def test_should_honor_nested_gitignore(self, tmp_path, monkeypatch):
+        # MED-5: a nested subdir/.gitignore must be honored, not just the root one.
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+        (tmp_path / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitignore").write_text("secret.txt\n", encoding="utf-8")
+
+        kept = sub / "keep.py"
+        nested_ignored = sub / "secret.txt"
+        root_ignored = tmp_path / "junk.tmp"
+        kept.write_text("ok", encoding="utf-8")
+        nested_ignored.write_text("no", encoding="utf-8")
+        root_ignored.write_text("no", encoding="utf-8")
+
+        files = list(DirectoryScanner(SearchConfig()).walk(str(tmp_path)))
+
+        assert str(kept) in files
+        assert str(nested_ignored) not in files  # nested .gitignore honored
+        assert str(root_ignored) not in files  # root .gitignore still honored
+
+    def test_should_honor_nested_gitignore_negation_reinclude(self, tmp_path, monkeypatch):
+        # MED-5: a deeper `!re-include` must override a parent ignore (git precedence).
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+        (tmp_path / ".gitignore").write_text("*.log\n", encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitignore").write_text("!keep.log\n", encoding="utf-8")
+
+        reincluded = sub / "keep.log"
+        still_ignored = sub / "other.log"
+        root_ignored = tmp_path / "root.log"
+        for created in (reincluded, still_ignored, root_ignored):
+            created.write_text("x", encoding="utf-8")
+
+        files = list(DirectoryScanner(SearchConfig()).walk(str(tmp_path)))
+
+        assert str(reincluded) in files  # nested !keep.log re-includes it
+        assert str(still_ignored) not in files  # parent *.log still applies
+        assert str(root_ignored) not in files
+
     def test_should_include_gitignored_directories_when_no_ignore_is_enabled(
         self, tmp_path, monkeypatch
     ):

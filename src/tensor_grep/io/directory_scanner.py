@@ -130,6 +130,50 @@ class DirectoryScanner:
         patterns = raw.decode("utf-8", errors="replace").splitlines()
         return pathspec.GitIgnoreSpec.from_lines(patterns)
 
+    @staticmethod
+    def _ancestor_spec_stack(
+        base_path: Path,
+        root_path: Path,
+        dir_specs: "dict[Path, GitIgnoreSpec | None]",
+    ) -> "list[tuple[Path, GitIgnoreSpec]]":
+        # Collect the loaded .gitignore specs from base_path down to root_path (shallow-first).
+        # os.walk is top-down, so every ancestor of root_path was visited (and its spec loaded)
+        # before root_path is processed.
+        chain: list[Path] = []
+        directory = root_path
+        while True:
+            chain.append(directory)
+            if directory == base_path or directory.parent == directory:
+                break
+            directory = directory.parent
+        chain.reverse()
+        return [(d, spec) for d in chain if (spec := dir_specs.get(d)) is not None]
+
+    def _path_ignored_by_stack(
+        self,
+        path: Path,
+        is_dir: bool,
+        spec_stack: "list[tuple[Path, GitIgnoreSpec]]",
+    ) -> bool:
+        # Apply the ancestor .gitignore specs shallowest-first; the DEEPEST spec with an opinion
+        # wins (git precedence: a nested .gitignore overrides a parent's). pathspec's tri-state
+        # check_file returns include=True (matched an ignore) / False (negated re-include) / None
+        # (no match), so a deeper `!keep.log` correctly overrides a parent's `*.log` ignore.
+        decision: bool | None = None
+        for spec_dir, spec in spec_stack:
+            try:
+                rel = path.relative_to(spec_dir).as_posix()
+            except ValueError:
+                continue
+            if not rel or rel == ".":
+                continue
+            if is_dir:
+                rel = f"{rel}/"
+            result = spec.check_file(rel)
+            if result.include is not None:
+                decision = result.include
+        return bool(decision)
+
     def _requires_python_guardrails(self, base_path: Path) -> bool:
         if self.config.no_ignore or self.config.no_ignore_files:
             return False
@@ -167,7 +211,10 @@ class DirectoryScanner:
         # exported by rust_core; see HAS_RUST_SCANNER above).
         max_depth = self.config.max_depth
         base_depth = len(base_path.parts)
-        ignore_spec = self._load_ignore_spec(base_path)
+        # Nested-.gitignore support: cache each directory's own spec as os.walk descends, then test
+        # paths against the full ancestor chain so a nested subdir/.gitignore is honored, not just
+        # the root one. base_path's spec is loaded up front; each deeper dir loads lazily on entry.
+        dir_specs: dict[Path, GitIgnoreSpec | None] = {base_path: self._load_ignore_spec(base_path)}
 
         def _relative_posix(path: Path) -> str:
             return path.relative_to(base_path).as_posix()
@@ -197,17 +244,21 @@ class DirectoryScanner:
                 dirs[:] = [d for d in dirs if not d.startswith(".")]
 
             root_path = Path(root)
+            if root_path not in dir_specs:
+                dir_specs[root_path] = self._load_ignore_spec(root_path)
+            spec_stack = self._ancestor_spec_stack(base_path, root_path, dir_specs)
+
             dirs[:] = [
                 directory
                 for directory in dirs
                 if self._should_descend_dir(base_path, root_path, directory)
             ]
 
-            if ignore_spec is not None:
+            if spec_stack:
                 dirs[:] = [
                     directory
                     for directory in dirs
-                    if not ignore_spec.match_file(f"{_relative_posix(Path(root) / directory)}/")
+                    if not self._path_ignored_by_stack(root_path / directory, True, spec_stack)
                 ]
 
             for file_name in files:
@@ -217,7 +268,7 @@ class DirectoryScanner:
 
                 file_path = Path(root) / file_name
                 relative_path = Path(_relative_posix(file_path))
-                if ignore_spec is not None and ignore_spec.match_file(relative_path.as_posix()):
+                if spec_stack and self._path_ignored_by_stack(file_path, False, spec_stack):
                     continue
                 if self._should_include_file(file_path, relative_path):
                     yield str(file_path)
