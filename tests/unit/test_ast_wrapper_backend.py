@@ -39,9 +39,21 @@ def test_raise_for_nonzero_waives_complete_json_with_nonzero_exit():
 
 
 def test_ast_wrapper_backend_should_use_resolved_binary_path():
+    """#130(b): the primary `ast-grep` which()-resolution now also probe-runs
+    (see test_ast_grep_backend_probes_primary_name_before_trusting_it below),
+    so this must mock subprocess.run to a passing probe -- previously this
+    test relied on which() alone and would have gone environment-dependent
+    (silently trusting whatever real binary a dev machine happened to have at
+    this literal path) instead of exercising the mocked contract."""
     backend = AstGrepWrapperBackend()
+    mock_result = MagicMock()
+    mock_result.stdout = "ast-grep 0.39.5\n"
+    mock_result.stderr = ""
 
-    with patch("shutil.which") as which:
+    with (
+        patch("shutil.which") as which,
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
         which.side_effect = lambda name: {
             "ast-grep": r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD",
             "ast-grep.exe": None,
@@ -91,6 +103,107 @@ def test_ast_wrapper_backend_should_accept_verified_sg_alias():
 
         assert backend.is_available() is True
         assert backend._get_binary_name() == "/opt/bin/sg"
+
+
+def test_ast_grep_backend_probes_primary_name_before_trusting_it():
+    """#130(b): doctor/runtime must not trust a which()-resolved `ast-grep` on
+    name alone. A broken npm shim literally named `ast-grep` resolves via
+    shutil.which() but is not runnable (e.g. a Windows shim invoked under
+    WSL/Linux: execve() on a non-native binary format raises OSError, exactly
+    what a real interpreter-less exec failure surfaces as). The primary two
+    which()-only branches must be probe-gated exactly like the existing
+    sg/sg.exe branches already are -- an unprobed resolution must not be
+    trusted."""
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch("shutil.which") as which,
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            side_effect=OSError("[Errno 8] Exec format error"),
+        ),
+    ):
+        which.side_effect = lambda name: {
+            "ast-grep": "/fake/path/ast-grep",
+            "ast-grep.exe": None,
+            "sg.exe": None,
+            "sg": None,
+        }.get(name)
+
+        assert backend.is_available() is False
+        assert backend._get_binary_name() == "ast-grep"
+
+
+def test_ast_grep_backend_still_trusts_working_binary():
+    """Regression guard for the probe-gate fix above: a genuinely working
+    `ast-grep` binary (which() resolves it AND --version confirms it) must
+    still be trusted -- the fix must not over-reject a real install."""
+    backend = AstGrepWrapperBackend()
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "ast-grep 0.39.5\n"
+    mock_result.stderr = ""
+
+    with (
+        patch("shutil.which") as which,
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        which.side_effect = lambda name: {
+            "ast-grep": "/real/path/ast-grep",
+            "ast-grep.exe": None,
+            "sg.exe": None,
+            "sg": None,
+        }.get(name)
+
+        assert backend.is_available() is True
+        assert backend._get_binary_name() == "/real/path/ast-grep"
+
+
+def test_ast_grep_backend_memoizes_binary_probe():
+    backend = AstGrepWrapperBackend()
+    probe_calls: list[str] = []
+
+    def record_probe(binary: str) -> bool:
+        probe_calls.append(binary)
+        return True
+
+    with (
+        patch("shutil.which", side_effect=lambda name: "/real/path/ast-grep"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend._is_ast_grep_sg_binary",
+            side_effect=record_probe,
+        ),
+    ):
+        assert backend._get_binary_name() == "/real/path/ast-grep"
+        assert backend._get_binary_name() == "/real/path/ast-grep"
+
+    assert probe_calls == ["/real/path/ast-grep"]
+
+
+def test_doctor_ast_grep_available_false_when_shim_broken():
+    """#130(b): `tg doctor`'s ast_grep status delegates to
+    AstGrepWrapperBackend, so the probe-gate fix must be visible through
+    _doctor_ast_grep_status() too -- a broken shim must surface
+    available:false, not available:true."""
+    from tensor_grep.cli.main import _doctor_ast_grep_status
+
+    with (
+        patch("shutil.which") as which,
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            side_effect=OSError("[Errno 8] Exec format error"),
+        ),
+    ):
+        which.side_effect = lambda name: {
+            "ast-grep": "/fake/path/ast-grep",
+            "ast-grep.exe": None,
+            "sg.exe": None,
+            "sg": None,
+        }.get(name)
+
+        payload = {"ast_grep": _doctor_ast_grep_status()}
+
+    assert payload["ast_grep"]["available"] is False
 
 
 def test_ast_wrapper_backend_should_emit_runtime_routing_metadata():
