@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.59.1 (2026-07-11)
+
+### Bug Fixes
+
+- **backends**: Raise BackendExecutionError on malformed/wrong-shape ast-grep JSON at exit 0 (MED-3)
+  ([#515](https://github.com/oimiragieo/tensor-grep/pull/515),
+  [`c9e54ef`](https://github.com/oimiragieo/tensor-grep/commit/c9e54ef467b680310a1a27ca1a83fe4b3713c5c7))
+
+_parse_result and _parse_json_items in ast_wrapper_backend.py silently swallowed malformed JSON
+  (`except json.JSONDecodeError: pass` / `return []`) and non-list JSON shapes, returning a clean
+  0-match SearchResult instead of raising. Per the Backend Fail-Closed Contract, this let a
+  corrupted or unexpected ast-grep payload masquerade as "no matches" at exit 0 -- most seriously
+  for search_project(), which backs `tg scan --ruleset` (SAST): a garbled stdout would make an
+  entire security ruleset scan silently report zero findings.
+
+Split the swallow into two explicit checks at both sites: a JSONDecodeError now raises
+  BackendExecutionError("...malformed JSON..."), and a successfully-parsed non-list shape (e.g. an
+  object) now raises BackendExecutionError("...expected a list...") instead of falling through to an
+  accidental AttributeError/TypeError caught by a caller's blanket except. A valid empty list `[]`
+  -- the one legitimate no-match shape -- still returns 0 matches without raising, proven by a
+  dedicated regression test.
+
+Adds 6 tests covering malformed-JSON and non-list-shape at exit 0 across
+  search/search_many/search_project, plus the valid-`[]` regression guard.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.59.0 (2026-07-11)
 
 ### Features
