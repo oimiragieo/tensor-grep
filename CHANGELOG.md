@@ -1,6 +1,123 @@
 # CHANGELOG
 
 
+## v1.58.14 (2026-07-11)
+
+### Bug Fixes
+
+- **index**: Close 5 silent-wrong-result bugs in --index search (fail-closed + FullScan + no_ignore
+  + smart_case, audit H1, Opus-gated) ([#511](https://github.com/oimiragieo/tensor-grep/pull/511),
+  [`4dc57c9`](https://github.com/oimiragieo/tensor-grep/commit/4dc57c926f96b74b67ea8ef79a48a20609a38d46))
+
+* fix(rust): --index fail-closed compatibility gate + no_ignore mode tracking (audit H1a-d)
+
+Four confirmed silent-wrong-result bugs in `tg search --index` (rust_core only, no Python backend
+  touched):
+
+- H1a: route_search() (routing.rs:234-236) selected TrigramIndex for explicit --index before any
+  compatibility check ran, and run_index_query() (main.rs) only ever read
+  pattern/ignore_case/fixed_strings -- invert_match, context, max_count, word_regexp, globs, and
+  multi-pattern were all silently dropped instead of honored or refused (--index -v returned the
+  NON-inverted set, exit 0). handle_index_search() now fails closed with a clear error for these six
+  conditions, mirroring the same compatibility subset detect_warm_index_state already enforces for
+  warm-index auto-routing.
+
+- H1b: index.rs::search() hardwired --fixed-strings to the trigram-Indexed candidate path
+  unconditionally, even for patterns shorter than TRIGRAM_LEN (3 bytes) whose empty trigram set
+  silently produced a false "0 matches" instead of falling back to a full scan the regex branch
+  already had.
+
+- H1c: build-time trigrams are lowercased with to_ascii_lowercase (a no-op on multi-byte UTF-8,
+  extract_file_trigrams) but the fixed-string query path lowercased with Unicode-aware
+  str::to_lowercase (query_candidates_fixed) -- a non-ASCII --ignore-case pattern's query trigrams
+  could never line up with the index's build-time trigrams, again reading as a false "0 matches".
+
+H1b and H1c are both closed by a new TrigramIndex::fixed_string_candidate_ selection() that falls
+  back to FullScan in both cases, reusing the same precedent normalize_prefilter_literal already
+  established for the regex prefilter path.
+
+- H1d: the on-disk index format never recorded the --no-ignore mode it was built with, and
+  staleness_reason()'s new-file scan was hardcoded .git_ignore(true) regardless of the query's
+  --no-ignore request. A query whose --no-ignore mode disagreed with the build mode silently reused
+  the stale index -- leaking gitignored content into a later default query (info disclosure) or
+  missing gitignored files a later --no-ignore query asked for. TrigramIndex/SerializableIndex now
+  persist a `no_ignore` field in both the bincode format (INDEX_FORMAT_VERSION 3 -> 4, so any
+  pre-existing index is safely rebuilt) and the JSON form; is_stale()/ staleness_reason() now take
+  the query's no_ignore and treat a mismatch as stale, triggering a rebuild under the query's
+  requested mode (the new-file walk itself now also mirrors collect_file_entries' git_ignore
+  semantics instead of the hardcoded `true`). Applies to both explicit --index and warm auto-routing
+  (detect_warm_index_state).
+
+TDD: 8 new real-binary tests in rust_core/tests/test_index.rs (RED before each fix -- verified
+  against the pre-fix binary via git stash, then GREEN after) covering
+  invert-match/word-regexp/max-count/glob fail-closed (H1a), short-fixed-string parity (H1b),
+  non-ASCII ignore-case parity (H1c), and both no_ignore mode-flip directions (H1d), plus one new
+  unit test in index.rs's own test module for is_stale/staleness_reason. Updated the two
+  pre-existing format-version-pinning tests (index.rs, test_index.rs) for the 3 -> 4 bump.
+  docs/routing_policy.md documents the new fail-closed contract; verified against the doc-governance
+  pytest assertions directly (no substring removed).
+
+cargo fmt -- --check / cargo clippy -- -D warnings (exact gate command) / cargo test --test
+  test_index --test test_routing / cargo test --lib / cargo test (full workspace) all green, zero
+  failures.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(rust): honor --smart-case (-S) on --index --json/--ndjson (audit H1e, gate must-fix)
+
+The adversarial Opus gate on the H1a-d fix (9434966) empirically found a 5th silent-false-negative
+  of the same class: `-S` is silently dropped on `tg search --index --json/--ndjson`.
+
+Mechanism: in JSON/ndjson mode `search_requires_ripgrep_passthrough` gates
+
+`smart_case` behind `!json && !ndjson` (main.rs:5226-5231), so `-S` is NOT diverted to ripgrep;
+  `route_search` picks TrigramIndex; the H1a bail does not list smart_case (correctly -- it is
+  honorable, not to be refused); and `run_index_query` passed only `args.ignore_case` (=false for
+  `-S`) to `index.search` -> case-SENSITIVE -> an all-lowercase `-S` pattern silently missed
+  uppercase matches (exit 0). Empirically: native `--json -S foo` = 3, `--index --json -S foo` = 2
+  (missing the uppercase FOO line).
+
+Fix -- HONOR (the gate's preferred option; smart-case IS index-doable, so refusing it would be a
+  needless UX regression): resolve case-sensitivity per pattern in `run_index_query` before calling
+  `index.search`: `args.ignore_case || (args.smart_case &&
+  smart_case_pattern_is_case_insensitive(pattern))`. An all-lowercase `-S` pattern searches
+  case-insensitively; a pattern with an uppercase char stays case-sensitive -- identical to native
+  smart-case. The resolved case reuses the existing ignore_case path, including the H1b/H1c
+  full-scan safety nets, so there is no new edge-case surface (non-ASCII uppercase like `E-acute`
+  resolves to case-sensitive, matching native).
+
+The helper `smart_case_pattern_is_case_insensitive` was imported only under `#[cfg(feature =
+  "cuda")]` (its sole prior user is the cuda-gated `gpu_params_require_case_insensitive_matching`);
+  made the import unconditional since `run_index_query` (non-cuda) now uses it -- still used in both
+  cfgs, no unused-import warning either way.
+
+`detect_warm_index_state` deliberately NOT changed: it already permits `-S` (does not gate
+  smart_case), which is correct for the honor approach, and warm auto-routing flows through the same
+  `run_index_query` chokepoint, so the single fix covers both explicit `--index` and warm
+  auto-routing. Proven by a dedicated warm-auto real-binary test that asserts
+  `routing_backend=TrigramIndex` before checking parity (so the parity is not vacuous). A
+  `detect_warm_index_state` change would only make sense for the fail-closed fallback (diverting
+  `-S` away from the index), which this commit does not take.
+
+TDD: 3 new real-binary tests in test_index.rs -- explicit `--index --json -S`
+
+all-lowercase parity vs native (RED before: 2 vs 3; GREEN after: 3 == 3), warm-auto `-S`
+  all-lowercase parity (RED before: 2 vs 3; GREEN after, routes to TrigramIndex), and an
+  uppercase-pattern case-sensitivity regression guard (green before and after: proves the fix does
+  not over-broadly make every `-S` case-insensitive). The warm test computes its native baseline
+  BEFORE building the index (a cold `--json` query creates no index) so the baseline is not itself
+  contaminated by warm auto-routing. Real-binary after-state also confirmed for the `--ndjson`
+  variant (3 == native 3).
+
+docs/routing_policy.md's `--index` fail-closed section gains a bullet documenting `-S` as
+  honored-per-pattern (additive; no governance-pinned substring removed).
+
+cargo fmt -- --check / cargo clippy -- -D warnings (exact gate command) / cargo test --test
+  test_index (29 passed) / cargo test --test test_routing (81 passed) all green.
+
+---------
+
+
 ## v1.58.13 (2026-07-11)
 
 ### Bug Fixes
