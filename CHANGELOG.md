@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v1.62.1 (2026-07-11)
+
+### Bug Fixes
+
+- **semantic**: Cap-degrade reuses accumulated chunks instead of re-chunking the full corpus
+  uncapped (audit A2) ([#527](https://github.com/oimiragieo/tensor-grep/pull/527),
+  [`a1c5984`](https://github.com/oimiragieo/tensor-grep/commit/a1c5984014fa058303c5f79a0abcd6af6f62fc01))
+
+When the semantic corpus-chunk cap (_SEMANTIC_CORPUS_CHUNK_CAP) trips -- or a single file's
+  chunk_file() raises the per-file MAX_CHUNKS guard -- _apply_semantic_rerank degraded to BM25 by
+  calling rerank_hybrid(dense_index=None) with NO bm25_index. That drops into rerank_hybrid's `if
+  bm25_index is None` branch, which re-reads + re-chunks the ENTIRE matched-file set UNCAPPED --
+  turning the safety guard into the expensive O(corpus) file-I/O pass it exists to prevent (external
+  audit 2026-07-11).
+
+Fix: pass bm25_index=Bm25Index(chunks) built from the chunks already accumulated (bounded by the
+  cap, or by the file that raised -- which also avoids re-invoking chunk_file on the pathological
+  file and re-raising). Mirrors the existing F1 dense-fault retry below, whose comment already
+  states "reuse the SAME bm25_index (no second chunk pass)". No reranker.py change -- it already
+  supports a caller index.
+
+Test: test_search_semantic_cap_fallback_does_not_rechunk_full_corpus forces the cap to 1, counts
+  chunk_file calls at both bind sites, asserts no file is chunked twice by the degrade path.
+  Existing cap / built-once / chunker-error tests stay green.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Sync BACKLOG.md to current truth -- 0 open PRs, v1.62.0, live task-store queues
+  (audit A5) ([#526](https://github.com/oimiragieo/tensor-grep/pull/526),
+  [`ad742d7`](https://github.com/oimiragieo/tensor-grep/commit/ad742d74ed38f00bb249c1da531ac206c5799902))
+
+The external audit (2026-07-11) flagged BACKLOG.md as a governance bug: it listed old releases/PRs
+  as open (8 SHIPPING PRs, v1.58.x era) though `gh pr list` reports 0 and v1.62.0 is releasing.
+  Since AGENTS.md reads it for WIP limits, stale data can incorrectly stop new work.
+
+Prepend an authoritative CURRENT STATE block (0 PRs / v1.62.0 / the two live CEO-relayed fix-queues
+  #133 dogfood + #134 audit / SHIPPED-since-v1.57.1) and mark every section below it HISTORICAL
+  until the next full refresh. The CLI task store remains the authoritative live backlog.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.62.0 (2026-07-11)
 
 ### Chores
