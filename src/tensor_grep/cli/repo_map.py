@@ -7537,10 +7537,16 @@ def _build_context_pack_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(file_matches, test_matches)
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["deweighted_trees"] = [
-        {"path": tree_path, "reasons": list(info["reasons"])}
-        for tree_path, info in sorted(deweighted_trees.items())
-    ]
+    # Only emit when non-empty. An empty `deweighted_trees` still costs ~20 bytes in every
+    # context-pack payload, and (since compaction records dropped keys in omitted_keys) omitting it
+    # saves nothing -- enough to tip the macOS llm-compact token-budget test, whose long temp paths
+    # leave a ~5-byte margin under the < 9000 ceiling, over the edge (#525 CI). Consumers treat a
+    # missing key as "nothing de-weighted".
+    if deweighted_trees:
+        payload["deweighted_trees"] = [
+            {"path": tree_path, "reasons": list(info["reasons"])}
+            for tree_path, info in sorted(deweighted_trees.items())
+        ]
     return payload
 
 
@@ -11968,7 +11974,7 @@ def _fallback_file_source(
 
 
 _COMPACT_CONTEXT_RENDER_PROFILES = {"compact", "llm"}
-_COMPACT_CONTEXT_RENDER_OMITTED_KEYS = ("symbols", "imports", "related_paths", "deweighted_trees")
+_COMPACT_CONTEXT_RENDER_OMITTED_KEYS = ("symbols", "imports", "related_paths")
 _LLM_CONTEXT_RENDER_OMITTED_KEYS = (
     "candidate_edit_targets",
     "coverage",
