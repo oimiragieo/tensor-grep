@@ -1,6 +1,224 @@
 # CHANGELOG
 
 
+## v1.62.0 (2026-07-11)
+
+### Chores
+
+- **gpu**: Remove dead backend_gpu.rs + broken Dockerfile.gpu; mark experimental GDS code (#131 F10)
+  ([#520](https://github.com/oimiragieo/tensor-grep/pull/520),
+  [`4a72fca`](https://github.com/oimiragieo/tensor-grep/commit/4a72fca27f444c55c559b66bb2d040e630867f4e))
+
+GPU honesty cleanup (audit #131 F10). No behavior change -- all removed code was never executed and
+  the compiled binary is functionally identical.
+
+Removed (confirmed dead): - rust_core/src/backend_gpu.rs (110 lines): declared `pub mod` in lib.rs
+  but ZERO references outside its own file, no #[pyfunction], not in the #[pymodule] export list.
+  Superseded by the subprocess python_sidecar path. `cargo check` passes after removing the module +
+  its lib.rs declaration. - Dockerfile.gpu: never CI-built (no reference in any .github/workflows)
+  AND broken -- the multi-stage build does an editable `uv pip install -e` rooted at /app/src in
+  stage 1 but the runtime stage copies only /opt/venv, never /app/src, so the `tg` entrypoint fails
+  on `import tensor_grep`. Documented as removed in V1_RELEASE_PLAN.md (re-add a CI-smoke-tested one
+  if/when GPU ships).
+
+Marked experimental (kept, individually tested, but NOT wired into production): -
+  io/reader_kvikio.py (KvikIOReader) + io/reader_dstorage.py (DStorageReader): class docstrings
+  noting production GPU reads use the Rust FFI read_mmap_to_arrow_chunked, not these spikes. -
+  core/hardware/memory_manager.py should_use_pinned_memory: comment noting no production caller (the
+  pinned-vs-GDS-vs-mmap decision is not yet wired in). - gpu_native.rs
+  SearchExecutionOptions.use_cuda_graphs: comment clarifying it is default-off in production but a
+  LIVE tested feature via `tg gpu-cuda-graphs` (NOT dead code -- corrects an earlier
+  mis-classification).
+
+Verified: `cargo check` exit 0 (compiles without backend_gpu.rs); ruff check + ruff format --check
+  --preview clean on the 3 touched Python files.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Refresh BACKLOG.md to current state (drain @ v1.58.11, codex-audit wave complete, dogfood + GPU
+  audit triaged) ([#513](https://github.com/oimiragieo/tensor-grep/pull/513),
+  [`099a0c7`](https://github.com/oimiragieo/tensor-grep/commit/099a0c70334314a40e54db1d3f6ae730e69f03d1))
+
+Rewrites the ~8h-stale ledger (was v1.57.1-era) to reflect: the 8-PR security-first drain
+  (v1.58.5-v1.58.10 live), the completed codex-audit HIGH wave (#508-#512, gate caught 3 defects),
+  the CEO no-SaaS directive, the v1.58.9 dogfood fix-queue (#130), and the GPU deep-dive triage
+  (#131 -- honesty/correctness bugs actionable; the ~24wk rebuild->SaaS is CEO-gated and re-opens
+  the #99 wedge the CEO closed). Cross-references task-store IDs #117-#131.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- V1.58.9 dogfood skill honesty fixes + GPU PFAC doc correction (#130 skill layer, #131 F1)
+  ([#514](https://github.com/oimiragieo/tensor-grep/pull/514),
+  [`1889a69`](https://github.com/oimiragieo/tensor-grep/commit/1889a69cb229bb3cbf2103cd53b21c6a63710652))
+
+* docs(skills): correct tg skill Known-Issues to v1.58.9 dogfood reality + add enterprise-agent
+  skill
+
+Dogfood #130 skill-layer honesty pass. Corrects over-optimistic prior claims in the tensor-grep
+  skill against actual v1.58.9 behavior: - unscoped workspace search still burns the 60s rg timeout
+  (the vendored-root <1s refuse does NOT fire on /mnt/c/dev/projects despite a top-level
+  node_modules) -- was previously claimed as a <1s refusal - tg inventory --deadline on a
+  multi-project parent can return 0 files (deadline expires before any file is counted;
+  truncation_cause=deadline) - tg classify takes FILE_PATH only, no --json flag (default format is
+  json) - tg checkpoint create on a whole large repo can fail (IsADirectory on awkward paths under
+  benchmarks/external_repos/chalk); scope to src/ - doctor may report ast_grep.available:true while
+  it is not runnable under WSL (availability != runnable) - callers/blast-radius/impact --deadline
+  15-20 finish ~17-24s, exit 2 + partial:true when truncated - architecture-contract C14 (scoped
+  file-dep primitive) marked RESOLVED (tg imports / importers shipped in KNOWN_COMMANDS as of
+  v1.54+, task #74) - workspace-dogfood sweep table refreshed to the 2026-07-10 v1.58.9 run (28 PASS
+  / 5 INCOMPLETE / 3 FAIL / 2 TIMEOUT)
+
+Adds tensor-grep-enterprise-agent skill (enterprise readiness gaps + autonomous-agent hard-stops) +
+  AGENTS.md index entry.
+
+Docs/skill-only; no code change. The underlying code bugs remain tracked in backlog #130.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(gpu): correct the false PFAC/Aho-Corasick claim -- the GPU kernel is a position-parallel
+  brute-force byte-compare (audit #131 F1)
+
+docs/gpu_crossover.md claimed the native GPU backend "uses a PFAC (Parallel Failureless
+  Aho-Corasick) algorithm". Verified against the real kernel (rust_core/src/gpu_native.rs):
+  gpu_text_search_matches_at is a naive byte-by-byte compare, and gpu_text_search_positions
+  parallelizes it across text positions (every pattern tested at every position, staged in shared
+  memory). That is the opposite of an Aho-Corasick automaton, which uses a goto/failure trie
+  precisely to avoid rescanning. No PFAC/Aho/failureless symbol exists anywhere in the kernel
+  source.
+
+Replaces the claim in the prose (:97), the Supported-semantics table (:103), and the stale
+  back-reference (:131) with the honest description, and notes PFAC as a FUTURE optimization, not
+  what ships today.
+
+Left unchanged (verified accurate): the CPU Aho-Corasick single-pass multi-pattern route (a
+  separate, real, shipped feature) and the roadmap "P1 CUDA-PFAC kernel" labels in AGENTS.md/skills,
+  which correctly name PFAC as the paused future target rather than the current kernel.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **orient**: Auto de-weight bundled vendor/skill/generated CODE subtrees in centrality (#132)
+  ([#525](https://github.com/oimiragieo/tensor-grep/pull/525),
+  [`10c2c7a`](https://github.com/oimiragieo/tensor-grep/commit/10c2c7a232f8984ef12307a0389220bc10d68e56))
+
+* feat(orient): auto de-weight bundled vendor/skill/generated CODE subtrees in centrality (#132)
+
+`tg orient` / `tg agent` centrality ranked bundled third-party/skill/generated subtrees (a vendored
+  library, node_modules, a .claude/skills tree) as "central" when they were internally
+  well-connected -- burying real product code and forcing a manual --ignore. This auto-DE-WEIGHTS
+  (never hard-excludes) such subtrees.
+
+A subtree's composite centrality is multiplied by 0.25 ONLY on STRONG-1 (a nested package manifest:
+  pyproject.toml/package.json/Cargo.toml/...) AND either STRONG-2 (an import island -- no file
+  OUTSIDE the subtree imports INTO it) or WEAK (a vendor name prior:
+  vendor/third_party/skills/external_repos/_vendored/node_modules). A monorepo subproject that HAS a
+  manifest but IS imported across the repo is protected by the import-island test;
+  de-weight-not-exclude means a genuinely central vendored file can still surface. Default ON; `tg
+  orient --no-auto-deweight` opts out. The capsule payload gains a `deweighted_trees` list (path +
+  reasons) for transparency.
+
+Rebased the preserved WIP branch (based on v1.40.3) onto current main. The WIP had extracted a
+  shared `_code_files_and_import_graph` helper from v1.40.3's `_central_files_from_map`, while main
+  had separately split that code into `_file_centrality_scores` (#93 SUB-2). Reconciled by keeping
+  main's architecture: `_file_centrality_scores` now sources the graph from the shared helper and
+  returns RAW scores (so `_suggested_scope_from_map` is unaffected), and the de-weight is applied in
+  `_central_files_from_map` (central_files only, matching the WIP's scope).
+
+Tests: 6 new (each heuristic branch + the monorepo false-positive guard + the
+  de-weight-is-not-exclude invariant + the raw-suggested-scope invariant); the 29 existing
+  orient/centrality tests stay green. ruff (format --preview + check) and py_compile clean.
+  Gate-free surface (orient/cli -- not apply_policy/mcp/backends).
+
+Follow-up (deferred, YAGNI): an explicit `.claude/worktrees` name prior is moot while worktrees are
+  gitignored (never scanned); a scanned worktree is already caught by the generic
+  manifest+import-island path.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(orient): require internal cohesion for the vendored-subtree import-island signal
+
+The de-weight import-island test (STRONG-2) fired on ANY subtree with zero incoming import edges --
+  which trivially includes every non-Python subproject (a Rust `rust_core/` crate, a Go module),
+  because the Python-centric stem import graph cannot resolve their imports. A legitimate Rust crate
+  with its own Cargo.toml was therefore treated as a vendored island and de-weighted, burying its
+  files: the agent-capsule rust-language hardcase regressed (a Python file won `primary_target` over
+  `src/lib.rs`). Caught by #525 CI (test-python on all 6 platform/version cells).
+
+Fix: an import-island now requires POSITIVE internal cohesion -- some file in the subtree must be
+  imported by ANOTHER file in the same subtree -- in addition to being externally isolated. A
+  graph-invisible subtree (no edges at all) is no longer an island; it can still fire on STRONG-1 +
+  a name prior, but not on the empty-graph signal alone.
+
+Test: test_skips_graph_invisible_subproject_with_no_import_edges (a rust_core/ + Cargo.toml + .rs
+  tree must NOT be de-weighted). The previously-failing
+  test_agent_capsule_hardcase_rust_language_hint_selects_rust_target + all agent-capsule +
+  orient/centrality tests are green.
+
+* fix(orient): drop deweighted_trees from the compact context render (macOS token budget)
+
+The context-pack payload gained a `deweighted_trees` diagnostic list (this feature), but
+  `_compact_context_render_payload` copies the full payload and only prunes an explicit omit-list --
+  so the new key was carried into the LLM-compact render, inflating it by ~22 chars. On macOS, whose
+  pytest temp paths (/private/var/folders/...) are longer, that tipped
+  test_context_render_llm_profile_compacts_agent_metadata over its `< 9000` budget (9019). Caught by
+  #525 CI (test-python macos-latest, both py versions; ubuntu/windows have shorter temp paths and
+  stayed under).
+
+Fix: add `deweighted_trees` to _COMPACT_CONTEXT_RENDER_OMITTED_KEYS -- the compact render drops it
+  (like symbols/imports/related_paths); the full/non-compact render keeps it for transparency.
+  Verified: the compact llm payload no longer contains the key; the budget test + 16 context-render
+  + 22 agent-capsule/orient tests pass.
+
+* fix(orient): omit empty deweighted_trees from the context-pack payload (macOS token budget)
+
+The prior attempt (e112f38) added deweighted_trees to the compact-render omit-list, but compaction
+  RECORDS every dropped key in payload_compaction.omitted_keys -- so omitting a present key just
+  moves its ~20-byte name from the field into the audit list, saving ~nothing (macOS 9019 -> 9015,
+  still over the < 9000 ceiling).
+
+Measured the real delta (this branch 7633 vs main 7613 on the same fixture = +20B, entirely the
+  "deweighted_trees" string now sitting in omitted_keys). main's macOS render is ~8995 -- a genuine
+  ~5B margin under 9000 -- so ANY net addition tips it.
+
+Real fix: revert the omit-list change, and only set payload["deweighted_trees"] when NON-EMPTY (an
+  empty list is the common no-vendored-subtree case, incl. this test's fixture). The payload is now
+  byte-identical to main for the empty case (7613); consumers treat a missing key as "nothing
+  de-weighted". Verified: the budget test + agent-capsule hardcases + feature tests are green and
+  the measured payload == main.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **routing**: De-flake help-probe timeout test via delta comparison, not absolute wall-clock (#129)
+  ([#521](https://github.com/oimiragieo/tensor-grep/pull/521),
+  [`be2828e`](https://github.com/oimiragieo/tensor-grep/commit/be2828eefe205478997565b1fb6702e2677f52c4))
+
+test_help_probe_timeout_env_override_is_honored asserted `elapsed < 3.0` to prove
+  TG_HELP_PROBE_TIMEOUT_MS=250 is honored (fast fallback) rather than falling through to the raised
+  3000ms default. Under parallel-spawn contention, process-spawn overhead can push a
+  correctly-honored 250ms probe past the 3.0s absolute bound -> intermittent false failure (a known
+  re-run-to-clear flake).
+
+Fix: measure the 250ms override AND the 3000ms default back-to-back against the same wedged Python
+  under the same machine load, then assert the override is markedly faster (delta > 1.0s) instead of
+  a tight absolute bound. Shared contention cancels in the delta, so the discriminator ("override
+  honored => markedly faster than the default") holds regardless of absolute machine load. Same
+  de-flake pattern as #120 (outcome/delta over wall-clock). Both the override and default paths
+  still assert a clean native-help fallback (returncode 0, Usage:, no stderr).
+
+Verified: the test passes locally; ruff check + ruff format --preview clean.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.61.2 (2026-07-11)
 
 ### Bug Fixes
