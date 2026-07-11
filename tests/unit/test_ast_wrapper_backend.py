@@ -690,3 +690,122 @@ def test_ast_wrapper_backend_tolerates_per_path_access_warnings_with_findings(ca
 
     assert result.total_matches == 1
     assert "skipped unreadable paths" in capsys.readouterr().err
+
+
+# --- Backend Fail-Closed Contract: exit-0 malformed/wrong-shape JSON must raise,
+# not silently report a clean 0-match result (MED-3 audit fix). `[]` (or any
+# string parsing to a list) remains the ONE legitimate no-match shape -- see the
+# regression guard at the bottom of this block.
+
+
+def test_ast_wrapper_backend_should_raise_on_malformed_json_at_exit_zero_for_search():
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout='[{"file":"a.py","range"', stderr=""),
+        ),
+        pytest.raises(BackendExecutionError, match="malformed JSON"),
+    ):
+        backend.search(
+            "example.py",
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+
+def test_ast_wrapper_backend_should_raise_on_malformed_json_at_exit_zero_for_search_many():
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout='[{"file":"a.py","range"', stderr=""),
+        ),
+        pytest.raises(BackendExecutionError, match="malformed JSON"),
+    ):
+        backend.search_many(
+            ["example.py"],
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+
+def test_ast_wrapper_backend_should_raise_on_malformed_json_at_exit_zero_for_search_project():
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout='[{"file":"a.py","range"', stderr=""),
+        ),
+        pytest.raises(BackendExecutionError, match="malformed JSON"),
+    ):
+        backend.search_project("project", "sgconfig.yml")
+
+
+def test_ast_wrapper_backend_should_raise_on_non_list_json_shape_at_exit_zero_for_search():
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout='{"error":"sg internal panic"}', stderr=""),
+        ),
+        pytest.raises(BackendExecutionError, match="expected a list"),
+    ):
+        backend.search(
+            "example.py",
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+
+def test_ast_wrapper_backend_should_raise_on_non_list_json_shape_at_exit_zero_for_search_project():
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout='{"error":"sg internal panic"}', stderr=""),
+        ),
+        pytest.raises(BackendExecutionError, match="expected a list"),
+    ):
+        backend.search_project("project", "sgconfig.yml")
+
+
+def test_ast_wrapper_backend_should_treat_valid_empty_list_as_no_match_not_error():
+    """The 'obvious fix is wrong' regression guard: a valid empty list `[]` is the
+    ONE legitimate no-match shape and must NOT raise, on both the search() path
+    (_parse_result) and the search_project() path (_parse_json_items)."""
+    backend = AstGrepWrapperBackend()
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout="[]", stderr=""),
+        ),
+    ):
+        result = backend.search(
+            "example.py",
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+        assert result.total_matches == 0
+        assert result.matched_file_paths == []
+
+        project_result = backend.search_project("project", "sgconfig.yml")
+        assert project_result == {}

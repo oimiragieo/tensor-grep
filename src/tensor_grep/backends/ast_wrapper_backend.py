@@ -208,34 +208,42 @@ class AstGrepWrapperBackend(ComputeBackend):
 
         try:
             data_list = json.loads(stdout)
-            for item in data_list:
-                file_path = str(item.get("file") or fallback_file or "")
-                text = item.get("text", "")
-                match_range = item.get("range")
-                if not isinstance(match_range, dict):
-                    match_range = None
-                meta_variables = item.get("metaVariables")
-                if not isinstance(meta_variables, dict):
-                    meta_variables = None
-                start = match_range.get("start", {}) if match_range is not None else {}
-                if not isinstance(start, dict):
-                    start = {}
-                line_num = int(start.get("line", 0)) + 1  # 0-indexed to 1-indexed
+        except json.JSONDecodeError as exc:
+            raise BackendExecutionError(
+                f"ast-grep returned malformed JSON on stdout (exit 0): {exc}"
+            ) from exc
+        if not isinstance(data_list, list):
+            raise BackendExecutionError(
+                "ast-grep returned an unexpected JSON shape on stdout (exit 0): "
+                f"expected a list, got {type(data_list).__name__}"
+            )
 
-                matches.append(
-                    MatchLine(
-                        line_number=line_num,
-                        text=text,
-                        file=file_path,
-                        range=match_range,
-                        meta_variables=meta_variables,
-                    )
+        for item in data_list:
+            file_path = str(item.get("file") or fallback_file or "")
+            text = item.get("text", "")
+            match_range = item.get("range")
+            if not isinstance(match_range, dict):
+                match_range = None
+            meta_variables = item.get("metaVariables")
+            if not isinstance(meta_variables, dict):
+                meta_variables = None
+            start = match_range.get("start", {}) if match_range is not None else {}
+            if not isinstance(start, dict):
+                start = {}
+            line_num = int(start.get("line", 0)) + 1  # 0-indexed to 1-indexed
+
+            matches.append(
+                MatchLine(
+                    line_number=line_num,
+                    text=text,
+                    file=file_path,
+                    range=match_range,
+                    meta_variables=meta_variables,
                 )
-                if file_path and file_path not in seen_files:
-                    seen_files.add(file_path)
-                    matched_files.append(file_path)
-        except json.JSONDecodeError:
-            pass
+            )
+            if file_path and file_path not in seen_files:
+                seen_files.add(file_path)
+                matched_files.append(file_path)
 
         return SearchResult(
             matches=matches,
@@ -271,10 +279,15 @@ class AstGrepWrapperBackend(ComputeBackend):
     def _parse_json_items(self, stdout: str) -> list[dict[str, Any]]:
         try:
             loaded = json.loads(stdout)
-        except json.JSONDecodeError:
-            return []
+        except json.JSONDecodeError as exc:
+            raise BackendExecutionError(
+                f"ast-grep returned malformed JSON on stdout (exit 0): {exc}"
+            ) from exc
         if not isinstance(loaded, list):
-            return []
+            raise BackendExecutionError(
+                "ast-grep returned an unexpected JSON shape on stdout (exit 0): "
+                f"expected a list, got {type(loaded).__name__}"
+            )
         return [item for item in loaded if isinstance(item, dict)]
 
     def _run_ast_grep_command(
