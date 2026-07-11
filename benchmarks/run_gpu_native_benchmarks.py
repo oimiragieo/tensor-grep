@@ -421,7 +421,11 @@ def _extract_tg_match_signatures(payload: dict[str, object]) -> list[tuple[str, 
     for match in matches:
         if not isinstance(match, dict):
             continue
-        line_number = match.get("line_number")
+        # Native tg search JSON (SearchMatchJson in rust_core/src/main.rs) emits
+        # the line number under the key `line`; the rg-passthrough serializer uses
+        # `line_number`. Read `line` first, fall back to `line_number` so both the
+        # native `--gpu-device-ids` path and the CPU/rg path parse correctly (#131 F2).
+        line_number = match.get("line", match.get("line_number"))
         if not isinstance(line_number, int):
             line_number = 0
         signatures.append((
