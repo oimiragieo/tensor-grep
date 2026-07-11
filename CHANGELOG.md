@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.61.1 (2026-07-11)
+
+### Bug Fixes
+
+- **scanner**: Honor nested .gitignore files in the directory walk, not just the root (#128 MED-5)
+  ([#522](https://github.com/oimiragieo/tensor-grep/pull/522),
+  [`29269ef`](https://github.com/oimiragieo/tensor-grep/commit/29269efe75e5f19b0874b57c54666a1994a0ebdb))
+
+DirectoryScanner (the `tg search` file walk) loaded only base_path/.gitignore once and matched the
+  whole tree against that single spec -- a nested subdir/.gitignore was never read, so files a
+  nested gitignore should hide still appeared in results (correctness gap).
+
+Fix: maintain a per-directory spec cache as os.walk descends (top-down, so every ancestor is loaded
+  before its children), and test each path against its full ancestor chain shallowest-first, with
+  the DEEPEST spec's opinion winning (git precedence). Uses pathspec's tri-state check_file
+  (include=True ignored / False negated-reinclude / None no-match), so a deeper `!keep.log`
+  correctly overrides a parent's `*.log` ignore. The existing per-file byte-cap (Q15) + traversal
+  budget (Q14) are preserved (each nested .gitignore is byte-capped).
+
+Tests (RED on the old single-root code, GREEN now): nested-ignore honored + cross-file negation
+  re-include. 16/16 test_directory_scanner tests pass; ruff + mypy clean.
+
+Scope: directory_scanner (search path) only. repo_map/orient has the SAME gap via a
+
+DIFFERENT custom regex matcher -- fast-follow tracked in #128 (spec:
+  scratchpad/med5_nested_gitignore_spec.md). Gate-free surface (io/, not backends/mcp/etc.).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.61.0 (2026-07-11)
 
 ### Features
