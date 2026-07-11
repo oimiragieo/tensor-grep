@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v1.63.2 (2026-07-11)
+
+### Bug Fixes
+
+- **reranker**: Give the late-rerank budget a REAL wall-clock deadline (audit A3)
+  ([#531](https://github.com/oimiragieo/tensor-grep/pull/531),
+  [`36da19d`](https://github.com/oimiragieo/tensor-grep/commit/36da19d5e8d4ac55a171d9e0fc2cd4752a070752))
+
+* fix(reranker): give the late-rerank budget a REAL wall-clock deadline (external audit 2026-07-11
+  A3)
+
+The late-interaction rerank budget (`TG_RERANK_BUDGET_MS`) was enforced POST-HOC: it measured
+  `elapsed` only AFTER `late_reranker.rerank` had already returned, so it could DISCARD a
+  slow-but-completed rerank -- but a genuinely HUNG encoder (a wedged model, an infinite loop in the
+  injected reranker) never returns, so `tg search --rank` / `--semantic` blocked indefinitely with
+  no bound (a caller-triggerable hang).
+
+Run the rerank on a daemon thread and `join` on the budget: if it overruns, abandon the thread (it
+  dies with the short-lived CLI process) and degrade to the plain RRF order. This is now the ONLY
+  path that bounds a hung encoder -- the old check could never run for one.
+
+The Backend Fail-Closed Contract is PRESERVED across the thread boundary: -
+  LateRerankUnavailableError (recoverable, e.g. a malformed embedding shape) -> degrade to RRF. -
+  ANY OTHER exception (a genuine BackendExecutionError encode fault) -> re-raised on the worker's
+  behalf so it still propagates to the CLI boundary, exactly as the synchronous version did. -
+  BaseException is captured (not just Exception): a KeyboardInterrupt/SystemExit user-abort
+  propagates instead of being silently swallowed into an RRF degrade, and exactly one result holder
+  is always populated so the splice can never IndexError on an empty result.
+
+Tests: 3 new cases in test_reranker.py -- a hung (10s) encoder degrades within the 100ms budget
+  (returns in <4s, not ~10s); a BackendExecutionError propagates (not degrades); a KeyboardInterrupt
+  propagates (not swallowed). The existing budget/shape-mismatch/append-reason/byte-identical tests
+  stay green (the slow-but-completes case still degrades with "budget exceeded").
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* style(reranker): ruff format --preview line-wrap (fixes the Formatting & Linting gate)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.63.1 (2026-07-11)
 
 ### Bug Fixes
