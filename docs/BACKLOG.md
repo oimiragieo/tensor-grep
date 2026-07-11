@@ -3,7 +3,7 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-10 (drain @ v1.58.11).
+> Last refreshed 2026-07-11 (drain @ v1.63.4).
 
 **Process:** deep-dive/audit (cite `file:line`) → verify-against-code → Sonnet TDD build in
 `isolation:'worktree'` → real-venv verify (`uv run --active --no-sync`; copy `rust_core.pyd`, set
@@ -23,17 +23,19 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
-## ⭐ CURRENT STATE (2026-07-12) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+## ⭐ CURRENT STATE (2026-07-11) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **0 open PRs** (`gh pr list` = 0, the source of truth). **WIP=0 — drain FULLY CLEAR.** Live PyPI **v1.63.1**; **v1.63.2 releasing** (main `36da19d`; #531 late-rerank real deadline).
-- **This session drained the full v1.61.2-dogfood + external-audit batch — 5 releases (v1.62.2 → v1.63.2), zero broken releases, every fix real-binary-verified (not just CliRunner):**
-  - **v1.62.0** (#525 orient auto-deweight) · **v1.62.1** (#527 = audit **A2** semantic-cap self-bypass DoS) · **v1.62.2** (#528 = dogfood **P0** unscoped-search refuse-fast — the FULL-CLI `--rank`/`--semantic` path; the native binary already guarded the plain path, corrected by real-binary dogfood) · **v1.63.0** (#530 = `suggested_scope` on the agent capsule, no second scan) · **v1.63.1** (#529 = `tg evidence <path>` → `emit` UX hint) · **v1.63.2 releasing** (#531 = audit **A3** late-rerank REAL wall-clock deadline; a hung encoder no longer blocks `tg search --rank` forever; Fail-Closed Contract preserved across the thread boundary).
+- **0 open PRs** (`gh pr list` = 0, the source of truth). **WIP=0 — drain clear.** Live PyPI **v1.63.3**; **v1.63.4 releasing** (main `8e3e625`; #535 content-addressed AST parse-cache).
+- **This session shipped 7 releases (v1.62.0 → v1.63.4), zero broken, every fix real-binary-verified (not just CliRunner):**
+  - **v1.62.0** (#525 orient auto-deweight) · **v1.62.1** (#527 = audit **A2** semantic-cap self-bypass DoS) · **v1.62.2** (#528 = dogfood **P0** unscoped-search refuse-fast, FULL-CLI `--rank`/`--semantic` path) · **v1.63.0** (#530 = `suggested_scope` on the agent capsule, no second scan) · **v1.63.1** (#529 = `tg evidence <path>` → `emit` hint) · **v1.63.2** (#531 = audit **A3** late-rerank real wall-clock deadline) · **v1.63.3** (#534 = deweight O(subtrees×files)→one-pass lexical membership) · **v1.63.4 releasing** (#535 = content-addressed AST parse-cache).
+  - **LATENCY (the #1 moat lever) — two profiled wins this session:** #534 deweight removed 2 filesystem `resolve()`/pair from the shared agent/orient hot path (~16% of agent wall, worst on WSL 9p); #535 parse-cache deduped the 2-3x Python file parses (**36% faster WARM agent re-query 11.4s→7.4s** — the daemon-persistence enabler). **CPU-side dedup wins now EXHAUSTED** — the remaining `ast.walk` caller-scan is inherent (once per file, not duplicated), so the next latency lever is the warm-daemon / import-index = **#94 (Opus-gated → Jul-13)**.
+  - **The v1.63.2 dogfood "P0 whole-repo hang" alarm was a WSL /mnt/c 9p ARTIFACT, not a tg bug** — native, the flagged commands COMPLETE (agent 17.6s, callers 13.3s, workspace orient 48s). Reproduce WSL latency reports natively first (memory: `tensor-grep-wsl-mnt-c-latency-artifact-2026-07-11`).
 - **Remaining backlog (authoritative; gated as noted):**
-  - **#134 external audit** — SHIPPED: A2 (#527), A3 (#531). **Opus-gated → Jul-13** (weekly limit; mandatory adversarial gate before load-bearing security code): A1 (explicit `--index` drops CLI options / default-deny validator, rust_core), A4 (index-persistence load-once+atomic+lock, index.rs), GPU capability-validator + NVIDIA-artifact-without-native-CUDA packaging-matrix removal.
-  - **#133 v1.61.2 dogfood** — P0/UX DRAINED. Remaining polish-tail: edit-plan `validation_plan` (verified gap = `tg context` surface only; `tg agent` already emits it → marginal), dynamic-imports (extends #93). Held per the CEO's churn steer.
-  - **#94 latency (the #1 "make models prefer tg" lever)** — warm-daemon default fast path. **Opus-gated → Jul-13** (session_daemon surface).
+  - **#134 external audit** — SHIPPED: A2 (#527), A3 (#531); the re-relayed audit was STALE (both already fixed, verified vs live code). **VERIFY-PLANNED + Opus-gated → Jul-13:** A1 (explicit `--index` deny-list incomplete `main.rs:5908`; silently drops `--hidden`/`--max-depth`/`-l`/`-o`/`--replace` → default-deny capability validator) · A4 (index-persistence non-atomic `std::fs::write` `index.rs:856` + zero locking → temp→fsync→rename + O_EXCL lock). GPU capability-validator + NVIDIA-without-native-CUDA packaging-matrix removal is **CEO-gated** (GPU program vs no-SaaS).
+  - **#135 docs** — add scope-to-src + WSL-caveat agent guidance (THIS PR). **#133 dogfood polish-tail** (edit-plan `validation_plan` = marginal `tg context`-only gap; dynamic-imports extends #93) held per the CEO churn steer.
+  - **#94 latency warm-daemon default** — the next moat step now that CPU dedup is exhausted. **Opus-gated → Jul-13** (session_daemon surface).
 - **CEO-gated (the CEO's call):** benchmark publish #72 (the 7.5x-fewer-tokens-than-grep proof) · `tg ledger` #77 (local agent coordination) · GPU multi-week rebuild #131 (conflicts with no-SaaS).
-- **Strategic (audit + CEO steer 2026-07-11):** tool WORKS (477 releases, moat = **7.5x fewer tokens than grep on definition-lookup**, benchmark-proven); near-term product = signed PR evidence + change-governance; finish the moat (latency) + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
+- **Strategic (CEO steer 2026-07-11):** tool WORKS (moat = **7.5x fewer tokens than grep on definition-lookup**, benchmark-proven); finish the moat (latency — 2 CPU wins shipped, next lever Jul-13-gated) + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
 
 ---
 
