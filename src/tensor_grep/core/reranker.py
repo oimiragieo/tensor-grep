@@ -234,7 +234,9 @@ def rerank_hybrid(
                 rerank_result.append(
                     late_reranker.rerank(query, [chunks[i].text for i in head], head)
                 )
-            except BaseException as exc:  # classified + re-raised (if non-recoverable) by the caller
+            except (
+                BaseException
+            ) as exc:  # classified + re-raised (if non-recoverable) by the caller
                 rerank_error.append(exc)
 
         worker = threading.Thread(target=_run_late_rerank, name="tg-late-rerank", daemon=True)
