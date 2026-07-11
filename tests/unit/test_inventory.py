@@ -273,6 +273,70 @@ class TestDeadline:
         assert inv["scan_limit"]["truncation_cause"] is None
         assert inv["totals"]["files"] == 10
 
+    def test_inventory_deadline_never_zero_when_files_were_discovered(self, tmp_path, monkeypatch):
+        # #130(a): live-repro'd bug -- `tg inventory PATH --deadline N` on a large workspace
+        # returns totals.files=0 despite the walk having discovered files. ROOT: build_inventory
+        # computed ONE deadline shared by the walk phase (_iter_repo_files) and the per-file
+        # stat/categorize loop. A walk that (worst case) burns 100% of its allotted budget before
+        # returning leaves nothing for the per-file loop -- its very first
+        # `time.monotonic() >= deadline` check fires immediately -- totals.files stays 0 even
+        # though `walked` is non-empty. This simulates exactly that worst case: the walk consumes
+        # whatever deadline it is handed, in full, then still returns discovered files.
+        real_files = [_write(tmp_path, f"f{i}.py", "x=1\n") for i in range(5)]
+
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(inventory_module.time, "monotonic", lambda: clock["t"])
+
+        def fake_iter_repo_files(
+            root, *, max_files=None, deadline_monotonic=None, deadline_hit=None, **kwargs
+        ):
+            # Worst-case walk: burns 100% of whatever budget it was given before returning,
+            # exactly like a huge tree eating the whole --deadline window -- yet still
+            # discovers (and returns) real files.
+            if deadline_monotonic is not None:
+                clock["t"] = deadline_monotonic
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            return list(real_files)
+
+        monkeypatch.setattr(inventory_module, "_iter_repo_files", fake_iter_repo_files)
+
+        inv = build_inventory(str(tmp_path), deadline_seconds=2.0)
+
+        assert inv["scan_limit"]["possibly_truncated"] is True
+        assert inv["scan_limit"]["truncation_cause"] == "deadline"
+        # The core bug under test: files WERE discovered (the walk returned a non-empty list)
+        # but the per-file loop got zero time to process any of them -- a misleading silent-empty
+        # result rather than an honest partial floor.
+        assert inv["totals"]["files"] > 0
+
+    def test_inventory_walk_phase_reserves_stat_loop_budget(self, tmp_path, monkeypatch):
+        # #130(a): the fix reserves a SLICE of deadline_seconds for phase 2 (the per-file stat
+        # loop) by passing a smaller walk_deadline -- not the full deadline -- into
+        # _iter_repo_files. Freeze the clock so "the overall deadline" is a known, exact value:
+        # a loose "< now + deadline_seconds" bound measured around the call would pass even
+        # pre-fix, since some real wall-clock time always elapses during the call itself.
+        monkeypatch.setattr(inventory_module.time, "monotonic", lambda: 1000.0)
+        seen_deadlines: list[float | None] = []
+
+        def spy_iter_repo_files(root, *, max_files=None, deadline_monotonic=None, **kwargs):
+            seen_deadlines.append(deadline_monotonic)
+            return []
+
+        monkeypatch.setattr(inventory_module, "_iter_repo_files", spy_iter_repo_files)
+
+        deadline_seconds = 10.0
+        build_inventory(str(tmp_path), deadline_seconds=deadline_seconds)
+
+        assert seen_deadlines, "the walker was never called"
+        walk_deadline = seen_deadlines[0]
+        overall_deadline = 1000.0 + deadline_seconds
+        assert walk_deadline is not None
+        # Phase 2 must be guaranteed a real, non-zero slice of the budget: the walk's own
+        # deadline must be a genuine reservation, not the full overall deadline.
+        assert walk_deadline < overall_deadline
+        assert walk_deadline > 1000.0  # phase 1 still gets a positive slice, not zero
+
 
 class TestRegistration:
     def test_cli_default_max_files_matches_module_constant(self):
@@ -334,3 +398,94 @@ class TestDeadlineCliWiring:
             tg_main.app, ["inventory", str(tmp_path), "--deadline", "0.001"]
         )
         assert result.exit_code == 2
+
+    def test_inventory_exits_2_when_scan_possibly_truncated_json(self, tmp_path, monkeypatch):
+        # #130(a) optional bundle: the CLI never inspected scan_limit.possibly_truncated and
+        # always exited 0, mirroring neither `map`'s nor the symbol-command exit-2 contract for a
+        # truncated (e.g. --deadline-fired) scan. This is agent-observable: a script that only
+        # checks $? cannot tell "complete inventory" from "silently truncated inventory".
+        from typer.testing import CliRunner
+
+        from tensor_grep.cli import main as tg_main
+
+        def _spy(path, *, max_files=None, deadline_seconds=None):
+            return {
+                "totals": {"files": 3, "bytes": 30},
+                "binary": {"files": 0, "bytes": 0},
+                "languages": [],
+                "categories": [],
+                "top_level_dirs": [],
+                "largest_files": [],
+                "path": str(path),
+                "scan_limit": {
+                    "max_files": 50_000,
+                    "scanned_files": 3,
+                    "possibly_truncated": True,
+                    "truncation_cause": "deadline",
+                },
+            }
+
+        monkeypatch.setattr("tensor_grep.cli.inventory.build_inventory", _spy)
+        result = CliRunner().invoke(
+            tg_main.app, ["inventory", str(tmp_path), "--deadline", "5", "--json"]
+        )
+        assert result.exit_code == 2
+        # The payload must still be emitted (exit 2 signals "partial", not "nothing produced") --
+        # same "output the full payload FIRST, then exit 2" contract as `map`.
+        payload = json.loads(result.output)
+        assert payload["scan_limit"]["possibly_truncated"] is True
+
+    def test_inventory_exits_0_when_scan_not_truncated_json(self, tmp_path, monkeypatch):
+        # Regression pin: a complete (non-truncated) scan must stay exit 0.
+        from typer.testing import CliRunner
+
+        from tensor_grep.cli import main as tg_main
+
+        def _spy(path, *, max_files=None, deadline_seconds=None):
+            return {
+                "totals": {"files": 1, "bytes": 10},
+                "binary": {"files": 0, "bytes": 0},
+                "languages": [],
+                "categories": [],
+                "top_level_dirs": [],
+                "largest_files": [],
+                "path": str(path),
+                "scan_limit": {
+                    "max_files": 50_000,
+                    "scanned_files": 1,
+                    "possibly_truncated": False,
+                    "truncation_cause": None,
+                },
+            }
+
+        monkeypatch.setattr("tensor_grep.cli.inventory.build_inventory", _spy)
+        result = CliRunner().invoke(tg_main.app, ["inventory", str(tmp_path), "--json"])
+        assert result.exit_code == 0, result.output
+
+    def test_inventory_exits_2_when_scan_possibly_truncated_text_mode(self, tmp_path, monkeypatch):
+        # The exit-2 gate must fire in text-output mode too, not just --json.
+        from typer.testing import CliRunner
+
+        from tensor_grep.cli import main as tg_main
+
+        def _spy(path, *, max_files=None, deadline_seconds=None):
+            return {
+                "totals": {"files": 3, "bytes": 30},
+                "binary": {"files": 0, "bytes": 0},
+                "languages": [],
+                "categories": [],
+                "top_level_dirs": [],
+                "largest_files": [],
+                "path": str(path),
+                "scan_limit": {
+                    "max_files": 50_000,
+                    "scanned_files": 3,
+                    "possibly_truncated": True,
+                    "truncation_cause": "deadline",
+                },
+            }
+
+        monkeypatch.setattr("tensor_grep.cli.inventory.build_inventory", _spy)
+        result = CliRunner().invoke(tg_main.app, ["inventory", str(tmp_path), "--deadline", "5"])
+        assert result.exit_code == 2
+        assert "inventory:" in result.output  # render_inventory_text output still printed
