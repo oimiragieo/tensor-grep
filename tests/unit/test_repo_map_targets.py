@@ -347,6 +347,29 @@ def test_repo_walk_honors_gitignore(tmp_path: Path) -> None:
     assert "vendored.py" not in walked
 
 
+def test_repo_walk_honors_nested_gitignore(tmp_path: Path) -> None:
+    # MED-5 part B: the repo_map walk must honor a nested subdir/.gitignore (not just the root),
+    # including a deeper `!re-include` overriding a parent ignore (git precedence).
+    (tmp_path / ".gitignore").write_text("*.tmp\n*.log\n", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / ".gitignore").write_text("secret.txt\n!keep.log\n", encoding="utf-8")
+    (sub / "app.py").write_text("y = 2\n", encoding="utf-8")
+    (sub / "secret.txt").write_text("s\n", encoding="utf-8")
+    (sub / "keep.log").write_text("k\n", encoding="utf-8")
+    (sub / "other.log").write_text("o\n", encoding="utf-8")
+
+    repo_map._load_gitignore_matcher.cache_clear()
+    walked = {p.relative_to(tmp_path).as_posix() for p in repo_map._iter_repo_files(tmp_path)}
+
+    assert "keep.py" in walked
+    assert "sub/app.py" in walked
+    assert "sub/secret.txt" not in walked  # nested .gitignore honored
+    assert "sub/keep.log" in walked  # nested !keep.log overrides the root *.log ignore
+    assert "sub/other.log" not in walked  # root *.log still applies where not re-included
+
+
 def test_repo_walk_skips_tg_owned_index_and_reference_trees(tmp_path: Path) -> None:
     """Critical unscoped-search-hang fix A: repo_map must never descend into tg's own
     index/reference/vendor-benchmark trees -- these can be arbitrarily large and are never
