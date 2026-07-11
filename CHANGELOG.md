@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v1.62.2 (2026-07-11)
+
+### Bug Fixes
+
+- **search**: Refuse-fast unscoped full-CLI searches with no glob/type over the walk ceiling
+  (dogfood + audit P0-1) ([#528](https://github.com/oimiragieo/tensor-grep/pull/528),
+  [`d7284b6`](https://github.com/oimiragieo/tensor-grep/commit/d7284b6bba508422629a14a3bd86d1ed5eb6ffa2))
+
+The implicit-path walk-ceiling guard in `search_command` was gated on a glob/type filter being
+  present, so a full-CLI-routed unscoped search that carried NO glob/type (e.g. `tg search PATTERN
+  --rank` / `--semantic` / `--cpu`) escaped it and fell through to the unbounded per-file Python
+  loop, burning the wall-clock deadline on a large root instead of refusing fast.
+
+The plain fast-path search is already bounded upstream -- the bootstrap front door delegates it to
+  the native binary (whose own walk-ceiling guard refuses) or to rg passthrough -- so this only
+  affects queries forced to the full CLI where no fast native/rg engine can serve them. Remove the
+  glob/type requirement so the bounded walk-count probe (which strips glob/type anyway) fires for
+  any unscoped, unbounded full-CLI search over the ceiling. The sibling post-collection backstop
+  (`_should_refuse_unbounded_large_root_scan`) already keyed on `_has_walk_scope_bound`, not glob
+  presence, so it is consistent and unchanged.
+
+Dogfood-reproduced on the REAL front door (not CliRunner): `tg search PATTERN --rank` on a
+  >1500-file unscoped root did the full walk (exit 1 after the deadline) on v1.61.2; with this
+  change it refuses fast with the large-root guard message (exit 2).
+
+Tests: 2 TDD cases in test_cli_modes.py -- refuses over the ceiling on an implicit root before the
+  walk, allows a normal search under the ceiling.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.62.1 (2026-07-11)
 
 ### Bug Fixes
