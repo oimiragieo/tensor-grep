@@ -280,6 +280,7 @@ this document it does **not** carry the common envelope fields (`version`/`routi
 | `token_budget_label` | `string` | Human-readable summary of `token_estimate` and the snippet token budget. |
 | `truncated` | `boolean` | `true` when the snippet token budget clipped or dropped a snippet. |
 | `scan_limit` | `integer` | The effective `max_repo_files` used to build the underlying repo map. |
+| `suggested_scope` | `object \| null` | Additive (audit #93 SUB-2). Present only when the underlying repo scan itself was truncated (distinct from `truncated` above, which is snippet/token-budget only) AND a centrality-weighted directory rollup found a clear winner: `{dirs: [absolute_path], confidence: "heuristic"}`. `null` on a complete scan, or when the top two directories are tied/near-tied (degrade rather than guess). |
 
 `ignore` (repeatable glob, matches basename or repo-relative path) excludes a subtree from the
 **centrality ranking** only -- the files are still walked, just kept out of the central-files/

@@ -66,11 +66,14 @@ _ENTRY_NAMES = {
 }
 
 
-def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> list[dict[str, Any]]:
-    """Rank source files by import in-degree (foundational = imported-by-many); top-N with symbols."""
+def _file_centrality_scores(rm: dict[str, Any]) -> tuple[list[str], dict[str, float]]:
+    """Composite per-file centrality (capped fan-in + fan-out + symbol density) over the non-doc,
+    non-config code files in `rm`. Shared by `_central_files_from_map` (top-N central-file ranking)
+    and `_suggested_scope_from_map` (directory rollup, audit #93 SUB-2) so both features read off
+    the exact same score -- never a second, driftable scoring system."""
     all_files = [str(f) for f in rm.get("files", [])]
     if not all_files:
-        return []
+        return [], {}
     # "Central files" surface CODE architecture. Documentation files (heavily cross-referenced in
     # doc-heavy repos — e.g. 36 CLAUDE.md files) must not rank as central, and must not absorb a code
     # import via a stem collision (config.md shadowing config.py in by_stem). Exclude docs from the
@@ -117,6 +120,14 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
         fan_out = len(resolved_imports.get(source, []))
         density = min(symbol_counts.get(source, 0), _CENTRAL_SYMBOL_DENSITY_CAP)
         centrality[source] = float(fan_in + fan_out + density)
+    return code_files, centrality
+
+
+def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> list[dict[str, Any]]:
+    """Rank source files by import in-degree (foundational = imported-by-many); top-N with symbols."""
+    code_files, centrality = _file_centrality_scores(rm)
+    if not code_files:
+        return []
     ranked = sorted(code_files, key=lambda source: (-centrality[source], source))
     result: list[dict[str, Any]] = []
     for file_path in ranked[:max_central_files]:
@@ -136,6 +147,62 @@ def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> li
             "symbols": file_symbols,
         })
     return result
+
+
+# suggested_scope (audit #93 SUB-2): a truncated scan gives an agent an incomplete map with no
+# guidance on how to narrow it. When the top-level-directory rollup of `_file_centrality_scores`
+# shows a clear winner, suggest re-scoping to it; a tie or near-tie degrades to None rather than
+# guess (ranking-safety-floor discipline, memory: tensor-grep-idf-ranking-fragility-2026-06-29 --
+# this inherits the same flat, no-IDF-style composite score as central_files, so a wrong scope
+# guess would actively misdirect an agent, which is worse than no hint at all). The margin is a
+# ratio, not a fixed delta, so it scales with repos of very different absolute centrality sizes.
+_SUGGESTED_SCOPE_MIN_MARGIN_RATIO = 1.5
+
+
+def _top_level_dir(file_path: str, root: Path) -> str | None:
+    """First path component of `file_path` relative to `root`, or None for a file that lives
+    directly at the repo root (no subdirectory exists there to re-scope into)."""
+    try:
+        relative = Path(file_path).relative_to(root)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if len(parts) < 2:
+        return None
+    return parts[0]
+
+
+def _suggested_scope_from_map(rm: dict[str, Any]) -> dict[str, Any] | None:
+    """Centrality-weighted directory rollup: sum each code file's composite centrality
+    (`_file_centrality_scores`) up to its top-level directory, rank directories, and suggest the
+    top one only when it clearly outranks the runner-up. Returns None (never a guess) when there
+    are no candidate subdirectories, the signal is entirely flat (all zero), or the top two
+    directories are tied/near-tied. Callers gate the call itself on the repo map's
+    ``scan_limit.possibly_truncated`` -- a complete scan has nothing left to narrow."""
+    code_files, centrality = _file_centrality_scores(rm)
+    if not code_files:
+        return None
+    root = Path(str(rm.get("path", ".")))
+    dir_scores: dict[str, float] = {}
+    for file_path in code_files:
+        top_dir = _top_level_dir(file_path, root)
+        if top_dir is None:
+            continue
+        dir_scores[top_dir] = dir_scores.get(top_dir, 0.0) + centrality.get(file_path, 0.0)
+    if not dir_scores:
+        return None
+    ranked_dirs = sorted(dir_scores, key=lambda d: (-dir_scores[d], d))
+    top_score = dir_scores[ranked_dirs[0]]
+    if top_score <= 0:
+        return None  # no signal at all -- nothing to distinguish a "highest-value" directory
+    if len(ranked_dirs) > 1:
+        runner_up_score = dir_scores[ranked_dirs[1]]
+        if runner_up_score > 0 and top_score < runner_up_score * _SUGGESTED_SCOPE_MIN_MARGIN_RATIO:
+            return None  # no clear winner -- degrade to null rather than risk a misleading guess
+    return {
+        "dirs": [str(root / ranked_dirs[0])],
+        "confidence": "heuristic",
+    }
 
 
 def _detect_entry_points(rm: dict[str, Any]) -> list[dict[str, Any]]:
@@ -218,6 +285,16 @@ def build_orient_capsule(
     central_files = _central_files_from_map(rm, max_central_files=max_central_files)
     entry_points = _detect_entry_points(rm)
 
+    # suggested_scope (audit #93 SUB-2): gate on the underlying repo map's OWN scan_limit dict
+    # (`rm["scan_limit"]["possibly_truncated"]`, set by `repo_map.build_repo_map` -- NOT this
+    # capsule's own simplified `scan_limit` int returned below, and NOT the snippet/token-budget
+    # `truncated` flag computed further down). A complete scan has no incomplete map to narrow.
+    scan_limit_info = rm.get("scan_limit")
+    scan_possibly_truncated = bool(
+        isinstance(scan_limit_info, dict) and scan_limit_info.get("possibly_truncated")
+    )
+    suggested_scope = _suggested_scope_from_map(rm) if scan_possibly_truncated else None
+
     symbol_map: dict[str, list[dict[str, Any]]] = {}
     for cf in central_files:
         file_path = cf["file"]
@@ -294,6 +371,7 @@ def build_orient_capsule(
         ),
         "truncated": truncated,
         "scan_limit": effective_max_repo_files,
+        "suggested_scope": suggested_scope,
         "routing_reason": "orient",
     }
 
