@@ -62,7 +62,10 @@ _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 _DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
 _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES = 16
-_DAEMON_RESPONSE_CACHE_SCOPE = "daemon-routed top-level/session context-render/edit-plan requests"
+_DAEMON_RESPONSE_CACHE_SCOPE = (
+    "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
+    "blast-radius requests"
+)
 _DAEMON_RESPONSE_CACHE_STALE_DETECTION = "snapshot_mtime_only"
 _DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION = False
 _DAEMON_START_LOCK_STALE_SECONDS = _DAEMON_START_TIMEOUT_SECONDS * 2
@@ -924,6 +927,37 @@ def _context_render_response_cache_key(
     )
 
 
+def _symbol_command_response_cache_key(
+    command: str,
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[str, ...]:
+    # audit #113: one key function shared by all 5 symbol commands (defs/impact/refs/callers/
+    # blast_radius), so `command` MUST be a key field -- otherwise a `callers(foo)` lookup could
+    # serve a cached `defs(foo)` response (cross-command response bleed). Completeness of the
+    # REST of this tuple is equally load-bearing: a missing field (provider/max_tests/max_depth/
+    # max_repo_files) would let two requests that differ only in that field collide on the same
+    # cached answer (cross-request response bleed) -- see _symbol_command_response_cache_key's
+    # sibling _context_render_response_cache_key above for the same discipline.
+    return (
+        _path_cache_key(path),
+        session_id,
+        *_session_payload_fingerprint(payload),
+        command,
+        str(request.get("symbol", "")).strip(),
+        _request_cache_value(request, "provider", "native"),
+        _request_cache_value(request, "max_tests"),
+        _request_cache_value(request, "max_depth", 3),
+        _request_cache_value(
+            request,
+            "max_repo_files",
+            _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
+        ),
+    )
+
+
 def _response_cache_key_for_command(
     command: str,
     session_id: str,
@@ -935,6 +969,8 @@ def _response_cache_key_for_command(
         return _context_render_response_cache_key(session_id, path, request, payload)
     if command == "context_edit_plan":
         return _context_edit_plan_response_cache_key(session_id, path, request, payload)
+    if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS:
+        return _symbol_command_response_cache_key(command, session_id, path, request, payload)
     return None
 
 
@@ -1065,13 +1101,38 @@ def _serve_daemon_response_with_cache(
     if response_cache_key is None:
         return serve_session_request(session_id, session_request, path, payload=payload), "bypass"
 
-    _ensure_session_not_stale(payload, detect_added_files=False)
+    # audit #113 trap #1: context_render/context_edit_plan intentionally use
+    # detect_added_files=False here (see docs/CONTRACTS.md) so a cache HIT never pays for a
+    # directory walk -- new files stay invisible to those two commands until an explicit
+    # refresh. The 5 symbol commands are a correctness-sensitive code-intelligence surface (a
+    # blast-radius/callers answer that silently omits a newly-added call site is a WRONG
+    # answer, not just a stale one), so they must honor the caller's real refresh_on_stale flag
+    # here instead of copying the context-command False -- a new call site in a brand-new file
+    # (nothing about any already-tracked file changes) must still bust the cache.
+    detect_added_files = (
+        bool(session_request.get("refresh_on_stale", False))
+        if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS
+        else False
+    )
+    _ensure_session_not_stale(payload, detect_added_files=detect_added_files)
     with server._response_cache_lock:
         cached_response = server.response_cache.get(response_cache_key)
     if cached_response is not None:
         cached_response.pop("serve_response_cache", None)
         return cached_response, "hit"
 
+    if detect_added_files:
+        # The gate above already walked for added files and proved `payload` fresh for THIS
+        # request -- flip refresh_on_stale off before the miss-path recompute so
+        # serve_session_request's own internal _ensure_session_not_stale (session_store.py)
+        # does not re-walk the same added-file probe a second time in one request (mirrors the
+        # truncated-snapshot flip above). Guarded on detect_added_files (not unconditional):
+        # context_render/context_edit_plan never ran the walk above (detect_added_files=False
+        # for them, by design), so for THEM the inner call below is the ONLY place a miss
+        # discovers an added file -- flipping the flag unconditionally would silently disable
+        # that discovery (regression caught by
+        # test_session_daemon_refresh_on_added_file_response_is_cached).
+        session_request["refresh_on_stale"] = False
     response = serve_session_request(session_id, session_request, path, payload=payload)
     with server._response_cache_lock:
         server.response_cache.put(response_cache_key, response)
@@ -1681,7 +1742,14 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_count": server.payload_cache.session_count,
                     "root_count": server.payload_cache.root_count,
                 }
-                if command in {"context_edit_plan", "context_render"}:
+                # audit #113: observability now covers all 7 response-cacheable commands (the
+                # original context_render/context_edit_plan plus the 5 symbol commands) -- the
+                # SAME set _response_cache_key_for_command treats as cacheable. session_timing's
+                # build_metric naming below stays scoped to the original 2 (out of scope here).
+                if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS or command in {
+                    "context_edit_plan",
+                    "context_render",
+                }:
                     response["daemon_response_cache"] = {
                         "status": response_cache_status,
                         "entries": server.response_cache.entry_count,
@@ -1691,6 +1759,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         "max_size_bytes": server.response_cache.max_size_bytes,
                         "oversized_skips": server.response_cache.oversized_skips,
                     }
+                if command in {"context_edit_plan", "context_render"}:
                     build_metric = (
                         "build_context_render_seconds"
                         if command == "context_render"
