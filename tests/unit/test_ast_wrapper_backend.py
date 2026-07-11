@@ -159,6 +159,27 @@ def test_ast_grep_backend_still_trusts_working_binary():
         assert backend._get_binary_name() == "/real/path/ast-grep"
 
 
+def test_ast_grep_backend_memoizes_binary_probe():
+    backend = AstGrepWrapperBackend()
+    probe_calls: list[str] = []
+
+    def record_probe(binary: str) -> bool:
+        probe_calls.append(binary)
+        return True
+
+    with (
+        patch("shutil.which", side_effect=lambda name: "/real/path/ast-grep"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend._is_ast_grep_sg_binary",
+            side_effect=record_probe,
+        ),
+    ):
+        assert backend._get_binary_name() == "/real/path/ast-grep"
+        assert backend._get_binary_name() == "/real/path/ast-grep"
+
+    assert probe_calls == ["/real/path/ast-grep"]
+
+
 def test_doctor_ast_grep_available_false_when_shim_broken():
     """#130(b): `tg doctor`'s ast_grep status delegates to
     AstGrepWrapperBackend, so the probe-gate fix must be visible through

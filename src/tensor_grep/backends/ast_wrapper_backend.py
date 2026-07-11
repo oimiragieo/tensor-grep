@@ -83,11 +83,17 @@ class AstGrepWrapperBackend(ComputeBackend):
     This bypasses the heavy PyTorch Geometric setup for simple, fast structural searches.
     """
 
+    def __init__(self) -> None:
+        self._resolved_binary_name: str | None = None
+
     def is_available(self) -> bool:
         return self._get_binary_name() != "ast-grep"
 
     def _get_binary_name(self) -> str:
         import shutil
+
+        if self._resolved_binary_name is not None:
+            return self._resolved_binary_name
 
         # #130(b): every which()-resolved candidate must PROBE-RUN before being
         # trusted, not just the sg/sg.exe aliases. A broken npm shim literally
@@ -98,17 +104,22 @@ class AstGrepWrapperBackend(ComputeBackend):
         # actually run. Gate all four branches on the same probe used below.
         if ast_grep_path := shutil.which("ast-grep"):
             if _is_ast_grep_sg_binary(ast_grep_path):
-                return ast_grep_path
+                self._resolved_binary_name = ast_grep_path
+                return self._resolved_binary_name
         if ast_grep_exe_path := shutil.which("ast-grep.exe"):
             if _is_ast_grep_sg_binary(ast_grep_exe_path):
-                return ast_grep_exe_path
+                self._resolved_binary_name = ast_grep_exe_path
+                return self._resolved_binary_name
         if sg_exe_path := shutil.which("sg.exe"):
             if _is_ast_grep_sg_binary(sg_exe_path):
-                return sg_exe_path
+                self._resolved_binary_name = sg_exe_path
+                return self._resolved_binary_name
         if sg_path := shutil.which("sg"):
             if _is_ast_grep_sg_binary(sg_path):
-                return sg_path
-        return "ast-grep"
+                self._resolved_binary_name = sg_path
+                return self._resolved_binary_name
+        self._resolved_binary_name = "ast-grep"
+        return self._resolved_binary_name
 
     def _build_command(
         self, pattern: str, paths: list[str], config: SearchConfig | None = None
