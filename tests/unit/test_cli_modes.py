@@ -15263,3 +15263,27 @@ def test_tg_test_uses_typer_help():
     assert "Usage: " in result.stdout
     assert "Options" in result.stdout.lower() or "options" in result.stdout.lower()
     assert "positional arguments:" not in result.stdout
+
+
+def test_evidence_group_hints_emit_when_given_a_path_like_subcommand(tmp_path: Path) -> None:
+    # Dogfood trap (v1.61.2): an agent reaches for `tg evidence <PATH> <query>` by analogy
+    # with `tg defs`/`tg orient` (which take a path directly), but `evidence` is a command
+    # GROUP whose only action is `emit`. The error stays exit 2 (correct) but must now nudge
+    # the caller toward `emit` so they do not have to re-read --help.
+    src = tmp_path / "main.py"
+    src.write_text("x = 1\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["evidence", str(src), "search"])
+    assert result.exit_code == 2
+    combined = result.output
+    assert "No such command" in combined
+    assert "tg evidence emit" in combined
+
+
+def test_evidence_group_does_not_hint_emit_for_a_non_path_subcommand() -> None:
+    # A bare non-path token (a genuine subcommand typo) gets the standard error only -- the
+    # emit hint must not fire on every mistyped subcommand, just the path-shaped ones.
+    result = CliRunner().invoke(app, ["evidence", "boguscmd"])
+    assert result.exit_code == 2
+    combined = result.output
+    assert "No such command" in combined
+    assert "tg evidence emit" not in combined

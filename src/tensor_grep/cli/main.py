@@ -22,7 +22,9 @@ from uuid import uuid4
 if sys.platform.startswith("win") and not sys.stdout.isatty():
     os.environ.setdefault("TYPER_USE_RICH", "0")
 
+import click
 import typer
+from typer.core import TyperGroup
 
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.cli import ast_workflows
@@ -230,7 +232,46 @@ review_bundle_app = typer.Typer(
     help="Create and verify enterprise review bundles.",
     no_args_is_help=True,
 )
+
+
+class _EvidenceGroup(TyperGroup):
+    """Nudge `tg evidence <path>` toward the `emit` subcommand.
+
+    Dogfood trap (v1.61.2): an agent reaches for `tg evidence <PATH> <query>` by
+    analogy with `tg defs`/`tg orient` (which take a path directly), but `evidence`
+    is a command GROUP whose only action is `emit`. Click's default
+    "No such command 'src/...'" is correct (exit 2) but unhelpful -- when the unknown
+    subcommand looks like a filesystem path, append the concrete fix so the caller
+    does not have to re-read `--help`.
+    """
+
+    def resolve_command(
+        self, ctx: click.Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        try:
+            return super().resolve_command(ctx, args)
+        except click.exceptions.UsageError as exc:
+            token = args[0] if args else ""
+            if (
+                token
+                and not token.startswith("-")
+                and ("/" in token or "\\" in token or Path(token).exists())
+            ):
+                # Re-raise a NEW UsageError with the hint appended -- `UsageError.message` is a
+                # Final attribute (cannot be reassigned in place); a fresh error carrying the same
+                # `ctx` renders identically (Usage + "Try --help" + Error:) and keeps exit code 2.
+                raise click.exceptions.UsageError(
+                    f"{exc.format_message()}\n"
+                    "Hint: `tg evidence` is a command group; its receipt action is "
+                    f"`emit`. Did you mean `tg evidence emit {token}`? "
+                    "(run `tg evidence emit --help`)",
+                    ctx=exc.ctx,
+                ) from exc
+            raise
+
+
 evidence_app = typer.Typer(
+    cls=_EvidenceGroup,
     help="Emit a versioned EvidenceReceipt aggregating tg's existing outputs.",
     no_args_is_help=True,
 )
