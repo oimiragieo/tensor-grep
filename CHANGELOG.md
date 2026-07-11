@@ -1,6 +1,65 @@
 # CHANGELOG
 
 
+## v1.61.2 (2026-07-11)
+
+### Bug Fixes
+
+- **repo-map**: Honor nested .gitignore in the orient/map walk (#128 MED-5 part B)
+  ([#523](https://github.com/oimiragieo/tensor-grep/pull/523),
+  [`5bf49ad`](https://github.com/oimiragieo/tensor-grep/commit/5bf49adf1e638aeab26cbcbf22df220839a36f3a))
+
+* fix(repo-map): honor nested .gitignore in the orient/map file walk (#128 MED-5 part B)
+
+Companion to #522 (part A, directory_scanner/search). The repo_map walk (_iter_repo_bucket_files,
+  backing `tg map`/orient) loaded only the repo ROOT's .gitignore and threaded that single matcher
+  through the recursion -- a nested subdir/.gitignore was never honored, so orient/map included
+  files a nested gitignore should hide (an inconsistency with search once #522 landed).
+
+Fix: refactor _GitignoreMatcher.is_ignored to a tri-state check() (True ignore / False
+  negated-reinclude / None no-opinion), with is_ignored delegating to it (zero behavior change).
+  Then thread an ANCESTOR-MATCHER STACK through the walk: each directory loads its own matcher
+  (lru_cached, cheap on re-walk) and pushes it; _stack_ignored applies the stack shallowest-first
+  with the DEEPEST opinion winning (git precedence), so a deeper `!keep.log` overrides a parent
+  `*.log`. Kept repo_map's OWN regex matcher (no pathspec swap) so orient ranking behavior is
+  unchanged.
+
+Tests: nested-ignore + cross-file negation re-include exercised via the real repo_map walk (RED on
+  the old single-root code). 18 test_repo_map_targets + 49 deadline regression tests pass; ruff +
+  mypy clean. Gate-free surface (cli/).
+
+This completes MED-5 (both search + orient/map now honor nested .gitignore).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(repo-map): RUF005 use tuple-unpack not concat in the nested-gitignore stack (#523 lint)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **evidence**: De-flake receipt json-vs-dict test by freezing created_at (release-blocker)
+  ([#524](https://github.com/oimiragieo/tensor-grep/pull/524),
+  [`670f557`](https://github.com/oimiragieo/tensor-grep/commit/670f55752243e2fab7a452c1a4c7c21d07ec3395))
+
+test_build_evidence_receipt_json_matches_python_payload builds the receipt TWICE --
+  build_evidence_receipt (dict) then build_evidence_receipt_json (JSON) -- and asserts equality.
+  Each call stamps created_at = _utc_now_iso() at its own moment, so under CI load the two builds
+  can straddle a clock-tick, yielding different created_at values -> the equality assertion fails
+  intermittently. This flaked on windows-latest py3.12 and BLOCKED the v1.61.1 release run.
+
+Fix: monkeypatch _utc_now_iso to a fixed value so both builds are deterministic; the
+
+check (JSON serialization round-trips the dict) is unchanged. Verified: passes 3x locally; 39/39
+  test_evidence_receipt tests pass; ruff clean.
+
+test: -> no release. Prevents this flake from re-blocking future release runs.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.61.1 (2026-07-11)
 
 ### Bug Fixes
