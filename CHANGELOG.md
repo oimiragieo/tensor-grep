@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.59.4 (2026-07-11)
+
+### Bug Fixes
+
+- **backends**: Tg doctor no longer reports ast_grep available:true for a non-runnable shim +
+  memoize the probe (dogfood #130b) ([#518](https://github.com/oimiragieo/tensor-grep/pull/518),
+  [`ac2e153`](https://github.com/oimiragieo/tensor-grep/commit/ac2e15326ded5a317c0dc7c44c7c630bc54394f3))
+
+* fix(backends): doctor no longer reports ast_grep available:true for a non-runnable shim (#130 b)
+
+_get_binary_name() trusted a which()-resolved `ast-grep`/`ast-grep.exe` path on name alone -- only
+  the sg/sg.exe fallback branches called the existing _is_ast_grep_sg_binary() probe. A broken npm
+  shim literally named `ast-grep` (e.g. a Windows shim invoked under WSL/Linux, which fails to exec)
+  resolved via shutil.which() and was trusted with no probe-run, so is_available() (and therefore
+  `tg doctor`) reported available:true for a binary that cannot actually run.
+
+Wrap all four branches in the same probe already used for sg/sg.exe: only return a resolved path if
+  it PROBE-RUNS as real ast-grep. Since _get_binary_name() is also the search-execution path
+  (_build_command), this tightens both the diagnostic and the real runtime gate.
+
+Also hardened test_ast_wrapper_backend_should_use_resolved_binary_path, which mocked shutil.which()
+  but not subprocess.run and coincidentally kept passing only because this dev machine has a real
+  working ast-grep.CMD at its hardcoded path -- it now mocks the probe explicitly like its siblings,
+  so it exercises the mocked contract instead of real machine state.
+
+RED: test_ast_grep_backend_probes_primary_name_before_trusting_it and
+  test_doctor_ast_grep_available_false_when_shim_broken failed pre-fix (available=True);
+  test_ast_grep_backend_still_trusts_working_binary passed pre-fix (regression guard). All three
+  pass post-fix. Full test_ast_wrapper_backend.py (35/35), blast-radius sibling suites, ruff check,
+  ruff format --preview, and mypy all green; full tests/unit (4064 passed) shows zero regressions.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* perf(backends): memoize ast-grep binary resolution so the doctor probe runs once, not per-file
+  (#130 b follow-up)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.59.3 (2026-07-11)
 
 ### Bug Fixes
