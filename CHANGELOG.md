@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.63.0 (2026-07-11)
+
+### Features
+
+- **agent**: Surface `suggested_scope` on the agent capsule for a truncated scan (dogfood v1.61.2)
+  ([#530](https://github.com/oimiragieo/tensor-grep/pull/530),
+  [`8b2e4a6`](https://github.com/oimiragieo/tensor-grep/commit/8b2e4a6d59c19c111c663e11c19228473dcebbac))
+
+`tg orient` offers a `suggested_scope` narrowing hint when its scan is truncated, but `tg agent
+  --json` did not -- an agent driving off the capsule on a large repo got an incomplete map with no
+  guidance on how to narrow it (dogfood v1.61.2 gap).
+
+`build_context_render` already builds the raw repo map internally; add an opt-in
+  `include_suggested_scope` flag so it computes the SAME centrality-weighted directory rollup `tg
+  orient` emits, from that already-built map -- NO second scan, no latency hit on the agent hot
+  path. Gated on the map's own `scan_limit.possibly_truncated` (a complete scan has nothing left to
+  narrow), reusing orient's tested `_suggested_scope_from_map`. `build_agent_capsule` passes the
+  flag and copies the hint onto its result as an additive, conditional key next to
+  `result_incomplete` -- present only on a truncated scan with a clear winner, so a complete-scan
+  capsule stays byte-identical. The flag defaults off, so the `context`/MCP render callers are
+  unchanged.
+
+Validated on the REAL front door (not just CliRunner): `tg agent <repo> hub --json --max-repo-files
+  8` on a truncating repo now returns `suggested_scope: {"dirs": [".../core"], "confidence":
+  "heuristic"}` -- correctly the import-hub directory.
+
+Tests: 5 cases in test_agent_suggested_scope.py -- render emits it on a truncated scan, omits it
+  when the flag is off / the scan is complete, and the capsule copies it (or omits it, no empty
+  key). The ranking itself stays covered by test_orient_suggested_scope.py.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.62.2 (2026-07-11)
 
 ### Bug Fixes
