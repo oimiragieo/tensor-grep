@@ -979,6 +979,38 @@ def test_large_root_guard_allows_scoped_glob_over_ceiling():
     assert refused is False
 
 
+def test_plain_search_refuses_over_ceiling_implicit_root_before_walk(monkeypatch, tmp_path: Path):
+    """P0-1 (dogfood + external audit 2026-07-11): a bare `tg search PATTERN` (no explicit path) on a
+    large ORDINARY root -- not a multi-project workspace, generated, or vendored root, so none of the
+    cheap top-level guards fire -- must refuse fast via the bounded candidate-walk probe rather than
+    walk the whole tree to the ~60s deadline. Critically it fires for EVERY backend, incl. the rg
+    fast-path that the post-walk F6 guard skips."""
+    monkeypatch.setattr("tensor_grep.cli.main._LARGE_ROOT_SCAN_FILE_CEILING", 3)
+    for i in range(6):
+        (tmp_path / f"mod_{i}.py").write_text("needle = 1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["search", "needle"])
+
+    assert result.exit_code == 2, result.output
+    assert "broad root scan refused" in result.output
+    assert "safety guard, not a zero-match result" in result.output
+
+
+def test_plain_search_allows_under_ceiling_implicit_root(monkeypatch, tmp_path: Path):
+    """The bounded probe must NOT refuse an ordinary SMALL implicit root -- a real search still runs
+    (guards against the memory-warned regression where a too-broad refusal exit-2'd every search)."""
+    monkeypatch.setattr("tensor_grep.cli.main._LARGE_ROOT_SCAN_FILE_CEILING", 100)
+    for i in range(3):
+        (tmp_path / f"mod_{i}.py").write_text("needle = 1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["search", "needle"])
+
+    assert result.exit_code == 0, result.output
+    assert "broad root scan refused" not in result.output
+
+
 def test_large_root_guard_refuses_glob_with_implicit_path_over_ceiling():
     """Bug #88 (dogfood v1.54.0): with NO explicit PATH (`paths_defaulted=True`), `--glob`
     alone must not exempt an over-ceiling candidate count from refusal -- the ceiling is
