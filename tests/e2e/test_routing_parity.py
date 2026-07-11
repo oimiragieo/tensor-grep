@@ -694,20 +694,38 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
         wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
-    env = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper), TG_HELP_PROBE_TIMEOUT_MS="250")
+    env_override = dict(
+        **os.environ, TG_SIDECAR_PYTHON=str(wrapper), TG_HELP_PROBE_TIMEOUT_MS="250"
+    )
+    env_default = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper))
+    env_default.pop("TG_HELP_PROBE_TIMEOUT_MS", None)
     if _get_native_binary() is None:
         _run_native_front_door(["--version"], cwd=parity_env)
 
+    # Measure the 250ms override AND the 3000ms default back-to-back against the SAME wedged Python
+    # under the SAME machine load, then compare the DELTA rather than an absolute wall-clock bound.
+    # An absolute `elapsed < 3.0` is flaky under parallel-spawn contention: process-spawn overhead can
+    # push a correctly-honored 250ms probe past 3s (false failure). The delta cancels shared
+    # contention -- if the override is honored it MUST fall back markedly faster than the 3000ms
+    # default, whatever the absolute machine load. (Wedged Python hangs ~8-9s, so the default probe
+    # waits its full 3000ms before falling back; the override waits only ~250ms.)
     started = time.perf_counter()
-    native_help = _run_native_front_door(["--help"], cwd=parity_env, env=env)
-    elapsed = time.perf_counter() - started
+    native_help = _run_native_front_door(["--help"], cwd=parity_env, env=env_override)
+    override_elapsed = time.perf_counter() - started
 
-    assert elapsed < 3.0, (
-        f"TG_HELP_PROBE_TIMEOUT_MS=250 override was not honored -- fallback took {elapsed:.2f}s, "
-        "which is consistent with the override being ignored and the raised 3000ms default being "
-        "used instead"
+    started = time.perf_counter()
+    default_help = _run_native_front_door(["--help"], cwd=parity_env, env=env_default)
+    default_elapsed = time.perf_counter() - started
+
+    assert override_elapsed < default_elapsed - 1.0, (
+        f"TG_HELP_PROBE_TIMEOUT_MS=250 override was not honored -- override fallback took "
+        f"{override_elapsed:.2f}s vs the 3000ms-default {default_elapsed:.2f}s (delta "
+        f"{default_elapsed - override_elapsed:.2f}s <= 1.0s margin), consistent with the 250ms "
+        "override being ignored and the raised 3000ms default being used for both."
     )
-    assert native_help.returncode == 0
-    assert "Usage:" in native_help.stdout
-    assert "AI agent moat commands" in _strip_ansi(native_help.stdout)
-    assert native_help.stderr.strip() == ""
+    # Both paths must still fall back cleanly to the native help.
+    for result in (native_help, default_help):
+        assert result.returncode == 0
+        assert "Usage:" in result.stdout
+        assert "AI agent moat commands" in _strip_ansi(result.stdout)
+        assert result.stderr.strip() == ""
