@@ -44,6 +44,28 @@ _CENTRAL_NON_CODE_SUFFIXES = _CENTRAL_DOC_SUFFIXES | _CENTRAL_CONFIG_DATA_SUFFIX
 _CENTRAL_FAN_IN_CAP = 12
 _CENTRAL_SYMBOL_DENSITY_CAP = 25
 
+# Auto de-weight (never hard-exclude) bundled vendor/skill/generated CODE subtrees so `tg orient`/
+# `tg agent` surface real product code without a manual `--ignore` (#55 PR6). A subtree fires ONLY on
+# STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK (name prior)):
+#   STRONG-1 -- a directory below the repo root contains its own manifest, reusing the same marker
+#     set `_path_has_project_marker` (main.py) uses for broad-scan workspace-project detection.
+#   STRONG-2 -- an import island: no file OUTSIDE the subtree resolves an import INTO it (computed
+#     from the same resolved-import graph the centrality ranking builds).
+#   WEAK -- a name prior (vendor/, third_party/, skills/, external_repos/, _vendored/, node_modules/):
+#     a TIE-BREAKER only, never sufficient alone.
+# A monorepo subproject that HAS a manifest but IS imported across the repo is protected by STRONG-2
+# (not an island) -- de-weight, never exclude, is what keeps a false positive from hiding real product
+# code (the file can still surface if it is genuinely central even after the multiplier).
+_DEWEIGHT_FACTOR = 0.25
+_VENDOR_NAME_PRIOR = frozenset({
+    "vendor",
+    "third_party",
+    "skills",
+    "external_repos",
+    "_vendored",
+    "node_modules",
+})
+
 _ENTRY_NAMES = {
     "main.py",
     "__main__.py",
@@ -66,14 +88,15 @@ _ENTRY_NAMES = {
 }
 
 
-def _file_centrality_scores(rm: dict[str, Any]) -> tuple[list[str], dict[str, float]]:
-    """Composite per-file centrality (capped fan-in + fan-out + symbol density) over the non-doc,
-    non-config code files in `rm`. Shared by `_central_files_from_map` (top-N central-file ranking)
-    and `_suggested_scope_from_map` (directory rollup, audit #93 SUB-2) so both features read off
-    the exact same score -- never a second, driftable scoring system."""
+def _code_files_and_import_graph(
+    rm: dict[str, Any],
+) -> tuple[list[str], dict[str, list[str]], dict[str, set[str]]]:
+    """Shared code-only import graph (docs/config/data suffixes excluded): returns
+    ``(code_files, resolved_imports, reverse_importers)``. Used by both the centrality ranking and
+    the vendored-subtree import-island detection so the two heuristics see the identical graph."""
     all_files = [str(f) for f in rm.get("files", [])]
     if not all_files:
-        return [], {}
+        return [], {}, {}
     # "Central files" surface CODE architecture. Documentation files (heavily cross-referenced in
     # doc-heavy repos — e.g. 36 CLAUDE.md files) must not rank as central, and must not absorb a code
     # import via a stem collision (config.md shadowing config.py in by_stem). Exclude docs from the
@@ -102,6 +125,115 @@ def _file_centrality_scores(rm: dict[str, Any]) -> tuple[list[str], dict[str, fl
                 targets.append(candidate)
         resolved_imports[source] = targets
     reverse_importers = _repo_map._reverse_importers(code_files, resolved_imports)
+    return code_files, resolved_imports, reverse_importers
+
+
+def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Auto-detect bundled vendor/skill/generated CODE subtrees to DE-WEIGHT (never hard-exclude).
+
+    Returns ``{tree_path: {"reasons": [...]}}``. Fires ONLY on STRONG-1 (nested package manifest)
+    AND (STRONG-2 (import island) OR WEAK (name prior)) -- see the module-level comment above
+    ``_DEWEIGHT_FACTOR`` for the full rule. Requires ``rm["path"]`` to point at a real, existing
+    directory (a synthetic/relative-path test fixture with no "path" key returns ``{}`` rather than
+    guessing against the process CWD)."""
+    path_value = rm.get("path")
+    if not path_value:
+        return {}
+    try:
+        root = Path(str(path_value)).resolve()
+    except OSError:
+        return {}
+    if not root.is_dir():
+        return {}
+
+    all_files = [str(f) for f in rm.get("files", [])]
+    if not all_files:
+        return {}
+
+    from tensor_grep.cli.main import _BROAD_WORKSPACE_PROJECT_MARKERS
+
+    # Candidate directories: every ancestor (strictly below root) of every scanned file. Bounded by
+    # the already-scanned file set -- never an independent filesystem walk.
+    candidate_dirs: set[Path] = set()
+    for file_str in all_files:
+        try:
+            rel = Path(file_str).relative_to(root)
+        except ValueError:
+            continue
+        parts = rel.parts[:-1]
+        for i in range(1, len(parts) + 1):
+            candidate_dirs.add(Path(*parts[:i]))
+    if not candidate_dirs:
+        return {}
+
+    # STRONG-1: directory contains its own manifest.
+    manifest_dirs: dict[Path, str] = {}
+    for rel_dir in candidate_dirs:
+        abs_dir = root / rel_dir
+        for marker in sorted(_BROAD_WORKSPACE_PROJECT_MARKERS):
+            try:
+                if (abs_dir / marker).exists():
+                    manifest_dirs[rel_dir] = marker
+                    break
+            except OSError:
+                continue
+    if not manifest_dirs:
+        return {}
+
+    # Keep only the OUTERMOST manifest directory in any nested chain -- a deeper manifest inside an
+    # already-flagged subtree does not start a second, overlapping subtree.
+    subtree_rel_roots: list[Path] = []
+    for rel_dir in sorted(manifest_dirs, key=lambda p: len(p.parts)):
+        if any(
+            _repo_map._path_is_relative_to(root / rel_dir, root / existing)
+            for existing in subtree_rel_roots
+        ):
+            continue
+        subtree_rel_roots.append(rel_dir)
+
+    _code_files, _resolved_imports, reverse_importers = _code_files_and_import_graph(rm)
+    code_file_set = set(_code_files)
+
+    result: dict[str, dict[str, Any]] = {}
+    for rel_dir in subtree_rel_roots:
+        abs_dir = root / rel_dir
+        tree_files = {f for f in code_file_set if _repo_map._path_is_relative_to(Path(f), abs_dir)}
+        if not tree_files:
+            continue
+        # An import-island needs POSITIVE evidence of an internally-cohesive-but-externally-isolated
+        # cluster: some file in the subtree is imported by ANOTHER file in it, AND no file outside it
+        # imports in. A subtree with ZERO import edges -- a non-Python crate like `rust_core/`, invisible
+        # to this Python-centric stem graph -- trivially satisfies "externally isolated" but is NOT an
+        # island, just graph-invisible; it must NOT be de-weighted on STRONG-2 alone (else a legitimate
+        # Rust/Go subproject with its own manifest gets buried). It can still fire on a name prior.
+        externally_isolated = all(reverse_importers.get(f, set()) <= tree_files for f in tree_files)
+        has_internal_edge = any(reverse_importers.get(f, set()) & tree_files for f in tree_files)
+        is_island = externally_isolated and has_internal_edge
+        name_hits = sorted({part.lower() for part in rel_dir.parts} & _VENDOR_NAME_PRIOR)
+
+        if not (is_island or name_hits):
+            continue
+
+        reasons = [f"nested-manifest:{manifest_dirs[rel_dir]}"]
+        if is_island:
+            reasons.append("import-island")
+        if name_hits:
+            reasons.append(f"name-prior:{name_hits[0]}")
+
+        result[str(abs_dir)] = {"reasons": reasons}
+
+    return result
+
+
+def _file_centrality_scores(rm: dict[str, Any]) -> tuple[list[str], dict[str, float]]:
+    """Composite per-file centrality (capped fan-in + fan-out + symbol density) over the non-doc,
+    non-config code files in `rm`. Shared by `_central_files_from_map` (top-N central-file ranking)
+    and `_suggested_scope_from_map` (directory rollup, audit #93 SUB-2) so both features read off
+    the exact same score -- never a second, driftable scoring system."""
+    code_files, resolved_imports, reverse_importers = _code_files_and_import_graph(rm)
+    if not code_files:
+        return [], {}
+    code_file_set = set(code_files)
     # Composite centrality (dogfood 2026-07-03, v1.19.9): pure import in-degree surfaced LEAF data
     # files (constants.ts / figures.ts / barrel index.ts imported by many) at the top and buried the
     # real hubs (QueryEngine.ts, state.ts). A real architectural hub both RECEIVES and SENDS import
@@ -123,11 +255,35 @@ def _file_centrality_scores(rm: dict[str, Any]) -> tuple[list[str], dict[str, fl
     return code_files, centrality
 
 
-def _central_files_from_map(rm: dict[str, Any], *, max_central_files: int) -> list[dict[str, Any]]:
-    """Rank source files by import in-degree (foundational = imported-by-many); top-N with symbols."""
+def _central_files_from_map(
+    rm: dict[str, Any],
+    *,
+    max_central_files: int,
+    auto_deweight: bool = True,
+    deweighted_trees: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Rank source files by import in-degree (foundational = imported-by-many); top-N with symbols.
+
+    Files inside a detected vendored/skill subtree (see ``_detect_vendored_subtrees``) have their
+    composite score multiplied by ``_DEWEIGHT_FACTOR`` -- DE-WEIGHTED, never removed, so a genuinely
+    central file inside such a tree can still surface. The de-weight is applied HERE (not in
+    `_file_centrality_scores`) so `_suggested_scope_from_map` keeps reading the raw, un-de-weighted
+    score -- matching the WIP's original scope (central_files only)."""
     code_files, centrality = _file_centrality_scores(rm)
     if not code_files:
         return []
+    if deweighted_trees is None:
+        deweighted_trees = _detect_vendored_subtrees(rm) if auto_deweight else {}
+    tree_roots = list(deweighted_trees.keys())
+    for source in list(centrality):
+        candidate = Path(source)
+        for tree_root in tree_roots:
+            try:
+                candidate.relative_to(tree_root)
+            except ValueError:
+                continue
+            centrality[source] *= _DEWEIGHT_FACTOR
+            break
     ranked = sorted(code_files, key=lambda source: (-centrality[source], source))
     result: list[dict[str, Any]] = []
     for file_path in ranked[:max_central_files]:
@@ -272,8 +428,14 @@ def build_orient_capsule(
     max_repo_files: int | None = None,
     render_profile: str = "compact",
     ignore: tuple[str, ...] = (),
+    auto_deweight: bool = True,
 ) -> dict[str, Any]:
-    """Build a bounded codebase orientation capsule (no API key, no GPU)."""
+    """Build a bounded codebase orientation capsule (no API key, no GPU).
+
+    ``auto_deweight`` (default on) DE-WEIGHTS -- never hard-excludes -- auto-detected bundled
+    vendor/skill/generated CODE subtrees in the centrality ranking (see
+    ``_detect_vendored_subtrees``); pass ``auto_deweight=False`` (CLI: ``--no-auto-deweight``) to
+    disable. This is independent of ``--ignore``, which still hard-excludes explicit globs."""
     from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
 
     effective_max_repo_files = (
@@ -282,7 +444,10 @@ def build_orient_capsule(
     rm = _repo_map.build_repo_map(path, max_repo_files=effective_max_repo_files)
     rm = _apply_ignore_globs(rm, ignore)
 
-    central_files = _central_files_from_map(rm, max_central_files=max_central_files)
+    deweighted_trees = _detect_vendored_subtrees(rm) if auto_deweight else {}
+    central_files = _central_files_from_map(
+        rm, max_central_files=max_central_files, deweighted_trees=deweighted_trees
+    )
     entry_points = _detect_entry_points(rm)
 
     # suggested_scope (audit #93 SUB-2): gate on the underlying repo map's OWN scan_limit dict
@@ -338,10 +503,19 @@ def build_orient_capsule(
         snippets.append({"file": file_path, "source": snippet_text, "truncated": False})
         token_budget_used += snippet_tokens
 
+    deweighted_trees_list = [
+        {"path": tree_path, "reasons": list(info["reasons"])}
+        for tree_path, info in sorted(deweighted_trees.items())
+    ]
+
     lines: list[str] = [f"# Codebase orientation: {rm['path']}"]
     lines.append("\n## Central files (by import-graph centrality)")
     for cf in central_files:
         lines.append(f"- {cf['file']}  graph_score={cf['graph_score']}")
+    if deweighted_trees_list:
+        lines.append("\n## De-weighted vendor/skill subtrees (auto-detected, NOT excluded)")
+        for tree in deweighted_trees_list:
+            lines.append(f"- {tree['path']}  ({', '.join(tree['reasons'])})")
     if entry_points:
         lines.append("\n## Entry points (heuristic name detection)")
         for ep in entry_points:
@@ -373,6 +547,8 @@ def build_orient_capsule(
         "scan_limit": effective_max_repo_files,
         "suggested_scope": suggested_scope,
         "routing_reason": "orient",
+        "deweighted_trees": deweighted_trees_list,
+        "auto_deweight": auto_deweight,
     }
 
 
