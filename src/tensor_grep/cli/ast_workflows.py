@@ -710,7 +710,7 @@ def run_command(
 
         if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
             print(
-                "Warning: AstBackend not available (requires torch_geometric/tree_sitter). "
+                "Warning: AstBackend not available (requires tree-sitter or ast-grep). "
                 "Falling back to CPU regex.",
                 file=sys.stderr,
             )
@@ -974,11 +974,19 @@ def _select_ast_backend_for_pattern(
 
     backend: Any
     if Pipeline.__module__ == "tensor_grep.core.pipeline":
-        # Optimization: Prefer native AST backend if available, as it is much faster
-        if pattern_kind == "native" and _check_backend_available("AstBackend"):
-            backend = _get_cached_backend("AstBackend")
-        elif _check_backend_available("AstGrepWrapperBackend"):
+        # Prefer the ast-grep wrapper whenever it is available -- it is the stable,
+        # results-defining backend for BOTH native-shaped and wrapper-shaped patterns.
+        # The native tree-sitter AstBackend uses a DIFFERENT query DSL and returns
+        # DIFFERENT results for the same pattern (e.g. `identifier`: native matches every
+        # identifier node, the wrapper's code-pattern matches none), so it must NOT be
+        # silently preferred here -- that would change `tg run`/`tg scan` results for every
+        # box that has ast-grep + tree-sitter but no CUDA. Making native the CPU-perf default
+        # (and reconciling the two DSLs) is tracked separately (task #141). Native is reached
+        # ONLY as the ast-grep-absent fallback for native-shaped patterns.
+        if _check_backend_available("AstGrepWrapperBackend"):
             backend = _get_cached_backend("AstGrepWrapperBackend")
+        elif pattern_kind == "native" and _check_backend_available("AstBackend"):
+            backend = _get_cached_backend("AstBackend")
         elif pattern_kind == "wrapper":
             from tensor_grep.core.pipeline import ConfigurationError
 

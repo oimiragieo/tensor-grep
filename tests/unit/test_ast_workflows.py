@@ -506,6 +506,94 @@ def test_select_ast_backend_should_reject_wrapper_pattern_when_wrapper_is_unavai
         )
 
 
+def test_select_ast_backend_prefers_wrapper_when_ast_grep_available(monkeypatch):
+    """Invariant C (delete-dead-lsp-tensor-gnn): with ast-grep AVAILABLE, tg run/tg scan MUST
+    select the wrapper even for a native-shaped pattern with ast_prefer_native=True. This is the
+    exact production scenario the Opus gate flagged: tree-sitter present (native is_available now
+    True) + ast-grep present. The native tree-sitter AstBackend uses a different query DSL and
+    returns different results, so it must NOT be silently preferred -- that would change results
+    for every ast-grep + tree-sitter box without CUDA. (Native-as-CPU-default is task #141.)
+    """
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_for_pattern
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", _AvailableAstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend", AstGrepWrapperBackend
+    )
+
+    backend = _select_ast_backend_for_pattern(
+        SearchConfig(ast=True, ast_prefer_native=True, lang="python", query_pattern="identifier"),
+        "identifier",
+        {},
+    )
+
+    # Wrapper wins despite native being available AND ast_prefer_native=True + native pattern.
+    assert isinstance(backend, AstGrepWrapperBackend)
+    assert not isinstance(backend, _AvailableAstBackend)
+
+
+def test_select_ast_backend_falls_back_to_native_only_when_ast_grep_absent(monkeypatch):
+    """The ONLY place the native tree-sitter backend is now reachable: ast-grep ABSENT plus a
+    native-shaped pattern. (There the _get_query >=0.25 fix makes it actually run on CPU.)"""
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_for_pattern
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", _AvailableAstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    backend = _select_ast_backend_for_pattern(
+        SearchConfig(ast=True, ast_prefer_native=True, lang="python", query_pattern="identifier"),
+        "identifier",
+        {},
+    )
+
+    assert isinstance(backend, _AvailableAstBackend)
+
+
+def test_main_select_ast_backend_prefers_wrapper_when_ast_grep_available(monkeypatch):
+    """Invariant C, the main.py twin of _select_ast_backend_for_pattern (used by tg scan's
+    rule loop): wrapper preferred when ast-grep is available, regardless of native availability."""
+    from tensor_grep.cli.main import _select_ast_backend_for_pattern as main_select
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", _AvailableAstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend", AstGrepWrapperBackend
+    )
+
+    backend = main_select(
+        SearchConfig(ast=True, ast_prefer_native=True, lang="python", query_pattern="identifier"),
+        "identifier",
+        {},
+    )
+
+    assert isinstance(backend, AstGrepWrapperBackend)
+    assert not isinstance(backend, _AvailableAstBackend)
+
+
+def test_run_command_picks_wrapper_when_ast_grep_available(monkeypatch, tmp_path, capsys):
+    """Command-level proof of invariant C: `tg run` selects the ast-grep wrapper (whose
+    search_many runs), NOT the native backend, when ast-grep is available -- even for a
+    native-shaped pattern. If the router wrongly picked native (_AvailableAstBackend has no
+    search()/search_many()) this would raise AttributeError, so a regression fails loudly."""
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", _AvailableAstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend", AstGrepWrapperBackend
+    )
+    AstGrepWrapperBackend.search_many_calls = 0
+    (tmp_path / "a.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+
+    exit_code = run_command(pattern="identifier", path=str(tmp_path), lang="python")
+
+    captured = capsys.readouterr()
+    assert "ast-grep structural matching" in captured.out
+    assert AstGrepWrapperBackend.search_many_calls == 1
+    assert exit_code == 0
+
+
 def test_run_command_interactive_apply_should_return_error_when_apply_fails(
     monkeypatch, tmp_path, capsys
 ):

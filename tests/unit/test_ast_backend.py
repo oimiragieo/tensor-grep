@@ -91,29 +91,101 @@ class TestAstBackend:
         # Act & Assert
         assert backend.is_available() is False
 
-    @pytest.mark.gpu
-    def test_should_parse_python_ast(self, tmp_path):
-        # Note: This test requires tree-sitter, tree-sitter-python, and torch_geometric to be installed.
+    def test_is_available_is_true_on_tree_sitter_alone_even_without_torch_geometric(self, mocker):
+        """Parity/characterization test (delete-dead-lsp-tensor-gnn): AstBackend.search() is
+        pure tree-sitter query matching -- the dead GNN/_ast_to_graph path (which was the only
+        thing that ever touched torch/torch_geometric/CUDA) has been deleted. is_available()
+        must therefore report availability from tree-sitter alone: a fully-functional CPU
+        backend must not be gated behind an unrelated, no-longer-relevant GPU dependency.
+        Simulates the common non-GPU box: `tree_sitter` importable, `torch_geometric` is not.
+        """
+        import importlib.util
+
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "torch_geometric":
+                return None  # simulate: torch_geometric is NOT installed
+            if name == "tree_sitter":
+                return object()  # simulate: tree_sitter IS installed (any non-None spec)
+            return real_find_spec(name, *args, **kwargs)
+
+        mocker.patch("importlib.util.find_spec", side_effect=fake_find_spec)
         from tensor_grep.backends.ast_backend import AstBackend
 
         backend = AstBackend()
 
-        if not backend.is_available():
-            pytest.skip("AstBackend dependencies not installed")
+        # Act & Assert
+        assert backend.is_available() is True
+
+    def test_should_parse_python_ast(self, tmp_path, monkeypatch):
+        # CPU test (was @pytest.mark.gpu): AstBackend is a pure tree-sitter structural
+        # matcher with no torch/GPU dependency, so it must run in ordinary non-GPU CI.
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_python")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")  # hermetic: no persistent disk cache
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+        assert backend.is_available() is True  # tree-sitter present -> available (no CUDA needed)
 
         # Arrange
         file_path = tmp_path / "test.py"
-        file_path.write_text("def hello():\n    print('world')\n")
+        file_path.write_text("def hello():\n    print('world')\n", encoding="utf-8")
         config = SearchConfig(ast=True, lang="python")
 
-        # Act
-        # In this simplistic simulated graph match, we're passing a pattern that doesn't actually match the GNN directly,
-        # but verifies the graph extraction pipeline doesn't crash.
-        result = backend.search(str(file_path), "def", config)
+        # Act: a simple node-type pattern routes through the node-type index path.
+        result = backend.search(str(file_path), "function_definition", config)
 
-        # Assert
-        assert result is not None
-        assert isinstance(result.total_matches, int)
+        # Assert: real native match on CPU.
+        assert result.routing_backend == "AstBackend"
+        assert result.total_matches == 1
+
+    def test_should_match_sexpr_query_via_query_cursor_on_real_tree_sitter(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression for the tree-sitter >=0.25 `_get_query` migration (found by the Opus gate):
+        a non-simple ``(...)`` S-expr pattern routes through ``_get_query`` -> the
+        ``tree_sitter.Query(language, source)`` constructor + ``QueryCursor`` (mirroring the
+        capture site in ``search()``). tree-sitter 0.26 REMOVED ``Language.query``, so on the
+        pre-fix code this raised ``BackendExecutionError: 'tree_sitter.Language' object has no
+        attribute 'query'`` -- this test fails on the broken API and passes with the fix. Uses
+        REAL tree-sitter (no ``FakeLanguage.query`` mock, which would mask the API mismatch).
+        """
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_python")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")  # hermetic: force the live query path
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+        assert backend.is_available() is True
+
+        file_path = tmp_path / "svc.py"
+        file_path.write_text(
+            "def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n", encoding="utf-8"
+        )
+        config = SearchConfig(ast=True, lang="python")
+
+        # Act: exercises _get_query on the real tree-sitter >=0.25 API.
+        result = backend.search(str(file_path), "(function_definition) @fn", config)
+
+        # Assert: both function definitions matched via the QueryCursor path (not the index).
+        assert result.routing_backend == "AstBackend"
+        assert result.routing_reason == "ast_structural_match"
+        assert result.total_matches == 2
+
+    def test_search_raises_backend_execution_error_when_tree_sitter_missing(self, mocker):
+        """Backend Fail-Closed Contract: when tree-sitter is unavailable, search() must raise
+        BackendExecutionError (never silent-empty), so run_command reports a real error."""
+        mocker.patch.dict("sys.modules", {"tree_sitter": None})
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.base import BackendExecutionError
+
+        backend = AstBackend()
+        with pytest.raises(BackendExecutionError):
+            backend.search(
+                "whatever.py", "function_definition", SearchConfig(ast=True, lang="python")
+            )
 
     def test_should_raise_on_invalid_ast_query(self, tmp_path, mocker):
         """Audit MED: a broad `except Exception` around tree-sitter query compilation

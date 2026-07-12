@@ -521,8 +521,8 @@ dependencies = [
 # or CUDA-mismatched torch. The SUPPORTED GPU runtime path is the managed installer
 # (scripts/install.sh / install.ps1), which deliberately installs pinned CUDA 12.8 wheels.
 # `pip install tensor-grep[gpu]` is best-effort experimental, not the supported managed GPU path.
-gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "torch_geometric>=2.5.0"]
-gpu-win = ["torch>=2.0", "torch_geometric>=2.5.0"]
+gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0"]
+gpu-win = ["torch>=2.0"]
 nlp = ["transformers>=5.3.0", "tritonclient[http]"]
 ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-rust", "tree-sitter-go", "pygls>=1.3.0"]
 # Local hybrid semantic search dense leg (`tg search --semantic`, roadmap #27, Path B Stage 1):

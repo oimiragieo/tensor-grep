@@ -1,15 +1,11 @@
-from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, ClassVar
-
-if TYPE_CHECKING:
-    import torch
-
 import hashlib
 import json
 import logging
 import os
 import re
+from collections import OrderedDict
 from pathlib import Path
+from typing import Any, ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -136,9 +132,10 @@ def get_supported_languages() -> list[str]:
 
 class AstBackend(ComputeBackend):
     """
-    A Graph Neural Network (GNN) backend that parses source code into an Abstract Syntax Tree (AST)
-    using tree-sitter, converts the AST into a geometric graph tensor, and then performs parallel
-    subgraph isomorphism matching directly in GPU VRAM using PyTorch Geometric.
+    A native, in-process structural-search backend: parses source code into an Abstract Syntax
+    Tree (AST) using tree-sitter and matches tree-sitter queries directly against the parsed
+    tree (or a cached node-type index for simple single-node-type patterns). Pure CPU, no
+    torch/GPU dependency -- see ``is_available()``.
     """
 
     _shared_parsers: ClassVar[dict[str, Any]] = {}
@@ -506,18 +503,18 @@ class AstBackend(ComputeBackend):
         )
 
     def is_available(self) -> bool:
-        """Check if torch-geometric and tree-sitter are installed."""
+        """Check if tree-sitter is installed.
+
+        AstBackend.search() is pure tree-sitter query matching -- it never touches torch,
+        CUDA, or any graph-learning library (the dead GNN/tensor-graph path, `_ast_to_graph`,
+        was audited as unreachable and removed). GPU/torch are therefore not part of this
+        backend's availability contract; gating a fully-functional CPU backend behind an
+        unrelated GPU dependency was itself the bug.
+        """
         try:
             import importlib.util
 
-            if not importlib.util.find_spec("torch_geometric") or not importlib.util.find_spec(
-                "tree_sitter"
-            ):
-                return False
-
-            import torch
-
-            return bool(torch.cuda.is_available())
+            return importlib.util.find_spec("tree_sitter") is not None
         except ImportError:
             return False
 
@@ -572,7 +569,18 @@ class AstBackend(ComputeBackend):
             self._queries[cache_key] = query
             return query
 
-        query = parser.language.query(f"({pattern}) @match")
+        query_source = f"({pattern}) @match"
+        language = parser.language
+        if hasattr(language, "query"):
+            # tree-sitter < 0.25 (and test fakes): Language.query() builds the query.
+            query = language.query(query_source)
+        else:
+            # tree-sitter >= 0.25 (0.26 is pinned): Language.query was REMOVED; the
+            # tree_sitter.Query(language, source) constructor builds it, and a
+            # QueryCursor executes it (mirrored at the capture site in search()).
+            import tree_sitter
+
+            query = tree_sitter.Query(language, query_source)
         self._queries.pop(cache_key, None)
         self._queries[cache_key] = query
         while len(self._queries) > self._query_cache_max_entries():
@@ -609,65 +617,13 @@ class AstBackend(ComputeBackend):
             return cached[1]
         return None
 
-    def _ast_to_graph(
-        self, root_node: Any, source_bytes: bytes
-    ) -> tuple["torch.Tensor", "torch.Tensor", list[int]]:
-        """
-        Converts a tree-sitter AST into a PyTorch Geometric Graph (edge_index, node_features).
-        Returns:
-            edge_index: [2, num_edges] long tensor.
-            node_features: [num_nodes, feature_dim] float tensor.
-            line_numbers: A mapping from node index back to the source code line number.
-        """
-        edges = []
-        features: list[list[float]] = []
-        line_numbers = []
-
-        # In a real model, this would be a loaded embedding dictionary
-        node_type_map: dict[str, float] = {}
-
-        # audit B3: convert recursive DFS to explicit stack to avoid RecursionError on
-        # deeply-nested ASTs.  Stack entries are (node, parent_idx).
-        stack: list[tuple[Any, int]] = [(root_node, -1)]
-        while stack:
-            node, parent_idx = stack.pop()
-            current_idx = len(features)
-
-            # Simple feature representation: Hash the node type string to a pseudo-embedding
-            # A true production model uses Word2Vec or CodeBERT embeddings here
-            node_type = node.type
-            if node_type not in node_type_map:
-                node_type_map[node_type] = float(hash(node_type) % 1000) / 1000.0
-
-            features.append([node_type_map[node_type]])
-            line_numbers.append(node.start_point[0] + 1)
-
-            if parent_idx != -1:
-                edges.append([parent_idx, current_idx])
-                edges.append([current_idx, parent_idx])  # Bidirectional for GNNs
-
-            # Push children in reverse order so leftmost child is processed first.
-            for child in reversed(node.children):
-                stack.append((child, current_idx))
-
-        import torch
-
-        edge_index = (
-            torch.tensor(edges, dtype=torch.long).t().contiguous()
-            if edges
-            else torch.empty((2, 0), dtype=torch.long)
-        )
-        x = torch.tensor(features, dtype=torch.float)
-
-        return edge_index, x, line_numbers
-
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         if not self.is_available():
-            raise RuntimeError(
-                "AstBackend requires torch-geometric and tree-sitter to be installed."
-            )
+            # Backend Fail-Closed Contract (base.py): a real failure must raise
+            # BackendExecutionError, never fall through to a silent-empty result.
+            raise BackendExecutionError("AstBackend requires tree-sitter to be installed.")
 
         lang = "python"
         if config and hasattr(config, "lang") and config.lang:

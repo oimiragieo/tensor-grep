@@ -4513,7 +4513,7 @@ def tg_ast_search(
                 },
                 indent=2,
             )
-        return "Error: AstBackend is not available on this system. Requires torch_geometric and tree_sitter."
+        return "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
     all_results.routing_backend = getattr(
