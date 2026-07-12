@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.65.0 (2026-07-12)
+
+### Features
+
+- **daemon**: Make the warm session daemon the default fast path (opt-out) + version-skew guard
+  ([#94](https://github.com/oimiragieo/tensor-grep/pull/94),
+  [`45000f4`](https://github.com/oimiragieo/tensor-grep/commit/45000f42644e8369bd10b4c29df8233880cf71cd))
+
+Task #94 (the latency moat): flip the warm session daemon from opt-in to DEFAULT-ON, fail-open to
+  the cold path (never a wrong result or hang), + a package-version-skew guard on daemon.json +
+  test-env isolation. Opus session_daemon adversarial gate: SHIP (all safety properties survive; 3
+  LOW nits -> #143). ~20x faster warm symbol commands; kills the 6-33s cold-start that was the #1
+  reason models bypassed tg.
+
+
 ## v1.64.4 (2026-07-12)
 
 ### Bug Fixes
