@@ -1469,3 +1469,32 @@ def test_multi_pattern_e_f_do_not_delegate_to_native_binary() -> None:
     # No -e/-f -> still delegates; -F (fixed-strings, uppercase) is not a -f prefix match.
     assert bootstrap._can_delegate_to_native_tg_search(["--cpu", "foo", "."])
     assert bootstrap._can_delegate_to_native_tg_search(["--cpu", "-F", "foo", "."])
+
+
+def test_count_matches_does_not_delegate_to_native_binary() -> None:
+    # task #121: `--count-matches` reports ripgrep's per-OCCURRENCE count, which the
+    # separately-compiled native binary's fallback engine cannot produce (LINE-granular
+    # only, same as the Python fallbacks -- see cli/bootstrap.py's
+    # `_can_delegate_to_native_tg_search` comment). Before this fix, `--count-matches`
+    # combined with a trigger flag (--json/--ndjson/--cpu/--force-cpu/--gpu-device-ids)
+    # delegated straight to the native binary and silently returned a LINE count
+    # mislabeled as an occurrence count -- this outer argv fast path must refuse it for
+    # parity with cli/main.py's OWN inner native-delegation gate, which already refuses it
+    # via `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`count_matches`).
+    assert not bootstrap._can_delegate_to_native_tg_search([
+        "--json",
+        "--count-matches",
+        "foo",
+        ".",
+    ])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "--count-matches", "foo", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search([
+        "--ndjson",
+        "--count-matches",
+        "foo",
+        ".",
+    ])
+    # -c/--count is UNCHANGED: its line-count contract is exactly what the native binary's
+    # fallback already provides correctly, so it keeps delegating.
+    assert bootstrap._can_delegate_to_native_tg_search(["--json", "-c", "foo", "."])
+    assert bootstrap._can_delegate_to_native_tg_search(["--json", "--count", "foo", "."])

@@ -6920,10 +6920,40 @@ def search_command(
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     rg_backend = RipgrepBackend()
+    rg_is_available = rg_backend.is_available()
+    if config.count_matches and not rg_is_available:
+        # Backend Fail-Closed Contract (AGENTS.md) / task #121: `--count-matches` reports
+        # ripgrep's OCCURRENCE count (every match on a line counts separately), which is
+        # semantically different from `-c`/`--count`'s LINE count (one per matching line,
+        # regardless of how many times the pattern occurs on it). Every fallback engine
+        # that can serve a query without rg -- RustCoreBackend AND CPUBackend -- is
+        # LINE-granular only: neither ever emits more than one match per line, so a
+        # `--count-matches` request routed to either would silently report a LINE count
+        # mislabeled as an occurrence count (verified live: a 3-occurrence line undercounts
+        # to 1). Unlike the default/--json search degrade (a like-for-like engine swap: the
+        # native engine's match set IS what tg's own aggregate model already uses), there is
+        # no fallback engine here that can serve the SAME semantics rg provides, so silently
+        # "degrading" would be silent-wrong-output, not a graceful degrade. Refuse cleanly
+        # instead -- mirroring the identical refusal the native `--index` fast path already
+        # applies to `count_matches` for the same reason (`IndexFlagPolicy::Refuse` in
+        # rust_core/src/main.rs) -- rather than let it through as a wrong number. `-c`/
+        # `--count` is unaffected: its line-count contract is exactly what the fallback
+        # engines already provide correctly (Pipeline's `count_rust_fast_path`).
+        _exit_search_error(
+            "count_matches_requires_ripgrep",
+            (
+                "--count-matches reports ripgrep's per-occurrence match count, which "
+                "requires the 'rg' binary; rg was not found (checked TG_RG_PATH, PATH, "
+                "and the bundled fallback). Install ripgrep "
+                "(https://github.com/BurntSushi/ripgrep#installation), set TG_RG_PATH, "
+                "or use --count (-c) for a line count that works without rg."
+            ),
+            json_mode=json,
+        )
     can_passthrough_rg = (
         not guarded_broad_root
         and not explicit_hidden_search_root
-        and rg_backend.is_available()
+        and rg_is_available
         and _can_passthrough_rg(
             config,
             format_type=format_type,

@@ -1294,6 +1294,118 @@ def test_plain_search_unscoped_still_runs_on_small_repo(monkeypatch, tmp_path: P
     assert "broad root scan refused" not in result.output
 
 
+def test_count_matches_refuses_cleanly_when_rg_unresolvable(monkeypatch, tmp_path: Path):
+    """Task #121: `--count-matches` reports ripgrep's per-OCCURRENCE count (multiple
+    matches on one line each count separately), which no fallback engine can compute --
+    RustCoreBackend/CPUBackend never emit more than one match per line (mirrors `-c`'s
+    LINE-count contract, not `--count-matches`'s occurrence contract; see
+    rust_core/src/backend_cpu.rs's own "count MATCHING LINES, not total occurrences"
+    comment on its count fast path). Before this fix, routing to that fallback silently
+    reported a LINE count mislabeled as an occurrence count (a 3-occurrence line
+    undercounted to 1, exit 0, no visible signal) -- silent-wrong-output, not a graceful
+    degrade. With rg fully unresolvable, the CLI must refuse cleanly (structured exit 2,
+    actionable message) instead of a bare crash OR a silently wrong number."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "--count-matches"])
+
+    assert result.exit_code == 2, result.output
+    # Never a bare traceback/crash.
+    assert "Traceback" not in result.output
+    # Never a silently-wrong number standing in for the real answer (the line-count
+    # fallback would have printed "2", masquerading as the occurrence count).
+    assert result.output.strip() != "2"
+    assert "count-matches" in result.output
+    assert "rg" in result.output.lower() or "ripgrep" in result.output.lower()
+    # Points the user at the working degrade path (-c/--count) that IS correct without rg.
+    assert "--count" in result.output
+
+
+def test_count_matches_refuses_cleanly_when_rg_unresolvable_json(monkeypatch, tmp_path: Path):
+    """JSON-mode sibling of the test above: a structured, machine-readable error envelope
+    (matching the established `_exit_search_error` contract other refusals already use),
+    not a bare crash and not a JSON payload carrying a silently-wrong count."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "--count-matches", "--json"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "count_matches_requires_ripgrep"
+    assert "rg" in payload["detail"].lower() or "ripgrep" in payload["detail"].lower()
+
+
+def test_count_matches_still_uses_ripgrep_when_available(tmp_path: Path):
+    """Bidirectional half of task #121: when rg genuinely IS available, `--count-matches`
+    must keep working exactly as before (real occurrence count via rg), never refuse.
+
+    Plain (non-JSON) `--count-matches` is eligible for the raw rg passthrough fast path
+    (`_can_passthrough_rg`), which streams the real `rg` subprocess's stdout directly --
+    that bypasses CliRunner's captured stream (it redirects the Python-level `sys.stdout`
+    object, not the OS file descriptor a real subprocess inherits), so this uses a real
+    subprocess invocation instead, mirroring
+    `test_debug_passthrough_keeps_stdout_match_only`'s established pattern for the same
+    reason.
+    """
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    if not RipgrepBackend().is_available():
+        pytest.skip("rg is not available")
+
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tensor_grep.cli.main",
+            "search",
+            "foo",
+            str(target),
+            "--count-matches",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    # 4 total occurrences (3 on line 1 + 1 on line 3), NOT 2 matching lines -- proves real
+    # occurrence-level counting, not a line-count masquerading as one.
+    assert result.stdout.strip() == "4"
+
+
+def test_count_still_degrades_via_native_engine_when_rg_unresolvable(monkeypatch, tmp_path: Path):
+    """Regression guard: `-c`/`--count` (LINE-count semantics) must be UNAFFECTED by the
+    #121 fix -- it already degrades correctly to the native fallback engine (Pipeline's
+    `count_rust_fast_path`) because the fallback's one-match-per-line model IS `-c`'s
+    contract, not just an approximation of it."""
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths.resolve_ripgrep_binary", lambda: None)
+
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "--count"])
+
+    assert result.exit_code == 0, result.output
+    # 2 matching LINES (line 1 and line 3), correct for -c/--count even without rg.
+    assert result.output.strip() == "2"
+
+
 def test_plain_search_does_not_refuse_large_root_when_native_available(monkeypatch, tmp_path: Path):
     """Trap #2: when the fast native `tg` binary would handle this exact query, the new
     guard must NOT fire -- refusing there would convert a WORKING instant search into an
