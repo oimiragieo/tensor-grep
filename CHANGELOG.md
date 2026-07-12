@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.65.3 (2026-07-12)
+
+### Bug Fixes
+
+- **backends**: Fail closed with the documented ast-grep-dependency message when the native
+  AstBackend gets an ast-grep-DSL pattern it cannot compile
+  ([#144](https://github.com/oimiragieo/tensor-grep/pull/144),
+  [`08682a7`](https://github.com/oimiragieo/tensor-grep/commit/08682a7baff1895dbc25afee40f3730d02e83584))
+
+Release-tag-smoke has been red since v1.64.4 (#542): tg run --pattern <ast-grep-pattern> on an env
+  without the ast-grep binary routes to the native tree-sitter AstBackend, which cannot compile
+  ast-grep-DSL patterns and emitted a confusing 'Invalid node type' error not in
+  agent_readiness.py's skip_error_patterns. Now fails closed with 'Explicit AST search requires AST
+  dependencies: ...' (a skip pattern). One branch in ast_backend.py + 2 tests. Opus-gate: SHIP
+  (empirically verified no over-fire, dev-box unchanged). Full DSL reconciliation stays #141.
+
+
 ## v1.65.2 (2026-07-12)
 
 ### Bug Fixes
