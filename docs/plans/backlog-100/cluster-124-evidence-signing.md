@@ -16,10 +16,11 @@ compact sorted (precedent audit_manifest.py:65 _canonical_json_bytes), NOT the i
 ```python
 def canonical_receipt_bytes(receipt: dict) -> bytes:
     canonical = dict(receipt)
-    canonical.pop("signature", None)        # excluded: added after signing
-    canonical.pop("receipt_sha256", None)   # excluded: digest of these very bytes
-    return json.dumps(canonical, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode("utf-8")
+    canonical.pop("signature", None)  # excluded: added after signing
+    canonical.pop("receipt_sha256", None)  # excluded: digest of these very bytes
+    return json.dumps(
+        canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
 ```
 Everything EXCEPT signature + receipt_sha256 is signed (incl the whole `signing` block -> algorithm claim authenticated -> blocks downgrade). Residual: float repr is Python-json-specific -> gotcontext must match number serializer; keep receipt floats simple (they are).
 
