@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.65.2 (2026-07-12)
+
+### Bug Fixes
+
+- **rerank**: Cap total rechunk on plain --rank to bound unbounded-rechunk DoS
+  ([#128](https://github.com/oimiragieo/tensor-grep/pull/128),
+  [`f43b7c0`](https://github.com/oimiragieo/tensor-grep/commit/f43b7c02a99049d461928bf395e6cc5589c7e7bc))
+
+Adds TG_RANK_CORPUS_CHUNK_CAP (default MAX_CHUNKS 100k) at the shared CLI+MCP chunk chokepoint, sets
+  a visible rank_fallback_reason, never drops matches. Closes #128 rank-cap.
+
+
 ## v1.65.1 (2026-07-12)
 
 ### Bug Fixes
