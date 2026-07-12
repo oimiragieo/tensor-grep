@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.65.1 (2026-07-12)
+
+### Bug Fixes
+
+- **routing**: Route --index to the Rust validator, not the Python passthrough front door
+  ([#138](https://github.com/oimiragieo/tensor-grep/pull/138),
+  [`eaaaf0a`](https://github.com/oimiragieo/tensor-grep/commit/eaaaf0a12d26d37ecf6dc1b486b71a88fc31c989))
+
+Audit #138 #140: search_format_python_passthrough_args short-circuits on --index so it reaches
+  index_flag_violations (REFUSE/HONOR/REROUTE) instead of the Python sidecar (crash/leak). Non-index
+  passthrough unchanged. Opus routing gate: SHIP (rebased clean). 5 unit + 4 real-binary tests.
+
+
 ## v1.65.0 (2026-07-12)
 
 ### Features
