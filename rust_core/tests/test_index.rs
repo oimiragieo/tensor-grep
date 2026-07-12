@@ -1573,6 +1573,165 @@ fn test_tg_search_explicit_index_allows_passthrough_safe_flags_and_matches_basel
     );
 }
 
+/// Audit #138/#140 (the gap flagged in the comments on
+/// `test_tg_search_explicit_index_refuses_flags_outside_the_original_six` and
+/// `test_tg_search_explicit_index_allows_passthrough_safe_flags_and_matches_baseline` above):
+/// `search_format_python_passthrough_args` (main.rs) forwarded any invocation carrying a
+/// SEARCH_PYTHON_PASSTHROUGH_FLAGS member -- e.g. `--no-hidden`, `--require-git` -- to the Python
+/// sidecar BEFORE `--index` was ever parsed by clap, `--index` token included. Python has no such
+/// option, so that either crashes ("Error: No such option: --index") or leaks the token into the
+/// constructed rg argv, and never reaches this binary's own `index_flag_violations` validator.
+/// Points `TG_SIDECAR_PYTHON` at a script that only echoes a sentinel: if the Python passthrough
+/// front door is ever reached, the sentinel appears in stdout instead of a native JSON/error
+/// envelope, giving a deterministic, environment-independent (no real venv needed) proof of which
+/// dispatcher actually ran.
+const PYTHON_PASSTHROUGH_SENTINEL: &str = "TG_PYTHON_PASSTHROUGH_FRONTDOOR_SENTINEL";
+
+fn write_python_passthrough_sentinel(dir: &Path) -> std::path::PathBuf {
+    let script = dir.join("python-passthrough-sentinel.cmd");
+    fs::write(
+        &script,
+        format!("@echo off\r\necho {PYTHON_PASSTHROUGH_SENTINEL}\r\n"),
+    )
+    .unwrap();
+    script
+}
+
+#[test]
+fn test_tg_search_explicit_index_short_circuits_python_frontdoor_for_json_gated_passthrough_flag() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+    let python_sentinel = write_python_passthrough_sentinel(dir.path());
+
+    // --no-hidden is a SEARCH_PYTHON_PASSTHROUGH_FLAGS member (and separately PassthroughSafe for
+    // the index path, see INDEX_FLAG_POLICY) -- before the fix this alone routed the whole
+    // invocation, --index included, to the Python sidecar.
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--no-hidden")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_SIDECAR_PYTHON", &python_sentinel)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stdout.contains(PYTHON_PASSTHROUGH_SENTINEL) && !stderr.contains(PYTHON_PASSTHROUGH_SENTINEL),
+        "an explicit --index must never be forwarded to the Python sidecar; stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("no such option"),
+        "must not surface a Click-style unknown-option crash; stderr={stderr}"
+    );
+    // --no-hidden is PassthroughSafe for the index path -- the request must reach the native
+    // trigram-index engine and succeed, not merely avoid crashing.
+    assert!(output.status.success(), "stdout={stdout} stderr={stderr}");
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "TrigramIndex");
+    assert_eq!(payload["routing_reason"], "index-accelerated");
+    assert_eq!(payload["sidecar_used"], false);
+    assert_eq!(payload["total_matches"], 2);
+}
+
+#[test]
+fn test_tg_search_explicit_index_short_circuits_python_frontdoor_and_reaches_validator_for_require_git(
+) {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+    let python_sentinel = write_python_passthrough_sentinel(dir.path());
+
+    // --require-git is honored by SEARCH_PYTHON_PASSTHROUGH_FLAGS unconditionally (no --json
+    // gate) and is classified Refuse by index_flag_violations. This proves --index now reaches
+    // that validator (a real refusal, naming the flag) instead of the Python sidecar.
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--require-git")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_SIDECAR_PYTHON", &python_sentinel)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stdout.contains(PYTHON_PASSTHROUGH_SENTINEL)
+            && !stderr.contains(PYTHON_PASSTHROUGH_SENTINEL),
+        "an explicit --index must never be forwarded to the Python sidecar even with \
+         --require-git riding along; stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        !output.status.success(),
+        "--index --require-git must fail closed via index_flag_violations, not silently \
+         succeed; stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stderr.to_lowercase().contains("require-git"),
+        "the refusal must name the unsupported flag; stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_still_works_with_case_insensitive_flag() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("-i")
+        .arg("--json")
+        .arg("HELLO")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "TrigramIndex");
+    assert_eq!(payload["routing_reason"], "index-accelerated");
+    assert_eq!(payload["sidecar_used"], false);
+    assert_eq!(payload["total_matches"], 2);
+}
+
+#[test]
+fn test_tg_search_non_index_passthrough_flag_still_routes_to_python_sidecar() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+    let python_sentinel = write_python_passthrough_sentinel(dir.path());
+
+    // TRAP guard: the identical --no-hidden/--json combination as the short-circuit test above,
+    // MINUS --index, must still be forwarded to the Python sidecar exactly as before the fix.
+    let output = tg()
+        .arg("search")
+        .arg("--no-hidden")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_SIDECAR_PYTHON", &python_sentinel)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(PYTHON_PASSTHROUGH_SENTINEL),
+        "a non-index passthrough-flag invocation must still route to the Python sidecar \
+         unchanged; stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn test_tg_search_explicit_index_color_always_is_refused_but_never_and_auto_are_not() {
     let dir = tempdir().unwrap();

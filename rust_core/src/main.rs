@@ -1564,6 +1564,23 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
         .skip(2)
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+    // External audit #138/#140: `--index` selects the Rust-native trigram-index engine
+    // (route_search -> handle_index_search -> index_flag_violations), which the Python sidecar
+    // does not implement at all. Every check below exists to route some OTHER flag to Python --
+    // none of them know about --index, so a request combining --index with any single one of
+    // them (e.g. `tg search --index --no-hidden ...`) used to be forwarded here wholesale,
+    // `--index` token and all, BEFORE clap ever parsed --index. Python has no `--index` option,
+    // so that either crashes ("Error: No such option: --index") or -- if some future Python
+    // passthrough ever tolerates unknown flags -- leaks the bare token into the constructed rg
+    // argv. Short-circuit ahead of every passthrough check so an explicit --index always falls
+    // through (returns None here) to clap/route_search/index_flag_violations below, which
+    // already fail closed on any flag the index path cannot honor -- regardless of which other
+    // (individually Python-passthrough-eligible) flags ride along with it. This does not change
+    // routing for non-index invocations: the checks below are unreached only when --index is
+    // literally present.
+    if args.iter().any(|arg| arg == "--index") {
+        return None;
+    }
     if search_args_contain_any_flag(&args, SEARCH_PYTHON_PASSTHROUGH_FLAGS) {
         return Some(args);
     }
@@ -3199,6 +3216,152 @@ mod tests {
                 "--semantic".to_string(),
                 "invoice".to_string(),
                 "src".to_string()
+            ])
+        );
+    }
+
+    // -- Audit #138/#140: --index must short-circuit the Python-passthrough front door --------
+
+    #[test]
+    fn search_format_python_passthrough_args_short_circuits_index_with_json_gated_flag() {
+        // `--no-hidden` is in SEARCH_PYTHON_PASSTHROUGH_FLAGS (honored unconditionally by that
+        // allowlist). Before the fix, combining it with --index still forwarded the whole
+        // invocation -- literal "--index" token included -- to the Python sidecar, which has no
+        // such option.
+        let raw_args = [
+            "tg",
+            "search",
+            "--index",
+            "--no-hidden",
+            "--json",
+            "ERROR",
+            "bench_data",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+
+        assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_short_circuits_index_with_unconditional_allowlist_flag(
+    ) {
+        // `--require-git` is honored by SEARCH_PYTHON_PASSTHROUGH_FLAGS unconditionally (no
+        // --json gate needed) -- a different branch than the --json-gated case above.
+        let raw_args = [
+            "tg",
+            "search",
+            "--index",
+            "--require-git",
+            "ERROR",
+            "bench_data",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+
+        assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_short_circuits_index_with_structured_output_only_flag()
+    {
+        // `--passthru` only routes to Python when combined with --json/--ndjson (the function's
+        // third check); confirm --index short-circuits that branch too.
+        let raw_args = [
+            "tg",
+            "search",
+            "--index",
+            "--json",
+            "--passthru",
+            "ERROR",
+            "bench_data",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+
+        assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_short_circuits_index_with_multiline_only_flag() {
+        // `-U`/`--multiline` only routes to Python when combined with --json/--ndjson (the
+        // function's fourth, final check); confirm --index short-circuits that branch too.
+        let raw_args = [
+            "tg",
+            "search",
+            "--index",
+            "--json",
+            "-U",
+            "ERROR",
+            "bench_data",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+
+        assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_still_routes_non_index_invocations_to_python() {
+        // TRAP guard: the exact same flag combinations as the short-circuit tests above, MINUS
+        // --index, must still route to the Python sidecar exactly as before the fix -- adding the
+        // --index short-circuit must not change behavior for non-index invocations.
+        let no_hidden = [
+            "tg",
+            "search",
+            "--no-hidden",
+            "--json",
+            "ERROR",
+            "bench_data",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            search_format_python_passthrough_args(&no_hidden),
+            Some(vec![
+                "--no-hidden".to_string(),
+                "--json".to_string(),
+                "ERROR".to_string(),
+                "bench_data".to_string(),
+            ])
+        );
+
+        let require_git = ["tg", "search", "--require-git", "ERROR", "bench_data"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            search_format_python_passthrough_args(&require_git),
+            Some(vec![
+                "--require-git".to_string(),
+                "ERROR".to_string(),
+                "bench_data".to_string(),
+            ])
+        );
+
+        let passthru = [
+            "tg",
+            "search",
+            "--json",
+            "--passthru",
+            "ERROR",
+            "bench_data",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            search_format_python_passthrough_args(&passthru),
+            Some(vec![
+                "--json".to_string(),
+                "--passthru".to_string(),
+                "ERROR".to_string(),
+                "bench_data".to_string(),
             ])
         );
     }
