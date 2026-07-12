@@ -3,7 +3,7 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-12 (campaign #142 "backlog-100" full-ledger reconcile; v1.64.3 live, v1.64.4 building).
+> Last refreshed 2026-07-12 (campaign #142 "backlog-100" COMPLETE — 4 PRs drained: v1.67.1/v1.68.0/v1.68.1/v1.68.2, zero broken releases).
 
 **Process:** deep-dive/audit (cite `file:line`) → verify-against-code → Sonnet TDD build in
 `isolation:'worktree'` → real-venv verify (`uv run --active --no-sync`; copy `rust_core.pyd`, set
@@ -25,8 +25,8 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## ⭐ CURRENT STATE (2026-07-12) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **Live PyPI v1.64.3** (verified against `pypi.org/pypi/tensor.grep/json` this refresh). **v1.64.4 building** (main stamped `b7b715c`; the underlying CI/native-wheel run for `4503842` was still `in_progress` at verification time — content = **#542**, AstBackend tree-sitter-0.26 query-API repair + dead LSP tensor/GNN delete + wrapper-preferred routing).
-- **3 open PRs, all draft, all gate-pending** (`gh pr list --state open`, verified this refresh — WIP=3, well under the 5-PR cap): **#543** daemon-default flip (#94, `feat/warm-daemon-default`) — WIP-SALVAGE recovery of a build killed by a session limit before its own gate ran; CI all-green, but the **mandatory session_daemon Opus gate is PENDING** (zero reviews posted) — the PR is **NOT yet ship-approved** despite the campaign's design-level pre-clearance; lands as **v1.65.0** once gated. **#544** `--index` front-door leak fix (#138/#140, `fix/passthrough-index-frontdoor`) — routes `--index` to the Rust capability validator instead of leaking through the Python-passthrough path before clap parses it; Opus routing gate pending (a `--`-sentinel caveat is flagged for the reviewer). **#545** `--rank` corpus-chunk cap (#128d/MED-1, `fix/rank-total-chunk-cap`) — the chokepoint fix in `reranker.py`, self-declared gate-free (pure `core/`, no mandatory-gate surface touched), CI green, awaiting drain. **#2** atomic+locked index write (audit A4) is also actively building (`fix/atomic-locked-index*` local worktrees) but not yet pushed or opened as a PR.
+- **Live PyPI: v1.68.1** (v1.68.2 building — the last campaign fix, #557). **Campaign #142 ("backlog-100") COMPLETE** — all 4 PRs drained one-per-publish, zero broken releases. Release-blocker learnings banked: `tensor-grep-whole-repo-ruff-format-gap-and-git-show-smudge-2026-07-12` (doc-code-block ruff-format + stale-lock rode into #553; hotfixed via #558) + `tensor-grep-windows-worktree-agents-mask-cross-platform-ci-2026-07-12` (#556 Windows-path tests failed Linux CI).
+- **Campaign #142 4-PR queue DRAINED** (Sonnet-built, Opus-gated, one-per-publish): **#554** mcp default 512→2000 (#98) → v1.67.1 · **#555** daemon Tier-2 orient/agent (#108, ~16x latency — dogfood-verified 15.8s→0.95s on the PUBLISHED wheel) → v1.68.0 · **#556** apply_policy UNC-bypass + cross-platform test hardening (#126) → v1.68.1 · **#557** `--count-matches` honest-refuse (#121) → v1.68.2. The mandatory security/correctness gate caught+fixed PRE-MERGE: a UNC command-injection edge (#556), a contract-governance gap (#557), a cross-platform test hole (#556), and a daemon cold-rescue recall regression (#555).
 - **Campaign #142 ("backlog-100")**: 4 Fable design-planner audits (`docs/plans/backlog-100/cluster-{1,2,3,4}-*.md`, 2026-07-12) re-verified this ENTIRE ledger, file:line-cited, against the real tree. Headline: **the ledger was badly stale** — most standing items were already shipped across 4 drain waves (#514–#537) that never got written back here. This refresh reconciles it.
 - **Reconciled this campaign (already-fixed → dropped from the live backlog below; full per-item receipts in the cluster docs):**
   - **P0 #128/#130/#131 audit queue — 9 of 12 sub-items already fixed**, drain wave #514-#523: #128a ast-grep malformed-JSON→`BackendExecutionError` (`c9e54ef`/#515) · #128b nested-`.gitignore` in both Python walkers (`29269ef`/#522 + `5bf49ad`/#523) · #130a inventory `--deadline`→files=0 (`f88c2a0`/#516) · #130b `tg refs` "45s hang" **superseded/debunked** (deadline-bounded since #393/#478/#440; live repro = 9.16s, exit 2, `partial:true` — an honest partial, not a hang) · #130c checkpoint `IsADirectoryError` (`fad9c2e`/#517) · #130d doctor false `ast_grep.available` (`ac2e153`/#518) · #131 F1 PFAC doc claim (`1889a69`/#514) · F2 GPU benchmark `line_number` vs native `line` key (`7bbe15c`/#519) · F10 dead GPU code (`4a72fca`/#520). Only **#128d, #128c, F3** survive — see CURRENT LIVE BACKLOG. Cite: `cluster-1-p0-correctness.md`.
@@ -41,11 +41,13 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**0 open PRs — WIP=0, drain FULLY CLEAR.** The v1.61.2-dogfood + external-audit batch drained in full this session (v1.62.2 → v1.63.2, one-per-publish, zero broken releases). New builds resume when the Opus weekly-limit reopens (**Jul-13**) for the high-value gated items (#94 latency, #134 A1/A4/GPU); the gate-free remainder is polish-tail held per the CEO's churn steer.
+**0 open drain PRs — DRAIN CLEAR.** Campaign #142's 4-PR queue (#554-557) fully drained one-per-publish to v1.67.1/v1.68.0/v1.68.1/v1.68.2 — zero broken releases. (This #559 docs PR is the last artifact; merges after v1.68.2 publishes.)
 
-## SHIPPED — live on PyPI up to **v1.58.10**; v1.58.11 releasing
+## SHIPPED — live on PyPI up to **v1.68.1**; v1.68.2 building
 
-This drain batch: #499→v1.58.5 (tg_repo_map 512→2000) · #500→v1.58.6 (#110 write-path symlink TOCTOU) ·
+**v1.59–v1.66.1 window (merged, on PyPI):** #541 index capability-validator · #542 AstBackend tree-sitter query-API repair · #543 warm-daemon default-ON flip (#94 latency lever) · #544 `--index` front-door routing · #545 `--rank` chunk cap · #546 atomic + cross-process-locked index write · #547 backlog reconcile · #548 iterative Go AST walk (no RecursionError) · #549 `tg classify --stdin/--text` · #550 ast-grep fail-closed · #551 wedged-python help-probe deflake · #552 launcher import-defer perf · #553 Ed25519 evidence-signing (v1.67.0) · #558 release-blocker hotfix. Older detail below is HISTORICAL.
+
+Prior batch: #499→v1.58.5 (tg_repo_map 512→2000) · #500→v1.58.6 (#110 write-path symlink TOCTOU) ·
 #503→v1.58.7 + #505→v1.58.8 (two flaky-test root fixes) · #501→v1.58.9 (multi-pattern `-e`/`-f`) ·
 #502→v1.58.10 (#49 MCP stdio byte-framing+DoS) · **#508→v1.58.11 releasing** (**H3/H4** checkpoint
 arbitrary-read + disk-DoS — first codex-audit security fix live). Earlier: v1.58.0-v1.58.4 (daemon
