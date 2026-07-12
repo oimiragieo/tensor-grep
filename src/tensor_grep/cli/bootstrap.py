@@ -458,6 +458,23 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
         "--regexp",
         "-f",
         "--file",
+        # task #121: `--count-matches` reports ripgrep's per-OCCURRENCE count, which the
+        # separately-compiled native binary's fallback engine cannot produce (it is
+        # LINE-granular only, same as the Python CPU/Rust fallbacks -- see
+        # rust_core/src/backend_cpu.rs's `count_matches`, "count MATCHING LINES, not total
+        # occurrences"). Without this exclusion, `--count-matches` combined with a trigger
+        # flag (`--json`/`--ndjson`/`--cpu`/`--force-cpu`/`--gpu-device-ids`) delegated
+        # straight to the native binary and silently returned a LINE count mislabeled as an
+        # occurrence count (verified live: a 3-occurrence line undercounted to 1, exit 0, no
+        # visible signal) -- bypassing cli/main.py's OWN identical exclusion entirely
+        # (`count_matches` is already in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
+        # there; this outer argv fast path had simply drifted out of parity with it, the
+        # same two-front-doors gap the -e/-f exclusion above already guards against).
+        # Excluding it here routes to the full CLI instead, which refuses cleanly when rg
+        # is unresolvable and otherwise still uses rg (correct occurrence counts) when it
+        # is. `-c`/`--count` is UNCHANGED: its line-count contract is exactly what the
+        # native binary's fallback already provides correctly, so it keeps delegating.
+        "--count-matches",
     }
     unsupported_prefixes = ("--format=", "--lang=", "--replace=", "--regexp=", "--file=")
     if any(arg in unsupported_flags or arg.startswith(unsupported_prefixes) for arg in search_args):
@@ -1039,6 +1056,16 @@ def main_entry() -> None:
         ) or _search_args_include_unbounded_broad_scan(passthrough_search_args)
         invalid_regex = _search_args_include_obviously_invalid_regex(passthrough_search_args)
 
+        # task #121 note: `--count-matches` is excluded from `_can_delegate_to_native_tg_search`
+        # (it needs rg for its per-occurrence count, which the native binary's fallback engine
+        # cannot produce), but the `_prefer_rust_first_search()` OR-branch below can STILL route
+        # a bare `--count-matches` search to the native binary when TG_RUST_FIRST_SEARCH=1
+        # (`--count-matches` is not a `_requires_full_cli` flag). That is SAFE and deliberately
+        # NOT special-cased here: the native binary self-refuses count_matches via
+        # `require_ripgrep_or_exit` (rust_core/src/main.rs) when rg is unresolvable -- a clean
+        # exit-2, never a silent wrong count. Locked by
+        # test_cli_bootstrap.py::test_rust_first_count_matches_refuses_via_native_self_guard so a
+        # future routing change to this branch cannot silently reopen the silent-wrong-count.
         if (
             not explicit_rg_json
             and native_binary is not None

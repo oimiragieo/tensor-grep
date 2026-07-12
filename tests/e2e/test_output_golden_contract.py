@@ -64,6 +64,26 @@ EXACT_OUTPUT_CASES = {
     "replace_capture_groups_single_file": "world-hello\n",
 }
 
+# task #121: `--count-matches` reports ripgrep's per-OCCURRENCE count, which no rg-less
+# fallback engine can compute (they are line-granular only), so BOTH tg front doors now
+# refuse cleanly (structured exit 2) when rg is unresolvable rather than emit a silently
+# wrong line-count -- the Python path via `_exit_search_error(count_matches_requires_ripgrep)`
+# (cli/main.py) and the native binary via `require_ripgrep_or_exit` (rust_core/src/main.rs).
+# `run_tg` hard-asserts exit 0, so these two golden cases MUST be skipped when rg is
+# unresolvable (both the `python-m` launcher's TG_DISABLE_NATIVE_TG=1 Python path and the
+# `native` launcher hit the refuse). Do NOT re-snapshot: the recorded values happen to be
+# correct ONLY because occurrence-count == line-count for this fixture WHEN rg is available;
+# with rg absent the output is a structured error, not a count, so there is nothing stable
+# to snapshot.
+_COUNT_MATCHES_GOLDEN_CASES = {"count_matches_multi_file", "count_matches_single_file"}
+
+
+def _ripgrep_available() -> bool:
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    return RipgrepBackend().is_available()
+
+
 LAUNCHERS = ["python-m", "native"]
 
 
@@ -197,6 +217,11 @@ def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, ar
         pytest.skip("Native tg.exe does not support this flag currently")
     if launcher == "python-m" and "--ndjson" in args:
         pytest.skip("python -m tensor_grep requires native tg support for --ndjson")
+    if name in _COUNT_MATCHES_GOLDEN_CASES and not _ripgrep_available():
+        pytest.skip(
+            "--count-matches needs rg for its per-occurrence count; both front doors refuse "
+            "cleanly (exit 2) when rg is unresolvable (#121), so there is no count to snapshot"
+        )
     tg_stdout = run_tg(launcher, args + target, golden_fixture_dir)
     if name in EXACT_OUTPUT_CASES:
         assert tg_stdout == EXACT_OUTPUT_CASES[name]

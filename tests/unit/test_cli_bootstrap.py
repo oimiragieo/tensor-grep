@@ -1469,3 +1469,94 @@ def test_multi_pattern_e_f_do_not_delegate_to_native_binary() -> None:
     # No -e/-f -> still delegates; -F (fixed-strings, uppercase) is not a -f prefix match.
     assert bootstrap._can_delegate_to_native_tg_search(["--cpu", "foo", "."])
     assert bootstrap._can_delegate_to_native_tg_search(["--cpu", "-F", "foo", "."])
+
+
+def test_count_matches_does_not_delegate_to_native_binary() -> None:
+    # task #121: `--count-matches` reports ripgrep's per-OCCURRENCE count, which the
+    # separately-compiled native binary's fallback engine cannot produce (LINE-granular
+    # only, same as the Python fallbacks -- see cli/bootstrap.py's
+    # `_can_delegate_to_native_tg_search` comment). Before this fix, `--count-matches`
+    # combined with a trigger flag (--json/--ndjson/--cpu/--force-cpu/--gpu-device-ids)
+    # delegated straight to the native binary and silently returned a LINE count
+    # mislabeled as an occurrence count -- this outer argv fast path must refuse it for
+    # parity with cli/main.py's OWN inner native-delegation gate, which already refuses it
+    # via `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`count_matches`).
+    assert not bootstrap._can_delegate_to_native_tg_search([
+        "--json",
+        "--count-matches",
+        "foo",
+        ".",
+    ])
+    assert not bootstrap._can_delegate_to_native_tg_search(["--cpu", "--count-matches", "foo", "."])
+    assert not bootstrap._can_delegate_to_native_tg_search([
+        "--ndjson",
+        "--count-matches",
+        "foo",
+        ".",
+    ])
+    # -c/--count is UNCHANGED: its line-count contract is exactly what the native binary's
+    # fallback already provides correctly, so it keeps delegating.
+    assert bootstrap._can_delegate_to_native_tg_search(["--json", "-c", "foo", "."])
+    assert bootstrap._can_delegate_to_native_tg_search(["--json", "--count", "foo", "."])
+
+
+def _native_tg_binary_for_lock_test() -> str | None:
+    exe_name = "tg.exe" if sys.platform == "win32" else "tg"
+    for candidate in (
+        Path(f"rust_core/target/release/{exe_name}"),
+        Path(f"rust_core/target/debug/{exe_name}"),
+    ):
+        if candidate.exists():
+            return str(candidate.resolve())
+    return None
+
+
+def test_rust_first_count_matches_refuses_via_native_self_guard(tmp_path: Path) -> None:
+    """task #121 lock-test (dogfoods the REAL native binary).
+
+    `--count-matches` is excluded from `_can_delegate_to_native_tg_search`, but the
+    `_prefer_rust_first_search()` OR-branch in `main_entry` can still route a bare
+    `--count-matches` search to the native binary when `TG_RUST_FIRST_SEARCH=1` (it is not a
+    `_requires_full_cli` flag). That bypass is SAFE only because the native binary itself
+    self-refuses count_matches via `require_ripgrep_or_exit` (rust_core/src/main.rs) when rg
+    is unresolvable -- a clean exit-2, never a silent wrong count. This test locks that
+    end-to-end invariant so a future routing change to the rust-first branch cannot silently
+    reopen the silent-wrong-count. Uses `TG_DISABLE_RG=1` to force rg unresolvable
+    deterministically and `TG_NATIVE_TG_BINARY` to pin the in-tree binary.
+    """
+    native_binary = _native_tg_binary_for_lock_test()
+    if native_binary is None:
+        pytest.skip("Native tg binary not built in this environment")
+
+    target = tmp_path / "sample.txt"
+    # Line 1 has THREE occurrences of foo on ONE line: a silent line-count fallback would
+    # print 1 (wrong); the correct rg occurrence-count would be 3. The native self-refuse
+    # must produce NEITHER -- it must refuse rather than emit any bare number.
+    target.write_text("foo foo foo\nbar\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["TG_RUST_FIRST_SEARCH"] = "1"
+    env["TG_NATIVE_TG_BINARY"] = native_binary
+    env["TG_DISABLE_RG"] = "1"
+    env.pop("TG_DISABLE_NATIVE_TG", None)
+    env.pop("TG_RG_PATH", None)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep", "search", "foo", str(target), "--count-matches"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    # Clean refuse, never a silent wrong count.
+    assert result.returncode == 2, (
+        f"expected exit 2 refuse, got {result.returncode}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+    assert result.stdout.strip() not in {"1", "3"}, (
+        f"native binary emitted a bare count instead of refusing: stdout={result.stdout!r}"
+    )
+    assert "rg" in result.stderr.lower() or "ripgrep" in result.stderr.lower(), (
+        f"refuse message should name the missing rg backend: stderr={result.stderr!r}"
+    )
