@@ -1,6 +1,72 @@
 # CHANGELOG
 
 
+## v1.64.0 (2026-07-12)
+
+### Documentation
+
+- Refresh BACKLOG ledger to v1.63.4 + add scope-to-src/WSL agent guidance (#135)
+  ([#536](https://github.com/oimiragieo/tensor-grep/pull/536),
+  [`63d91c7`](https://github.com/oimiragieo/tensor-grep/commit/63d91c758f06ba7ee7affdcfc297495acdda9063))
+
+- BACKLOG CURRENT STATE: v1.63.1 -> v1.63.4 (this session's 7 releases incl the two profiled latency
+  wins #534 deweight + #535 parse-cache); the CPU-dedup-EXHAUSTED finding (next latency lever =
+  warm-daemon #94, Opus-gated Jul-13); the v1.63.2 "P0 hang" alarm = WSL 9p artifact; #134 A1/A4
+  verify-planned with file:line. - large-repo skill (#135): scope-to-src on big trees (graph is
+  O(files); native agent ~18s/872 files, workspace orient ~48s/50k -- COMPLETE not hung; REPO/src is
+  3-5x faster) + the WSL /mnt/c 9p latency-artifact caveat (reproduce natively before treating a WSL
+  "hang" as a tg bug).
+
+docs-only (no release); agent-readiness governance test green (39 passed).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **codemap**: Native `tg codemap` browsable folder->file->symbol code map (#137)
+  ([#538](https://github.com/oimiragieo/tensor-grep/pull/538),
+  [`35af979`](https://github.com/oimiragieo/tensor-grep/commit/35af979d068fe9349ac7fa099336855f5e7a775e))
+
+Renders a lean index + per-folder drill-down pages from build_repo_map()'s existing extraction --
+  reuses _cached_ast_parse (#535) + _read_source_text_cached + orient's _file_centrality_scores; NO
+  duplicated AST parsing (the whole point). Dual-oracle freshness (git _repo_revision_identity +
+  tree manifest sha256) with a read-only `--check` gate that fails closed (partial never passes;
+  unverifiable = stale). Token-efficient: lean top index (folders with >=1 mapped file only) +
+  per-folder pages + `--max-symbols-per-file` cap with a `tg defs` overflow pointer + empty (never
+  name-echo filler) descriptions. All 4 registration sites wired.
+
+Verified (the agent worktree happened to have the full toolchain): 30/30 codemap tests, 68/68
+  bootstrap, 4485 collected zero-import-errors, mypy 1.19.1 clean, ruff clean, and the REAL compiled
+  tg.exe dogfooded across exit 0/1/2. Fable-designed -> verify-planned -> Sonnet-built.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **sidecar**: Load-robust help-probe-override check via a control-run comparison (#136)
+  ([#537](https://github.com/oimiragieo/tensor-grep/pull/537),
+  [`07b1a59`](https://github.com/oimiragieo/tensor-grep/commit/07b1a59b0ef1e011dfdb2f714456d67e8fdcb40e))
+
+test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python asserted an ABSOLUTE
+  `elapsed < 3s` on a single wedged-Python --help run. Under extreme GitHub-runner starvation on
+  2026-07-11 the process-spawn overhead alone exceeded that bound, false-failing test-rust-core
+  (windows) and BLOCKING the v1.63.4 release (parse-cache #535). #129's earlier de-flake (a generous
+  absolute bound) held for ~1.5-2x contention but not the ~16x under starvation.
+
+Fix: run the wedged probe TWICE on the same host -- a 250ms override vs a 3000ms override -- and
+  assert the short run finishes >=1500ms sooner. The wedged Python never responds, so each run waits
+  its full probe timeout then falls back; both pay identical spawn/fallback overhead, so their
+  DIFFERENCE (the ~2750ms of probe-wait the short run skips) is robust to CI contention that
+  inflates both equally -- no absolute wall-clock is asserted. The outer hang-guard is raised
+  8s->30s (it only guards a truly-hung command, not the timing assertion). Still discriminates
+  "override honored" (~2750ms gap) from "override ignored" (both wait the same default -> ~0 gap ->
+  fails).
+
+cargo test + fmt + clippy green locally.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.63.4 (2026-07-11)
 
 ### Performance Improvements
