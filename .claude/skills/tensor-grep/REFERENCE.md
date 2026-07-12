@@ -93,6 +93,21 @@ tg session daemon start|status|stop  # manage the warm localhost session daemon 
 
 Use the session-scoped variants (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) in place of the top-level equivalents when working in a repeated-edit loop across invocations. The `session_id` comes from `tg session open --json` and is the required first argument for every subcommand except `open`/`list`/`daemon`. Refresh with `tg session refresh SESSION_ID` after non-trivial file changes.
 
+## Evidence Receipts (governance / audit trail)
+
+`tg evidence emit` aggregates what tg already computed (repo revision identity, blast-radius, validation outcomes, changed files/rollback, caller-supplied agent/model/cost) into one versioned JSON receipt, for a downstream consumer (e.g. gotcontext) to audit an agent's work. Every receipt gets a keyless `receipt_sha256` integrity digest; `--sign` additionally Ed25519-signs it so a separate trust domain can verify it without holding a forgeable key.
+
+```powershell
+tg evidence emit REPO_PATH --capsule capsule.json --manifest manifest.json --out receipt.json   # unsigned; receipt_sha256 always present
+tg evidence emit REPO_PATH --sign --out receipt.json            # Ed25519-signed; fails closed (non-zero, no file written) if no key resolves
+tg evidence keygen                                               # generate ~/.tensor-grep/keys/evidence_ed25519.key (0600) + .pub; --force to overwrite
+tg evidence pubkey                                                # print the public key + key_id for registering with a verifier
+tg evidence verify receipt.json --json                           # digest_valid / signature_valid / key_trusted / valid
+tg evidence verify receipt.json --trusted-key BASE64_PUBKEY --require-trusted   # fail closed unless the embedded key is pinned
+```
+
+An embedded public key alone only proves the receipt is internally self-consistent, never who signed it — pin the signer's key with `--trusted-key` (or `TG_EVIDENCE_TRUSTED_KEYS`) and add `--require-trusted` before trusting `valid=true` for anything security-relevant. Full wire format: `docs/CONTRACTS.md` section 8.
+
 ## Known Issues
 
 **Unscoped search on a vendored root refuses instantly, not a 60 s hang.** `tg search PATTERN` with no path against a root whose top level contains `node_modules`/`vendor`/`external_repos`/`third_party` is refused in under 1 s (exit 2) before any walk starts. A large/unscoped root with no such top-level dir still gets a wall-clock-bounded native walk (flagged partial on expiry) or the `TG_RG_TIMEOUT_SECONDS`-bounded rg passthrough (default 60 s, lowered from 600 s in #288) — the 60 s timeout is a backstop, not the primary behavior. WORKAROUND: always supply a path — `tg search PATTERN C:\repo` completes in ~0.4 s.
