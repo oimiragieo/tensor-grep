@@ -226,6 +226,90 @@ class TestAstBackend:
                 str(file_path), "not a valid ast query", SearchConfig(ast=True, lang="python")
             )
 
+    def test_bare_identifier_ast_grep_pattern_fails_closed_with_ast_dependency_message(
+        self, monkeypatch
+    ):
+        """#144 hotfix: release-tag-smoke's ast-run-smoke check runs
+        `tg run --pattern calculateTotal tests/fixtures/ast_smoke --lang js --json`, which is
+        ast-grep-DSL surface served by AstGrepWrapperBackend. When the ast-grep binary is absent
+        (CI, since #542 broadened AstBackend.is_available()), core/pipeline.py routing falls
+        through to this native tree-sitter AstBackend instead. "calculateTotal" satisfies
+        _is_simple_node_type_pattern (a bare identifier), so the node-type-index lookup runs
+        first, finds no such node TYPE (it is a user identifier, not a grammar node type),
+        returns 0 matches, and falls through to compiling the pattern as a tree-sitter QUERY --
+        which raises because "calculateTotal" is not a valid node type. Pre-fix, that surfaced
+        the generic "AST query compilation failed" error, which is not one of
+        agent_readiness.py's skip_error_patterns ("Explicit AST search requires AST
+        dependencies" / "no AST backend is available"), so CI failed instead of skipping. This
+        test drives the native AstBackend DIRECTLY (bypassing AstGrepWrapperBackend entirely)
+        against the real ast_smoke fixture and asserts the fail-closed message now names the
+        ast-grep dependency, so the smoke check recognizes it as an environment gap rather than
+        a real bug (#141 DSL divergence: native tree-sitter-query vs ast-grep-DSL)."""
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_javascript")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")  # hermetic: force the live query path
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.base import BackendExecutionError
+
+        backend = AstBackend()
+        assert backend.is_available() is True
+
+        fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "ast_smoke" / "app.js"
+        assert fixture_path.exists()
+
+        with pytest.raises(BackendExecutionError) as exc_info:
+            backend.search(str(fixture_path), "calculateTotal", SearchConfig(ast=True, lang="js"))
+
+        assert "Explicit AST search requires AST dependencies" in str(exc_info.value)
+
+    def test_malformed_non_simple_ast_query_still_raises_original_compilation_error(
+        self, tmp_path, mocker
+    ):
+        """Regression guard for #144: the new ast-grep-dependency branch must only fire for a
+        *simple* bare-identifier pattern (ast-grep-DSL-shaped). A malformed non-simple `(...)`
+        tree-sitter query is a genuinely invalid QUERY, not a plausible ast-grep pattern, and
+        must keep raising the ORIGINAL "AST query compilation failed" message -- proving the new
+        fail-closed branch was not over-broadened to swallow real invalid-query errors."""
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.base import BackendExecutionError
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+
+        class FakeLanguage:
+            def query(self, _pattern):
+                raise Exception("invalid query")
+
+        class FakeTree:
+            class RootNode:
+                type = "module"
+                start_point = (0, 0)
+                children = ()
+
+            root_node = RootNode()
+
+        class FakeParser:
+            language = FakeLanguage()
+
+            def parse(self, _source):
+                return FakeTree()
+
+        mocker.patch.object(backend, "_get_parser", return_value=FakeParser())
+
+        file_path = tmp_path / "test.py"
+        file_path.write_text("def hello():\n    print('world')\n", encoding="utf-8")
+
+        with pytest.raises(BackendExecutionError) as exc_info:
+            backend.search(
+                str(file_path),
+                "(function_definition name",  # malformed s-expr, not a bare identifier
+                SearchConfig(ast=True, lang="python"),
+            )
+
+        message = str(exc_info.value)
+        assert "AST query compilation failed" in message
+        assert "Explicit AST search requires AST dependencies" not in message
+
     def test_should_support_dict_capture_shape(self, tmp_path, mocker):
         from tensor_grep.backends.ast_backend import AstBackend
 
