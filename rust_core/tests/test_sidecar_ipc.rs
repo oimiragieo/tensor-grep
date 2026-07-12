@@ -533,6 +533,41 @@ fn write_wedged_python_script(dir: &Path) -> PathBuf {
 }
 
 #[cfg(not(feature = "cuda"))]
+// #145: `test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python` (below) and
+// `test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_is_wedged` (further
+// below) both drive `tg --help` against the SAME wedged-Python mechanism and measure wall-clock --
+// the single most directly identifiable source of mutual contention for either test's timing
+// assertion if `cargo test`'s default thread-parallelism happens to schedule them at the same time.
+// This lock makes that specific pair mutually exclusive. It cannot (from a single test file) also
+// exclude the ~14 OTHER subprocess-spawning tests in this binary or unrelated CI-runner load; see
+// `HELP_PROBE_TRIALS` and the widened gap in the override-honored test below for how the timing
+// assertion itself stays robust to that residual noise.
+static HELP_PROBE_TIMING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(not(feature = "cuda"))]
+fn lock_help_probe_timing() -> std::sync::MutexGuard<'static, ()> {
+    // Recover from poisoning instead of propagating it: if an EARLIER test panicked on its own
+    // assertion while holding this lock, unwrapping a PoisonError here would replace that test's
+    // real failure message with an unrelated "lock poisoned" panic in this one. The lock only
+    // provides mutual exclusion for timing purposes, not shared data integrity, so recovering is safe.
+    HELP_PROBE_TIMING_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(not(feature = "cuda"))]
+const HELP_PROBE_SHORT_OVERRIDE_MS: &str = "250";
+#[cfg(not(feature = "cuda"))]
+const HELP_PROBE_LONG_OVERRIDE_MS: &str = "6000";
+#[cfg(not(feature = "cuda"))]
+const HELP_PROBE_MIN_GAP: Duration = Duration::from_millis(2500);
+#[cfg(not(feature = "cuda"))]
+// Each variant is measured this many times and the FASTEST run is kept -- see the doc comment on
+// `min_wedged_help_probe` for why min-of-N is the right reducer for a noise source that only ever
+// adds latency.
+const HELP_PROBE_TRIALS: u32 = 2;
+
+#[cfg(not(feature = "cuda"))]
 fn run_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str) -> Duration {
     // Run `tg --help` against a wedged (never-responding) Python with the given help-probe timeout
     // override; assert the native fallback still succeeds with enriched help; return wall-clock
@@ -547,8 +582,12 @@ fn run_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str) -> Duratio
 
     let started = Instant::now();
     // Generous outer hang-guard: guards only against a truly-hung command, NOT the timing assertion
-    // (the short-vs-long comparison lives in the caller). 30s tolerates heavy CI runner starvation.
-    let output = run_with_timeout(tg, Duration::from_secs(30));
+    // (the short-vs-long comparison lives in the caller). #145: raised 30s->60s to keep a comparable
+    // safety margin above the widened long-side probe override (3000ms -> 6000ms); the wedged Python
+    // itself only ever sleeps ~20s (write_wedged_python_script), so in practice this ceiling is not
+    // expected to fire even under heavy contention -- it exists purely so a genuinely broken
+    // kill-on-timeout regression fails as a bounded panic instead of hanging the runner.
+    let output = run_with_timeout(tg, Duration::from_secs(60));
     let elapsed = started.elapsed();
 
     assert!(
@@ -565,6 +604,23 @@ fn run_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str) -> Duratio
 }
 
 #[cfg(not(feature = "cuda"))]
+// #145: race `probe_timeout_ms` `trials` times against the wedged Python and keep the FASTEST
+// (minimum) elapsed. CI subprocess-spawn/scheduler contention only ever ADDS latency -- it never
+// makes a run finish faster than its true uncontended cost -- so the minimum across independent
+// trials is a statistically principled lower-bound estimate, and a single unlucky trial (one
+// thread-scheduling hiccup, one antivirus scan of a freshly-written EXE) no longer decides the
+// result the way a single-shot measurement does. This does NOT weaken the regression check: if
+// TG_HELP_PROBE_TIMEOUT_MS is genuinely ignored, EVERY trial of EVERY variant converges on the same
+// ~DEFAULT_HELP_PROBE_TIMEOUT_MS wait regardless of which is minimized, so the short-vs-long gap
+// still collapses to ~0 and the caller's assertion still fails.
+fn min_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str, trials: u32) -> Duration {
+    (0..trials)
+        .map(|_| run_wedged_help_probe(wedge_script, probe_timeout_ms))
+        .min()
+        .expect("trials must be >= 1")
+}
+
+#[cfg(not(feature = "cuda"))]
 #[test]
 fn test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python() {
     // audit #97 item 1: TG_HELP_PROBE_TIMEOUT_MS must override the (3000ms) default help-probe
@@ -572,23 +628,48 @@ fn test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python() {
     // override must make the native --help fallback trigger fast against a Python that never responds.
     //
     // #136: this asserted an ABSOLUTE `elapsed < 3s`, which false-failed under extreme GitHub-runner
-    // starvation (spawn overhead alone exceeded the bound, blocking the v1.63.4 release). Instead RUN
-    // IT TWICE -- a 250ms override vs a 3000ms override -- on the same host and COMPARE: the wedged
-    // Python never responds, so each run waits its full probe timeout then falls back, and the short
-    // run must finish ~2750ms sooner. Both runs pay identical spawn/fallback overhead, so the
-    // DIFFERENCE is robust to CI contention (which inflates both equally); only the ~2750ms of
-    // probe-wait the short run skips is measured -- never an absolute wall-clock.
+    // starvation (spawn overhead alone exceeded the bound, blocking the v1.63.4 release). Fix: run the
+    // wedged probe TWICE -- a 250ms override vs a longer one -- on the same host and assert the short
+    // run finishes markedly sooner, since shared contention cancels in the DIFFERENCE rather than an
+    // absolute wall-clock. That held for a while but STILL false-failed a 3rd time on the
+    // windows-latest/nightly leg and blocked v1.65.2 (#145) -- a single-shot pair remains vulnerable
+    // to a contention spike landing on just the short run (which shrinks the gap), or to racing the
+    // sibling test below, which drives the exact same `tg --help`-against-wedged-Python code path.
+    //
+    // #145 hardening -- three independent, complementary changes, not another tolerance bump alone:
+    //   1. `HELP_PROBE_TIMING_LOCK` mutually excludes this test and its sibling below so they never
+    //      compete with EACH OTHER for process-creation resources (the single most directly
+    //      identifiable shared-mechanism contention source).
+    //   2. Each variant is measured `HELP_PROBE_TRIALS` times and the MINIMUM is kept (see
+    //      `min_wedged_help_probe`) so a single unlucky trial can no longer decide the result.
+    //   3. The long-side override is raised 3000ms -> 6000ms, doubling the nominal gap from ~2750ms
+    //      to ~5750ms, while the required minimum gap rises only 1500ms -> 2500ms -- i.e. the
+    //      required gap now needs to retain ~43% of the theoretical maximum instead of ~55%,
+    //      materially MORE tolerant of contention eroding the observed gap, while staying far above
+    //      the ~0ms gap a genuinely-ignored override would produce (both variants would then wait the
+    //      same real ~3000ms default, regardless of trials or minimum-taking).
     let dir = tempdir().unwrap();
     let wedge_script = write_wedged_python_script(dir.path());
+    let _guard = lock_help_probe_timing();
 
-    let elapsed_short = run_wedged_help_probe(&wedge_script, "250");
-    let elapsed_long = run_wedged_help_probe(&wedge_script, "3000");
+    let elapsed_short = min_wedged_help_probe(
+        &wedge_script,
+        HELP_PROBE_SHORT_OVERRIDE_MS,
+        HELP_PROBE_TRIALS,
+    );
+    let elapsed_long = min_wedged_help_probe(
+        &wedge_script,
+        HELP_PROBE_LONG_OVERRIDE_MS,
+        HELP_PROBE_TRIALS,
+    );
 
     assert!(
-        elapsed_short + Duration::from_millis(1500) < elapsed_long,
-        "TG_HELP_PROBE_TIMEOUT_MS=250 was not honored -- the 250ms-override run took {elapsed_short:?} \
-         but the 3000ms-override run took only {elapsed_long:?}; honoring 250ms should save ~2750ms of \
-         probe-wait (require >=1500ms of that gap to survive timing jitter)"
+        elapsed_short + HELP_PROBE_MIN_GAP < elapsed_long,
+        "TG_HELP_PROBE_TIMEOUT_MS override was not honored -- the best of {HELP_PROBE_TRIALS} \
+         run(s) at {HELP_PROBE_SHORT_OVERRIDE_MS}ms took {elapsed_short:?}, but the best of \
+         {HELP_PROBE_TRIALS} run(s) at {HELP_PROBE_LONG_OVERRIDE_MS}ms took only {elapsed_long:?}; \
+         honoring the short override should save several seconds of probe-wait (required >= \
+         {HELP_PROBE_MIN_GAP:?} of that gap to survive timing jitter)"
     );
 }
 
@@ -605,8 +686,13 @@ fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_i
     // lower bound: a sibling attempt at that showed parallel-test subprocess-spawn contention can
     // inflate elapsed time by ~1.5-2x, which would make a tight bound flaky. That the override is
     // honored is covered precisely, without timing ambiguity, by the sibling test above.
+    //
+    // #145: shares `HELP_PROBE_TIMING_LOCK` with the override-honored test above so the two
+    // `tg --help`-against-wedged-Python timing tests never race each other for process-creation
+    // resources; see the lock's doc comment for why.
     let dir = tempdir().unwrap();
     let wedge_script = write_wedged_python_script(dir.path());
+    let _guard = lock_help_probe_timing();
 
     let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
     tg.current_dir(repo_root())

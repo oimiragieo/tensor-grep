@@ -410,6 +410,13 @@ jobs:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
     needs: smoke
     runs-on: ${{ matrix.os }}
+    # #145: nightly Rust is unstable by design (a wall-clock-timing test on this leg has blocked
+    # the release gate 3x on wholly non-product flakes). Only the nightly leg is non-gating here --
+    # it still RUNS and stays VISIBLE (so a real nightly regression is seen and can be triaged), but
+    # a nightly-only failure no longer fails this job's conclusion, so `release`'s `needs: [...,
+    # test-rust-core, ...]` (below) is not blocked by it. The stable leg (every OS) is untouched and
+    # still hard-gates release on a real failure.
+    continue-on-error: ${{ matrix.rust_channel == 'nightly' }}
     permissions:
       contents: read
     strategy:
