@@ -159,11 +159,11 @@ pytest.importorskip("pygls.lsp.server")
 
 from tensor_grep.cli.lsp_server import (  # noqa: E402
     _DOCUMENTS_CACHE_MAX,
-    _TENSOR_CACHE_MAX,
     TensorGrepLSPServer,
     _lru_get,
     _lru_put,
     did_close,
+    did_open,
 )
 
 
@@ -194,11 +194,13 @@ class TestLruHelpers:
 
 
 # ---------------------------------------------------------------------------
-# I3: didClose handler evicts from documents_cache, tensor_cache, repo_map_cache
+# I3: didClose handler evicts from documents_cache, repo_map_cache
 # ---------------------------------------------------------------------------
 from lsprotocol.types import (  # noqa: E402
     DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams,
     TextDocumentIdentifier,
+    TextDocumentItem,
 )
 
 
@@ -211,8 +213,6 @@ class TestDidCloseHandler:
         server = _make_server()
         uri = (tmp_path / "file.py").as_uri()
         server.documents_cache[uri] = "print('hello')"
-        # Seed tensor and repo map caches too.
-        server.tensor_cache[uri] = {"dummy": True}
         server.repo_map_cache[str(tmp_path)] = {"symbols": []}
 
         did_close(
@@ -221,7 +221,6 @@ class TestDidCloseHandler:
         )
 
         assert uri not in server.documents_cache
-        assert uri not in server.tensor_cache
 
     def test_did_close_unknown_uri_is_safe(self, tmp_path: Path) -> None:
         server = _make_server()
@@ -239,11 +238,44 @@ class TestDidCloseHandler:
             _lru_put(server.documents_cache, f"file://{i}.py", f"content {i}", _DOCUMENTS_CACHE_MAX)
         assert len(server.documents_cache) <= _DOCUMENTS_CACHE_MAX
 
-    def test_tensor_cache_bounded_by_max(self) -> None:
+
+# ---------------------------------------------------------------------------
+# delete-dead-lsp-tensor-gnn: the LSP server has no tensor_cache anymore -- prove
+# it still constructs cleanly and still serves its real (documents_cache /
+# repo_map_cache) path through didOpen/didClose after the field + use-site removal.
+# ---------------------------------------------------------------------------
+class TestLspServerServesRealPathWithoutTensorCache:
+    def test_server_construction_has_no_tensor_cache_attribute(self) -> None:
         server = _make_server()
-        for i in range(_TENSOR_CACHE_MAX + 10):
-            _lru_put(server.tensor_cache, f"file://{i}.py", {"tensor": i}, _TENSOR_CACHE_MAX)
-        assert len(server.tensor_cache) <= _TENSOR_CACHE_MAX
+        assert not hasattr(server, "tensor_cache")
+
+    def test_did_open_then_did_close_serves_real_path(self, tmp_path: Path) -> None:
+        server = _make_server()
+        file_path = tmp_path / "file.py"
+        file_path.write_text("print('hello')\n", encoding="utf-8")
+        uri = file_path.as_uri()
+
+        # Must not raise: didOpen no longer touches a tensor cache, only the real
+        # documents_cache / repo_map_cache invalidation path.
+        did_open(
+            server,
+            DidOpenTextDocumentParams(
+                text_document=TextDocumentItem(
+                    uri=uri,
+                    language_id="python",
+                    version=1,
+                    text=file_path.read_text(encoding="utf-8"),
+                )
+            ),
+        )
+        assert server.documents_cache[uri] == "print('hello')\n"
+
+        # Must not raise: didClose evicts documents_cache/repo_map_cache only.
+        did_close(
+            server,
+            DidCloseTextDocumentParams(text_document=TextDocumentIdentifier(uri=uri)),
+        )
+        assert uri not in server.documents_cache
 
 
 # ---------------------------------------------------------------------------

@@ -91,9 +91,37 @@ class TestAstBackend:
         # Act & Assert
         assert backend.is_available() is False
 
+    def test_is_available_is_true_on_tree_sitter_alone_even_without_torch_geometric(self, mocker):
+        """Parity/characterization test (delete-dead-lsp-tensor-gnn): AstBackend.search() is
+        pure tree-sitter query matching -- the dead GNN/_ast_to_graph path (which was the only
+        thing that ever touched torch/torch_geometric/CUDA) has been deleted. is_available()
+        must therefore report availability from tree-sitter alone: a fully-functional CPU
+        backend must not be gated behind an unrelated, no-longer-relevant GPU dependency.
+        Simulates the common non-GPU box: `tree_sitter` importable, `torch_geometric` is not.
+        """
+        import importlib.util
+
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "torch_geometric":
+                return None  # simulate: torch_geometric is NOT installed
+            if name == "tree_sitter":
+                return object()  # simulate: tree_sitter IS installed (any non-None spec)
+            return real_find_spec(name, *args, **kwargs)
+
+        mocker.patch("importlib.util.find_spec", side_effect=fake_find_spec)
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+
+        # Act & Assert
+        assert backend.is_available() is True
+
     @pytest.mark.gpu
     def test_should_parse_python_ast(self, tmp_path):
-        # Note: This test requires tree-sitter, tree-sitter-python, and torch_geometric to be installed.
+        # Note: this test only requires tree-sitter + tree-sitter-python to be installed
+        # (AstBackend is a pure tree-sitter structural matcher; it has no torch/GPU dependency).
         from tensor_grep.backends.ast_backend import AstBackend
 
         backend = AstBackend()
@@ -107,8 +135,7 @@ class TestAstBackend:
         config = SearchConfig(ast=True, lang="python")
 
         # Act
-        # In this simplistic simulated graph match, we're passing a pattern that doesn't actually match the GNN directly,
-        # but verifies the graph extraction pipeline doesn't crash.
+        # Verifies the tree-sitter query-matching pipeline doesn't crash on a real pattern.
         result = backend.search(str(file_path), "def", config)
 
         # Assert

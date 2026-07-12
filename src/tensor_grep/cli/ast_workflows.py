@@ -710,7 +710,7 @@ def run_command(
 
         if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
             print(
-                "Warning: AstBackend not available (requires torch_geometric/tree_sitter). "
+                "Warning: AstBackend not available (requires tree-sitter or ast-grep). "
                 "Falling back to CPU regex.",
                 file=sys.stderr,
             )

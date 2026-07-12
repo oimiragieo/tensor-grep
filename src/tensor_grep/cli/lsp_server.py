@@ -26,8 +26,6 @@ from lsprotocol.types import (
     DocumentSymbol,
     DocumentSymbolParams,
     Location,
-    LogMessageParams,
-    MessageType,
     OptionalVersionedTextDocumentIdentifier,
     Position,
     PrepareRenameParams,
@@ -50,18 +48,15 @@ from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LS
 # audit I3: max entries per LRU cache dict.
 _DOCUMENTS_CACHE_MAX = 512
 _REPO_MAP_CACHE_MAX = 64
-_TENSOR_CACHE_MAX = 128
 
 
 class TensorGrepLSPServer(LanguageServer):  # type: ignore
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # audit I3: use OrderedDict-backed LRU caches so that open documents,
-        # repo maps, and GPU tensors cannot grow without bound.  Eviction is
-        # LRU (move_to_end on access, popitem(last=False) when over limit).
+        # audit I3: use OrderedDict-backed LRU caches so that open documents and
+        # repo maps cannot grow without bound.  Eviction is LRU (move_to_end on
+        # access, popitem(last=False) when over limit).
         self.documents_cache: OrderedDict[str, str] = OrderedDict()
-        # In a real enterprise version, we would keep the AST graph warm in VRAM here.
-        self.tensor_cache: OrderedDict[str, Any] = OrderedDict()
         self.repo_map_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.provider_mode = "native"
         self.external_providers = ExternalLSPProviderManager()
@@ -793,19 +788,15 @@ def did_open(ls: TensorGrepLSPServer, params: DidOpenTextDocumentParams) -> None
         _DOCUMENTS_CACHE_MAX,
     )
     _invalidate_repo_map_cache(ls, params.text_document.uri)
-    _update_ast_tensor(ls, params.text_document.uri, params.text_document.text)
     if ls.provider_mode != "native":
         _external_client_for_uri(ls, params.text_document.uri)
 
 
 @server.feature(TEXT_DOCUMENT_DID_CLOSE)  # type: ignore
 def did_close(ls: TensorGrepLSPServer, params: DidCloseTextDocumentParams) -> None:
-    """Document closed — evict from all caches and release GPU tensors (audit I3)."""
+    """Document closed — evict from all caches (audit I3)."""
     uri = params.text_document.uri
     ls.documents_cache.pop(uri, None)
-    # Drop tensor cache entry; if it contains GPU tensors the reference count
-    # falls to zero and VRAM is released at the next GC cycle.
-    ls.tensor_cache.pop(uri, None)
     # repo_map_cache is keyed by repo root, not URI, so we invalidate via the
     # normal helper which resolves the root from the URI.
     _invalidate_repo_map_cache(ls, uri)
@@ -849,10 +840,9 @@ def did_change(ls: TensorGrepLSPServer, params: DidChangeTextDocumentParams) -> 
 @server.feature(TEXT_DOCUMENT_DID_SAVE)  # type: ignore
 def did_save(ls: TensorGrepLSPServer, params: DidSaveTextDocumentParams) -> None:
     """Document saved."""
-    # audit I3: use LRU-promoting get.
-    text = cast(str, _lru_get(ls.documents_cache, params.text_document.uri) or "")
+    # audit I3: promote to MRU so a just-saved document isn't first to be evicted.
+    _lru_get(ls.documents_cache, params.text_document.uri)
     _invalidate_repo_map_cache(ls, params.text_document.uri)
-    _update_ast_tensor(ls, params.text_document.uri, text)
     if ls.provider_mode != "native":
         client = _external_client_for_uri(ls, params.text_document.uri)
         if client is not None:
@@ -925,49 +915,6 @@ def _negotiate_position_encoding(
         ls._position_encoding = "utf-32"
     else:
         ls._position_encoding = "utf-16"
-
-
-def _update_ast_tensor(ls: TensorGrepLSPServer, uri: str, text: str) -> None:
-    try:
-        from tensor_grep.backends.ast_backend import AstBackend
-
-        backend = AstBackend()
-        if not backend.is_available():
-            return
-
-        lang = _infer_language(uri)
-        parser_language = "javascript" if lang == "javascript" else lang
-        parser = backend._get_parser(parser_language)
-        source_bytes = text.encode("utf-8")
-        tree = parser.parse(source_bytes)
-
-        edge_index, x, line_numbers = backend._ast_to_graph(tree.root_node, source_bytes)
-
-        import torch
-
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        # audit I3: use LRU eviction; evicted entries drop GPU tensor references,
-        # allowing VRAM to be reclaimed at the next GC cycle.
-        _lru_put(
-            ls.tensor_cache,
-            uri,
-            {
-                "edge_index": edge_index.to(device),
-                "x": x.to(device),
-                "line_numbers": line_numbers,
-                "text": text,
-                "language": lang,
-            },
-            _TENSOR_CACHE_MAX,
-        )
-    except Exception as e:
-        ls.window_log_message(
-            LogMessageParams(
-                type=MessageType.Error,
-                message=f"Failed to update AST Tensor for {uri}: {e}",
-            )
-        )
 
 
 def run_lsp() -> None:

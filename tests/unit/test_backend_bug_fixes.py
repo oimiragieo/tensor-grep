@@ -77,27 +77,37 @@ def test_build_node_type_index_correct_line_mapping() -> None:
     assert index["grandchild"] == [4]
 
 
-def test_ast_to_graph_deep_tree_does_not_raise_recursion_error() -> None:
-    """_ast_to_graph must also survive deeply-nested trees (it has its own walker)."""
-    # _ast_to_graph imports torch — skip if not present.
-    try:
-        import torch  # noqa: F401
-    except ImportError:
-        import pytest
+# ---------------------------------------------------------------------------
+# delete-dead-lsp-tensor-gnn: the GNN/tensor path (_ast_to_graph, torch_geometric,
+# the LSP tensor cache) was audited as dead -- _ast_to_graph's only caller was the
+# LSP's tensor-cache updater, whose output nothing ever read back. Both were
+# deleted in the same change that made AstBackend.is_available() tree-sitter-only
+# (see test_ast_backend.py). These hygiene assertions pin the deletion so the
+# dead path cannot silently grow back.
+# ---------------------------------------------------------------------------
 
-        pytest.skip("torch not installed")
 
+def test_ast_to_graph_and_torch_geometric_are_fully_removed() -> None:
+    """_ast_to_graph (the dead GNN/tensor-graph conversion helper) must be gone from
+    AstBackend, and neither ast_backend.py nor lsp_server.py may import torch_geometric
+    anymore -- AstBackend.search() is pure tree-sitter query matching and never touches it.
+    """
+    from pathlib import Path
+
+    import tensor_grep.backends.ast_backend as ast_backend_module
     from tensor_grep.backends.ast_backend import AstBackend
 
-    backend = AstBackend()
-    depth = sys.getrecursionlimit() + 200
-    root = _build_chain(depth)
+    assert not hasattr(AstBackend, "_ast_to_graph"), "_ast_to_graph must be deleted (dead GNN path)"
 
-    # Must not raise RecursionError
-    _edge_index, x, line_numbers = backend._ast_to_graph(root, b"")
+    ast_backend_source = Path(ast_backend_module.__file__).read_text(encoding="utf-8")
+    assert "torch_geometric" not in ast_backend_source
 
-    assert x.shape[0] == depth + 1  # one node per level
-    assert len(line_numbers) == depth + 1
+    import tensor_grep.cli.lsp_server as lsp_server_module
+
+    lsp_server_source = Path(lsp_server_module.__file__).read_text(encoding="utf-8")
+    assert "torch_geometric" not in lsp_server_source
+    assert "tensor_cache" not in lsp_server_source, "the dead LSP tensor cache must be removed"
+    assert "_update_ast_tensor" not in lsp_server_source
 
 
 # ---------------------------------------------------------------------------

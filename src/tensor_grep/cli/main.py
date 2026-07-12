@@ -6410,7 +6410,7 @@ def search_command(
     ast: bool = typer.Option(
         False,
         "--ast",
-        help="Parse files into ASTs and search structurally using PyTorch Geometric.",
+        help="Parse files into ASTs and search structurally using tree-sitter.",
     ),
     lang: str | None = typer.Option(
         None,
