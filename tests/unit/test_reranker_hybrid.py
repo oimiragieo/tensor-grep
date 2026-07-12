@@ -8,6 +8,8 @@ being fetched.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from tensor_grep.core.reranker import rerank_by_bm25, rerank_hybrid
@@ -184,3 +186,139 @@ def test_path_channel_no_filename_overlap_falls_back_to_bm25_dense_only(monkeypa
     )
 
     assert [m.file for m in hybrid_flag_on.matches] == [m.file for m in hybrid_flag_off.matches]
+
+
+# --- #128d (backlog cluster-1 P0-CORRECTNESS, MED-1): the hybrid twin of the total corpus-chunk
+# cap tests in test_reranker.py. `rerank_hybrid`'s `bm25_index is None` build loop is "currently
+# unreached from production after #527" (the semantic path always passes a prebuilt bm25_index --
+# see cli/main.py's `_apply_semantic_rerank`), but the fix covers it too per the audit's explicit
+# instruction: "any future caller re-opens the hole" otherwise.
+
+
+def _write_three_line_file(tmp_path: Path, name: str) -> Path:
+    """A 3-line file that produces exactly 3 chunks at chunk_size=1, overlap=0 (one chunk per
+    line) -- gives fully deterministic, hand-countable chunk totals for the cap tests below."""
+    path = tmp_path / name
+    path.write_text(f"{name}_line_a\n{name}_line_b\n{name}_line_c\n", encoding="utf-8")
+    return path
+
+
+def _patch_counting_chunk_file(monkeypatch):  # type: ignore[no-untyped-def]
+    """Wrap reranker.py's bound `chunk_file` name with a call-counting proxy, returning the list
+    of paths it was invoked with (in call order)."""
+    from tensor_grep.core import reranker as reranker_module
+    from tensor_grep.core.retrieval_chunker import chunk_file as real_chunk_file
+
+    calls: list[str] = []
+
+    def _counting_chunk_file(path: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        calls.append(str(path))
+        return real_chunk_file(path, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(reranker_module, "chunk_file", _counting_chunk_file)
+    return calls
+
+
+def test_rerank_hybrid_corpus_cap_bounds_chunking_and_sets_reason(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The `bm25_index is None` build loop is bounded by the same total cap as rerank_by_bm25's,
+    and never drops a match."""
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "4")
+    calls = _patch_counting_chunk_file(monkeypatch)
+
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(3)]  # 3 chunks each -> 9
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=3,
+    )
+
+    out = rerank_hybrid(result, "anything", [str(f) for f in files], chunk_size=1, overlap=0)
+
+    assert calls == [str(files[0]), str(files[1])], f"unexpected chunking calls: {calls}"
+    assert out.rank_fallback_reason is not None
+    assert "corpus cap" in out.rank_fallback_reason
+    assert len(out.matches) == len(result.matches) == 3
+    assert {m.file for m in out.matches} == {m.file for m in result.matches}
+
+
+def test_rerank_hybrid_small_corpus_under_cap_leaves_reason_none(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A matched set comfortably under the (default) cap is unaffected: rank_fallback_reason stays
+    None and every file is chunked -- byte-identical to the pre-cap behavior."""
+    monkeypatch.delenv("TG_RANK_CORPUS_CHUNK_CAP", raising=False)
+    calls = _patch_counting_chunk_file(monkeypatch)
+
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(2)]
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=2,
+    )
+
+    out = rerank_hybrid(result, "anything", [str(f) for f in files], chunk_size=1, overlap=0)
+
+    assert calls == [str(files[0]), str(files[1])]
+    assert out.rank_fallback_reason is None
+    assert len(out.matches) == 2
+
+
+def test_rerank_hybrid_corpus_cap_env_tunable(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Same override-respected proof as rerank_by_bm25's twin: the default cap never trips this
+    small corpus, but TG_RANK_CORPUS_CHUNK_CAP set below the corpus total does."""
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(2)]  # 6 chunks total
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=2,
+    )
+
+    monkeypatch.delenv("TG_RANK_CORPUS_CHUNK_CAP", raising=False)
+    default_out = rerank_hybrid(
+        result, "anything", [str(f) for f in files], chunk_size=1, overlap=0
+    )
+    assert default_out.rank_fallback_reason is None
+
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "2")
+    capped_out = rerank_hybrid(result, "anything", [str(f) for f in files], chunk_size=1, overlap=0)
+    assert capped_out.rank_fallback_reason is not None
+    assert "2 chunks" in capped_out.rank_fallback_reason
+    assert len(capped_out.matches) == 2
+
+
+def test_rerank_hybrid_corpus_cap_appends_to_existing_and_late_rerank_reasons(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The 3-way reason combination (pre-existing + corpus-cap + late-rerank) preserves every
+    source -- generalizing the existing 2-way late-rerank append test without regressing it."""
+    from tensor_grep.core.retrieval_late import LateReranker, LateRerankUnavailableError
+
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "1")
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(2)]
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=2,
+        rank_fallback_reason="pre-existing upstream reason",
+    )
+
+    def _raising_encode(text: str) -> np.ndarray:
+        raise LateRerankUnavailableError("late rerank unavailable: model not fetched")
+
+    # Query MUST match a real token in the corpus ("line", present in every _write_three_line_file
+    # chunk) so the BM25 leg's ranking -- and therefore the late-rerank pool `head` -- is non-empty.
+    # Bm25Index.query() excludes zero-score chunks, and LateReranker.rerank() short-circuits an
+    # EMPTY pool without ever invoking `encode` at all -- an unmatched query like "anything" would
+    # never reach `_raising_encode`, silently defeating this test's whole premise.
+    out = rerank_hybrid(
+        result,
+        "line",
+        [str(f) for f in files],
+        chunk_size=1,
+        overlap=0,
+        late_reranker=LateReranker(encode=_raising_encode),
+    )
+
+    assert out.rank_fallback_reason is not None
+    assert "pre-existing upstream reason" in out.rank_fallback_reason
+    assert "corpus cap" in out.rank_fallback_reason
+    assert "model not fetched" in out.rank_fallback_reason
+    assert len(out.matches) == 2  # matches still never dropped across all three degrade sources

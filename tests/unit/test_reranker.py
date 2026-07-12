@@ -309,3 +309,169 @@ def test_late_reranker_base_exception_user_abort_propagates_not_swallowed() -> N
             bm25_index=bm25_index,
             late_reranker=LateReranker(encode=_aborting_encode),
         )
+
+
+# --- #128d (backlog cluster-1 P0-CORRECTNESS, MED-1): the total corpus-chunk cap for plain
+# `tg search --rank` (rerank_by_bm25's `index is None` build loop). Unlike the `--semantic` path
+# (already capped via #527/A2, cli/main.py), plain --rank had NO total bound at all -- only the
+# per-FILE MAX_CHUNKS guard existed. These tests exercise the shared reranker.py chokepoint
+# directly, which is what BOTH the CLI (cli/main.py:7222-7225) and the MCP `rank` tool
+# (cli/mcp_server.py:4258-4263) call unmodified -- see test_bm25_search_flag.py /
+# test_mcp_server.py for the end-to-end CLI/MCP-level twins of this same fix.
+
+
+def _write_three_line_file(tmp_path: Path, name: str) -> Path:
+    """A 3-line file that produces exactly 3 chunks at chunk_size=1, overlap=0 (one chunk per
+    line) -- gives fully deterministic, hand-countable chunk totals for the cap tests below."""
+    path = tmp_path / name
+    path.write_text(f"{name}_line_a\n{name}_line_b\n{name}_line_c\n", encoding="utf-8")
+    return path
+
+
+def _patch_counting_chunk_file(monkeypatch):  # type: ignore[no-untyped-def]
+    """Wrap reranker.py's bound `chunk_file` name with a call-counting proxy, returning the list
+    of paths it was invoked with (in call order) -- mirrors the identical pattern in
+    test_semantic_search_flag.py's cap-fallback test."""
+    from tensor_grep.core import reranker as reranker_module
+    from tensor_grep.core.retrieval_chunker import chunk_file as real_chunk_file
+
+    calls: list[str] = []
+
+    def _counting_chunk_file(path: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        calls.append(str(path))
+        return real_chunk_file(path, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(reranker_module, "chunk_file", _counting_chunk_file)
+    return calls
+
+
+def test_rerank_by_bm25_corpus_cap_bounds_chunking_and_sets_reason(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """RED->GREEN: a matched set whose total chunk count exceeds the cap must STOP chunking before
+    every file is processed, and must surface `rank_fallback_reason` -- never silently truncate.
+    Matches are NEVER dropped: the cap affects rank quality only."""
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "4")
+    calls = _patch_counting_chunk_file(monkeypatch)
+
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(3)]  # 3 chunks each -> 9
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=3,
+    )
+
+    out = rerank_by_bm25(result, "anything", [str(f) for f in files], chunk_size=1, overlap=0)
+
+    # Cap=4: file 1 (3 chunks, 3<=4) then file 2 (6>4) trips -- file 3 never chunked.
+    assert calls == [str(files[0]), str(files[1])], f"unexpected chunking calls: {calls}"
+    assert out.rank_fallback_reason is not None
+    assert "corpus cap" in out.rank_fallback_reason
+    assert "4 chunks" in out.rank_fallback_reason
+    # Never drop matches -- same file set, same count, only order may change.
+    assert len(out.matches) == len(result.matches) == 3
+    assert {m.file for m in out.matches} == {m.file for m in result.matches}
+
+
+def test_rerank_by_bm25_small_corpus_under_cap_leaves_reason_none(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A matched set comfortably under the (default) cap chunks every file, unchanged from
+    pre-cap behavior: `rank_fallback_reason` stays None and every file is chunked."""
+    monkeypatch.delenv("TG_RANK_CORPUS_CHUNK_CAP", raising=False)
+    calls = _patch_counting_chunk_file(monkeypatch)
+
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(2)]
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=2,
+    )
+
+    out = rerank_by_bm25(result, "anything", [str(f) for f in files], chunk_size=1, overlap=0)
+
+    assert calls == [str(files[0]), str(files[1])]  # every file chunked, nothing capped
+    assert out.rank_fallback_reason is None
+    assert len(out.matches) == 2
+
+
+def test_rerank_by_bm25_corpus_cap_env_tunable(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The cap is env-tunable: the SAME corpus is uncapped by default (huge MAX_CHUNKS default)
+    but trips once TG_RANK_CORPUS_CHUNK_CAP is set below the corpus's chunk total -- proves the
+    override is actually read, not just that some hardcoded internal cap exists."""
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(2)]  # 3 chunks each -> 6
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=2,
+    )
+
+    monkeypatch.delenv("TG_RANK_CORPUS_CHUNK_CAP", raising=False)
+    default_out = rerank_by_bm25(
+        result, "anything", [str(f) for f in files], chunk_size=1, overlap=0
+    )
+    assert default_out.rank_fallback_reason is None  # default cap (100_000) never trips here
+
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "2")
+    calls = _patch_counting_chunk_file(monkeypatch)
+    capped_out = rerank_by_bm25(
+        result, "anything", [str(f) for f in files], chunk_size=1, overlap=0
+    )
+    assert capped_out.rank_fallback_reason is not None
+    assert "2 chunks" in capped_out.rank_fallback_reason
+    assert calls == [str(files[0])]  # trips after the very first file (3 chunks > cap 2)
+    assert len(capped_out.matches) == 2  # still never drops matches
+
+
+def test_rerank_by_bm25_corpus_cap_appends_to_existing_fallback_reason(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Append, never clobber: a pre-existing `rank_fallback_reason` on the input result must
+    survive alongside the new corpus-cap reason (the same convention every other rank/semantic
+    degrade in this codebase follows)."""
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "1")
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(2)]
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=2,
+        rank_fallback_reason="pre-existing upstream reason",
+    )
+
+    out = rerank_by_bm25(result, "anything", [str(f) for f in files], chunk_size=1, overlap=0)
+
+    assert out.rank_fallback_reason is not None
+    assert "pre-existing upstream reason" in out.rank_fallback_reason
+    assert "corpus cap" in out.rank_fallback_reason
+
+
+def test_rerank_by_bm25_corpus_cap_trip_is_deterministic_across_calls(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Determinism: matched_file_paths arrives sorted from the caller (main.py:7197); the cap
+    truncation point and resulting order must be stable across repeated calls on the same input."""
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "4")
+    files = [_write_three_line_file(tmp_path, f"f{i}.py") for i in range(3)]
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="x", file=str(f)) for f in files],
+        total_matches=3,
+    )
+    file_paths = [str(f) for f in files]
+
+    first = rerank_by_bm25(result, "anything", file_paths, chunk_size=1, overlap=0)
+    second = rerank_by_bm25(result, "anything", file_paths, chunk_size=1, overlap=0)
+
+    assert first.rank_fallback_reason == second.rank_fallback_reason
+    assert [m.file for m in first.matches] == [m.file for m in second.matches]
+
+
+def test_rank_corpus_chunk_cap_non_positive_or_malformed_env_falls_back_to_default(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """A malformed override must degrade gracefully (mirror `_int_env`'s own contract), and a
+    non-positive override must not pathologically cap ranking at (near) zero chunks."""
+    from tensor_grep.core.reranker import _rank_corpus_chunk_cap
+    from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
+
+    for bad_value in ("0", "-5", "not-a-number", ""):
+        monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", bad_value)
+        assert _rank_corpus_chunk_cap() == MAX_CHUNKS, f"bad value {bad_value!r} was not rejected"
+
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "42")
+    assert _rank_corpus_chunk_cap() == 42
