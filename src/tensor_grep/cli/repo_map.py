@@ -15717,6 +15717,31 @@ def build_symbol_callers_json(
     )
 
 
+def _blast_radius_no_match_is_possibly_truncated(payload: dict[str, Any]) -> bool:
+    """True iff a blast-radius-shaped payload is a ``no_match`` produced from a
+    possibly-truncated repo map -- the one case where a map-based lookup that skipped the
+    literal-seed rescue below cannot be trusted (the symbol may simply sit outside the scan
+    window, not genuinely be absent from the repo).
+
+    ONE shared definition for three call sites that must agree verbatim on exactly when a
+    no_match is trustworthy, instead of three independently-drifting inline copies:
+    (1) this function's own caller below, which retries via ``_literal_symbol_seed_files``;
+    (2) the Tier-2 daemon agent-capsule's call-site-evidence collector
+    (``agent_capsule._collect_capsule_call_site_evidence_from_map``), which has no rescue
+    available on the daemon's cached map and must instead signal its caller to fall back to the
+    cold path (task #108, the TRAP A class); and (3) ``main._daemon_blast_radius_no_match_is_
+    unreliable`` (the Tier-1 ``blast-radius`` command's own daemon-fallback gate, audit #107).
+
+    Deliberately narrow: only fires on ``no_match`` AND ``possibly_truncated`` together. A
+    no_match on a COMPLETE map is a real miss -- treating that as untrustworthy too would
+    defeat retries/daemon-fallback for every genuine no-match, not just the truncated ones.
+    """
+    if not payload.get("no_match"):
+        return False
+    scan_limit = payload.get("scan_limit")
+    return isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+
+
 def build_symbol_blast_radius(
     symbol: str,
     path: str | Path = ".",
@@ -15747,12 +15772,7 @@ def build_symbol_blast_radius(
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    scan_limit = payload.get("scan_limit")
-    if (
-        payload.get("no_match")
-        and isinstance(scan_limit, dict)
-        and scan_limit.get("possibly_truncated")
-    ):
+    if _blast_radius_no_match_is_possibly_truncated(payload):
         seed_files = _literal_symbol_seed_files(
             Path(path).expanduser().resolve(),
             symbol,

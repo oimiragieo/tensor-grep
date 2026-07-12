@@ -452,13 +452,50 @@ def build_orient_capsule(
     ``auto_deweight`` (default on) DE-WEIGHTS -- never hard-excludes -- auto-detected bundled
     vendor/skill/generated CODE subtrees in the centrality ranking (see
     ``_detect_vendored_subtrees``); pass ``auto_deweight=False`` (CLI: ``--no-auto-deweight``) to
-    disable. This is independent of ``--ignore``, which still hard-excludes explicit globs."""
+    disable. This is independent of ``--ignore``, which still hard-excludes explicit globs.
+
+    Thin cold-path wrapper: build the repo map (the only expensive step, task #108) and delegate
+    everything else to ``build_orient_capsule_from_map`` so the warm session-daemon fast path
+    (which reuses an already-cached map) shares one code path with the cold path -- parity by
+    construction rather than a second, driftable implementation."""
     from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
 
     effective_max_repo_files = (
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
     )
     rm = _repo_map.build_repo_map(path, max_repo_files=effective_max_repo_files)
+    return build_orient_capsule_from_map(
+        rm,
+        max_central_files=max_central_files,
+        max_snippet_files=max_snippet_files,
+        max_tokens=max_tokens,
+        render_profile=render_profile,
+        ignore=ignore,
+        auto_deweight=auto_deweight,
+    )
+
+
+def build_orient_capsule_from_map(
+    rm: dict[str, Any],
+    *,
+    max_central_files: int = 10,
+    max_snippet_files: int = 5,
+    max_tokens: int = 3000,
+    render_profile: str = "compact",
+    ignore: tuple[str, ...] = (),
+    auto_deweight: bool = True,
+) -> dict[str, Any]:
+    """Task #108 (Tier-2 daemon moat): the map-based core of ``build_orient_capsule``, taking an
+    already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
+    the filesystem itself. ``build_orient_capsule`` is a thin wrapper around this function, so
+    cold and warm output are identical by construction for the same map.
+
+    ``max_repo_files`` is deliberately NOT a parameter here: the only place the cold wrapper uses
+    it is to build ``rm`` (already done by the caller) and to echo it back in the ``scan_limit``
+    result field -- reconstructed below from ``rm["scan_limit"]["max_repo_files"]`` (populated by
+    ``build_repo_map`` whenever a cap was applied), so there is exactly one source of truth for
+    what cap actually produced ``rm`` instead of a second, independently-supplied value that could
+    drift from it."""
     rm = _apply_ignore_globs(rm, ignore)
 
     deweighted_trees = _detect_vendored_subtrees(rm) if auto_deweight else {}
@@ -476,6 +513,12 @@ def build_orient_capsule(
         isinstance(scan_limit_info, dict) and scan_limit_info.get("possibly_truncated")
     )
     suggested_scope = _suggested_scope_from_map(rm) if scan_possibly_truncated else None
+    # The capsule's own simplified `scan_limit` int (see the docstring above): the cap that
+    # produced `rm`, read back off the map itself rather than threaded through as a second,
+    # independently-suppliable parameter.
+    effective_max_repo_files = (
+        scan_limit_info.get("max_repo_files") if isinstance(scan_limit_info, dict) else None
+    )
 
     symbol_map: dict[str, list[dict[str, Any]]] = {}
     for cf in central_files:

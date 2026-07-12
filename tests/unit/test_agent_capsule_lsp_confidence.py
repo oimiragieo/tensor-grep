@@ -169,7 +169,7 @@ def test_capsule_lsp_boost_resolves_single_lsp_backed_tie(
         )
 
     monkeypatch.setenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, "1")
-    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", fake_context_render)
 
     payload = agent_capsule.build_agent_capsule(
         "change create_invoice behavior",
@@ -202,7 +202,7 @@ def test_capsule_lsp_boost_is_feature_gated(
     monkeypatch.delenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, raising=False)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=primary_file.resolve(),
             alternative_file=alternative_file.resolve(),
@@ -234,7 +234,7 @@ def test_capsule_validation_resolved_tie_cites_targeted_validation_evidence(
     monkeypatch.delenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, raising=False)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=primary_file.resolve(),
             alternative_file=alternative_file.resolve(),
@@ -270,7 +270,7 @@ def test_capsule_lsp_boost_keeps_confirmation_when_tied_alternative_is_lsp_backe
     monkeypatch.setenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, "1")
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=primary_file.resolve(),
             alternative_file=alternative_file.resolve(),
@@ -310,7 +310,7 @@ def test_capsule_lsp_boost_requires_supported_target_language(
     monkeypatch.setenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, "1")
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=primary_file.resolve(),
             alternative_file=alternative_file.resolve(),
@@ -342,7 +342,7 @@ def test_capsule_lsp_boost_does_not_override_lower_trust_cap(
     monkeypatch.setenv(agent_capsule._CAPSULE_LSP_CONFIDENCE_BOOST_ENV, "1")
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=primary_file.resolve(),
             alternative_file=alternative_file.resolve(),

@@ -6214,7 +6214,9 @@ def test_agent_capsule_filters_file_only_alternative_targets(monkeypatch, tmp_pa
             "context_consistency": {"primary_file_included": True},
         }
 
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_context_render_from_map", _fake_context_render
+    )
 
     payload = agent_capsule.build_agent_capsule(
         "create_invoice",
@@ -6359,7 +6361,9 @@ def test_agent_capsule_lsp_resolved_tie_reports_resolution_evidence(
         }
 
     monkeypatch.setenv("TG_CAPSULE_LSP_CONFIDENCE_BOOST", "1")
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_context_render_from_map", _fake_context_render
+    )
 
     payload = agent_capsule.build_agent_capsule(
         "change invoice tax calculation",
@@ -6502,7 +6506,9 @@ def test_agent_capsule_equal_confidence_alternative_requires_confirmation(monkey
             "context_consistency": {"primary_file_included": True},
         }
 
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_context_render_from_map", _fake_context_render
+    )
 
     payload = agent_capsule.build_agent_capsule(
         "change invoice tax calculation",
@@ -6607,7 +6613,9 @@ def test_agent_capsule_unrequested_marker_helper_tie_requires_confirmation(monke
             "context_consistency": {"primary_file_included": True},
         }
 
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_context_render_from_map", _fake_context_render
+    )
 
     payload = agent_capsule.build_agent_capsule(
         "harden Windows subprocess exe bridge",
@@ -6861,7 +6869,9 @@ def test_agent_capsule_filters_pytest_only_validation_for_typescript_primary(
             "context_consistency": {"primary_file_included": True},
         }
 
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _fake_context_render)
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_context_render_from_map", _fake_context_render
+    )
 
     payload = agent_capsule.build_agent_capsule(
         "createInvoice tax calculation",

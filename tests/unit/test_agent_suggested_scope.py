@@ -60,17 +60,21 @@ def test_agent_capsule_copies_suggested_scope_from_render(tmp_path: Path, monkey
     # Deterministic copy-path check: whatever `suggested_scope` the inner render carries, the
     # capsule surfaces it verbatim on its result. Monkeypatch the render (not the map) so this
     # does not depend on the real centrality/truncation internals.
+    #
+    # task #108: build_agent_capsule now delegates to build_agent_capsule_from_map, which calls
+    # build_context_render_from_map (NOT the build_context_render wrapper) -- real_render must
+    # be retargeted to match, and its call shape is (rm, query, **kwargs), not (query, path,
+    # **kwargs). include_suggested_scope was never a build_context_render_from_map kwarg (it is
+    # wrapper-only), so there is nothing left to filter out of kwargs before forwarding.
     hint = {"dirs": [str(tmp_path / "core")], "confidence": "heuristic"}
-    real_render = repo_map.build_context_render
+    real_render = repo_map.build_context_render_from_map
 
     def _render_with_hint(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        payload = real_render(
-            *args, **{k: v for k, v in kwargs.items() if k != "include_suggested_scope"}
-        )
+        payload = real_render(*args, **kwargs)
         payload["suggested_scope"] = hint
         return payload
 
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _render_with_hint)
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render_from_map", _render_with_hint)
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
 
     result = build_agent_capsule("x", tmp_path)
@@ -81,17 +85,16 @@ def test_agent_capsule_omits_suggested_scope_when_render_has_none(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     # When the inner render carries no hint (complete scan / flat signal), the capsule must NOT
-    # stamp an empty-but-present key -- byte-identical to a pre-feature capsule.
-    real_render = repo_map.build_context_render
+    # stamp an empty-but-present key -- byte-identical to a pre-feature capsule. See the
+    # task #108 retargeting note on the sibling test above.
+    real_render = repo_map.build_context_render_from_map
 
     def _render_no_hint(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        payload = real_render(
-            *args, **{k: v for k, v in kwargs.items() if k != "include_suggested_scope"}
-        )
+        payload = real_render(*args, **kwargs)
         payload.pop("suggested_scope", None)
         return payload
 
-    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render", _render_no_hint)
+    monkeypatch.setattr(agent_capsule.repo_map, "build_context_render_from_map", _render_no_hint)
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
 
     result = build_agent_capsule("x", tmp_path)

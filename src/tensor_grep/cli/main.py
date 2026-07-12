@@ -7664,28 +7664,48 @@ def orient(
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
     from tensor_grep.cli.orient_capsule import build_orient_capsule, build_orient_capsule_json
 
-    try:
-        if json_output:
-            typer.echo(
-                build_orient_capsule_json(
-                    path,
-                    max_tokens=max_tokens,
-                    max_central_files=max_central_files,
-                    ignore=tuple(ignore),
-                    auto_deweight=not no_auto_deweight,
+    # Task #108 (Tier-2 daemon moat): probe BEFORE the try block -- a daemon hit is already a
+    # ready-built dict (no filesystem call left that could raise FileNotFoundError/ValueError), so
+    # it does not need the cold path's exception handling. A miss/error/mismatch falls open to the
+    # unchanged cold path below (fail-open contract).
+    daemon_payload = _maybe_orient_via_running_daemon(
+        path=path,
+        max_tokens=max_tokens,
+        max_central_files=max_central_files,
+        ignore=tuple(ignore),
+        auto_deweight=not no_auto_deweight,
+    )
+    if daemon_payload is not None:
+        payload = daemon_payload
+    else:
+        try:
+            if json_output:
+                typer.echo(
+                    build_orient_capsule_json(
+                        path,
+                        max_tokens=max_tokens,
+                        max_central_files=max_central_files,
+                        ignore=tuple(ignore),
+                        auto_deweight=not no_auto_deweight,
+                    )
                 )
+                return
+            payload = build_orient_capsule(
+                path,
+                max_tokens=max_tokens,
+                max_central_files=max_central_files,
+                ignore=tuple(ignore),
+                auto_deweight=not no_auto_deweight,
             )
-            return
-        payload = build_orient_capsule(
-            path,
-            max_tokens=max_tokens,
-            max_central_files=max_central_files,
-            ignore=tuple(ignore),
-            auto_deweight=not no_auto_deweight,
-        )
-    except (FileNotFoundError, ValueError) as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+
+    if json_output:
+        # build_orient_capsule_json's exact format (json.dumps(..., indent=2), no
+        # ensure_ascii=False) -- match it here so a warm hit is byte-identical to a cold miss.
+        typer.echo(json.dumps(payload, indent=2))
+        return
 
     typer.echo(f"# Codebase orientation: {payload['path']}")
     typer.echo(f"central files ({len(payload['central_files'])}):")
@@ -7942,6 +7962,122 @@ def _maybe_symbol_command_via_running_daemon(
             maybe_autostart_session_daemon_nonblocking(daemon_path)
             return None
         if "error" in payload:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _maybe_orient_via_running_daemon(
+    *,
+    path: str,
+    max_tokens: int,
+    max_central_files: int,
+    ignore: tuple[str, ...],
+    auto_deweight: bool,
+) -> dict[str, Any] | None:
+    """Task #108 (Tier-2 daemon moat): fail-open warm-daemon fast path for `tg orient`, mirroring
+    `_maybe_symbol_command_via_running_daemon`'s probe/autostart-on-miss shape (task #94 Tier-1)
+    byte-for-byte -- gated behind the SAME `_session_daemon_autostart_enabled` flag Tier-1 uses
+    (no separate flag; inherits the CI/GITHUB_ACTIONS force-off), and a probe MISS fires a
+    non-blocking autostart so a LATER call is warm while THIS call still runs the cold path
+    below. `orient` has no semantic-provider concept (no --provider flag), so unlike the symbol
+    commands/agent there is no provider gate here.
+    """
+    if not _session_daemon_autostart_enabled():
+        return None
+    daemon_path = _daemon_directory_path(path)
+    if daemon_path is None:
+        return None
+    try:
+        from tensor_grep.cli.session_daemon import (
+            maybe_autostart_session_daemon_nonblocking,
+            request_running_session_daemon,
+        )
+
+        request: dict[str, Any] = {
+            "command": "orient",
+            "path": daemon_path,
+            "refresh_on_stale": True,
+            "max_tokens": max_tokens,
+            "max_central_files": max_central_files,
+            "ignore": list(ignore),
+            "auto_deweight": auto_deweight,
+        }
+        payload = request_running_session_daemon(daemon_path, request)
+        if payload is None:
+            maybe_autostart_session_daemon_nonblocking(daemon_path)
+            return None
+        if "error" in payload:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _maybe_agent_via_running_daemon(
+    *,
+    path: str,
+    query: str,
+    max_files: int,
+    max_sources: int,
+    max_tokens: int | None,
+    max_repo_files: int,
+    model: str | None,
+    provider: str,
+    gpu_device_ids: list[int] | None,
+    ignore: tuple[str, ...],
+) -> dict[str, Any] | None:
+    """Task #108 (Tier-2 daemon moat): fail-open warm-daemon fast path for `tg agent`, mirroring
+    `_maybe_symbol_command_via_running_daemon`'s probe/autostart-on-miss shape. Two additional
+    refusals beyond the symbol-command template: a non-native provider (same native-only rule as
+    every other daemon-served command) and an explicit `--gpu-device-ids` request -- the GPU
+    evidence probe shells out to a fresh `tg search` subprocess
+    (`agent_capsule._agent_gpu_evidence`) and must never run inside a long-lived daemon worker
+    thread, so it always takes the cold path (the design review's "GPU-in-agent stays
+    cold/CLI-only" scope note).
+
+    TRAP A (audit #107 class, task #108 design review): a daemon response carrying the internal
+    `daemon_evidence_unreliable` sentinel (stamped by `agent_capsule.build_agent_capsule_from_map`
+    when its call-site-evidence collector hit a no_match it cannot trust -- no literal-seed rescue
+    available on the daemon's cached map) is discarded here exactly like a transport error, so the
+    caller's cold path (which DOES have the rescue) runs instead.
+    """
+    if not _session_daemon_autostart_enabled():
+        return None
+    if provider != "native":
+        return None
+    if gpu_device_ids:
+        return None
+    daemon_path = _daemon_directory_path(path)
+    if daemon_path is None:
+        return None
+    try:
+        from tensor_grep.cli.session_daemon import (
+            maybe_autostart_session_daemon_nonblocking,
+            request_running_session_daemon,
+        )
+
+        request: dict[str, Any] = {
+            "command": "agent",
+            "path": daemon_path,
+            "query": query,
+            "provider": provider,
+            "refresh_on_stale": True,
+            "max_files": max_files,
+            "max_sources": max_sources,
+            "max_tokens": max_tokens,
+            "max_repo_files": max_repo_files,
+            "model": model,
+            "ignore": list(ignore),
+        }
+        payload = request_running_session_daemon(daemon_path, request)
+        if payload is None:
+            maybe_autostart_session_daemon_nonblocking(daemon_path)
+            return None
+        if "error" in payload:
+            return None
+        if payload.get("daemon_evidence_unreliable"):
             return None
         return payload
     except Exception:
@@ -8248,6 +8384,57 @@ def agent(
             command_name="agent",
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
+        # Task #108 (Tier-2 daemon moat): mirrors edit-plan's daemon-payload gate (:8452-8478
+        # below) -- print the full daemon payload through the SAME json/text branches and the SAME
+        # exit-2-on-scan-truncation contract as the cold path, then return early. A miss/error/
+        # mismatch (including the TRAP A `daemon_evidence_unreliable` sentinel) falls open to the
+        # unchanged cold build below.
+        daemon_payload = _maybe_agent_via_running_daemon(
+            path=resolved_path,
+            query=resolved_query,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_tokens=max_tokens,
+            max_repo_files=max_repo_files,
+            model=model,
+            provider=provider,
+            gpu_device_ids=parsed_gpu_device_ids,
+            ignore=tuple(ignore),
+        )
+        if daemon_payload is not None:
+            if json_output:
+                typer.echo(json.dumps(daemon_payload, ensure_ascii=False, indent=2))
+            else:
+                payload = daemon_payload
+                primary = payload.get("primary_target", {})
+                primary_file = primary.get("file") or "<none>"
+                primary_line = primary.get("line") or 1
+                primary_symbol = primary.get("symbol") or "<unknown>"
+                validation_commands = payload.get("validation_commands", [])
+                confidence = payload.get("confidence", {}).get("overall", 0)
+                gpu_acceleration = payload.get("gpu_acceleration", {})
+                ambiguity = payload.get("ambiguity", {})
+                ask_user_before_editing = payload.get("ask_user_before_editing", {})
+                context_consistency = payload.get("context_consistency", {})
+                alternatives = payload.get("alternative_targets", [])
+                typer.echo(f"Agent capsule for {payload['path']}")
+                typer.echo(f"query={payload['query']}")
+                typer.echo(f"primary={primary_file}#L{primary_line} {primary_symbol}")
+                typer.echo(f"validation={len(validation_commands)} commands")
+                typer.echo(f"confidence={confidence}")
+                typer.echo(f"ask_required={bool(ask_user_before_editing.get('required'))}")
+                typer.echo(f"ambiguity={ambiguity.get('status', 'unknown')}")
+                typer.echo(
+                    "alternatives="
+                    f"{len(alternatives)}"
+                    f" omitted={context_consistency.get('alternative_targets_omitted_count', 0)}"
+                )
+                if gpu_device_ids:
+                    typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
+            if _scan_incomplete(daemon_payload):
+                raise typer.Exit(2)
+            return
+
         payload = build_agent_capsule(
             resolved_query,
             resolved_path,
@@ -9946,18 +10133,20 @@ def _daemon_blast_radius_no_match_is_unreliable(payload: dict[str, Any]) -> bool
     what the cold build_symbol_blast_radius (repo_map.py, which DOES retry via
     _literal_symbol_seed_files) would find. The symbol may simply sit outside the daemon
     session's scan window, so a no_match here is unreliable and the caller should fall through to
-    cold instead of trusting it. Mirrors the truncated-no_match condition in
-    repo_map.build_symbol_blast_radius verbatim (repo_map.py:~15373-15378) so the two arms agree
-    on exactly when a no_match is trustworthy.
+    cold instead of trusting it.
 
     Deliberately narrow: only fires on no_match AND possibly_truncated together. A warm no_match
     on a COMPLETE map is a real miss -- falling back to cold there would defeat the daemon
     speedup for every genuine no-match, not just the truncated-and-wrong ones.
+
+    Task #108: delegates to repo_map._blast_radius_no_match_is_possibly_truncated, the ONE shared
+    definition of this condition (also used by build_symbol_blast_radius's own literal-seed-rescue
+    trigger and the Tier-2 daemon agent-capsule's call-site-evidence collector) so all three arms
+    agree on exactly when a no_match is trustworthy instead of drifting independently.
     """
-    if not payload.get("no_match"):
-        return False
-    scan_limit = payload.get("scan_limit")
-    return isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+    from tensor_grep.cli.repo_map import _blast_radius_no_match_is_possibly_truncated
+
+    return _blast_radius_no_match_is_possibly_truncated(payload)
 
 
 @app.command(name="blast-radius")
