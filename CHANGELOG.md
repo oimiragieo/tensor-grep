@@ -1,6 +1,98 @@
 # CHANGELOG
 
 
+## v1.68.0 (2026-07-12)
+
+### Features
+
+- **daemon**: Serve orient + agent capsules via the warm session daemon (Tier-2 moat) (#108)
+  ([#555](https://github.com/oimiragieo/tensor-grep/pull/555),
+  [`47174b4`](https://github.com/oimiragieo/tensor-grep/commit/47174b4f8ff5765f5d6853ef807c5a3458f1c006))
+
+* feat(daemon): serve orient + agent capsules via the warm session daemon (Tier-2 moat) (#108)
+
+Extends task #94's warm-session-daemon fast path (Tier-1: context-render/edit-plan/the 5 symbol
+  commands) to `tg orient` and `tg agent` (Tier-2), the two remaining moat commands that previously
+  always paid the full repo-map scan cost even with a daemon already running.
+
+- Refactor build_orient_capsule / build_agent_capsule into thin cold-path wrappers that build the
+  repo map once and delegate to new build_orient_capsule_from_map / build_agent_capsule_from_map, so
+  cold and warm share one code path (parity by construction). agent's map-based core additionally
+  collapses the cold path's TWO independent repo scans (context-render ranking + call-site-evidence
+  blast-radius) into one shared map. - TRAP A: the daemon's cached-map call-site-evidence collector
+  (_collect_capsule_call_site_evidence_from_map) has no literal-seed rescue, unlike the cold
+  build_symbol_blast_radius wrapper. A no_match on a possibly-truncated map is flagged via a new
+  daemon_evidence_unreliable sentinel and the client wrapper discards the whole response, falling
+  back to cold -- the same #107 divergence class already fixed for blast-radius. - TRAP B:
+  suggested_scope is computed in the build_context_render WRAPPER, not
+  build_context_render_from_map. build_agent_capsule_from_map replicates that block against its own
+  map so a warm capsule does not silently drop suggested_scope on a truncated scan. - Add
+  "orient"/"agent" daemon commands (session_store dispatch), dedicated response-cache key builders
+  keyed on every output-affecting flag, added-file-sensitive staleness (a new central file or call
+  site changes the answer, not just its staleness), and fail-open client wrappers (native-only,
+  --gpu-device-ids always cold, autostart-on-miss) mirroring Tier-1's shape. - Reuses the existing
+  _SessionResponseCache (no new cache) and inherits Tier-1's TG_SESSION_DAEMON_AUTOSTART flag
+  (confirmed default-ON on main; no separate flag added).
+
+Dogfooded via the real shipped `tg` binary (bootstrap front door, not CliRunner) on the tensor-grep
+  repo itself: orient cold 14.6s -> warm (response-cache hit) 0.95s (~15x); agent cold 21.5s -> warm
+  1.5s (~15x); both byte-identical to cold once daemon-only provenance fields are stripped. 11-plus
+  TDD tests added in tests/unit/test_orient_agent_daemon.py covering warm/cold parity, both traps,
+  stale-invalidation, fail-open, provider/GPU routing gates, cache-key isolation, concurrency, and
+  the CI force-off inheritance.
+
+Opus-gate PENDING (session_daemon surface).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(daemon): restore literal-seed rescue on the cold agent path (Opus-gate FIX-FIRST, #108)
+
+The task #108 refactor made cold `build_agent_capsule` a thin wrapper over
+  `build_agent_capsule_from_map`, which collected call-site evidence through the RESCUE-LESS
+  `_collect_capsule_call_site_evidence_from_map` -> `build_symbol_blast_radius_from_map` (no
+  literal-seed rescue). That removed the rescue from the COLD path entirely -- the rescue-equipped
+  `_collect_capsule_call_site_evidence` became dead code -- so cold agent could silently omit
+  callers whose symbol def sorts beyond the scan cap, and the internal `daemon_evidence_unreliable`
+  sentinel could leak into cold `--json` output (violating the code's own "never on the cold path"
+  invariant).
+
+Fix (thread a private `_rescue_call_site_evidence` flag through `build_agent_capsule_from_map`): -
+  COLD (direct `build_agent_capsule`) now passes `_rescue_call_site_evidence=True` and collects
+  evidence through the RESCUE-equipped `_collect_capsule_call_site_evidence` -> the FS-backed
+  `build_symbol_blast_radius` wrapper, recovering out-of-window callers exactly like pre-PR main. It
+  hardcodes the sentinel to False (the rescue already ran), so cold output never carries
+  `daemon_evidence_unreliable`. - WARM/DAEMON (`session_store` dispatch, default flag False) keeps
+  the single-cached-map win via the rescue-less `_from_map` collector and stamps the sentinel on an
+  untrustworthy truncated no_match; the client (`_maybe_agent_via_running_daemon`) discards on the
+  sentinel and falls back to the now-genuinely-rescue-equipped cold path. - Ranking (context-render)
+  + suggested_scope (TRAP B) still go through `_from_map` unchanged -- only call-site-evidence
+  collection differs cold-vs-warm. Cost: cold pays its pre-PR second blast-radius scan again; the
+  daemon path (the moat) keeps the single map. - Fixed the false "never on the cold path" comment at
+  the sentinel stamp.
+
+Recall guarantee (bidirectional oracle, tests/unit/test_orient_agent_daemon.py): -
+  test_cold_call_site_evidence_collector_rescues_out_of_window_def: on a truncated map whose
+  target-symbol def is out of window, the rescue-equipped collector (cold) RECOVERS the in-window
+  caller while the rescue-less collector (warm) returns empty + `unreliable=True`. -
+  test_cold_agent_capsule_recovers_out_of_window_callers_and_omits_sentinel: end-to-end cold
+  `build_agent_capsule` recovers the caller AND omits the sentinel (verified to FAIL under the
+  pre-fix rescue-less routing: 0 callers + sentinel present). -
+  test_daemon_evidence_unreliable_never_leaks_into_direct_cold_agent_json: direct-cold `tg agent
+  --json` on a truncated repo never carries the sentinel.
+
+4-gate: ruff check + ruff format --check --preview + mypy (79 files) all clean; full pytest
+  (unit+integration+e2e, dev+ast+semantic extras) green except the pre-existing terminal-width
+  `test_audit_help_does_not_fall_through_to_search` flake (passes at COLUMNS=200, zero diff
+  overlap). Dogfooded the shipped code: cold rescue recovers an out-of-window caller; cold `tg
+  agent` at a tiny --max-repo-files exits 2 with no sentinel leak.
+
+Opus-gate PENDING (session_daemon surface) -- re-review after this fix.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.67.1 (2026-07-12)
 
 ### Bug Fixes
