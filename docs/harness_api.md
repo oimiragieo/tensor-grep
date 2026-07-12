@@ -1494,7 +1494,7 @@ Current tool set (47 tools; re-derive with `grep -n "^def tg_\|^async def tg_" s
 - `tg_checkpoint_create(path=".")`
 - `tg_checkpoint_list(path=".")`
 - `tg_checkpoint_undo(checkpoint_id, path=".")`
-- `tg_session_open(path=".")`
+- `tg_session_open(path=".", max_repo_files=2000)`
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`
 - `tg_session_refresh(session_id, path=".")`

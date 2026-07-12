@@ -1548,22 +1548,26 @@ def test_tg_session_open_accepts_initial_repo_map_cap(tmp_path: Path, monkeypatc
 
 
 def test_tg_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path, monkeypatch):
+    # #98: the default cap was raised 512 -> 2000 (mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT) so
+    # tg_session_open matches every sibling MCP scan tool. Create more than 2000 files so the
+    # truncation behavior at the new default cap is still exercised end-to-end (not just the
+    # signature default -- see test_mcp_context_default_cap.py for the signature-level pin).
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
-    for index in range(520):
-        (src_dir / f"module_{index:03}.py").write_text(
+    for index in range(2005):
+        (src_dir / f"module_{index:04}.py").write_text(
             f"def function_{index}():\n    return {index}\n",
             encoding="utf-8",
         )
 
     payload = json.loads(mcp_server.tg_session_open(str(project)))
 
-    assert payload["file_count"] == 512
-    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert payload["file_count"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT == 2000
+    assert payload["scan_limit"]["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
     assert payload["scan_limit"]["possibly_truncated"] is True
 
 
