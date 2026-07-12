@@ -5495,14 +5495,16 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_session_open(path: str = ".", max_repo_files: int | None = 512) -> str:
+def tg_session_open(
+    path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_SCAN_LIMIT
+) -> str:
     """
     Create a cached repository-map session for repeated edit loops.
 
     Args:
         path: File or directory rooted at the session scope.
         max_repo_files: Optional cap for files scanned into the initial session repo map.
-            Defaults to 512 for agent-safe cold opens.
+            Defaults to 2000 for agent-safe cold opens.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before opening a session rooted there -- see tg_repo_map for the systemic-finding
