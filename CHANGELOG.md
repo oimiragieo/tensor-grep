@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.64.2 (2026-07-12)
+
+### Bug Fixes
+
+- **codemap**: Harden --check freshness oracle against output-dir + untracked false positives
+  ([#540](https://github.com/oimiragieo/tensor-grep/pull/540),
+  [`f4ae5a6`](https://github.com/oimiragieo/tensor-grep/commit/f4ae5a6953321582164e4891e387959ae88c3921))
+
+External-audit #138 item #7: opt-in exclude_prefixes on _repo_revision_identity (default None =
+  byte-identical for evidence consumers), applied symmetrically at stamp + --check; git ls-files
+  tracked-only payload intersection; CI codemap-freshness smoke guard. Opus-diff-reviewed (default
+  signing path unchanged, bidirectional exclusion cannot false-negative). 20 new tests.
+
+
 ## v1.64.1 (2026-07-12)
 
 ### Bug Fixes
