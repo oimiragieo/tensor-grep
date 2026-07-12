@@ -14224,13 +14224,18 @@ def test_test_command_should_reuse_wrapper_backend_selection_for_multiple_ast_gr
 
 
 def test_ast_selection_should_skip_pipeline_for_native_backend(monkeypatch):
+    # delete-dead-lsp-tensor-gnn: native is now reachable ONLY when ast-grep is ABSENT
+    # (the wrapper is preferred whenever available, since the two backends use different
+    # query DSLs and are not results-interchangeable). This test's real purpose is that a
+    # DIRECT native selection skips Pipeline construction, so it now models the ast-grep-absent
+    # fallback: wrapper unavailable + native available + native-shaped pattern -> native.
     monkeypatch.setattr(
         "tensor_grep.backends.ast_backend.AstBackend",
         _FakeDirectNativeAstBackend,
     )
     monkeypatch.setattr(
         "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
-        _FakeDirectWrapperAstBackend,
+        _FakeUnavailableAstBackend,
     )
     monkeypatch.setattr(
         "tensor_grep.core.pipeline.Pipeline.__init__",

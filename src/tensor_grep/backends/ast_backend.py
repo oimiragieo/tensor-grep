@@ -569,7 +569,18 @@ class AstBackend(ComputeBackend):
             self._queries[cache_key] = query
             return query
 
-        query = parser.language.query(f"({pattern}) @match")
+        query_source = f"({pattern}) @match"
+        language = parser.language
+        if hasattr(language, "query"):
+            # tree-sitter < 0.25 (and test fakes): Language.query() builds the query.
+            query = language.query(query_source)
+        else:
+            # tree-sitter >= 0.25 (0.26 is pinned): Language.query was REMOVED; the
+            # tree_sitter.Query(language, source) constructor builds it, and a
+            # QueryCursor executes it (mirrored at the capture site in search()).
+            import tree_sitter
+
+            query = tree_sitter.Query(language, query_source)
         self._queries.pop(cache_key, None)
         self._queries[cache_key] = query
         while len(self._queries) > self._query_cache_max_entries():

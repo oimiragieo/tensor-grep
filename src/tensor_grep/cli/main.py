@@ -5897,23 +5897,26 @@ def _select_ast_backend_for_pattern(
 
             ast_backend = AstBackend()
             ast_wrapper = AstGrepWrapperBackend()
-            if pattern_kind == "native":
+            # Prefer the ast-grep wrapper whenever it is available: it is the stable,
+            # results-defining backend for BOTH pattern kinds. The native tree-sitter
+            # AstBackend uses a DIFFERENT DSL and returns DIFFERENT results, so it must not
+            # be silently preferred (that would change tg run/tg scan results on every
+            # ast-grep+tree-sitter box without CUDA). Native-as-CPU-default is task #141.
+            # Native is reached ONLY as the ast-grep-absent fallback for native patterns.
+            if ast_wrapper.is_available():
+                backend = ast_wrapper
+            elif pattern_kind == "native":
                 if ast_backend.is_available():
                     backend = ast_backend
-                elif ast_wrapper.is_available():
-                    backend = ast_wrapper
                 else:
                     backend = Pipeline(
                         config=replace(base_config, query_pattern=pattern)
                     ).get_backend()
             else:
-                if ast_wrapper.is_available():
-                    backend = ast_wrapper
-                else:
-                    raise ConfigurationError(
-                        "Explicit AST search requires AST dependencies: ast-grep wrapper backend "
-                        "is required for this pattern but is not available"
-                    )
+                raise ConfigurationError(
+                    "Explicit AST search requires AST dependencies: ast-grep wrapper backend "
+                    "is required for this pattern but is not available"
+                )
         except ImportError:
             backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
     else:

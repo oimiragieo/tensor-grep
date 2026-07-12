@@ -118,29 +118,74 @@ class TestAstBackend:
         # Act & Assert
         assert backend.is_available() is True
 
-    @pytest.mark.gpu
-    def test_should_parse_python_ast(self, tmp_path):
-        # Note: this test only requires tree-sitter + tree-sitter-python to be installed
-        # (AstBackend is a pure tree-sitter structural matcher; it has no torch/GPU dependency).
+    def test_should_parse_python_ast(self, tmp_path, monkeypatch):
+        # CPU test (was @pytest.mark.gpu): AstBackend is a pure tree-sitter structural
+        # matcher with no torch/GPU dependency, so it must run in ordinary non-GPU CI.
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_python")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")  # hermetic: no persistent disk cache
         from tensor_grep.backends.ast_backend import AstBackend
 
         backend = AstBackend()
-
-        if not backend.is_available():
-            pytest.skip("AstBackend dependencies not installed")
+        assert backend.is_available() is True  # tree-sitter present -> available (no CUDA needed)
 
         # Arrange
         file_path = tmp_path / "test.py"
-        file_path.write_text("def hello():\n    print('world')\n")
+        file_path.write_text("def hello():\n    print('world')\n", encoding="utf-8")
         config = SearchConfig(ast=True, lang="python")
 
-        # Act
-        # Verifies the tree-sitter query-matching pipeline doesn't crash on a real pattern.
-        result = backend.search(str(file_path), "def", config)
+        # Act: a simple node-type pattern routes through the node-type index path.
+        result = backend.search(str(file_path), "function_definition", config)
 
-        # Assert
-        assert result is not None
-        assert isinstance(result.total_matches, int)
+        # Assert: real native match on CPU.
+        assert result.routing_backend == "AstBackend"
+        assert result.total_matches == 1
+
+    def test_should_match_sexpr_query_via_query_cursor_on_real_tree_sitter(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression for the tree-sitter >=0.25 `_get_query` migration (found by the Opus gate):
+        a non-simple ``(...)`` S-expr pattern routes through ``_get_query`` -> the
+        ``tree_sitter.Query(language, source)`` constructor + ``QueryCursor`` (mirroring the
+        capture site in ``search()``). tree-sitter 0.26 REMOVED ``Language.query``, so on the
+        pre-fix code this raised ``BackendExecutionError: 'tree_sitter.Language' object has no
+        attribute 'query'`` -- this test fails on the broken API and passes with the fix. Uses
+        REAL tree-sitter (no ``FakeLanguage.query`` mock, which would mask the API mismatch).
+        """
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_python")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")  # hermetic: force the live query path
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+        assert backend.is_available() is True
+
+        file_path = tmp_path / "svc.py"
+        file_path.write_text(
+            "def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n", encoding="utf-8"
+        )
+        config = SearchConfig(ast=True, lang="python")
+
+        # Act: exercises _get_query on the real tree-sitter >=0.25 API.
+        result = backend.search(str(file_path), "(function_definition) @fn", config)
+
+        # Assert: both function definitions matched via the QueryCursor path (not the index).
+        assert result.routing_backend == "AstBackend"
+        assert result.routing_reason == "ast_structural_match"
+        assert result.total_matches == 2
+
+    def test_search_raises_backend_execution_error_when_tree_sitter_missing(self, mocker):
+        """Backend Fail-Closed Contract: when tree-sitter is unavailable, search() must raise
+        BackendExecutionError (never silent-empty), so run_command reports a real error."""
+        mocker.patch.dict("sys.modules", {"tree_sitter": None})
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.base import BackendExecutionError
+
+        backend = AstBackend()
+        with pytest.raises(BackendExecutionError):
+            backend.search(
+                "whatever.py", "function_definition", SearchConfig(ast=True, lang="python")
+            )
 
     def test_should_raise_on_invalid_ast_query(self, tmp_path, mocker):
         """Audit MED: a broad `except Exception` around tree-sitter query compilation
