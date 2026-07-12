@@ -4203,6 +4203,224 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(parse_early_positional_ripgrep_args(&replace).is_none());
     }
+
+    // -- Audit fix #1: --index capability validator (index_flag_violations) ------------------
+
+    fn index_violations_for(tokens: &[&str]) -> Vec<&'static str> {
+        let args = parse_search_args(tokens);
+        let request = resolve_search_request(&args).expect("expected request to resolve");
+        index_flag_violations(&args, &request)
+    }
+
+    /// Runtime backstop to the compile-time ratchet: `index_flag_violations` exhaustively
+    /// destructures `SearchArgs` (no `..`), so a NEW field already fails compilation until it's
+    /// added to that `match`/destructure. This test additionally guards the SEPARATE
+    /// `INDEX_FLAG_POLICY` documentation table (used only by the tests below) from drifting out
+    /// of sync with the real clap arg list -- e.g. someone satisfies the compiler by adding
+    /// `newfield: _` to the destructure but forgets to record its classification here.
+    #[test]
+    fn index_flag_policy_table_is_exhaustive_over_search_args_clap_ids() {
+        let command = <SearchArgs as clap::Args>::augment_args(clap::Command::new("t"));
+        let clap_ids: Vec<String> = command
+            .get_arguments()
+            .map(|arg| arg.get_id().as_str().to_string())
+            .filter(|id| id != "help")
+            .collect();
+        assert!(
+            !clap_ids.is_empty(),
+            "sanity: clap should report at least one SearchArgs argument"
+        );
+
+        let missing: Vec<&String> = clap_ids
+            .iter()
+            .filter(|id| {
+                !INDEX_FLAG_POLICY
+                    .iter()
+                    .any(|(name, _)| *name == id.as_str())
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "SearchArgs has clap arg(s) not classified in INDEX_FLAG_POLICY for the --index \
+             capability validator (index_flag_violations): {missing:?}"
+        );
+
+        let stale: Vec<&str> = INDEX_FLAG_POLICY
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| !clap_ids.iter().any(|id| id == name))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "INDEX_FLAG_POLICY has stale entries no longer present on SearchArgs: {stale:?}"
+        );
+
+        let mut seen: Vec<&str> = Vec::new();
+        for (name, _) in INDEX_FLAG_POLICY {
+            assert!(
+                !seen.contains(name),
+                "INDEX_FLAG_POLICY has a duplicate entry for {name:?}"
+            );
+            seen.push(name);
+        }
+    }
+
+    #[test]
+    fn index_flag_violations_catches_flags_outside_the_original_six() {
+        // None of these are in the original H1a 6-flag deny-list (invert_match/context/
+        // max_count/word_regexp/globs/multi-pattern); before audit fix #1 they were silently
+        // dropped by run_index_query the moment they reached it (combined with --json here so
+        // they reach index_flag_violations at all -- see its doc comment on reachability).
+        let cases: &[(&[&str], &str)] = &[
+            (&["--hidden"], "-./--hidden"),
+            (&["--max-depth", "2"], "-d/--max-depth"),
+            (&["-t", "py"], "-t/--type"),
+            (&["--sort", "path"], "--sort"),
+            (&["--sortr", "path"], "--sortr"),
+            (&["--sort-files"], "--sort-files"),
+            (&["-o"], "-o/--only-matching"),
+            (&["-r", "X"], "-r/--replace"),
+            (&["--max-filesize", "10K"], "--max-filesize"),
+            (&["--no-ignore-vcs"], "--no-ignore-vcs"),
+            (&["--require-git"], "--require-git"),
+            (&["-L"], "-L/--follow"),
+            (&["-a"], "-a/--text"),
+            (&["-l"], "-l/--files-with-matches"),
+            (&["--files-without-match"], "--files-without-match"),
+            (&["--column"], "--column"),
+            (&["--count-matches"], "--count-matches"),
+            (&["--vimgrep"], "--vimgrep"),
+            (&["--passthru"], "--passthru"),
+            (&["--null"], "-0/--null"),
+            (&["--null-data"], "--null-data"),
+            (&["-U"], "-U/--multiline"),
+            (&["--multiline-dotall"], "--multiline-dotall"),
+            (&["--path-separator", "/"], "--path-separator"),
+            (&["--no-ignore-dot"], "--no-ignore-dot"),
+            (&["--no-ignore-exclude"], "--no-ignore-exclude"),
+            (&["--no-ignore-files"], "--no-ignore-files"),
+            (&["--no-ignore-global"], "--no-ignore-global"),
+            (&["--no-ignore-parent"], "--no-ignore-parent"),
+            (&["--format", "text"], "--format"),
+        ];
+        for (extra, expected) in cases {
+            let mut tokens = vec!["tg", "search", "--index", "--json"];
+            tokens.extend_from_slice(extra);
+            tokens.push("foo");
+            tokens.push(".");
+            let violations = index_violations_for(&tokens);
+            assert!(
+                violations.contains(expected),
+                "flags {extra:?} should be refused (expected {expected:?}); got {violations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn index_flag_violations_allows_passthrough_safe_bundle() {
+        let tokens = [
+            "tg",
+            "search",
+            "--index",
+            "--json",
+            "--no-fixed-strings",
+            "--no-invert-match",
+            "--ignore",
+            "--no-hidden",
+            "--no-column",
+            "--unicode",
+            "--pcre2-unicode",
+            "--messages",
+            "--no-config",
+            "--auto-hybrid-regex",
+            "--color",
+            "auto",
+            "foo",
+            ".",
+        ];
+        assert_eq!(
+            index_violations_for(&tokens),
+            Vec::<&str>::new(),
+            "PassthroughSafe flags must not be refused"
+        );
+    }
+
+    #[test]
+    fn index_flag_violations_color_never_and_auto_are_safe_but_always_is_refused() {
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "--color", "never", "foo", "."])
+                .is_empty()
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "--color", "auto", "foo", "."])
+                .is_empty()
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "--color", "always", "foo", "."])
+                .contains(&"--color"),
+            "explicit --color always asks for output the index path cannot produce"
+        );
+    }
+
+    #[test]
+    fn index_flag_violations_refuses_contradictory_engine_selection() {
+        // fold-in (c): --index combined with an explicit alternate engine is contradictory;
+        // route_search currently checks explicit_index before force_cpu/explicit_gpu_device_ids,
+        // so without this check the engine flag would be silently dropped, not honored.
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "--cpu", "foo", "."])
+                .contains(&"--cpu/--force-cpu")
+        );
+        assert!(index_violations_for(&[
+            "tg",
+            "search",
+            "--index",
+            "--gpu-device-ids",
+            "0",
+            "foo",
+            "."
+        ])
+        .contains(&"--gpu-device-ids"));
+    }
+
+    #[test]
+    fn index_flag_violations_honors_original_six_plus_no_line_number() {
+        // The pre-existing H1a 6 must still be classified Refuse after the rewrite.
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "-v", "foo", "."])
+                .contains(&"-v/--invert-match")
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "-C", "2", "foo", "."])
+                .contains(&"-C/-A/-B (context)")
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "-m", "1", "foo", "."])
+                .contains(&"-m/--max-count")
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "-w", "foo", "."])
+                .contains(&"-w/--word-regexp")
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "-g", "*.rs", "foo", "."])
+                .contains(&"-g/--glob")
+        );
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "-e", "foo", "-e", "bar", "."])
+                .contains(&"multiple patterns (-e)")
+        );
+
+        // Honor: -N/--no-line-number (and -n) must NOT be refused -- it's threaded into the
+        // emit call (fold-in b) instead of being rejected.
+        assert!(index_violations_for(&["tg", "search", "--index", "-N", "foo", "."]).is_empty());
+        assert!(index_violations_for(&["tg", "search", "--index", "-n", "foo", "."]).is_empty());
+        assert!(index_violations_for(&["tg", "search", "--index", "-S", "foo", "."]).is_empty());
+        assert!(
+            index_violations_for(&["tg", "search", "--index", "--no-ignore", "foo", "."])
+                .is_empty()
+        );
+    }
 }
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
@@ -4891,19 +5109,354 @@ fn resolve_search_request_with_stdin(
     })
 }
 
+/// Audit fix #1 (index capability validator, 2026-07-11): per-field classification of every
+/// `SearchArgs` flag against the trigram index engine (`run_index_query` / `TrigramIndex`).
+/// Three policy classes:
+///   - `Honor`: the index path already correctly implements this flag (or the flag is one of
+///     the query-defining fields -- `pattern`/`regexp`/`path` -- whose cardinality is enforced
+///     separately, via `request.patterns.len() != 1` below and the `request.paths.len() != 1`
+///     bail in `handle_index_search`).
+///   - `PassthroughSafe`: the flag is a semantic no-op on this path -- it only restates a
+///     default that already holds here (e.g. `--unicode`, `--no-hidden`, `--ignore`), or it only
+///     changes behavior once ripgrep itself is invoked (e.g. `--auto-hybrid-regex`), which the
+///     index path never does.
+///   - `Refuse`: the flag changes the result set or output shape in a way the index cannot (yet)
+///     reproduce. Silently dropping it would return wrong-but-plausible results with exit 0, so
+///     the explicit `--index` path must fail closed and warm auto-routing must reroute past the
+///     index instead (see the two call sites below and in `handle_index_search`).
+///
+/// Supersedes the original 6-flag ad-hoc deny-list (H1a, audit #79/#10/#14): that list was
+/// correct as far as it went, but `run_index_query` only ever consulted
+/// pattern/ignore_case/smart_case/fixed_strings/json/ndjson/count -- every OTHER flag (`--hidden`,
+/// `--sort`, `--max-depth`, `-t`, `-o`, `-r`, `--max-filesize`, the `--no-ignore-*` family, ...)
+/// was silently dropped once it reached this function instead of being honored or refused. (In
+/// practice most of those flags are only non-json/non-ndjson-reachable via
+/// `search_prefers_ripgrep_passthrough`'s early rg-passthrough branch in
+/// `handle_ripgrep_search`, which diverts them to `rg` before `route_search` ever runs; combined
+/// with `--json`/`--ndjson` that branch is skipped and they reach here directly -- see the H1e
+/// smart-case tests below for the same reachability shape.)
+///
+/// The destructure below names EVERY `SearchArgs` field with no `..` rest pattern: adding a new
+/// field to `SearchArgs` fails this function's compilation until it is explicitly classified
+/// here (the compile-time ratchet). `INDEX_FLAG_POLICY` (test-only, defined just below) is a
+/// second, independent listing used as a *runtime* backstop -- see
+/// `index_flag_policy_table_is_exhaustive_over_search_args_clap_ids` in the test module -- so an
+/// edit that adds a field here (satisfying the compiler) without ALSO updating that table still
+/// fails a test instead of silently drifting out of sync.
+fn index_flag_violations(args: &SearchArgs, request: &ResolvedSearchRequest) -> Vec<&'static str> {
+    let mut violations = Vec::new();
+
+    let SearchArgs {
+        ignore_case: _,      // Honor: threaded into TrigramIndex::search.
+        fixed_strings: _,    // Honor: threaded into TrigramIndex::search.
+        no_fixed_strings: _, // PassthroughSafe: restates the `fixed_strings` default (false).
+        invert_match,
+        no_invert_match: _, // PassthroughSafe: restates the `invert_match` default (false).
+        count: _,           // Honor: aggregate len(unique_line_matches).
+        count_matches,
+        line_number: _, // Honor: threaded as `line_number && !no_line_number` (fold-in b).
+        no_line_number: _, // Honor: see line_number.
+        column,
+        no_column: _, // PassthroughSafe: the index path never emits column offsets.
+        replace,
+        format,
+        sort,
+        sort_reverse,
+        sort_files,
+        null,
+        null_data,
+        multiline,
+        multiline_dotall,
+        context: _,        // Refuse: covered by search_has_context() below (existing H1a).
+        after_context: _,  // Refuse: see context.
+        before_context: _, // Refuse: see context.
+        max_count,
+        max_depth,
+        word_regexp,
+        smart_case: _, // Honor: H1e, resolved per-pattern inside run_index_query.
+        globs,
+        no_ignore: _, // Honor: threaded as build/staleness mode (H1d).
+        ignore: _,    // PassthroughSafe: restates the `no_ignore` default (respect ignore files).
+        no_ignore_dot,
+        no_ignore_exclude,
+        no_ignore_files,
+        no_ignore_global,
+        no_ignore_parent,
+        hidden,
+        no_hidden: _, // PassthroughSafe: the index build walker hardcodes hidden-file exclusion
+        // (`WalkBuilder::hidden(true)` in index.rs) regardless of query flags, so
+        // this restates what already happens.
+        follow,
+        text,
+        files_with_matches,
+        files_without_match,
+        file_type,
+        index: _, // Honor: the field that selects this engine; not a compat flag itself.
+        force_cpu,
+        gpu_device_ids,
+        color,
+        path_separator,
+        only_matching,
+        vimgrep,
+        passthru,
+        json: _,    // Honor.
+        ndjson: _,  // Honor.
+        verbose: _, // Honor: emit_verbose_metadata is called from run_index_query.
+        regexp: _,  // Honor: cardinality enforced via request.patterns.len() below.
+        pattern: _, // Honor: the query itself.
+        path: _,    // Honor: cardinality enforced by handle_index_search's paths.len()!=1 bail.
+        pcre2,
+        auto_hybrid_regex: _, // PassthroughSafe: only affects behavior once rg is actually invoked.
+        unicode: _,           // PassthroughSafe: restates the Unicode-mode default (on).
+        pcre2_unicode: _,     // PassthroughSafe: alias of `unicode`; same reasoning.
+        max_filesize,
+        no_ignore_vcs,
+        require_git,
+        messages: _, // PassthroughSafe: restates the default; index has no diagnostic-message mode.
+        no_config: _, // PassthroughSafe: the index path never reads an rg config file.
+        pcre2_version: _, // PassthroughSafe: early-exit flag (handle_ripgrep_search top), unreachable here.
+        type_list: _,     // PassthroughSafe: early-exit flag, unreachable here.
+        version: _,       // PassthroughSafe: early-exit flag, unreachable here.
+    } = args;
+
+    if *invert_match {
+        violations.push("-v/--invert-match");
+    }
+    if search_has_context(args) {
+        violations.push("-C/-A/-B (context)");
+    }
+    if max_count.is_some() {
+        violations.push("-m/--max-count");
+    }
+    if *word_regexp {
+        violations.push("-w/--word-regexp");
+    }
+    if !globs.is_empty() {
+        violations.push("-g/--glob");
+    }
+    if request.patterns.len() != 1 {
+        violations.push("multiple patterns (-e)");
+    }
+    if *count_matches {
+        violations.push("--count-matches");
+    }
+    if *column {
+        violations.push("--column");
+    }
+    if replace.is_some() {
+        violations.push("-r/--replace");
+    }
+    if format.is_some() {
+        violations.push("--format");
+    }
+    if sort.is_some() {
+        violations.push("--sort");
+    }
+    if sort_reverse.is_some() {
+        violations.push("--sortr");
+    }
+    if *sort_files {
+        violations.push("--sort-files");
+    }
+    if *null {
+        violations.push("-0/--null");
+    }
+    if *null_data {
+        violations.push("--null-data");
+    }
+    if *multiline {
+        violations.push("-U/--multiline");
+    }
+    if *multiline_dotall {
+        violations.push("--multiline-dotall");
+    }
+    if max_depth.is_some() {
+        violations.push("-d/--max-depth");
+    }
+    if *no_ignore_dot {
+        violations.push("--no-ignore-dot");
+    }
+    if *no_ignore_exclude {
+        violations.push("--no-ignore-exclude");
+    }
+    if *no_ignore_files {
+        violations.push("--no-ignore-files");
+    }
+    if *no_ignore_global {
+        violations.push("--no-ignore-global");
+    }
+    if *no_ignore_parent {
+        violations.push("--no-ignore-parent");
+    }
+    if *hidden {
+        violations.push("-./--hidden");
+    }
+    if *follow {
+        violations.push("-L/--follow");
+    }
+    if *text {
+        violations.push("-a/--text");
+    }
+    if *files_with_matches {
+        violations.push("-l/--files-with-matches");
+    }
+    if *files_without_match {
+        violations.push("--files-without-match");
+    }
+    if !file_type.is_empty() {
+        violations.push("-t/--type");
+    }
+    if *force_cpu {
+        // fold-in (c): --index and --cpu request contradictory engines; route_search currently
+        // checks explicit_index before force_cpu, so without this --cpu would be silently
+        // dropped rather than honored or refused.
+        violations.push("--cpu/--force-cpu");
+    }
+    if !gpu_device_ids.is_empty() {
+        // fold-in (c): same contradiction as force_cpu, for explicit --gpu-device-ids.
+        violations.push("--gpu-device-ids");
+    }
+    if let Some(mode) = color {
+        // `--color never`/`--color auto` restate a no-op default (the index's plain-text
+        // emitter never writes ANSI escapes either way); only an explicit `always` (or any other
+        // unrecognized value) asks for something this path cannot produce.
+        if mode.as_str() != "never" && mode.as_str() != "auto" {
+            violations.push("--color");
+        }
+    }
+    if path_separator.is_some() {
+        violations.push("--path-separator");
+    }
+    if *only_matching {
+        violations.push("-o/--only-matching");
+    }
+    if *vimgrep {
+        violations.push("--vimgrep");
+    }
+    if *passthru {
+        violations.push("--passthru");
+    }
+    if *pcre2 {
+        // fold-in (c): defense in depth only. route_search already sends --pcre2 to
+        // ripgrep_pcre2() ahead of explicit_index when rg is available, and
+        // handle_ripgrep_search's unconditional `require_ripgrep_or_exit(rg_available,
+        // "--pcre2")` guard already fails closed before either is reached when rg is NOT
+        // available -- so this arm should be unreachable in practice today. Kept so a future
+        // routing-order change fails closed instead of silently running PCRE2 syntax through
+        // the index's non-PCRE2 regex engine.
+        violations.push("-P/--pcre2");
+    }
+    if max_filesize.is_some() {
+        violations.push("--max-filesize");
+    }
+    if *no_ignore_vcs {
+        violations.push("--no-ignore-vcs");
+    }
+    if *require_git {
+        violations.push("--require-git");
+    }
+
+    violations
+}
+
+/// Test-only, independent-of-the-destructure classification table -- see
+/// `index_flag_violations`'s doc comment for why this exists alongside the compile-time
+/// exhaustive destructure. Keyed by clap arg id, which for a `#[derive(Args)]` struct field is
+/// the Rust field name itself (not the `long = "..."` CLI spelling).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexFlagPolicy {
+    /// The index path already correctly implements this flag.
+    Honor,
+    /// The flag is a semantic no-op on the index path (restates a default, or only matters once
+    /// ripgrep itself runs). `color` is listed here even though `--color always` is refused at
+    /// runtime by value -- see `index_flag_violations`.
+    PassthroughSafe,
+    /// The flag changes the result set or output shape; `--index` must fail closed / reroute.
+    Refuse,
+}
+
+#[cfg(test)]
+const INDEX_FLAG_POLICY: &[(&str, IndexFlagPolicy)] = &[
+    ("ignore_case", IndexFlagPolicy::Honor),
+    ("fixed_strings", IndexFlagPolicy::Honor),
+    ("no_fixed_strings", IndexFlagPolicy::PassthroughSafe),
+    ("invert_match", IndexFlagPolicy::Refuse),
+    ("no_invert_match", IndexFlagPolicy::PassthroughSafe),
+    ("count", IndexFlagPolicy::Honor),
+    ("count_matches", IndexFlagPolicy::Refuse),
+    ("line_number", IndexFlagPolicy::Honor),
+    ("no_line_number", IndexFlagPolicy::Honor),
+    ("column", IndexFlagPolicy::Refuse),
+    ("no_column", IndexFlagPolicy::PassthroughSafe),
+    ("replace", IndexFlagPolicy::Refuse),
+    ("format", IndexFlagPolicy::Refuse),
+    ("sort", IndexFlagPolicy::Refuse),
+    ("sort_reverse", IndexFlagPolicy::Refuse),
+    ("sort_files", IndexFlagPolicy::Refuse),
+    ("null", IndexFlagPolicy::Refuse),
+    ("null_data", IndexFlagPolicy::Refuse),
+    ("multiline", IndexFlagPolicy::Refuse),
+    ("multiline_dotall", IndexFlagPolicy::Refuse),
+    ("context", IndexFlagPolicy::Refuse),
+    ("after_context", IndexFlagPolicy::Refuse),
+    ("before_context", IndexFlagPolicy::Refuse),
+    ("max_count", IndexFlagPolicy::Refuse),
+    ("max_depth", IndexFlagPolicy::Refuse),
+    ("word_regexp", IndexFlagPolicy::Refuse),
+    ("smart_case", IndexFlagPolicy::Honor),
+    ("globs", IndexFlagPolicy::Refuse),
+    ("no_ignore", IndexFlagPolicy::Honor),
+    ("ignore", IndexFlagPolicy::PassthroughSafe),
+    ("no_ignore_dot", IndexFlagPolicy::Refuse),
+    ("no_ignore_exclude", IndexFlagPolicy::Refuse),
+    ("no_ignore_files", IndexFlagPolicy::Refuse),
+    ("no_ignore_global", IndexFlagPolicy::Refuse),
+    ("no_ignore_parent", IndexFlagPolicy::Refuse),
+    ("hidden", IndexFlagPolicy::Refuse),
+    ("no_hidden", IndexFlagPolicy::PassthroughSafe),
+    ("follow", IndexFlagPolicy::Refuse),
+    ("text", IndexFlagPolicy::Refuse),
+    ("files_with_matches", IndexFlagPolicy::Refuse),
+    ("files_without_match", IndexFlagPolicy::Refuse),
+    ("file_type", IndexFlagPolicy::Refuse),
+    ("index", IndexFlagPolicy::Honor),
+    ("force_cpu", IndexFlagPolicy::Refuse),
+    ("gpu_device_ids", IndexFlagPolicy::Refuse),
+    ("color", IndexFlagPolicy::PassthroughSafe),
+    ("path_separator", IndexFlagPolicy::Refuse),
+    ("only_matching", IndexFlagPolicy::Refuse),
+    ("vimgrep", IndexFlagPolicy::Refuse),
+    ("passthru", IndexFlagPolicy::Refuse),
+    ("json", IndexFlagPolicy::Honor),
+    ("ndjson", IndexFlagPolicy::Honor),
+    ("verbose", IndexFlagPolicy::Honor),
+    ("regexp", IndexFlagPolicy::Honor),
+    ("pattern", IndexFlagPolicy::Honor),
+    ("path", IndexFlagPolicy::Honor),
+    ("pcre2", IndexFlagPolicy::Refuse),
+    ("auto_hybrid_regex", IndexFlagPolicy::PassthroughSafe),
+    ("unicode", IndexFlagPolicy::PassthroughSafe),
+    ("pcre2_unicode", IndexFlagPolicy::PassthroughSafe),
+    ("max_filesize", IndexFlagPolicy::Refuse),
+    ("no_ignore_vcs", IndexFlagPolicy::Refuse),
+    ("require_git", IndexFlagPolicy::Refuse),
+    ("messages", IndexFlagPolicy::PassthroughSafe),
+    ("no_config", IndexFlagPolicy::PassthroughSafe),
+    ("pcre2_version", IndexFlagPolicy::PassthroughSafe),
+    ("type_list", IndexFlagPolicy::PassthroughSafe),
+    ("version", IndexFlagPolicy::PassthroughSafe),
+];
+
 fn detect_warm_index_state(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
 ) -> IndexRoutingState {
     if args.index
         || request.paths.len() != 1
-        || args.invert_match
-        || search_has_context(args)
-        || args.max_count.is_some()
-        || args.word_regexp
-        || !args.globs.is_empty()
         || request.patterns.len() != 1
         || request.patterns[0].len() < 3
+        || !index_flag_violations(args, request).is_empty()
     {
         return IndexRoutingState::default();
     }
@@ -5901,36 +6454,20 @@ fn handle_index_search(
         anyhow::bail!("index search currently supports exactly one path root");
     }
 
-    // Backend Fail-Closed Contract (audit H1a): route_search() (routing.rs) selects
+    // Backend Fail-Closed Contract (audit H1a, superseded by audit fix #1 2026-07-11): H1a
+    // originally hand-listed the 6 flags below because route_search() (routing.rs) selects
     // TrigramIndex for --index before any compatibility checks run, and run_index_query()
-    // below only ever reads pattern/ignore_case/fixed_strings -- every other search flag
-    // was silently dropped instead of honored or refused (e.g. --index -v used to return
-    // the NON-inverted set with exit 0). Mirror the same compatibility subset
-    // detect_warm_index_state already enforces for warm-index auto-routing and fail
-    // closed instead of silently running the query without them. Deliberately excludes
-    // the pattern-length and non-ASCII-ignore-case checks detect_warm_index_state also
-    // has -- those (H1b/H1c) are handled as a transparent full-scan fallback inside
-    // TrigramIndex::search/fixed_string_candidate_selection instead of a refusal, since
-    // the index can still honor them correctly, just without the trigram prefilter.
-    let mut unsupported_with_index: Vec<&str> = Vec::new();
-    if args.invert_match {
-        unsupported_with_index.push("-v/--invert-match");
-    }
-    if search_has_context(args) {
-        unsupported_with_index.push("-C/-A/-B (context)");
-    }
-    if args.max_count.is_some() {
-        unsupported_with_index.push("-m/--max-count");
-    }
-    if args.word_regexp {
-        unsupported_with_index.push("-w/--word-regexp");
-    }
-    if !args.globs.is_empty() {
-        unsupported_with_index.push("-g/--glob");
-    }
-    if request.patterns.len() != 1 {
-        unsupported_with_index.push("multiple patterns (-e)");
-    }
+    // only ever reads a handful of fields -- every OTHER search flag was silently dropped
+    // instead of honored or refused (e.g. --index -v used to return the NON-inverted set with
+    // exit 0). `index_flag_violations` (above `detect_warm_index_state`) replaces the ad-hoc
+    // list with an exhaustive per-field classification covering every `SearchArgs` field, not
+    // just these 6, and is shared with `detect_warm_index_state`'s warm-auto-routing gate so
+    // the two can't drift apart again. Deliberately excludes the pattern-length and
+    // non-ASCII-ignore-case checks detect_warm_index_state also has -- those (H1b/H1c) are
+    // handled as a transparent full-scan fallback inside
+    // TrigramIndex::search/fixed_string_candidate_selection instead of a refusal, since the
+    // index can still honor them correctly, just without the trigram prefilter.
+    let unsupported_with_index = index_flag_violations(args, request);
     if !unsupported_with_index.is_empty() {
         anyhow::bail!(
             "--index does not support {} yet; rerun without --index (or without the \
@@ -6089,11 +6626,45 @@ fn run_index_query(
     }
 
     if args.count {
-        println!("{}", unique_line_matches(&matches).len());
+        // Audit fix #1 must-fix (Opus adversarial gate on PR #541): emit per-file `path:count`
+        // via the SAME emit_count_search_matches the sibling native aggregate path already uses
+        // (emit_multi_pattern_native_results below), NOT a bare aggregate total. The old
+        // `println!("{unique_count}")` printed a single number (e.g. `3`) while every other count
+        // emitter -- `rg -c`, the native CPU engine's append_count_output_bytes, and
+        // emit_count_search_matches -- prints per-file counts. Because `count` is (correctly) an
+        // Honor flag, the WARM auto-index path reaches here too, so a plain `tg search -c <pat>
+        // <dir>` silently changed output shape (per-file -> bare aggregate) the moment a `.tg_index`
+        // happened to exist -- exactly the silent-wrong-shape-with-exit-0 this validator exists to
+        // prevent. emit_count_search_matches omits zero-count files, byte-matching `rg -c` (the
+        // rg-compat target); the native CPU engine's separate grep-style zero-count emission is its
+        // own pre-existing divergence, deliberately not replicated on the index fast path.
+        emit_count_search_matches(request.primary_path(), &matches);
+        // fold-in (a): rg exit-parity. `rg -c` (and the native CPU / multi-pattern engines) exit 1
+        // on zero matches; run_index_query never did, so `--index --count` on a no-match query
+        // exited 0 -- indistinguishable from a successful search. `matches.is_empty()` is
+        // equivalent to the old `unique_count == 0` (unique_line_matches never empties a non-empty
+        // set), and emit_count_search_matches prints nothing for an empty set on a dir target,
+        // matching `rg -c`'s empty-stdout-plus-exit-1 no-match contract.
+        if matches.is_empty() {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
-    emit_plain_search_matches(request.primary_path(), &matches);
+    // fold-in (b): thread `-N`/`--no-line-number` the same way the native/rg-passthrough
+    // configs already do (`args.line_number && !args.no_line_number`, see e.g.
+    // native_search_config_for_command) instead of emit_plain_search_matches's hardcoded
+    // `true`, which made `-N` a no-op on the index path.
+    emit_plain_search_matches_with_line_number(
+        request.primary_path(),
+        &matches,
+        args.line_number && !args.no_line_number,
+    );
+
+    // fold-in (a): see the --count arm above for why this matches native/GPU exit-parity.
+    if matches.is_empty() {
+        std::process::exit(1);
+    }
 
     Ok(())
 }
@@ -9669,6 +10240,12 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
     unique
 }
 
+// Audit fix #1 (2026-07-11): `run_index_query`'s plain-output arm used to be this function's
+// only non-cuda caller, hardcoding `line_number: true` regardless of `-N`/`--no-line-number`
+// (fold-in b). It now calls `emit_plain_search_matches_with_line_number` directly with the same
+// `line_number && !no_line_number` expression the native/rg-passthrough configs already use, so
+// this wrapper's only remaining caller is the cuda-only `emit_gpu_native_plain_results` below.
+#[cfg(feature = "cuda")]
 fn emit_plain_search_matches(path: &str, matches: &[SearchMatchJson]) {
     emit_plain_search_matches_with_line_number(path, matches, true);
 }
