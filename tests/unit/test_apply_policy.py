@@ -1757,6 +1757,14 @@ def test_canonicalize_exec_parent_resolves_real_junction(tmp_path: Path) -> None
     assert "junction-alias" not in str(canonical)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows path-namespace semantics (8.3 short-name / NTFS junction / "
+    "extended-length prefix / UNC admin-share). On POSIX these argv[0] strings are literal "
+    "filenames (backslash is a valid char, no drive letter), so the shadow is still DENIED "
+    "fail-closed -- shutil.which returns None for the non-existent literal path -- but via a "
+    "different code path (not-found-on-PATH) than this Windows-specific assertion checks.",
+)
 def test_run_policy_command_rejects_extended_length_prefix_shadow_inside_repo(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1788,6 +1796,10 @@ def test_run_policy_command_rejects_extended_length_prefix_shadow_inside_repo(
     assert "refusing a repo-local executable shadow" in str(result["detail"])
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-only NTFS junction (mklink /J via cmd.exe, absent on POSIX).",
+)
 def test_run_policy_command_rejects_junction_alias_shadow_inside_repo(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1830,6 +1842,10 @@ def test_run_policy_command_rejects_junction_alias_shadow_inside_repo(
     assert "refusing a repo-local executable shadow" in str(result["detail"])
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-only NTFS junction (mklink /J via cmd.exe, absent on POSIX).",
+)
 def test_run_policy_command_allows_junction_alias_that_resolves_outside_repo(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1874,6 +1890,11 @@ def test_run_policy_command_allows_junction_alias_that_resolves_outside_repo(
     assert captured.get("argv") is not None
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-only 8.3 short-name scenario (the ~1 short alias + the Path.resolve() "
+    "8.3-expansion behavior this simulates are Windows path-namespace concepts).",
+)
 def test_run_policy_command_rejects_8dot3_alias_shadow_inside_repo(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1967,6 +1988,14 @@ def test_run_policy_command_denies_when_exec_parent_canonicalization_fails(
 # drive-letter path (C:\..., and \\?\C:\...->C:\... after the ext-length strip), never a UNC prefix.
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-only UNC / admin-share (C$) path namespace. On POSIX a \\\\host\\C$\\ "
+    "string is a literal relative filename (no network/admin-share, no drive letter), so the "
+    "shadow is still DENIED fail-closed but via not-found/could-not-canonicalize, not this "
+    "Windows-specific UNC-refusal assertion. The UNC guard itself is inert on POSIX by design "
+    "(os.path.abspath never yields a \\\\-leading path there).",
+)
 @pytest.mark.parametrize(
     "unc_prefix",
     [
@@ -2017,6 +2046,10 @@ def test_run_policy_command_rejects_unc_admin_share_shadow_inside_repo(
     assert "UNC/network-share" in str(result["detail"])
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-only UNC / network-share path namespace (see the admin-share test above).",
+)
 def test_run_policy_command_rejects_unc_share_even_when_outside_repo(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -2050,6 +2083,11 @@ def test_run_policy_command_rejects_unc_share_even_when_outside_repo(
     assert "UNC/network-share" in str(result["detail"])
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-only: exercises the \\\\?\\C:\\ extended-length local spelling that only "
+    "resolves on Windows; on POSIX that literal string does not name the real tool.",
+)
 def test_run_policy_command_allows_local_drive_letter_tool_not_flagged_as_unc(
     tmp_path: Path, monkeypatch
 ) -> None:
