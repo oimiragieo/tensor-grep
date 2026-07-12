@@ -206,6 +206,113 @@ fn test_tg_classify_stdout_matches_python_module() {
 }
 
 #[test]
+fn test_tg_classify_text_flag_stdout_matches_python_module() {
+    // #92: --text classifies a literal string through the SAME sidecar payload["content"]
+    // path a file classify already used -- verify both front doors agree byte-for-byte.
+    if !repo_python_has_module("typer") {
+        return;
+    }
+
+    let literal = "2026-05-26 ERROR payment retry failed";
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("classify")
+        .arg("--text")
+        .arg(literal);
+    configure_classify_env(&mut tg);
+    let tg_output = run_with_timeout(tg, Duration::from_secs(40));
+
+    let mut py = Command::new(repo_python());
+    py.current_dir(repo_root())
+        .arg("-m")
+        .arg("tensor_grep")
+        .arg("classify")
+        .arg("--text")
+        .arg(literal);
+    configure_classify_env(&mut py);
+    let py_output = run_with_timeout(py, Duration::from_secs(40));
+
+    assert_eq!(tg_output.status.code(), py_output.status.code());
+    assert_eq!(tg_output.stdout, py_output.stdout);
+    assert_eq!(tg_output.stderr, py_output.stderr);
+
+    assert!(
+        tg_output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        tg_output.status.code(),
+        String::from_utf8_lossy(&tg_output.stdout),
+        String::from_utf8_lossy(&tg_output.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&tg_output.stdout).unwrap();
+    let classifications = payload["classifications"].as_array().unwrap();
+    assert_eq!(classifications.len(), 1);
+    assert_eq!(classifications[0]["label"], "error");
+    assert!(classifications[0]["file"].is_null());
+}
+
+#[test]
+fn test_tg_classify_stdin_flag_stdout_matches_python_module() {
+    // #92: --stdin reads to EOF and classifies via the same content payload; compare against
+    // `python -m tensor_grep classify --stdin` fed identical bytes.
+    if !repo_python_has_module("typer") {
+        return;
+    }
+
+    let content = b"INFO ok\nERROR database failed\nWARN retrying\n".to_vec();
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root()).arg("classify").arg("--stdin");
+    configure_classify_env(&mut tg);
+    let tg_output = run_with_stdin_timeout(tg, content.clone(), Duration::from_secs(40));
+
+    let mut py = Command::new(repo_python());
+    py.current_dir(repo_root())
+        .arg("-m")
+        .arg("tensor_grep")
+        .arg("classify")
+        .arg("--stdin");
+    configure_classify_env(&mut py);
+    let py_output = run_with_stdin_timeout(py, content, Duration::from_secs(40));
+
+    assert_eq!(tg_output.status.code(), py_output.status.code());
+    assert_eq!(tg_output.stdout, py_output.stdout);
+    assert_eq!(tg_output.stderr, py_output.stderr);
+
+    assert!(
+        tg_output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        tg_output.status.code(),
+        String::from_utf8_lossy(&tg_output.stdout),
+        String::from_utf8_lossy(&tg_output.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&tg_output.stdout).unwrap();
+    let classifications = payload["classifications"].as_array().unwrap();
+    assert_eq!(classifications.len(), 3);
+    assert_eq!(classifications[1]["label"], "error");
+}
+
+#[test]
+fn test_tg_classify_stdin_empty_input_degrades_cleanly_without_hanging() {
+    // TRAP coverage: a closed/empty stdin pipe must exit cleanly (bounded by
+    // run_with_stdin_timeout's own hard timeout), not hang and not crash.
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root()).arg("classify").arg("--stdin");
+    configure_classify_env(&mut tg);
+    let output = run_with_stdin_timeout(tg, Vec::new(), sidecar_test_timeout());
+
+    assert!(
+        !output.status.success(),
+        "empty stdin should exit non-zero rather than fabricate an empty success"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no content to classify"),
+        "expected a clean diagnostic, got: {stderr}"
+    );
+}
+
+#[test]
 fn test_sidecar_protocol_handles_large_payload_and_large_stdout() {
     let payload = json!({
         "content": large_classify_payload(2 * 1024 * 1024),

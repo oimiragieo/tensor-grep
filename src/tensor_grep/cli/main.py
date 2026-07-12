@@ -11451,12 +11451,26 @@ def checkpoint_undo(
 
 @app.command()
 def classify(
-    file_path: str,
+    file_path: str | None = typer.Argument(
+        None, help="The log file to classify (omit when using --stdin or --text)."
+    ),
     format_type: str = typer.Option("json", "--format", help="Output format"),
     max_lines: int = typer.Option(
         DEFAULT_CLASSIFY_MAX_LINES,
         "--max-lines",
         help="Maximum input lines to emit in JSON output (0 disables the cap).",
+    ),
+    stdin_flag: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Read the text to classify from stdin instead of a file "
+        "(mutually exclusive with --text).",
+    ),
+    text: str | None = typer.Option(
+        None,
+        "--text",
+        help="Classify a literal string instead of a file or stdin "
+        "(mutually exclusive with --stdin).",
     ),
 ) -> None:
     """Run log classification with local heuristics or an explicit cyBERT provider."""
@@ -11469,19 +11483,61 @@ def classify(
         _enrich_classifications,
     )
 
-    classify_path = Path(file_path).expanduser()
-    if not classify_path.exists():
+    if stdin_flag and text is not None:
+        typer.echo("Error: tg classify --stdin cannot be combined with --text", err=True)
+        raise typer.Exit(1)
+    if stdin_flag and file_path is not None:
         typer.echo(
-            "Error: classify expects a file path; --text/stdin literal classification "
-            f"is not supported yet. Received: {file_path}",
-            err=True,
+            "Error: tg classify --stdin cannot be combined with a file path argument", err=True
+        )
+        raise typer.Exit(1)
+    if text is not None and file_path is not None:
+        typer.echo(
+            "Error: tg classify --text cannot be combined with a file path argument", err=True
         )
         raise typer.Exit(1)
 
-    reader = FallbackReader()
-    lines = list(reader.read_lines(file_path))
-    if not lines:
-        sys.exit(1)
+    # Mirrors sidecar.py's _classify_payload: content supplied directly (stdin/--text) skips
+    # the file-read branch entirely, and empty content degrades cleanly instead of hanging or
+    # crashing (audit MED's fix for the sidecar's own empty-content branch, mirrored here for
+    # front-door parity).
+    source_path: str | None = None
+    if stdin_flag:
+        content = sys.stdin.read()
+        lines = content.splitlines(keepends=True)
+        if content and not lines:
+            lines = [content]
+        if not lines:
+            typer.echo("no content to classify (input is empty)", err=True)
+            raise typer.Exit(1)
+    elif text is not None:
+        lines = text.splitlines(keepends=True)
+        if text and not lines:
+            lines = [text]
+        if not lines:
+            typer.echo("no content to classify (input is empty)", err=True)
+            raise typer.Exit(1)
+    else:
+        if file_path is None:
+            typer.echo(
+                "Error: classify requires a file path, or --stdin, or --text <literal>",
+                err=True,
+            )
+            raise typer.Exit(1)
+        classify_path = Path(file_path).expanduser()
+        if not classify_path.exists():
+            typer.echo(
+                "Error: classify expects a file path; use --text for a literal string or "
+                f"--stdin to read from stdin. Received: {file_path}",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        source_path = file_path
+        reader = FallbackReader()
+        lines = list(reader.read_lines(file_path))
+        if not lines:
+            sys.exit(1)
 
     budgeted_lines, line_budget = _apply_classify_line_budget(lines, max_lines)
     results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
@@ -11495,7 +11551,7 @@ def classify(
             "classifications": _enrich_classifications(
                 results,
                 budgeted_lines,
-                source_path=file_path,
+                source_path=source_path,
             ),
         }
         print(json.dumps(data))

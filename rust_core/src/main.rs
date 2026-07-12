@@ -863,8 +863,16 @@ pub struct ClassifyArgs {
     #[arg(long = "max-lines", default_value_t = 500)]
     pub max_lines: usize,
 
-    /// The log file to classify
-    pub file_path: String,
+    /// Read the text to classify from stdin instead of a file (mutually exclusive with --text)
+    #[arg(long = "stdin")]
+    pub stdin_flag: bool,
+
+    /// Classify a literal string instead of a file or stdin (mutually exclusive with --stdin)
+    #[arg(long = "text", value_name = "TEXT")]
+    pub text: Option<String>,
+
+    /// The log file to classify (omit when using --stdin or --text)
+    pub file_path: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -4594,24 +4602,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::AuditVerify(args) => handle_audit_verify_command(args),
         Commands::Audit { args } => handle_python_passthrough("audit", args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
-        Commands::Classify(args) => {
-            if !Path::new(&args.file_path).exists() {
-                anyhow::bail!(
-                    "classify expects a file path; --text/stdin literal classification is not supported yet. Received: {}",
-                    args.file_path
-                );
-            }
-            handle_sidecar_command(
-                "classify",
-                vec![
-                    "--format".to_string(),
-                    args.format,
-                    "--max-lines".to_string(),
-                    args.max_lines.to_string(),
-                    args.file_path,
-                ],
-            )
-        }
+        Commands::Classify(args) => handle_classify_command(args),
         Commands::Run(args) => handle_ast_run(args),
         Commands::Scan { args } => {
             if ast_scan_requires_python_passthrough(&args) {
@@ -10354,8 +10345,64 @@ fn classify_gpu_sidecar_unavailable(stderr: &str, message: &str) -> Option<Strin
     }
 }
 
-fn handle_sidecar_command(command: &str, args: Vec<String>) -> anyhow::Result<()> {
-    match execute_sidecar_command(command, args, None) {
+// #92: classify's --stdin/--text share the sidecar's pre-existing `payload["content"]` path
+// (sidecar.py:_classify_payload already prefers payload content over the positional file
+// argument) -- no new IPC protocol, just wiring these two flags into the existing Optional
+// payload parameter that execute_sidecar_command has always accepted.
+fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
+    if args.stdin_flag && args.text.is_some() {
+        anyhow::bail!("tg classify --stdin cannot be combined with --text");
+    }
+    if args.stdin_flag && args.file_path.is_some() {
+        anyhow::bail!("tg classify --stdin cannot be combined with a file path argument");
+    }
+    if args.text.is_some() && args.file_path.is_some() {
+        anyhow::bail!("tg classify --text cannot be combined with a file path argument");
+    }
+
+    let sidecar_args = vec![
+        "--format".to_string(),
+        args.format,
+        "--max-lines".to_string(),
+        args.max_lines.to_string(),
+    ];
+
+    if args.stdin_flag {
+        // Read to EOF; an empty/closed pipe yields an empty string rather than hanging, and
+        // the sidecar's existing empty-content branch degrades cleanly (exit 1 with a message
+        // instead of a silent hang or crash) -- see sidecar.py's `if not lines:` branch.
+        let mut stdin_bytes = Vec::new();
+        io::stdin().read_to_end(&mut stdin_bytes)?;
+        let content = String::from_utf8_lossy(&stdin_bytes).into_owned();
+        let payload = serde_json::json!({ "content": content });
+        return handle_sidecar_command("classify", sidecar_args, Some(payload));
+    }
+
+    if let Some(text) = args.text {
+        let payload = serde_json::json!({ "content": text });
+        return handle_sidecar_command("classify", sidecar_args, Some(payload));
+    }
+
+    let file_path = args.file_path.ok_or_else(|| {
+        anyhow::anyhow!("classify requires a file path, or --stdin, or --text <literal>")
+    })?;
+    if !Path::new(&file_path).exists() {
+        anyhow::bail!(
+            "classify expects a file path; use --text for a literal string or --stdin to read from stdin. Received: {}",
+            file_path
+        );
+    }
+    let mut full_args = sidecar_args;
+    full_args.push(file_path);
+    handle_sidecar_command("classify", full_args, None)
+}
+
+fn handle_sidecar_command(
+    command: &str,
+    args: Vec<String>,
+    payload: Option<serde_json::Value>,
+) -> anyhow::Result<()> {
+    match execute_sidecar_command(command, args, payload) {
         Ok(result) => {
             let _ = result.sidecar_pid;
             if !result.stdout.is_empty() {
