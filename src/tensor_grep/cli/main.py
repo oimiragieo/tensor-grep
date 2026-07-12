@@ -26,8 +26,6 @@ import click
 import typer
 from typer.core import TyperGroup
 
-from tensor_grep.backends.base import BackendExecutionError
-from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version,
@@ -6441,6 +6439,13 @@ def search_command(
     Search files for a regex pattern. GPU routing is experimental and opt-in via --gpu-device-ids; CPU/ripgrep is the default and the current speed baseline.
     The stable text-search contract is the validated rg-compatible surface documented in docs/CONTRACTS.md.
     """
+    # Lazy import (perf task #94 PR-2): defers tensor_grep.backends.base (~5ms measured, this
+    # box) off every OTHER `tg` command's hot import path -- BackendExecutionError is only
+    # needed by the two fail-closed except sites further down (native-backend-fallback retry +
+    # the semantic-rerank CLI boundary). Importing it here -- unconditionally, before either
+    # branch -- keeps both except clauses valid while deferring the cost.
+    from tensor_grep.backends.base import BackendExecutionError
+
     # Just forward to CPU backend for now as a stub.
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
     args = positionals or []
@@ -11862,7 +11867,9 @@ def test(
     ),
 ) -> None:
     """Test structural rules in tensor-grep's bounded AST workflow slice."""
-    exit_code = ast_workflows.test_command(config)
+    from tensor_grep.cli.ast_workflows import test_command
+
+    exit_code = test_command(config)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 
