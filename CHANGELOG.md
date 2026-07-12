@@ -1,6 +1,117 @@
 # CHANGELOG
 
 
+## v1.67.0 (2026-07-12)
+
+### Bug Fixes
+
+- **release**: Ruff-format the cluster-124 doc code block + regenerate uv.lock
+  ([#558](https://github.com/oimiragieo/tensor-grep/pull/558),
+  [`35868fa`](https://github.com/oimiragieo/tensor-grep/commit/35868fa7366f5ea95fd4058e26de79ac952ead6b))
+
+Two release-gating static-analysis failures rode into v1.67.0 from #553: 1. `ruff format --check
+  --preview .` (a release gate) reformats the embedded Python code fence in
+  docs/plans/backlog-100/cluster-124-evidence-signing.md (ruff formats Markdown code blocks under
+  --preview); the #553 doc's snippet was unformatted. Applied `ruff format --preview`. 2.
+  Regenerated uv.lock after cryptography>=48.0.1 was added to [project].dependencies (the stale-lock
+  Dependency & License Audit).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **evidence**: Ed25519-sign evidence receipts + tg evidence verify/keygen/pubkey for downstream
+  verification (#124) ([#553](https://github.com/oimiragieo/tensor-grep/pull/553),
+  [`5e046ed`](https://github.com/oimiragieo/tensor-grep/commit/5e046ed0927bed873491ea15f4785584973bde18))
+
+* feat(evidence): Ed25519-sign evidence receipts + tg evidence verify/keygen/pubkey for downstream
+  verification (#124)
+
+Adds a P2 signing layer on top of the Phase-1 EvidenceReceipt aggregator: `tg evidence emit` now
+  always attaches a keyless `receipt_sha256` integrity digest, and `--sign` additionally
+  Ed25519-signs the receipt so a separate trust domain (e.g. gotcontext) can verify it without ever
+  holding a key that could forge one. `tg audit`'s existing HMAC-SHA256 pattern (audit_manifest.py)
+  is correct for its own same-operator local tamper-evidence use case but wrong here, where producer
+  and verifier are different trust domains.
+
+- NEW src/tensor_grep/cli/evidence_signing.py isolates all cryptography: canonical_receipt_bytes
+  (tg-canonical-json-v1: compact, key-sorted, ASCII-only JSON with only `signature`/`receipt_sha256`
+  excluded -- the `signing` block itself is inside the signed bytes, blocking an algorithm-downgrade
+  or key-swap attack), sign_receipt, verify_receipt, generate_keypair, key resolution/trust-set
+  helpers, and the verify-path DoS guard (bounded file read before json.loads). - S2
+  trust-bootstrap: an embedded public key only proves internal self-consistency, never authenticity.
+  `verify` always reports the signer's fingerprint (recomputed from the actual key bytes);
+  `key_trusted` only becomes true against an out-of-band pinned `--trusted-key` /
+  TG_EVIDENCE_TRUSTED_KEYS (hmac.compare_digest), and `--require-trusted` fails `valid` closed on an
+  unpinned key. A trusted-key check against an unsigned receipt is always invalid, mirroring
+  audit_manifest.py's "signing key supplied but manifest unsigned" rule. - Fail-closed: `--sign`
+  with no resolvable key (or `cryptography` unavailable) exits non-zero and writes no receipt --
+  never a silent unsigned fallback. Private keys are written at 0600 via an atomic O_CREAT|O_EXCL
+  temp-then-rename (session_store._write_json_atomic pattern), refusing to overwrite an existing
+  file or write through a symlink even with --force (caught and fixed a real bypass during TDD:
+  resolving the path before the symlink check defeated the guard). - New CLI surface, all
+  Python-only (`evidence` is a native passthrough command; no Rust/clap changes): `tg evidence emit
+  --sign/--signing-key/--previous`, `tg evidence verify
+  --trusted-key/--require-trusted/--previous/--json`, `tg evidence keygen [--out/--force]`, `tg
+  evidence pubkey [--signing-key]`. - pyproject.toml: promotes `cryptography>=48.0.1` from a
+  transitive constraint to a direct [project].dependencies entry (already resolved via mcp>=1.2.0 ->
+  pyjwt[crypto], zero new install cost). - 13-test bidirectional-oracle TDD suite
+  (tests/unit/test_evidence_signing.py) plus updates to tests/unit/test_evidence_receipt.py for the
+  now-always-present receipt_sha256. Docs: docs/CONTRACTS.md section 8, an AGENTS.md summary, the tg
+  skill REFERENCE.md, and the design spec archived at
+  docs/plans/backlog-100/cluster-124-evidence-signing.md.
+
+Opus-gate PENDING (load-bearing crypto).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(evidence): bound the --previous receipt read + warn when trust is not enforced (Opus-gate
+  follow-ups, #124)
+
+Addresses the Opus crypto-gate FIX-FIRST findings on PR #553 (crypto core passed: no
+  forge/downgrade/key-swap/silent-unsigned).
+
+FIX #1 (DoS): previous_receipt_digest read the --previous file with an unbounded read_bytes() before
+  decode/hash -- asymmetric with the 5 MB cap on the primary receipt read (read_receipt_file), and
+  reachable from BOTH `tg evidence emit --previous HUGE` and `tg evidence verify --previous HUGE`.
+  Extracted a shared _read_bounded_file_bytes() helper (reads at most max_bytes+1, refuses over-cap
+  before any parse/hash) and routed BOTH read_receipt_file and previous_receipt_digest through it,
+  so every receipt-file path -- primary or chain, emit or verify -- is DoS-bounded identically. Also
+  surfaces a failed chain's reason (chain_error) in the verify text output, not only --json, so a
+  bounded-read refusal is actionable.
+
+FIX #2 (footgun): `tg evidence verify --trusted-key K` without --require-trusted still returned
+  valid=true (only key_trusted=false), which is least-surprise-violating since pinning a specific
+  key implies intent to enforce. Now emits a VISIBLE stderr warning in that combo (behavior
+  unchanged -- valid is NOT silently altered; just warned). ASCII-only.
+
+FIX #3 (doc): added a docs/CONTRACTS.md section-8 note that tg-canonical-json-v1 inherits CPython
+  number formatting (float repr / big-int), so a cross-language verifier (gotcontext/JS) MUST match
+  it (this is why RFC 8785/JCS exists) or treat numeric fields carefully.
+
+New tests: test_previous_receipt_digest_rejects_oversized_file,
+  test_previous_receipt_digest_accepts_normal_file_and_prefers_stored_digest,
+  test_cli_verify_previous_oversized_fails_closed_not_oom,
+  test_cli_emit_previous_oversized_fails_closed_not_oom,
+  test_cli_verify_warns_when_trusted_key_without_require_trusted,
+  test_cli_verify_no_warning_when_require_trusted_set,
+  test_cli_verify_no_warning_when_no_trusted_key_supplied.
+
+Accepted (no change) per the gate's two INFO items: the _CRYPTOGRAPHY_IMPORT_ERROR sentinel is
+  defense-in-depth behind the real top-level import guard; the Windows key-perms POSIX-semantic gap
+  is a pre-existing platform limit (the 0600 mode is enforced via os.open on POSIX; the
+  cross-platform mode-argument spy test covers Windows).
+
+4-gate GREEN: ruff check + ruff format --check --preview + mypy all clean; evidence suite 88 passed
+  / 1 skipped; full unit suite 4300 passed, 31 pre-existing-unrelated failures (tree-sitter cluster
+  fixed on newer main by #548 + Torch/CyBERT env), all in files this branch never touches (confirmed
+  via empty git-log merge-base..HEAD).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.66.1 (2026-07-12)
 
 ### Performance Improvements

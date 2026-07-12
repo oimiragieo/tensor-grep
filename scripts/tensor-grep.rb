@@ -4,7 +4,7 @@
 class TensorGrep < Formula
   desc "GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT"
   homepage "https://github.com/oimiragieo/tensor-grep"
-  TENSOR_GREP_VERSION = "1.66.1"
+  TENSOR_GREP_VERSION = "1.67.0"
   version TENSOR_GREP_VERSION
   
   # NOTE: a `sha256 "<digest>"` line is stamped after each url into the PUBLISHED formula at
