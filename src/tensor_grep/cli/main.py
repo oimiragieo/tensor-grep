@@ -7694,6 +7694,90 @@ def orient(
 
 
 @app.command()
+def codemap(
+    path: str = typer.Argument(".", help="Directory to render a browsable code map for"),
+    out: str | None = typer.Option(
+        None,
+        "--out",
+        help="Output directory for pages + _coverage.json. Defaults to <path>/docs/code-map.",
+    ),
+    index_file: str = typer.Option(
+        "index.md",
+        "--index",
+        help="Index filename, resolved inside --out unless given as an absolute path.",
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Read-only freshness check of an existing code map (no re-parse); exits 1 when stale.",
+    ),
+    max_repo_files: int = typer.Option(
+        # Literal mirrors codemap.DEFAULT_MAX_REPO_FILES (kept literal so the heavy repo_map
+        # import stays lazy, matching map's/inventory's pattern); a guard test pins them.
+        50_000,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before truncating (walk-only; defaults to 50000).",
+    ),
+    max_symbols_per_file: int = typer.Option(
+        50,
+        "--max-symbols-per-file",
+        min=1,
+        help="Per-file symbol cap before an overflow pointer line (defaults to 50).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Render a persisted, browsable folder->file->symbol code map (lean index + per-folder pages)."""
+    from tensor_grep.cli.codemap import build_codemap, check_codemap_freshness
+
+    if check:
+        try:
+            result = check_codemap_freshness(
+                path, out=out, index=index_file, max_repo_files=max_repo_files
+            )
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+
+        if json_output:
+            typer.echo(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            status = "fresh" if result["fresh"] else "stale"
+            _safe_stdout_line(f"codemap --check: {status} -- {result['reason']}")
+
+        if not result["fresh"]:
+            raise typer.Exit(1)
+        return
+
+    try:
+        payload = build_codemap(
+            path,
+            out=out,
+            index=index_file,
+            max_repo_files=max_repo_files,
+            max_symbols_per_file=max_symbols_per_file,
+        )
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        _safe_stdout_line(f"Code map for {payload['path']}")
+        _safe_stdout_line(f"out={payload['out']} index={payload['index']}")
+        _safe_stdout_line(
+            f"folders={payload['folders_total']} files={payload['files_total']} "
+            f"symbols={payload['symbols_total']}"
+        )
+        if payload.get("partial"):
+            _safe_stdout_line(f"PARTIAL: {payload.get('remediation', '')}")
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
+
+
+@app.command()
 def context(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     query_arg: str | None = typer.Argument(

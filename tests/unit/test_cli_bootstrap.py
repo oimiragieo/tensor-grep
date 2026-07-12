@@ -23,6 +23,15 @@ def test_bootstrap_commands_match_source_of_truth() -> None:
     )
 
 
+def test_codemap_argv_does_not_forward_to_search() -> None:
+    """Registration site 1 (commands.py KNOWN_COMMANDS): a miss here would silently misroute
+    `tg codemap` into a ripgrep search for the literal pattern "codemap" instead of the real
+    command -- `_normalize_search_invocation` returning non-None is exactly that misrouting."""
+    assert bootstrap._normalize_search_invocation(["codemap"]) is None
+    assert bootstrap._normalize_search_invocation(["codemap", "--json"]) is None
+    assert bootstrap._normalize_search_invocation(["codemap", "--check"]) is None
+
+
 def test_vendored_root_dir_names_match_source_of_truth() -> None:
     """Review finding L1 (PR #400): cli/bootstrap.py's front-door vendored-root mirror and
     cli/main.py's `_should_refuse_unbounded_vendored_root_scan` guard must trigger on

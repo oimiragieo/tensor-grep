@@ -955,6 +955,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Render a persisted, browsable folder->file->symbol code map (lean index + per-folder pages)
+    #[command(name = "codemap", disable_help_flag = true)]
+    Codemap {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Emit a single-pass repository inventory (files, bytes, languages, categories)
     #[command(name = "inventory", disable_help_flag = true)]
     Inventory {
@@ -4299,6 +4305,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::GpuOomProbe(args) => handle_gpu_oom_probe_command(args),
         Commands::Map { args } => handle_python_passthrough("map", args),
         Commands::Orient { args } => handle_python_passthrough("orient", args),
+        Commands::Codemap { args } => handle_python_passthrough("codemap", args),
         Commands::Inventory { args } => handle_python_passthrough("inventory", args),
         Commands::DocsCoverage { args } => handle_python_passthrough("docs-coverage", args),
         Commands::Session { args } => handle_python_passthrough("session", args),
