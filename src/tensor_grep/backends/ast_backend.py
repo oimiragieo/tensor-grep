@@ -674,6 +674,25 @@ class AstBackend(ComputeBackend):
             # silent false negative (sibling of the SILENT-FALLBACK class). Raise per base.py's
             # contract so run_command's except-BackendExecutionError handler reports a real
             # "invalid pattern" error instead of "0 matches".
+            #
+            # #144 hotfix / #141 DSL divergence: a bare identifier (e.g. "calculateTotal") that
+            # already failed the node-type-index lookup above and then fails to compile as a
+            # tree-sitter QUERY is not a malformed query -- it is an ast-grep-DSL code pattern
+            # (tg run --pattern's native surface), which only AstGrepWrapperBackend speaks. The
+            # native tree-sitter backend and the ast-grep wrapper are two different pattern DSLs;
+            # when the wrapper is unavailable (e.g. CI without the ast-grep binary) routing falls
+            # through to this native backend, which cannot serve that pattern. Fail closed with
+            # the documented ast-grep-dependency message (matches agent_readiness.py's
+            # skip_error_patterns) instead of the generic "invalid pattern" message, so an
+            # environment gap is not misclassified as a real query bug. A non-simple pattern
+            # (e.g. a malformed "(...)" query) keeps the original message unchanged.
+            if self._is_simple_node_type_pattern(pattern):
+                raise BackendExecutionError(
+                    "Explicit AST search requires AST dependencies: the ast-grep wrapper "
+                    f"backend is required for pattern {pattern!r} (the native tree-sitter "
+                    "backend only serves structural node-type and (s-expression) queries, "
+                    "not ast-grep code patterns)."
+                ) from exc
             raise BackendExecutionError(
                 f"AST query compilation failed (invalid pattern for language {lang!r}?): {exc}"
             ) from exc
