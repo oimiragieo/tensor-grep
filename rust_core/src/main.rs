@@ -5611,39 +5611,60 @@ const INDEX_FLAG_POLICY: &[(&str, IndexFlagPolicy)] = &[
     ("version", IndexFlagPolicy::PassthroughSafe),
 ];
 
+/// Detects warm-index routing state, loading the persisted index AT MOST ONCE (audit #138 item
+/// #3): the previous version only returned `IndexRoutingState`, so the immediate warm-routing
+/// caller (below) and `handle_index_search` each independently re-loaded + re-deserialized the
+/// SAME `.tg_index` file for a single search invocation. Returning the loaded index lets the
+/// caller reuse it directly instead of reading the file a second time. This is a pure READ -- it
+/// never acquires the write lock (`IndexLockGuard` is only taken around a `save()`, never here);
+/// see `save_index_locked` for where persistence is actually gated.
+///
+/// The returned `Option<TrigramIndex>` is `Some` only when a load actually succeeded; it is
+/// always `None` when the guard clauses short-circuit (no `.tg_index` yet, explicit `--index`,
+/// or an incompatible flag combination) or when the load itself failed (a corrupt/legacy index),
+/// mirroring the `IndexRoutingState` this replaces field-for-field.
 fn detect_warm_index_state(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
-) -> IndexRoutingState {
+) -> (IndexRoutingState, Option<TrigramIndex>) {
     if args.index
         || request.paths.len() != 1
         || request.patterns.len() != 1
         || request.patterns[0].len() < 3
         || !index_flag_violations(args, request).is_empty()
     {
-        return IndexRoutingState::default();
+        return (IndexRoutingState::default(), None);
     }
 
     let index_path = resolve_index_path(request.primary_path());
     if !index_path.exists() {
-        return IndexRoutingState::default();
+        return (IndexRoutingState::default(), None);
     }
 
     match TrigramIndex::load(&index_path) {
-        Ok(index) => IndexRoutingState {
-            exists: true,
+        Ok(index) => {
             // H1d (audit): a query's --no-ignore mode that disagrees with the mode this
             // index was built under must be treated as stale so auto-routing does not
             // silently serve gitignored content the query didn't ask for (or silently
             // omit gitignored content a --no-ignore query did ask for).
-            is_stale: index.is_stale(args.no_ignore),
-            pattern_compatible: true,
-        },
-        Err(_) => IndexRoutingState {
-            exists: true,
-            is_stale: true,
-            pattern_compatible: true,
-        },
+            let is_stale = index.is_stale(args.no_ignore);
+            (
+                IndexRoutingState {
+                    exists: true,
+                    is_stale,
+                    pattern_compatible: true,
+                },
+                Some(index),
+            )
+        }
+        Err(_) => (
+            IndexRoutingState {
+                exists: true,
+                is_stale: true,
+                pattern_compatible: true,
+            },
+            None,
+        ),
     }
 }
 
@@ -6001,7 +6022,7 @@ fn search_prefers_ripgrep_passthrough(
         || args.index
         || args.force_cpu
         || !args.gpu_device_ids.is_empty()
-        || detect_warm_index_state(args, request).exists
+        || detect_warm_index_state(args, request).0.exists
     {
         return false;
     }
@@ -6407,7 +6428,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     #[cfg(not(feature = "cuda"))]
     let (corpus_bytes, corpus_bytes_known) = (0u64, false);
 
-    let index_state = detect_warm_index_state(&args, &request);
+    let (index_state, warm_loaded_index) = detect_warm_index_state(&args, &request);
 
     #[cfg(feature = "cuda")]
     let gpu_auto_supported = request.paths.len() == 1
@@ -6471,7 +6492,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     );
 
     match decision.selection {
-        BackendSelection::TrigramIndex => handle_index_search(&args, &request, &query),
+        BackendSelection::TrigramIndex => {
+            handle_index_search(&args, &request, &query, warm_loaded_index)
+        }
         BackendSelection::NativeGpu => {
             let gpu_device_ids = if args.gpu_device_ids.is_empty() {
                 &auto_gpu_ids
@@ -6608,10 +6631,38 @@ fn resolve_index_path(search_path: &str) -> PathBuf {
     }
 }
 
+/// Persists `index` to `index_path` under the write-serializing index lock -- the ONLY place in
+/// the search path that acquires it. Readers (`TrigramIndex::load`, `detect_warm_index_state`)
+/// never take this lock; a wrong lock on the read path would deadlock (or at minimum
+/// unnecessarily serialize) EVERY `tg` invocation against a warm index (audit #138 item #2
+/// critical trap). Per the Backend Fail-Closed Contract (AGENTS.md), a failed PERSIST must never
+/// fail the SEARCH: on a lock-acquire timeout (another writer holding it past the 12s budget) or
+/// an actual write/rename failure, this warns to stderr and returns without persisting -- the
+/// caller's in-memory `index` (already fully built) is unaffected and is what actually answers
+/// the search.
+fn save_index_locked(index: &TrigramIndex, index_path: &Path, verbose: bool) {
+    match tensor_grep_rs::index_lock::IndexLockGuard::acquire(index_path) {
+        Ok(_guard) => {
+            if let Err(e) = index.save(index_path) {
+                eprintln!("[index] warning: failed to persist index: {e}");
+            } else if verbose {
+                eprintln!("[index] persisted index to {}", index_path.display());
+            }
+        }
+        Err(timeout) => {
+            eprintln!(
+                "[index] warning: {timeout}; skipping persistence for this run (search \
+                 results are unaffected -- a later invocation will retry)"
+            );
+        }
+    }
+}
+
 fn handle_index_search(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
     query: &str,
+    preloaded_index: Option<TrigramIndex>,
 ) -> anyhow::Result<()> {
     if request.paths.len() != 1 {
         anyhow::bail!("index search currently supports exactly one path root");
@@ -6649,7 +6700,20 @@ fn handle_index_search(
 
     let index_path = resolve_index_path(request.primary_path());
 
-    let index = if index_path.exists() {
+    let index = if let Some(loaded) = preloaded_index {
+        // audit #138 item #3 (load-once): `detect_warm_index_state` already loaded this index
+        // (and, by construction, only ever hands one to us via the `should_route_to_index()` /
+        // warm_index() routing arm, which requires `!is_stale`) -- reuse it instead of reading
+        // and re-deserializing the same `.tg_index` file a second time.
+        if args.verbose {
+            eprintln!(
+                "[index] loaded cached index: {} files, {} trigrams",
+                loaded.file_count(),
+                loaded.trigram_count()
+            );
+        }
+        loaded
+    } else if index_path.exists() {
         let loaded = match TrigramIndex::load(&index_path) {
             Ok(idx) => idx,
             Err(e) => {
@@ -6659,7 +6723,7 @@ fn handle_index_search(
                     Path::new(request.primary_path()),
                     args.no_ignore,
                 )?;
-                fresh.save(&index_path)?;
+                save_index_locked(&fresh, &index_path, args.verbose);
                 if args.verbose {
                     eprintln!(
                         "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
@@ -6681,7 +6745,7 @@ fn handle_index_search(
                 Path::new(request.primary_path()),
                 args.no_ignore,
             )?;
-            update.index.save(&index_path)?;
+            save_index_locked(&update.index, &index_path, args.verbose);
             if args.verbose {
                 eprintln!(
                     "[index] incremental update complete in {:?}: reused {} unchanged files, added {}, modified {}, deleted {}; {} files, {} trigrams, {} postings",
@@ -6716,7 +6780,7 @@ fn handle_index_search(
         let started = Instant::now();
         let fresh =
             TrigramIndex::build_with_options(Path::new(request.primary_path()), args.no_ignore)?;
-        fresh.save(&index_path)?;
+        save_index_locked(&fresh, &index_path, args.verbose);
         if args.verbose {
             eprintln!(
                 "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
