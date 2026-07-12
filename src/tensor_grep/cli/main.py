@@ -32,6 +32,7 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version,
     _native_tg_version_matches,
+    env_flag_disabled,
     env_flag_enabled,
     iter_in_tree_native_tg_binaries,
     native_frontdoor_metadata_path,
@@ -211,7 +212,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS`: Total per-command budget for optional external LSP provider requests before native fallback.
 - `TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_AST_QUERY_CACHE_MAX_ENTRIES`, `TENSOR_GREP_AST_NODE_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS`: Bound long-lived in-process search and repo-context caches.
 - `TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES`, `TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES`, `TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES`: Bound agent-loop response and LSP provider caches.
-- `TG_SESSION_DAEMON_AUTOSTART`: Set to `1` to opt `defs`/`impact`/`refs`/`callers`/`blast-radius` into a default warm-daemon fast path (probes a running `tg session daemon`; auto-spawns one non-blocking on a miss). Default off (today's cold-path behavior); always forced off when `CI` or `GITHUB_ACTIONS` is set. Querying N distinct repo roots with this on can leave up to N resident daemons; each self-shuts-down after `TG_SESSION_DAEMON_IDLE_SECONDS` (900s default) of inactivity.""",
+- `TG_SESSION_DAEMON_AUTOSTART`: Default-ON warm-daemon fast path for `defs`/`impact`/`refs`/`callers`/`blast-radius` (probes a running `tg session daemon`; auto-spawns one non-blocking on a miss, so only the first call per root pays the cold-start cost). Set to `0`/`false`/`no`/`off` to opt back out to the always-cold path; always forced off when `CI` or `GITHUB_ACTIONS` is set. Querying N distinct repo roots with this on can leave up to N resident daemons; each self-shuts-down after `TG_SESSION_DAEMON_IDLE_SECONDS` (900s default) of inactivity.""",
     no_args_is_help=True,
     add_completion=True,
     rich_markup_mode="markdown",
@@ -7854,12 +7855,16 @@ def _daemon_directory_path(path: str) -> str | None:
 
 
 def _session_daemon_autostart_enabled() -> bool:
-    """TG_SESSION_DAEMON_AUTOSTART opt-in for the default Tier-1 warm-daemon fast path.
+    """TG_SESSION_DAEMON_AUTOSTART opt-out for the default Tier-1 warm-daemon fast path.
 
-    Task #94 Part A, must-fix 4. DEFAULT OFF: unset (or any value other than 1/true/yes/on)
-    means today's behavior EXACTLY -- no daemon is probed, spawned, or routed to, for any of
-    the 5 symbol commands. Flipping this default ON is a separate, later, conscious decision
-    (per the design-gate verdict SHIP-WITH-CHANGES); this PR only wires the plumbing.
+    Task #94 PR-1 (the conscious default flip flagged by the original Part A comment; cleared
+    after #498 landed the daemon response-cache correctness fix docs/BACKLOG.md's #94 entry
+    gated the flip on). DEFAULT ON: unset -- or any value other than an explicit falsy token
+    (``0``/``false``/``no``/``off``, see ``env_flag_disabled`` in runtime_paths.py) -- routes
+    defs/impact/refs/callers/blast-radius through a running ``tg session daemon``, non-blocking
+    auto-spawning one on a miss. This is the ~20x warm-vs-cold latency win: the cold path pays a
+    6-33s repo-map build on every call. Set the flag to an explicit falsy token to opt back out
+    to the always-cold path, byte-for-byte unchanged from before this PR.
 
     Auto-forced OFF whenever CI or GITHUB_ACTIONS is set, regardless of the flag's own value,
     so a CI job can never leave a background session-daemon process (idle-lived up to
@@ -7867,7 +7872,7 @@ def _session_daemon_autostart_enabled() -> bool:
     """
     if env_flag_enabled("CI") or env_flag_enabled("GITHUB_ACTIONS"):
         return False
-    return env_flag_enabled("TG_SESSION_DAEMON_AUTOSTART")
+    return not env_flag_disabled("TG_SESSION_DAEMON_AUTOSTART")
 
 
 def _maybe_symbol_command_via_running_daemon(

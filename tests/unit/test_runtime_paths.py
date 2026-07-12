@@ -20,6 +20,25 @@ def clear_caches():
     resolve_ripgrep_binary.cache_clear()
 
 
+# Task #94 PR-1: env_flag_disabled is the mirror of env_flag_enabled for a default-ON, opt-out
+# flag (TG_SESSION_DAEMON_AUTOSTART) -- "explicitly turned off", not "is it on".
+def test_env_flag_disabled_recognizes_falsy_tokens(monkeypatch):
+    for token in ("0", "false", "no", "off", "FALSE", "No", "OFF", "  off  "):
+        monkeypatch.setenv("TG_TEST_FLAG_DISABLED_PROBE", token)
+        assert runtime_paths.env_flag_disabled("TG_TEST_FLAG_DISABLED_PROBE") is True, token
+
+
+def test_env_flag_disabled_false_when_unset_or_other_value(monkeypatch):
+    monkeypatch.delenv("TG_TEST_FLAG_DISABLED_PROBE", raising=False)
+    assert runtime_paths.env_flag_disabled("TG_TEST_FLAG_DISABLED_PROBE") is False
+    monkeypatch.setenv("TG_TEST_FLAG_DISABLED_PROBE", "1")
+    assert runtime_paths.env_flag_disabled("TG_TEST_FLAG_DISABLED_PROBE") is False
+    monkeypatch.setenv("TG_TEST_FLAG_DISABLED_PROBE", "true")
+    assert runtime_paths.env_flag_disabled("TG_TEST_FLAG_DISABLED_PROBE") is False
+    monkeypatch.setenv("TG_TEST_FLAG_DISABLED_PROBE", "banana")
+    assert runtime_paths.env_flag_disabled("TG_TEST_FLAG_DISABLED_PROBE") is False
+
+
 def test_resolve_native_tg_binary_env_override(tmp_path):
     binary_path = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
     binary_path.touch()

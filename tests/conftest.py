@@ -64,3 +64,19 @@ def cleanup_external_lsp_providers():
     manager = getattr(repo_map_module, "_EXTERNAL_LSP_PROVIDER_MANAGER", None)
     if manager is not None:
         manager.stop_all()
+
+
+@pytest.fixture(autouse=True)
+def _disable_session_daemon_autostart_by_default(monkeypatch):
+    """Task #94 PR-1 trap T3: TG_SESSION_DAEMON_AUTOSTART now defaults ON (opt-out, see
+    ``_session_daemon_autostart_enabled`` in ``src/tensor_grep/cli/main.py``). Without this,
+    hundreds of unrelated CliRunner tests across the suite that invoke defs/impact/refs/callers/
+    blast-radius would each try to autostart a REAL background session-daemon subprocess on a
+    dev box -- the CI/GITHUB_ACTIONS force-off baked into that function does not cover a local
+    ``pytest`` run. Force the flag off for the whole suite; individual daemon tests (see
+    ``tests/unit/test_symbol_daemon_autostart.py``) opt back in per-test via their own
+    ``monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", "1")``, which overrides this fixture's
+    value for the remainder of that test only (pytest's ``monkeypatch`` restores in LIFO order,
+    so the per-test override never leaks to later tests).
+    """
+    monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", "0")
