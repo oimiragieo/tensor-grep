@@ -222,81 +222,87 @@ def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]
     imports: list[str] = []
     symbols: list[dict[str, Any]] = []
 
-    def _walk(node: Any) -> None:
-        node_type = node.type
-        if node_type == "import_spec":
-            path_field = node.child_by_field_name("path")
-            import_path_text = _go_import_spec_path_text(path_field, source_bytes)
-            if import_path_text is not None:
-                imports.append(import_path_text)
-        elif node_type == "function_declaration":
-            name_node = node.child_by_field_name("name")
-            if name_node is not None:
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    symbols.append(
-                        _symbol_record(
+    def _walk(root: Any) -> None:
+        # F26 fix (audit #63): explicit-stack DFS instead of recursion, so a pathologically
+        # deep AST can never raise RecursionError (matches the ast_backend.py B3 precedent:
+        # `AstBackend._build_node_type_index`). Children are pushed in reverse so the leftmost
+        # child is popped (and thus visited) first, preserving the original pre-order traversal.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type == "import_spec":
+                path_field = node.child_by_field_name("path")
+                import_path_text = _go_import_spec_path_text(path_field, source_bytes)
+                if import_path_text is not None:
+                    imports.append(import_path_text)
+            elif node_type == "function_declaration":
+                name_node = node.child_by_field_name("name")
+                if name_node is not None:
+                    name = _node_text(name_node)
+                    if _is_clean_symbol_name(name):
+                        symbols.append(
+                            _symbol_record(
+                                name=name,
+                                kind="function",
+                                file=path,
+                                start_line=node.start_point[0] + 1,
+                                end_line=node.end_point[0] + 1,
+                            )
+                        )
+            elif node_type == "method_declaration":
+                name_node = node.child_by_field_name("name")
+                if name_node is not None:
+                    name = _node_text(name_node)
+                    if _is_clean_symbol_name(name):
+                        record = _symbol_record(
                             name=name,
-                            kind="function",
+                            kind="method",
                             file=path,
                             start_line=node.start_point[0] + 1,
                             end_line=node.end_point[0] + 1,
                         )
-                    )
-        elif node_type == "method_declaration":
-            name_node = node.child_by_field_name("name")
-            if name_node is not None:
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    record = _symbol_record(
-                        name=name,
-                        kind="method",
-                        file=path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                    )
-                    receiver_type = _go_receiver_type_name(node, source_bytes)
-                    if receiver_type:
-                        record["receiver_type"] = receiver_type
-                    symbols.append(record)
-        elif node_type == "type_spec":
-            name_node = node.child_by_field_name("name")
-            type_node = node.child_by_field_name("type")
-            if name_node is not None:
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    kind = _GO_TYPE_SPEC_KIND_BY_TYPE_FIELD.get(
-                        type_node.type if type_node is not None else "", "type"
-                    )
-                    symbols.append(
-                        _symbol_record(
-                            name=name,
-                            kind=kind,
-                            file=path,
-                            start_line=node.start_point[0] + 1,
-                            end_line=node.end_point[0] + 1,
+                        receiver_type = _go_receiver_type_name(node, source_bytes)
+                        if receiver_type:
+                            record["receiver_type"] = receiver_type
+                        symbols.append(record)
+            elif node_type == "type_spec":
+                name_node = node.child_by_field_name("name")
+                type_node = node.child_by_field_name("type")
+                if name_node is not None:
+                    name = _node_text(name_node)
+                    if _is_clean_symbol_name(name):
+                        kind = _GO_TYPE_SPEC_KIND_BY_TYPE_FIELD.get(
+                            type_node.type if type_node is not None else "", "type"
                         )
-                    )
-        elif node_type in {"const_spec", "var_spec"} and not _node_has_ancestor_type(
-            node, {"block"}
-        ):
-            kind = "const" if node_type == "const_spec" else "var"
-            for name_node in node.children_by_field_name("name"):
-                if name_node.type != "identifier":
-                    continue
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    symbols.append(
-                        _symbol_record(
-                            name=name,
-                            kind=kind,
-                            file=path,
-                            start_line=node.start_point[0] + 1,
-                            end_line=node.end_point[0] + 1,
+                        symbols.append(
+                            _symbol_record(
+                                name=name,
+                                kind=kind,
+                                file=path,
+                                start_line=node.start_point[0] + 1,
+                                end_line=node.end_point[0] + 1,
+                            )
                         )
-                    )
-        for child in node.children:
-            _walk(child)
+            elif node_type in {"const_spec", "var_spec"} and not _node_has_ancestor_type(
+                node, {"block"}
+            ):
+                kind = "const" if node_type == "const_spec" else "var"
+                for name_node in node.children_by_field_name("name"):
+                    if name_node.type != "identifier":
+                        continue
+                    name = _node_text(name_node)
+                    if _is_clean_symbol_name(name):
+                        symbols.append(
+                            _symbol_record(
+                                name=name,
+                                kind=kind,
+                                file=path,
+                                start_line=node.start_point[0] + 1,
+                                end_line=node.end_point[0] + 1,
+                            )
+                        )
+            stack.extend(reversed(node.children))
 
     _walk(tree.root_node)
     imports = sorted(dict.fromkeys(imports))
@@ -326,36 +332,40 @@ def go_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     def _node_text(node: Any) -> str:
         return _tree_sitter_node_text(source_bytes, node)
 
-    def _walk(node: Any) -> None:
-        node_type = node.type
-        name_node: Any | None = None
-        kind: str | None = None
-        if node_type == "function_declaration":
-            name_node = node.child_by_field_name("name")
-            kind = "function"
-        elif node_type == "method_declaration":
-            name_node = node.child_by_field_name("name")
-            kind = "method"
-        elif node_type == "type_spec":
-            name_node = node.child_by_field_name("name")
-            type_node = node.child_by_field_name("type")
-            kind = _GO_TYPE_SPEC_KIND_BY_TYPE_FIELD.get(
-                type_node.type if type_node is not None else "", "type"
-            )
-        if name_node is not None and kind is not None and _node_text(name_node) == symbol:
-            block = _node_text(node)
-            if block and not block.endswith("\n"):
-                block = f"{block}\n"
-            sources.append({
-                "name": symbol,
-                "kind": kind,
-                "file": str(path),
-                "start_line": node.start_point[0] + 1,
-                "end_line": node.end_point[0] + 1,
-                "source": block,
-            })
-        for child in node.children:
-            _walk(child)
+    def _walk(root: Any) -> None:
+        # F26 fix (audit #63): explicit-stack DFS instead of recursion -- see the identical
+        # comment on go_imports_and_symbols's `_walk` above for the rationale/precedent.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            name_node: Any | None = None
+            kind: str | None = None
+            if node_type == "function_declaration":
+                name_node = node.child_by_field_name("name")
+                kind = "function"
+            elif node_type == "method_declaration":
+                name_node = node.child_by_field_name("name")
+                kind = "method"
+            elif node_type == "type_spec":
+                name_node = node.child_by_field_name("name")
+                type_node = node.child_by_field_name("type")
+                kind = _GO_TYPE_SPEC_KIND_BY_TYPE_FIELD.get(
+                    type_node.type if type_node is not None else "", "type"
+                )
+            if name_node is not None and kind is not None and _node_text(name_node) == symbol:
+                block = _node_text(node)
+                if block and not block.endswith("\n"):
+                    block = f"{block}\n"
+                sources.append({
+                    "name": symbol,
+                    "kind": kind,
+                    "file": str(path),
+                    "start_line": node.start_point[0] + 1,
+                    "end_line": node.end_point[0] + 1,
+                    "source": block,
+                })
+            stack.extend(reversed(node.children))
 
     _walk(tree.root_node)
     sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
@@ -510,30 +520,38 @@ def _go_import_bindings(source_bytes: bytes, tree: Any) -> list[dict[str, Any]]:
     """Every ``import_spec`` in *tree*: ``{"path", "alias", "dot", "blank"}``."""
     bindings: list[dict[str, Any]] = []
 
-    def _walk(node: Any) -> None:
-        if node.type == "import_spec":
-            path_field = node.child_by_field_name("path")
-            name_field = node.child_by_field_name("name")
-            import_path_text = _go_import_spec_path_text(path_field, source_bytes)
-            if import_path_text is not None:
-                alias: str | None = None
-                dot = False
-                blank = False
-                if name_field is not None:
-                    if name_field.type == "package_identifier":
-                        alias = _tree_sitter_node_text(source_bytes, name_field)
-                    elif name_field.type == "dot":
-                        dot = True
-                    elif name_field.type == "blank_identifier":
-                        blank = True
-                bindings.append({
-                    "path": import_path_text,
-                    "alias": alias,
-                    "dot": dot,
-                    "blank": blank,
-                })
-        for child in node.children:
-            _walk(child)
+    def _walk(root: Any) -> None:
+        # F26 fix (audit #63): explicit-stack DFS instead of recursion -- see the identical
+        # comment on go_imports_and_symbols's `_walk` (above, this module) for the rationale/
+        # precedent. Order preservation matters MORE here than in the other three walkers: unlike
+        # them, `bindings` is never re-sorted by its caller (`_go_alias_to_import_path` folds it
+        # into a dict in traversal order) -- pushing children in reverse and popping from the end
+        # keeps this an exact pre-order DFS, byte-identical visiting order to the old recursion.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "import_spec":
+                path_field = node.child_by_field_name("path")
+                name_field = node.child_by_field_name("name")
+                import_path_text = _go_import_spec_path_text(path_field, source_bytes)
+                if import_path_text is not None:
+                    alias: str | None = None
+                    dot = False
+                    blank = False
+                    if name_field is not None:
+                        if name_field.type == "package_identifier":
+                            alias = _tree_sitter_node_text(source_bytes, name_field)
+                        elif name_field.type == "dot":
+                            dot = True
+                        elif name_field.type == "blank_identifier":
+                            blank = True
+                    bindings.append({
+                        "path": import_path_text,
+                        "alias": alias,
+                        "dot": dot,
+                        "blank": blank,
+                    })
+            stack.extend(reversed(node.children))
 
     _walk(tree.root_node)
     return bindings
@@ -694,7 +712,14 @@ def go_references_and_calls(
 
     source_bytes = source.encode("utf-8")
     tree = parser.parse(source_bytes)
-    lines = source.splitlines()
+    # F26 fix (audit #63): tree-sitter's row counting (`node.start_point[0]`) advances only on
+    # "\n", but `str.splitlines()` ALSO splits on "\r", "\v"/"\x0b", "\f"/"\x0c", "\x1c"-"\x1e",
+    # "\x85", U+2028 and U+2029 -- a single stray form-feed (or any of those other separators)
+    # anywhere in the source injects an EXTRA entry into a splitlines()-based array, shifting
+    # every row-indexed `text` lookup below it out of alignment with tree-sitter's own rows.
+    # Split strictly on "\n" (matching tree-sitter's row semantics) and strip a trailing "\r"
+    # per line so CRLF-terminated files still read cleanly.
+    lines = [line.rstrip("\r") for line in source.split("\n")]
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
@@ -764,79 +789,87 @@ def go_references_and_calls(
             entry["resolution_confidence"] = float(resolution.get("confidence", 0.95))
         bucket.append(entry)
 
-    def _walk(node: Any) -> None:
-        node_type = node.type
-        node_text = (
-            _node_text(node)
-            if node_type in {"identifier", "type_identifier", "field_identifier"}
-            else ""
-        )
-        if (
-            node_type == "identifier"
-            and node_text == symbol
-            and not _is_definition_identifier(node)
-        ):
-            parent = node.parent
+    def _walk(root: Any) -> None:
+        # F26 fix (audit #63): explicit-stack DFS instead of recursion -- see the
+        # identical comment on go_imports_and_symbols's `_walk` (above, this module) for
+        # the rationale/precedent. This is the walker invoked BARE at repo_map.py:14613
+        # (build_symbol_refs) and :15339 (build_symbol_callers) -- the highest-priority
+        # crash site the audit finding names.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            node_text = (
+                _node_text(node)
+                if node_type in {"identifier", "type_identifier", "field_identifier"}
+                else ""
+            )
             if (
-                parent is not None
-                and parent.type == "call_expression"
-                and parent.child_by_field_name("function") == node
+                node_type == "identifier"
+                and node_text == symbol
+                and not _is_definition_identifier(node)
             ):
-                _emit(references, node, kind="reference", ref_kind="call", resolution=None)
-                _emit(calls, node, kind="call", ref_kind="call", resolution=None)
-            else:
-                _emit(references, node, kind="reference", ref_kind="value", resolution=None)
-        elif (
-            node_type == "type_identifier"
-            and node_text == symbol
-            and not _is_definition_identifier(node)
-        ):
-            _emit(references, node, kind="reference", ref_kind="type", resolution=None)
-        elif (
-            node_type == "field_identifier"
-            and node_text == symbol
-            and not _is_definition_identifier(node)
-        ):
-            parent = node.parent
-            if parent is not None and parent.type == "selector_expression":
-                field_node = parent.child_by_field_name("field")
-                if field_node is not None and field_node == node:
-                    operand_node = parent.child_by_field_name("operand")
-                    operand_name = (
-                        _node_text(operand_node)
-                        if operand_node is not None and operand_node.type == "identifier"
-                        else None
-                    )
-                    package_resolution = _resolution_for_package(operand_name)
-                    grandparent = getattr(parent, "parent", None)
-                    is_call = (
-                        grandparent is not None
-                        and grandparent.type == "call_expression"
-                        and grandparent.child_by_field_name("function") == parent
-                    )
-                    if is_call:
-                        resolution = _confident_call_resolution(package_resolution)
-                        _emit(
-                            references,
-                            node,
-                            kind="reference",
-                            ref_kind="call",
-                            resolution=resolution,
+                parent = node.parent
+                if (
+                    parent is not None
+                    and parent.type == "call_expression"
+                    and parent.child_by_field_name("function") == node
+                ):
+                    _emit(references, node, kind="reference", ref_kind="call", resolution=None)
+                    _emit(calls, node, kind="call", ref_kind="call", resolution=None)
+                else:
+                    _emit(references, node, kind="reference", ref_kind="value", resolution=None)
+            elif (
+                node_type == "type_identifier"
+                and node_text == symbol
+                and not _is_definition_identifier(node)
+            ):
+                _emit(references, node, kind="reference", ref_kind="type", resolution=None)
+            elif (
+                node_type == "field_identifier"
+                and node_text == symbol
+                and not _is_definition_identifier(node)
+            ):
+                parent = node.parent
+                if parent is not None and parent.type == "selector_expression":
+                    field_node = parent.child_by_field_name("field")
+                    if field_node is not None and field_node == node:
+                        operand_node = parent.child_by_field_name("operand")
+                        operand_name = (
+                            _node_text(operand_node)
+                            if operand_node is not None and operand_node.type == "identifier"
+                            else None
                         )
-                        _emit(calls, node, kind="call", ref_kind="call", resolution=resolution)
-                    else:
-                        # F9 fix: a package-qualified non-call selector (`config.DefaultTimeout`)
-                        # is a VALUE read (const/var), not a struct FIELD access -- only a
-                        # genuinely unresolved operand (a real struct field access) stays "field".
-                        _emit(
-                            references,
-                            node,
-                            kind="reference",
-                            ref_kind="value" if package_resolution is not None else "field",
-                            resolution=package_resolution,
+                        package_resolution = _resolution_for_package(operand_name)
+                        grandparent = getattr(parent, "parent", None)
+                        is_call = (
+                            grandparent is not None
+                            and grandparent.type == "call_expression"
+                            and grandparent.child_by_field_name("function") == parent
                         )
-        for child in node.children:
-            _walk(child)
+                        if is_call:
+                            resolution = _confident_call_resolution(package_resolution)
+                            _emit(
+                                references,
+                                node,
+                                kind="reference",
+                                ref_kind="call",
+                                resolution=resolution,
+                            )
+                            _emit(calls, node, kind="call", ref_kind="call", resolution=resolution)
+                        else:
+                            # F9 fix: a package-qualified non-call selector
+                            # (`config.DefaultTimeout`) is a VALUE read (const/var), not a struct
+                            # FIELD access -- only a genuinely unresolved operand (a real struct
+                            # field access) stays "field".
+                            _emit(
+                                references,
+                                node,
+                                kind="reference",
+                                ref_kind="value" if package_resolution is not None else "field",
+                                resolution=package_resolution,
+                            )
+            stack.extend(reversed(node.children))
 
     _walk(tree.root_node)
     references.sort(key=lambda item: (item["file"], item["line"], item["text"]))

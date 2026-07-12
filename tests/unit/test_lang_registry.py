@@ -84,6 +84,40 @@ def test_language_registry_has_exactly_the_stage1_languages() -> None:
     }
 
 
+def test_target_and_provider_language_agree_with_registry() -> None:
+    """F22 (audit #63 LOW tail): `_target_language_for_path` (repo_map.py:6475-6494) and
+    `_provider_language_for_path` (repo_map.py:13018+) each still carry their OWN hardcoded
+    suffix dispatch instead of routing through `lang_registry` -- the "MOST-FORGOTTEN seam"
+    the code comments itself warn about (repo_map.py:6489-6493: miss the teach on either
+    function and the agent capsule's query-language-vs-target-language 0.55 confidence cap
+    silently misfires on the new language). `test_graph_suffixes_matches_the_historical_
+    hardcoded_union` above pins only the suffix UNION; it says nothing about whether each
+    suffix maps to the SAME language id in all three places.
+
+    Parametrize DYNAMICALLY over `lang_registry.LANGUAGE_REGISTRY` (never a hardcoded suffix
+    list, which would itself be exactly the kind of thing that drifts) so this is a ratchet
+    against the NEXT language expansion (the #62 CEO fork), not just a snapshot of today's
+    five languages: it fails loudly the moment a new `LanguageSpec` is registered without
+    teaching both dispatch functions, instead of the new language silently reading as "no
+    target language" / "no provider language".
+    """
+    assert lang_registry.LANGUAGE_REGISTRY, (
+        "registry must be non-empty for this test to mean anything"
+    )
+    for spec in lang_registry.LANGUAGE_REGISTRY.values():
+        assert spec.suffixes, f"{spec.language_id!r} has no suffixes to check"
+        for suffix in spec.suffixes:
+            path = f"example{suffix}"
+            assert repo_map._target_language_for_path(path) == spec.language_id, (
+                f"_target_language_for_path disagrees with lang_registry for suffix {suffix!r}: "
+                f"registry says {spec.language_id!r}"
+            )
+            assert repo_map._provider_language_for_path(path) == spec.language_id, (
+                f"_provider_language_for_path disagrees with lang_registry for suffix {suffix!r}: "
+                f"registry says {spec.language_id!r}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Provenance labeling (parsed vs missing-grammar)
 # ---------------------------------------------------------------------------

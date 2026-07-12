@@ -418,6 +418,82 @@ def test_rust_classifier_exception_defaults_to_value_without_dropping_rows(
 
 
 # ---------------------------------------------------------------------------
+# F19: a Call's arguments inside a type annotation are VALUES, not type syntax.
+# ---------------------------------------------------------------------------
+
+
+def test_python_call_argument_inside_annotation_is_not_mislabeled_type(tmp_path: Path) -> None:
+    """F19 (audit #63): `_walk` propagates `in_annotation` into every child field, including an
+    `ast.Call`'s `args`/`keywords` (repo_map.py:4383-4390) -- so a runtime-value argument passed
+    to a call INSIDE a type annotation (e.g. ``Annotated[Head, validate(Symbol)]``) mislabeled
+    the argument ref_kind "type" (it is a plain VALUE read, not type syntax) purely because the
+    call happens to sit inside an annotation subtree. The callee (``validate``) and the
+    annotation's own head (``AnnotationHead``) are both unaffected -- the parent-Call precedence
+    (repo_map.py:4320-4321) already wins for the callee regardless of in_annotation, and the fix
+    only resets in_annotation for a Call's OWN args/keywords fields, not Annotated's slice.
+    """
+    mod_path = tmp_path / "mod.py"
+    mod_path.write_text(
+        "class Symbol:\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "class AnnotationHead:\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "def validate(value):\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    use_path = tmp_path / "use.py"
+    use_path.write_text(
+        "from typing import Annotated\n"
+        "\n"
+        "from mod import AnnotationHead, Symbol, validate\n"
+        "\n"
+        "\n"
+        "def plain_annotation(y: Symbol) -> None:\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "def f(x: Annotated[AnnotationHead, validate(Symbol)]) -> None:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    symbol_payload = repo_map.build_symbol_refs("Symbol", tmp_path)
+    symbol_refs = {
+        row["line"]: row
+        for row in symbol_payload["references"]
+        if row["file"] == str(use_path.resolve())
+    }
+    # Row-count invariant (the #422 zero-count-change rule governing this whole tail PR): the
+    # fix only relabels ref_kind, it must never add/remove a reference row.
+    assert len(symbol_refs) == 2
+    assert symbol_refs[6]["ref_kind"] == "type"  # def plain_annotation(y: Symbol) -> None:
+    # Before the F19 fix this was "type" -- Symbol here is a call ARGUMENT, not type syntax,
+    # even though `validate(Symbol)` sits inside `Annotated[...]`'s type-annotation subtree.
+    assert symbol_refs[10]["ref_kind"] == "value"  # ...Annotated[AnnotationHead, validate(Symbol)]
+
+    validate_payload = repo_map.build_symbol_refs("validate", tmp_path)
+    validate_refs = [
+        row for row in validate_payload["references"] if row["file"] == str(use_path.resolve())
+    ]
+    assert len(validate_refs) == 1
+    assert validate_refs[0]["ref_kind"] == "call"  # the callee keeps "call" -- untouched by F19.
+
+    head_payload = repo_map.build_symbol_refs("AnnotationHead", tmp_path)
+    head_refs = [
+        row for row in head_payload["references"] if row["file"] == str(use_path.resolve())
+    ]
+    assert len(head_refs) == 1
+    # Annotated's own first arg (the actual annotation head) stays "type" -- only a Call's
+    # args/keywords reset in_annotation, not Annotated's subscript slice itself.
+    assert head_refs[0]["ref_kind"] == "type"
+
+
+# ---------------------------------------------------------------------------
 # F21: `_reference_kind_counts` must count non-dict rows too (sum == len invariant).
 # ---------------------------------------------------------------------------
 

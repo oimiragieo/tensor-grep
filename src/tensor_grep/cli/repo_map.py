@@ -4381,7 +4381,15 @@ def _python_references_and_calls(
                 })
 
         for field_name, value in ast.iter_fields(node):
-            child_in_annotation = in_annotation or field_name in ("annotation", "returns")
+            if isinstance(node, ast.Call) and field_name in ("args", "keywords"):
+                # F19 fix (audit #63): a Call's arguments are runtime VALUES, not type syntax,
+                # even when the call itself sits inside a type-annotation subtree (e.g.
+                # `Annotated[int, validate(LIMIT)]`) -- only the callee should keep the
+                # enclosing annotation context, and that's moot anyway since the parent-is-Call
+                # precedence above always wins for the callee regardless of in_annotation.
+                child_in_annotation = False
+            else:
+                child_in_annotation = in_annotation or field_name in ("annotation", "returns")
             if isinstance(value, list):
                 for item in value:
                     if isinstance(item, ast.AST):

@@ -26,6 +26,7 @@ used to verify:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -675,3 +676,125 @@ def test_nested_go_mod_boundary_stops_import_resolution(tmp_path: Path) -> None:
     # Before the F24 fix this greedily resolved to <root>/toolsmod/sub via the ROOT module's own
     # prefix, silently treating a separate nested module's directory as part of the parent.
     assert target_dir is None
+
+
+# ---------------------------------------------------------------------------
+# F26: splitlines() vs tree-sitter row semantics -- a stray form-feed shifts every `text` below.
+# ---------------------------------------------------------------------------
+
+
+def test_go_reference_text_survives_form_feed_in_a_comment(tmp_path: Path) -> None:
+    """F26 (audit #63): `_line_text`'s row-indexed lookup (lang_go.py:697/:707-709) used
+    ``source.splitlines()`` for the row-indexed `text` array, but tree-sitter's OWN row
+    counting (``node.start_point[0]``) only advances on ``\\n``. ``str.splitlines()`` ALSO
+    splits on ``\\r``, ``\\v``/``\\x0b``, ``\\f``/``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``,
+    U+2028 and U+2029 -- so a single stray form-feed inside a comment injects one EXTRA entry
+    into the splitlines()-based array, shifting the row-indexed `text` lookup for every node
+    below it by one line out of alignment with tree-sitter's own row count.
+    """
+    go_mod = tmp_path / "go.mod"
+    go_mod.write_text("module example.com/ffmod\n\ngo 1.21\n", encoding="utf-8")
+    ff_go = tmp_path / "ff.go"
+    ff_go.write_text(
+        "package main\n"
+        "\n"
+        "// leading\x0ccomment\n"
+        "func Target() int {\n"
+        "\treturn 1\n"
+        "}\n"
+        "\n"
+        "func caller() int {\n"
+        "\treturn Target()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    refs, calls = lang_go.go_references_and_calls(ff_go, "Target")
+
+    assert len(refs) == 1
+    # Before the F26 fix this read "func caller() int {" -- the WRONG line, shifted by exactly
+    # the one extra split the \f comment injected above it.
+    assert refs[0]["line"] == 9
+    assert refs[0]["text"] == "\treturn Target()"
+    assert refs[0]["kind"] == "reference"
+
+    assert len(calls) == 1
+    assert calls[0]["line"] == 9
+    assert calls[0]["text"] == "\treturn Target()"
+    assert calls[0]["kind"] == "call"
+
+
+# ---------------------------------------------------------------------------
+# F26: unbounded recursive `_walk` -- a pathologically deep AST must not raise RecursionError.
+# ---------------------------------------------------------------------------
+
+
+def _deep_nested_go_source(depth: int) -> str:
+    """Syntactically valid Go whose parse tree is *depth* levels deep: redundant parens around
+    a literal (tree-sitter accepts arbitrarily nested ``parenthesized_expression`` the same way
+    the Go compiler does), inside an exported function body."""
+    return (
+        "package main\n\nfunc Target() int {\n\treturn "
+        + ("(" * depth)
+        + "1"
+        + (")" * depth)
+        + "\n}\n"
+    )
+
+
+def test_go_walkers_survive_pathologically_deep_ast_without_recursion_error(
+    tmp_path: Path,
+) -> None:
+    """F26 (audit #63, CRASH -- highest priority): all four of lang_go.py's `_walk` functions
+    (``go_imports_and_symbols`` :225, ``go_parser_symbol_sources`` :329, ``_go_import_bindings``
+    :513, ``go_references_and_calls`` :767) recursed one Python stack frame per AST node depth
+    with no bound -- a deeply-nested but syntactically VALID Go file raised an uncaught
+    ``RecursionError``. ``go_references_and_calls`` is invoked BARE (no try/except) at
+    repo_map.py:14613 (``build_symbol_refs``) and :15339 (``build_symbol_callers``), so this used
+    to crash the WHOLE ``tg refs``/``tg callers`` command instead of a graceful degrade.
+
+    Depth matches the established ``ast_backend.py`` B3 precedent
+    (``sys.getrecursionlimit() + 500``, `tests/unit/test_backend_bug_fixes.py`) -- deep enough to
+    exceed the default 1000-frame limit, bounded enough to stay fast (anti-hang protocol: no
+    unbounded loop/subprocess, a fixed small fixture, single-process, no timeout wrapper needed
+    since a RecursionError raises in well under a second, verified empirically before writing
+    this test).
+    """
+    depth = sys.getrecursionlimit() + 500
+    go_mod = tmp_path / "go.mod"
+    go_mod.write_text("module example.com/deepmod\n\ngo 1.21\n", encoding="utf-8")
+    deep_go = tmp_path / "deep.go"
+    deep_go.write_text(_deep_nested_go_source(depth), encoding="utf-8")
+
+    # go_imports_and_symbols (lang_go.py:225).
+    imports, symbols = lang_go.go_imports_and_symbols(deep_go)
+    assert imports == []
+    assert any(s["name"] == "Target" and s["kind"] == "function" for s in symbols)
+
+    # go_parser_symbol_sources (lang_go.py:329).
+    sources = lang_go.go_parser_symbol_sources(deep_go, "Target")
+    assert len(sources) == 1
+    assert sources[0]["kind"] == "function"
+
+    # _go_import_bindings (lang_go.py:513) -- private helper, exercised directly like the
+    # existing F11 tests above already do for its sibling helpers.
+    parser = lang_go._go_parser()
+    assert parser is not None
+    source_bytes = deep_go.read_text(encoding="utf-8").encode("utf-8")
+    tree = parser.parse(source_bytes)
+    bindings = lang_go._go_import_bindings(source_bytes, tree)
+    assert bindings == []
+
+    # go_references_and_calls (lang_go.py:767) -- the function invoked BARE at
+    # repo_map.py:14613/:15339.
+    refs, calls = lang_go.go_references_and_calls(deep_go, "Target")
+    assert refs == []
+    assert calls == []
+
+    # And the actual repo_map.py entry points that call it bare -- confirms the fix closes the
+    # crash at the REAL call sites the audit finding names, not just the lower-level function.
+    refs_payload = repo_map.build_symbol_refs("Target", tmp_path)
+    assert not refs_payload.get("no_match")
+    assert refs_payload["references"] == []
+    callers_payload = repo_map.build_symbol_callers("Target", tmp_path)
+    assert callers_payload["callers"] == []
