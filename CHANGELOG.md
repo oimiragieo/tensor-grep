@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.64.4 (2026-07-12)
+
+### Bug Fixes
+
+- **backends**: Repair AstBackend query API (tree-sitter 0.26) + delete dead LSP tensor/GNN +
+  wrapper-preferred routing ([#542](https://github.com/oimiragieo/tensor-grep/pull/542),
+  [`4503842`](https://github.com/oimiragieo/tensor-grep/commit/4503842046af32f642956a686696d953f0b3deec))
+
+External-audit #138 item #5: _get_query fixed for tree-sitter 0.26 (Language.query removed), dead
+  LSP tensor-cache/GNN + torch_geometric removed, ast-grep wrapper stays preferred (native only as
+  fallback; DSL-divergence-safe). Opus-gate re-approved; uv.lock synced.
+
+
 ## v1.64.3 (2026-07-12)
 
 ### Bug Fixes
