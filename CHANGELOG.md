@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.64.3 (2026-07-12)
+
+### Bug Fixes
+
+- **index**: Validate --index capability flags at both front doors, fail-closed + per-file count
+  ([#541](https://github.com/oimiragieo/tensor-grep/pull/541),
+  [`d5fbe8e`](https://github.com/oimiragieo/tensor-grep/commit/d5fbe8e0306a43e156f7750af65373c4603747c6))
+
+External-audit #138 item #1: index_flag_violations exhaustively classifies all SearchArgs
+  (Honor/PassthroughSafe/Refuse); explicit --index REFUSES unsupported flags, warm auto-index
+  REROUTES to rg (fixes wrong-results-with-exit-0). Count arm routes through
+  emit_count_search_matches (per-file path:count, matches rg/native). Opus adversarial gate +
+  re-review. Full rust gate green.
+
+
 ## v1.64.2 (2026-07-12)
 
 ### Bug Fixes
