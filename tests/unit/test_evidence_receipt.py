@@ -304,6 +304,188 @@ def test_repo_revision_identity_makes_at_most_two_git_subprocess_calls(
     assert call_count <= 2
 
 
+# ---------------------------------------------------------------------------
+# exclude_prefixes: opt-in output-dir exclusion for the git-dirty oracle (the `tg codemap --check`
+# false-positive: regenerating a persisted artifact's own committed output must not make the repo
+# read as dirty against itself). Default None is characterization-tested to stay byte-for-byte
+# identical -- this helper is signing-adjacent (P2 will sign receipts built from this identity).
+# ---------------------------------------------------------------------------
+
+
+def test_repo_revision_identity_default_exclude_prefixes_is_byte_identical_baseline(
+    git_repo: Path,
+) -> None:
+    """Characterization test: omitting exclude_prefixes, passing it as None, and passing an empty
+    list must all reproduce the EXACT pre-existing (unfiltered) dirty computation -- the opt-in
+    param must never move the default path even one bit."""
+    (git_repo / "scratch.tmp").write_text("uncommitted\n", encoding="utf-8")
+    (git_repo / "docs").mkdir()
+    (git_repo / "docs" / "generated.md").write_text("stuff\n", encoding="utf-8")
+
+    omitted = evidence_receipt._repo_revision_identity(git_repo)
+    explicit_none = evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=None)
+    explicit_empty = evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=[])
+
+    assert omitted == explicit_none == explicit_empty
+    # sanity: both new paths are genuinely still counted dirty by the unfiltered default
+    assert omitted["dirty_file_count"] == 2
+
+
+def test_repo_revision_identity_exclude_prefixes_ignores_matching_dirty_path(
+    git_repo: Path,
+) -> None:
+    (git_repo / "docs" / "code-map").mkdir(parents=True)
+    (git_repo / "docs" / "code-map" / "index.md").write_text("generated\n", encoding="utf-8")
+    (git_repo / "scratch.tmp").write_text("uncommitted\n", encoding="utf-8")
+
+    filtered = evidence_receipt._repo_revision_identity(
+        git_repo, exclude_prefixes=["docs/code-map"]
+    )
+
+    assert filtered["status"] == "present"
+    assert filtered["dirty"] is True  # scratch.tmp is still genuinely dirty
+    assert filtered["dirty_file_count"] == 1
+
+
+def test_repo_revision_identity_exclude_prefixes_regenerated_tracked_output_reads_clean(
+    git_repo: Path,
+) -> None:
+    """The exact reported bug, descendant direction: the output dir was already committed, then a
+    file inside it is regenerated (edited in place) -- git reports the specific nested path (`M
+    docs/code-map/index.md`), which must be recognized as a descendant of the excluded prefix."""
+    (git_repo / "docs" / "code-map").mkdir(parents=True)
+    (git_repo / "docs" / "code-map" / "index.md").write_text("v1\n", encoding="utf-8")
+    _run_git(["add", "-A"], cwd=git_repo)
+    _run_git(["commit", "-m", "commit codemap output"], cwd=git_repo)
+
+    (git_repo / "docs" / "code-map" / "index.md").write_text("v2 regenerated\n", encoding="utf-8")
+
+    filtered = evidence_receipt._repo_revision_identity(
+        git_repo, exclude_prefixes=["docs/code-map"]
+    )
+
+    assert filtered["dirty"] is False, filtered
+    assert filtered["dirty_tree_sha256"] == _EMPTY_SHA256
+
+
+def test_repo_revision_identity_exclude_prefixes_first_ever_generation_reads_clean(
+    git_repo: Path,
+) -> None:
+    """Ancestor direction: the output dir has NEVER been committed, so git collapses the whole new
+    subtree to a single `?? docs/` entry -- an ANCESTOR of the excluded prefix `docs/code-map`, not
+    a descendant of it. A one-directional `path.startswith(prefix)` filter would miss this."""
+    (git_repo / "docs" / "code-map").mkdir(parents=True)
+    (git_repo / "docs" / "code-map" / "index.md").write_text(
+        "freshly generated\n", encoding="utf-8"
+    )
+
+    filtered = evidence_receipt._repo_revision_identity(
+        git_repo, exclude_prefixes=["docs/code-map"]
+    )
+
+    assert filtered["dirty"] is False, filtered
+
+
+def test_repo_revision_identity_exclude_prefixes_respects_path_segment_boundaries(
+    git_repo: Path,
+) -> None:
+    """`docs-extra/file.py` must NOT be excluded by exclude_prefixes=["docs"] -- prefix matching
+    must respect path-segment ("/") boundaries, never a bare substring/startswith(prefix)."""
+    (git_repo / "docs-extra").mkdir()
+    (git_repo / "docs-extra" / "file.py").write_text("content\n", encoding="utf-8")
+
+    filtered = evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=["docs"])
+
+    assert filtered["dirty"] is True, filtered
+    assert filtered["dirty_file_count"] == 1
+
+
+def test_repo_revision_identity_exclude_prefixes_handles_rename_into_excluded_dir(
+    git_repo: Path,
+) -> None:
+    """A rename INTO the excluded dir is excluded by its DESTINATION path (-z reverses field order
+    to put the new path first) -- a naive parse that grabbed the ORIG_PATH instead would wrongly
+    keep this dirty."""
+    (git_repo / "scratch.py").write_text("content\n", encoding="utf-8")
+    _run_git(["add", "-A"], cwd=git_repo)
+    _run_git(["commit", "-m", "add scratch.py"], cwd=git_repo)
+
+    (git_repo / "docs").mkdir()
+    _run_git(["mv", "scratch.py", "docs/scratch.py"], cwd=git_repo)
+
+    filtered = evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=["docs"])
+
+    assert filtered["dirty"] is False, filtered
+
+
+def test_repo_revision_identity_exclude_prefixes_handles_rename_out_of_excluded_dir(
+    git_repo: Path,
+) -> None:
+    """A rename FROM the excluded dir elsewhere must NOT be excluded -- only the destination path
+    decides, matching git's own `-z` "to, from" field order."""
+    (git_repo / "docs").mkdir()
+    (git_repo / "docs" / "scratch.py").write_text("content\n", encoding="utf-8")
+    _run_git(["add", "-A"], cwd=git_repo)
+    _run_git(["commit", "-m", "add docs/scratch.py"], cwd=git_repo)
+
+    _run_git(["mv", "docs/scratch.py", "scratch.py"], cwd=git_repo)
+
+    filtered = evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=["docs"])
+
+    assert filtered["dirty"] is True, filtered
+
+
+def test_repo_revision_identity_exclude_prefixes_still_makes_at_most_two_git_calls(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call_count = 0
+    real_run_subprocess = evidence_receipt.run_subprocess
+
+    def _counting_run_subprocess(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _counting_run_subprocess)
+
+    evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=["docs/code-map"])
+
+    assert call_count <= 2
+
+
+# ---------------------------------------------------------------------------
+# _parse_porcelain_z: the `-z` record parser in isolation (pure function, no subprocess).
+# ---------------------------------------------------------------------------
+
+
+def test_parse_porcelain_z_handles_leading_space_status_and_simple_entries() -> None:
+    raw = "## main\x00 M sub/core.py\x00?? new_file.py\x00"
+    branch, entries = evidence_receipt._parse_porcelain_z(raw)
+    assert branch == "main"
+    assert entries == [(" M", "sub/core.py"), ("??", "new_file.py")]
+
+
+def test_parse_porcelain_z_rename_takes_destination_path_and_consumes_orig_path() -> None:
+    raw = "## main\x00R  new_name.py\x00old_name.py\x00"
+    branch, entries = evidence_receipt._parse_porcelain_z(raw)
+    assert branch == "main"
+    # exactly one entry: ORIG_PATH is consumed, never surfaced as its own record
+    assert entries == [("R ", "new_name.py")]
+
+
+def test_parse_porcelain_z_path_field_never_includes_the_status_prefix() -> None:
+    raw = "## main\x00?? docs_lookalike.py\x00"
+    _branch, entries = evidence_receipt._parse_porcelain_z(raw)
+    assert entries == [("??", "docs_lookalike.py")]
+
+
+def test_parse_porcelain_z_no_branch_header_still_parses_entries() -> None:
+    raw = " M sub/core.py\x00"
+    branch, entries = evidence_receipt._parse_porcelain_z(raw)
+    assert branch is None
+    assert entries == [(" M", "sub/core.py")]
+
+
 def test_receipt_revision_block_reflects_dirty_worktree_end_to_end(git_repo: Path) -> None:
     (git_repo / "scratch.tmp").write_text("uncommitted\n", encoding="utf-8")
 

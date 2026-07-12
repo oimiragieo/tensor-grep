@@ -26,6 +26,7 @@ import json
 import os
 import shlex
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -135,13 +136,25 @@ def _parse_branch_header(header_text: str) -> str | None:
     return local or None
 
 
-def _repo_revision_identity(root: Path) -> dict[str, Any]:
+def _repo_revision_identity(
+    root: Path, exclude_prefixes: Sequence[str] | None = None
+) -> dict[str, Any]:
     """`git rev-parse HEAD` + `git status --porcelain=v1 -b` -> commit/branch/dirty identity.
 
     Exactly 2 git subprocess calls (the CEO's performance mandate): the porcelain `-b` flag folds
     the branch name into the SAME `git status` call that reports dirty entries, so a second
     `rev-parse --abbrev-ref HEAD` call is unnecessary. Fails closed to `status: "unavailable"` on
     any git error (not a repo, git missing, timeout) -- never raises, never fabricates a value.
+
+    `exclude_prefixes` (opt-in, default None): repo-root-relative POSIX path prefixes whose
+    porcelain entries never count toward `dirty`/`dirty_tree_sha256` -- e.g. a generator's own
+    `--out` directory, so regenerating a persisted, committed artifact doesn't make the repo read
+    as dirty against its own prior output (the `tg codemap --check` false-positive this param was
+    added for). This module is signing-adjacent (P2 will sign receipts built from this identity),
+    so the DEFAULT (None) branch below is left byte-for-byte IDENTICAL to the pre-exclusion
+    implementation -- every existing caller that never passes `exclude_prefixes` is provably
+    unaffected; see `_repo_revision_identity_excluding` for the separate opt-in branch, which is
+    still exactly 1 status call (2 total with the `rev-parse` above).
     """
     timeout_seconds = configured_git_timeout_seconds()
 
@@ -160,6 +173,14 @@ def _repo_revision_identity(root: Path) -> dict[str, Any]:
     commit_sha = commit_result.stdout.strip()
     if not commit_sha:
         return {"status": "unavailable", "reason": "git rev-parse HEAD returned no output"}
+
+    if exclude_prefixes:
+        return _repo_revision_identity_excluding(
+            root,
+            commit_sha=commit_sha,
+            timeout_seconds=timeout_seconds,
+            exclude_prefixes=exclude_prefixes,
+        )
 
     try:
         status_result = run_subprocess(
@@ -181,6 +202,104 @@ def _repo_revision_identity(root: Path) -> dict[str, Any]:
             branch = _parse_branch_header(line[3:])
         elif line.strip():
             dirty_lines.append(line)
+
+    dirty_tree_sha256 = hashlib.sha256("\n".join(sorted(dirty_lines)).encode("utf-8")).hexdigest()
+    return {
+        "status": "present",
+        "commit_sha": commit_sha,
+        "branch": branch,
+        "dirty": bool(dirty_lines),
+        "dirty_tree_sha256": dirty_tree_sha256,
+        "dirty_file_count": len(dirty_lines),
+    }
+
+
+def _parse_porcelain_z(raw: str) -> tuple[str | None, list[tuple[str, str]]]:
+    """Parse `git status --porcelain=v1 -b -z` stdout into `(branch, [(XY, path), ...])`.
+
+    `-z` NUL-terminates every record instead of LF and never quotes special characters, so paths
+    are read verbatim -- no `" -> "` string-splitting and no core.quotePath unescaping needed. Per
+    git-status(1), a rename/copy record's field order is reversed under `-z` ("`from -> to`
+    becomes `to from`"), so the FIRST path field is always the destination path; a second,
+    NUL-terminated ORIG_PATH field follows only when the status contains R or C, and is consumed
+    here without being mistaken for its own record.
+    """
+    tokens = raw.split("\0")
+    if tokens and tokens[-1] == "":
+        tokens.pop()
+    branch: str | None = None
+    entries: list[tuple[str, str]] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        i += 1
+        if not token:
+            continue
+        if token.startswith("## "):
+            branch = _parse_branch_header(token[3:])
+            continue
+        if len(token) < 3:
+            continue  # malformed/short record -- skip defensively, never crash
+        # Fixed-width fields (2-char XY status + 1 separator space + path), NOT a
+        # `.partition(" ")`/whole-token `startswith` split: X or Y can itself be a literal space
+        # (e.g. " M" = modified-in-worktree-only), which a naive first-space split would misparse.
+        status, path = token[:2], token[3:]
+        entries.append((status, path))
+        if "R" in status or "C" in status:
+            i += 1  # skip the NUL-terminated ORIG_PATH field for a rename/copy record
+    return branch, entries
+
+
+def _path_excluded(path: str, exclude_prefixes: Sequence[str]) -> bool:
+    """True if `path` should be dropped from the dirty set: `path` is nested under (or equal to)
+    an excluded prefix, OR an excluded prefix is nested under (or equal to) `path`. The second
+    direction matters because git collapses an entirely-untracked directory to its own path (e.g.
+    a brand-new `docs/` shows as a single `?? docs/` entry even though the excluded prefix is the
+    deeper `docs/code-map`) -- a one-directional `startswith` would miss that collapsed case.
+    Path-segment-boundary-safe: `docs-extra` is never treated as nested under `docs`.
+    """
+    normalized_path = path.strip("/")
+    for prefix in exclude_prefixes:
+        normalized_prefix = prefix.strip("/")
+        if not normalized_prefix:
+            continue
+        if normalized_path == normalized_prefix:
+            return True
+        if normalized_path.startswith(normalized_prefix + "/"):
+            return True
+        if normalized_prefix.startswith(normalized_path + "/"):
+            return True
+    return False
+
+
+def _repo_revision_identity_excluding(
+    root: Path,
+    *,
+    commit_sha: str,
+    timeout_seconds: float,
+    exclude_prefixes: Sequence[str],
+) -> dict[str, Any]:
+    """The `exclude_prefixes`-aware sibling of `_repo_revision_identity`'s status half: a SEPARATE
+    `-z` status call (never mixed into the default LF-parsed branch above, so that default branch
+    stays byte-for-byte unchanged). Still exactly 1 status call (2 total with the already-issued
+    `rev-parse`)."""
+    try:
+        status_result = run_subprocess(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-b", "-z"],
+            timeout_seconds=timeout_seconds,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "unavailable", "reason": f"git status could not run: {exc}"}
+    if status_result.returncode != 0:
+        return {"status": "unavailable", "reason": _last_stderr_line(status_result.stderr)}
+
+    branch, entries = _parse_porcelain_z(status_result.stdout)
+    dirty_lines = [
+        f"{status} {path}" for status, path in entries if not _path_excluded(path, exclude_prefixes)
+    ]
 
     dirty_tree_sha256 = hashlib.sha256("\n".join(sorted(dirty_lines)).encode("utf-8")).hexdigest()
     return {

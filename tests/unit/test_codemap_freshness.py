@@ -202,6 +202,94 @@ def test_truncated_scan_writes_partial_and_check_fails(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# (14) exclude_prefixes end-to-end: regenerating a COMMITTED map must not flip --check to stale
+# (the reported false positive) -- proven WITHOUT the .gitignore workaround `git_fixture_repo`
+# above needs (its own comment names this exact gap as a "real, separate product question").
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def git_fixture_repo_output_tracked(tmp_path: Path) -> Path:
+    """Same setup as `git_fixture_repo` but does NOT gitignore the output dir -- proves the
+    exclude_prefixes fix makes the git-dirty oracle output-dir-aware on its own, without needing
+    the .gitignore workaround."""
+    repo = _copy_fixture(tmp_path)
+    _run_git(["init", "-b", "main", "."], cwd=repo)
+    _run_git(["config", "user.email", "test@example.com"], cwd=repo)
+    _run_git(["config", "user.name", "Test User"], cwd=repo)
+    _run_git(["add", "-A"], cwd=repo)
+    _run_git(["commit", "-m", "initial commit"], cwd=repo)
+    return repo
+
+
+def test_regenerating_a_committed_map_does_not_flip_check_to_stale(
+    git_fixture_repo_output_tracked: Path,
+) -> None:
+    """The exact false positive this PR fixes: `docs/code-map/` is committed, and a second
+    `build_codemap` run rewrites its own pages (a new `generated_at` timestamp at minimum) --
+    without output-dir exclusion this reads as a dirty worktree and --check falsely fails."""
+    repo = git_fixture_repo_output_tracked
+    build_codemap(repo)
+    _run_git(["add", "-A"], cwd=repo)
+    _run_git(["commit", "-m", "commit first codemap output"], cwd=repo)
+
+    build_codemap(repo)  # regenerate -- rewrites every page's stamp line + generated_at
+
+    result = check_codemap_freshness(repo)
+    assert result["fresh"] is True, result["reason"]
+
+
+def test_first_ever_generation_leaves_an_uncommitted_map_reading_fresh(
+    git_fixture_repo_output_tracked: Path,
+) -> None:
+    """First-ever generation: `docs/code-map/` has never been committed, so git collapses it to a
+    single untracked `docs/` entry -- the exclusion must still catch this (ancestor direction)."""
+    repo = git_fixture_repo_output_tracked
+    build_codemap(repo)  # docs/code-map/ now exists on disk, entirely untracked, never committed
+
+    result = check_codemap_freshness(repo)
+    assert result["fresh"] is True, result["reason"]
+
+
+def test_custom_out_dir_is_also_excluded_from_the_git_dirty_oracle(
+    git_fixture_repo_output_tracked: Path,
+) -> None:
+    """Symmetry: a non-default --out directory must be excluded too, computed dynamically at BOTH
+    the stamp site and the --check site -- not hardcoded to `docs/code-map`."""
+    repo = git_fixture_repo_output_tracked
+    custom_out = repo / "generated-map"
+
+    build_codemap(repo, out=custom_out)
+    _run_git(["add", "-A"], cwd=repo)
+    _run_git(["commit", "-m", "commit custom-out codemap"], cwd=repo)
+
+    build_codemap(repo, out=custom_out)  # regenerate under the custom out dir
+
+    result = check_codemap_freshness(repo, out=custom_out)
+    assert result["fresh"] is True, result["reason"]
+
+
+def test_unrelated_dirty_file_still_flips_check_to_stale_with_exclusions_active(
+    git_fixture_repo_output_tracked: Path,
+) -> None:
+    """The exclusion must be scoped to the output dir only -- a genuine, unrelated dirty file must
+    still flip the check to stale (bidirectional oracle: this can't just always read fresh now)."""
+    repo = git_fixture_repo_output_tracked
+    build_codemap(repo)
+    _run_git(["add", "-A"], cwd=repo)
+    _run_git(["commit", "-m", "commit first codemap output"], cwd=repo)
+
+    (repo / "pkg" / "core.py").write_text(
+        (repo / "pkg" / "core.py").read_text(encoding="utf-8") + "\n# unrelated edit\n",
+        encoding="utf-8",
+    )
+
+    result = check_codemap_freshness(repo)
+    assert result["fresh"] is False
+    assert result["reason"]
+
+
+# ---------------------------------------------------------------------------
 # PATH contract on the check path too.
 # ---------------------------------------------------------------------------
 

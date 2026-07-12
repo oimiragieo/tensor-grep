@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ from tensor_grep.cli import lang_registry
 from tensor_grep.cli import orient_capsule as _orient_capsule
 from tensor_grep.cli import repo_map as _repo_map
 from tensor_grep.cli._index_lock import replace_with_retry
+from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 # Mirrors inventory's/docs-coverage's 50000 default (NOT map's 512 or agent's 2000 -- codemap is
 # an exhaustive inventory, not an agent-context budget). Kept as a real module constant (unlike
@@ -134,6 +136,16 @@ def _repo_relative_posix(file_path: str, root: Path) -> str:
         return Path(file_path).resolve().relative_to(root).as_posix()
     except (OSError, ValueError):
         return Path(file_path).as_posix()
+
+
+def _revision_exclude_prefixes(out_dir: Path, root: Path) -> list[str]:
+    """The single repo-relative POSIX exclude-prefix for `_repo_revision_identity`'s git-dirty
+    oracle: the map's own `--out` directory, so regenerating a persisted, committed map never
+    reads as a dirty change against itself (the `tg codemap --check` false-positive). Computed
+    fresh from the SAME `out_dir` input at BOTH the stamp site (`build_codemap`) and the `--check`
+    site (`check_codemap_freshness`) -- symmetric by construction, never hardcoded to the
+    `docs/code-map` default (a custom `--out` is excluded too)."""
+    return [_repo_relative_posix(str(out_dir), root)]
 
 
 def _is_under_dir(path: Path, directory: Path) -> bool:
@@ -441,6 +453,61 @@ def _exclude_output_paths(rm: dict[str, Any], *, out_dir: Path, index_path: Path
     filtered["imports"] = [
         i for i in rm.get("imports", []) if not _excluded(str(i.get("file", "")))
     ]
+    return filtered
+
+
+def _tracked_file_set(root: Path) -> set[str] | None:
+    """Resolved absolute paths of every git-tracked file under `root` (`git ls-files -z`), or
+    `None` when git is unavailable/errors (not a repo, git missing, timeout). `None` is a distinct
+    sentinel from "empty set": callers must degrade to "no intersection possible" (keep
+    everything) on `None`, never mistake it for "this repo genuinely tracks zero files"."""
+    try:
+        result = run_subprocess(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            timeout_seconds=configured_git_timeout_seconds(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    tracked: set[str] = set()
+    for rel_posix in result.stdout.split("\0"):
+        if not rel_posix:
+            continue
+        try:
+            tracked.add(str((root / rel_posix).resolve()))
+        except OSError:
+            continue
+    return tracked
+
+
+def _exclude_untracked_paths(rm: dict[str, Any], *, root: Path) -> dict[str, Any]:
+    """Post-filter the repo_map payload to drop every file `git ls-files` does not track --
+    mirrors `_exclude_output_paths`'s exact shape. An untracked/gitignored file (scratch script,
+    build artifact, local-only note) is filesystem-real but not part of the project's committed
+    surface, and its volatile mtime/existence must never leak into the persisted, browsable
+    inventory. Degrades to a no-op (returns `rm` unchanged) when the tracked-file set is
+    unavailable (non-git dir, git missing, timeout) -- never crashes, never guesses."""
+    tracked = _tracked_file_set(root)
+    if tracked is None:
+        return rm
+
+    def _is_tracked(file_str: str) -> bool:
+        if not file_str:
+            return False
+        try:
+            return str(Path(file_str).resolve()) in tracked
+        except OSError:
+            return False
+
+    filtered = dict(rm)
+    filtered["files"] = [f for f in rm.get("files", []) if _is_tracked(str(f))]
+    filtered["tests"] = [f for f in rm.get("tests", []) if _is_tracked(str(f))]
+    filtered["symbols"] = [s for s in rm.get("symbols", []) if _is_tracked(str(s.get("file", "")))]
+    filtered["imports"] = [i for i in rm.get("imports", []) if _is_tracked(str(i.get("file", "")))]
     return filtered
 
 
@@ -782,14 +849,19 @@ def build_codemap(
     out_dir = Path(out).expanduser().resolve() if out is not None else (root / "docs" / "code-map")
     index_path = _resolve_index_path(out_dir, index).resolve()
 
-    revision_fn = _revision_identity or _evidence_receipt._repo_revision_identity
-    revision = revision_fn(root)
+    if _revision_identity is not None:
+        revision = _revision_identity(root)
+    else:
+        revision = _evidence_receipt._repo_revision_identity(
+            root, exclude_prefixes=_revision_exclude_prefixes(out_dir, root)
+        )
     now = _now() if _now is not None else datetime.now(UTC)
     now_iso = _format_utc_iso(now)
     stamp_line = _format_stamp_line(revision, now_iso)
 
     rm = _repo_map.build_repo_map(root, max_repo_files=max_repo_files)
     rm = _exclude_output_paths(rm, out_dir=out_dir, index_path=index_path)
+    rm = _exclude_untracked_paths(rm, root=root)
 
     universe = sorted(set(rm.get("files", [])) | set(rm.get("tests", [])))
 
@@ -942,8 +1014,12 @@ def check_codemap_freshness(
 
     stamped_revision = coverage.get("revision")
     if isinstance(stamped_revision, dict) and stamped_revision.get("status") == "present":
-        revision_fn = _revision_identity or _evidence_receipt._repo_revision_identity
-        live_revision = revision_fn(root)
+        if _revision_identity is not None:
+            live_revision = _revision_identity(root)
+        else:
+            live_revision = _evidence_receipt._repo_revision_identity(
+                root, exclude_prefixes=_revision_exclude_prefixes(out_dir, root)
+            )
         if live_revision.get("status") == "present":
             if (
                 live_revision.get("commit_sha") == stamped_revision.get("commit_sha")
