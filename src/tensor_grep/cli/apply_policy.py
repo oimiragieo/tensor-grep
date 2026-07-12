@@ -386,8 +386,33 @@ def _path_is_under(path: Path, root: Path) -> bool:
         return False
 
 
+def _strip_extended_length_prefix(path_str: str) -> str:
+    r"""Strip a Windows ``\\?\`` / ``\\?\UNC\`` extended-length prefix for a STRING
+    comparison (#126).
+
+    The prefix opts a path OUT of Windows' normal path processing (component
+    normalization, 8.3 lookup, ``MAX_PATH`` checks) and is preserved verbatim by both
+    ``os.path.abspath`` and ``Path.resolve()`` -- verified empirically on this box:
+    neither adds nor removes it. An untrusted policy's ``lint_cmd``/``test_cmd`` can
+    spell its ``argv[0]`` with this prefix explicitly; since ``shutil.which()`` returns
+    an already-path-shaped ``argv[0]`` unchanged (a path containing a separator skips
+    the PATH search and is returned as-is after an access check), the prefix survives
+    all the way to the confinement comparison in ``_abspath_beneath_or_equal``. Left
+    unstripped, a prefixed spelling of a location and an unprefixed spelling of the
+    identical location never string-match, so the beneath-or-equal check silently
+    returns False (not beneath) for a path that IS beneath -- fail OPEN. Stripping it
+    here, ahead of ``normcase``/``normpath``, closes that gap for both operands
+    uniformly. A no-op on POSIX and on any path that never had the prefix.
+    """
+    if path_str.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path_str[len("\\\\?\\UNC\\") :]
+    if path_str.startswith("\\\\?\\"):
+        return path_str[len("\\\\?\\") :]
+    return path_str
+
+
 def _abspath_beneath_or_equal(path: Path, root: Path) -> bool:
-    """True if ``path`` is ``root`` itself or nested anywhere beneath it (any depth).
+    r"""True if ``path`` is ``root`` itself or nested anywhere beneath it (any depth).
 
     Deliberately independent of ``_path_is_under()``/``Path.relative_to()``: the
     shadow-executable guard in ``_run_policy_command`` must run this check on an
@@ -403,13 +428,57 @@ def _abspath_beneath_or_equal(path: Path, root: Path) -> bool:
     "outside root" negative. The beneath check requires a ``os.sep`` boundary after
     the root prefix, so a sibling directory that merely shares a string prefix with
     the root (e.g. ``repo-other`` next to ``repo``) is never wrongly treated as
-    nested inside it.
+    nested inside it. Each side is also run through ``_strip_extended_length_prefix``
+    first (#126) so a ``\\?\``-prefixed spelling of a path matches an unprefixed
+    spelling of the identical location.
     """
-    normalized_path = os.path.normcase(os.path.normpath(str(path)))
-    normalized_root = os.path.normcase(os.path.normpath(str(root)))
+    normalized_path = os.path.normcase(os.path.normpath(_strip_extended_length_prefix(str(path))))
+    normalized_root = os.path.normcase(os.path.normpath(_strip_extended_length_prefix(str(root))))
     if normalized_path == normalized_root:
         return True
     return normalized_path.startswith(normalized_root + os.sep)
+
+
+def _canonicalize_exec_parent(executable_path: Path) -> Path | None:
+    r"""Canonicalize ``executable_path``'s PARENT directory chain for the repo-confinement
+    comparison (#126, H2 fast-follow -- commit e10c91d explicitly deferred this: "the
+    parent-canonicalization hardening (8.3/junction/\?\ edges) is intentionally NOT
+    applied here -- it is a tracked fast-follow").
+
+    ``_run_policy_command`` intentionally confines on ``os.path.abspath`` rather than
+    ``Path.resolve()`` (see ``_abspath_beneath_or_equal``'s docstring): the #453 defense
+    requires a repo-local shadow that is ITSELF a symlink/junction to be judged by where
+    it lexically sits, never by where it points, or a symlink escaping the repo to an
+    arbitrary outside target would slip the guard. But that same lexical-only comparison
+    is bypassable in the OTHER direction: an 8.3 short name (``PROGRA~1`` vs
+    ``Program Files``), an NTFS junction alias, or an explicit ``\\?\``-prefixed spelling
+    can all name a location INSIDE the untrusted repo while spelling it differently from
+    the repo root's own canonical string -- ``_abspath_beneath_or_equal`` then silently
+    returns False (not beneath) for a path that IS beneath. Fail open.
+
+    The fix resolves ONLY ``executable_path.parent`` -- never the full path, which would
+    dereference the leaf and reopen #453 -- via ``Path.resolve(strict=True)``. Verified
+    empirically on Windows: this single call both expands 8.3 short-name components at
+    every level of the parent chain (``GetFinalPathNameByHandleW`` returns the
+    filesystem's own canonical long name directly; a second ``GetLongPathNameW`` pass is
+    not needed) and fully traverses NTFS junctions/symlinks in the parent chain, in one
+    step. ``strict=True`` is intentional and mirrors this module's existing
+    resolve-or-None convention (``_policy_file_arg``, above): the parent MUST exist by
+    the time this runs (``resolved_executable`` was just confirmed to exist by
+    ``shutil.which``), so a failure here means a TOCTOU race, a permission error, or
+    other OS-level unresolvability -- not a legitimate case worth weakening the guard
+    for.
+
+    Returns ``None`` when canonicalization fails for any reason. Callers MUST fail
+    closed (deny) on ``None`` -- mirroring the fail-closed contract already established
+    at every other confinement chokepoint in this module and in
+    ``mcp_server.py::_confine_mcp_path``. Never treat ``None`` as "not beneath root".
+    """
+    try:
+        resolved_parent = executable_path.parent.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return resolved_parent / executable_path.name
 
 
 def _policy_file_arg(path_value: object, *, working_root: Path) -> str | None:
@@ -576,11 +645,57 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
             detail=f"{name} command executable {(argv[0] if argv else command)!r} was not found on PATH.",
         )
     resolved_path = Path(os.path.abspath(resolved_executable))
+
+    # #126 (Opus re-gate, 4th same-class edge -- UNC / network-share smuggling): a UNC spelling of
+    # the executable -- \\host\share\..., the loopback admin-share \\127.0.0.1\C$\...\<repo>\evil.cmd
+    # / \\localhost\C$\..., or the \\?\UNC\... extended form -- names the SAME on-disk in-repo shadow
+    # through the network/admin-share namespace, which Path.resolve() does NOT map back to its C:\
+    # drive-letter form (verified empirically). So _canonicalize_exec_parent returns a still-UNC
+    # parent and NEITHER the raw-stripped nor the canonical beneath-compare starts with the local
+    # repo-root string -- the OR-guard below would pass and the shadow would spawn (reproduced live
+    # end-to-end by the adversarial gate on a box where the C$ admin share is reachable). A
+    # UNC-spelled executable can never be confined to a LOCAL drive-letter repo root by a string
+    # comparison, and a legitimate local tool always resolves to a drive-letter path (C:\..., and
+    # \\?\C:\... -> C:\... after the ext-length strip -- NOT a UNC prefix), so refuse any UNC
+    # executable path outright. Fail closed, before the beneath-guard.
+    stripped_exec = _strip_extended_length_prefix(str(resolved_path))
+    if stripped_exec.startswith("\\\\"):
+        return _command_result(
+            passed=False,
+            detail=(
+                f"{name} command executable {argv[0]!r}: refusing a UNC/network-share "
+                f"executable path {resolved_path} (cannot be confined to the local repo root)."
+            ),
+        )
+
     try:
         untrusted_root = cwd.resolve()
     except OSError:
         untrusted_root = cwd
-    if _abspath_beneath_or_equal(resolved_path, untrusted_root):
+
+    # #126 (Windows canonicalization fail-open, H2 fast-follow -- e10c91d deferred this):
+    # resolved_path above is deliberately lexical-only (os.path.abspath, no symlink-follow --
+    # see _abspath_beneath_or_equal's docstring), which an 8.3 short name / NTFS junction
+    # alias / \?\-prefixed spelling of an in-repo location can evade. _canonicalize_exec_parent
+    # closes that gap without reopening #453 (it never dereferences the leaf). Checked WITH,
+    # never INSTEAD OF, the raw lexical guard below: the two conditions cover disjoint gaps --
+    # raw catches "spelled in-repo", canonical catches "resolves in-repo but spelled
+    # differently" -- so ORing them only ever denies a superset of what either denies alone;
+    # a legitimate outside-root binary fails both and is never affected. Canonicalization
+    # failure fails closed (denied), matching every other confinement chokepoint in this
+    # module.
+    canonical_exec_parent = _canonicalize_exec_parent(resolved_path)
+    if canonical_exec_parent is None:
+        return _command_result(
+            passed=False,
+            detail=(
+                f"{name} command executable {argv[0]!r}: could not canonicalize "
+                f"{resolved_path} for the repo-confinement check; refusing to run it."
+            ),
+        )
+    if _abspath_beneath_or_equal(resolved_path, untrusted_root) or _abspath_beneath_or_equal(
+        canonical_exec_parent, untrusted_root
+    ):
         return _command_result(
             passed=False,
             detail=(
