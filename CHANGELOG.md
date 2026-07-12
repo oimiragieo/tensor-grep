@@ -1,6 +1,83 @@
 # CHANGELOG
 
 
+## v1.65.6 (2026-07-12)
+
+### Bug Fixes
+
+- **lang-graph**: Bound lang_go recursion, fix Python in_annotation leak, pin registry-dispatch
+  agreement (audit #63 F19/F22/F26) ([#548](https://github.com/oimiragieo/tensor-grep/pull/548),
+  [`0fa47d6`](https://github.com/oimiragieo/tensor-grep/commit/0fa47d6693cd4c1da1a99537b6c59ca3b4d2ddd9))
+
+Three sub-fixes from the cluster-4 stale-reconcile audit
+  (docs/plans/backlog-100/cluster-4-stale-reconcile.md), the one still-real tail of the 2026-07-07
+  Fable audit (task #63; F15/F23 already fixed by 8c68351/#431).
+
+F26 (CRASH, highest priority): lang_go.py's four _walk functions (go_imports_and_symbols,
+  go_parser_symbol_sources, _go_import_bindings, go_references_and_calls) recursed one Python stack
+  frame per AST node depth with no bound. go_references_and_calls is invoked bare (no try/except) at
+  repo_map.py:14613 (build_symbol_refs) and :15339 (build_symbol_callers), so a deeply-nested but
+  syntactically valid Go file raised an uncaught RecursionError that crashed the whole tg refs/tg
+  callers command. Converted all four to explicit-stack DFS (push children in reverse, pop from the
+  end -- byte-identical pre-order traversal to the old recursion), matching the established
+  ast_backend.py B3 precedent (AstBackend._build_node_type_index). Also fixed the
+  splitlines()-vs-tree-sitter-row mismatch in go_references_and_calls: tree-sitter's row counting
+  advances only on "\n", but str.splitlines() also splits on \r, \v, \f, \x1c-\x1e, \x85,
+  U+2028/U+2029 -- a stray form-feed shifted every row-indexed `text` lookup below it out of
+  alignment. Now splits strictly on "\n" with a per-line "\r" strip.
+
+F19: repo_map.py's Python _walk propagated in_annotation into an ast.Call's args/keywords fields, so
+  a runtime-value argument passed to a call inside a type annotation (e.g. Annotated[int,
+  validate(LIMIT)]) mislabeled the argument ref_kind "type" instead of "value". Fixed by resetting
+  in_annotation to False when descending into a Call's own args/keywords fields; the callee keeps
+  "call" via the pre-existing parent-is-Call precedence, untouched by this fix.
+
+F22: added a governance test (test_lang_registry.py) that pins agreement between
+  lang_registry.LANGUAGE_REGISTRY and repo_map.py's two independently-hardcoded suffix dispatchers,
+  _target_language_for_path (:6475-6494) and _provider_language_for_path (:13018+). Parametrized
+  dynamically over the live registry so it ratchets against the next language expansion instead of a
+  hardcoded snapshot. No code fix needed here -- the two functions already agree for today's five
+  languages; this closes the drift-detection gap the audit flagged.
+
+TDD: RED confirmed for F19 (wrong ref_kind) and F26 (RecursionError, both a synthetic deep-nest
+  fixture and a real end-to-end `tg refs`/`tg callers` CLI repro showing the uncaught traceback)
+  before each fix; F22's governance test passes immediately (pure ratchet) and was proven
+  non-vacuous via a throwaway monkeypatched-disagreement check.
+
+Gate: ruff check, ruff format --check --preview, mypy src/tensor_grep, and 199 tests across the
+  repo_map/lang_go/lang_registry/typed_ref_kinds/medlow2_repo_map/repo_map_* surface all green.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile ledger to campaign #142 "backlog-100" audit findings
+  ([#547](https://github.com/oimiragieo/tensor-grep/pull/547),
+  [`68e7f97`](https://github.com/oimiragieo/tensor-grep/commit/68e7f970706af14ac0a1ca935b141826c0c5f7f2))
+
+Four Fable design-planner audits (docs/plans/backlog-100/cluster-{1,2,3,4}-*.md, 2026-07-12)
+  re-verified the whole BACKLOG.md against the real tree, file:line-cited, and found it badly stale:
+  most standing items were already shipped across drain waves #514-#537 that never got written back
+  to the ledger.
+
+- CURRENT STATE: refresh to v1.64.3 live / v1.64.4 building; record the 3 real open PRs
+  (#543/#544/#545, all draft, gate-pending -- #543 is NOT yet Opus-approved despite earlier framing)
+  + the in-progress #2 atomic-index worktree; summarize what the campaign reconciled (P0 9/12 fixed,
+  #118+#130(a)(c) fixed, #129/#73 closed, the 7 oldest ledger entries #22/#38/#44/#47/#48/#59/#62
+  all closed). - CURRENT LIVE BACKLOG: full rewrite into 4 buckets (IN-FLIGHT / GATE-FREE ready /
+  OPUS-GATED / FLIP follow-ups) covering the real residual queue, each item cited to its cluster
+  doc. Linux-blocked items (#89/#90/#109) carried forward unaudited (outside this campaign's scope).
+  - CEO-FACING: add the next-language-expansion fork (re-homed from #62) and fold the
+  GPU-public-proof re-home (#47) into the existing GPU-program fork. - PAPER.md: append one
+  retirement entry (Optimization Ledger, item 6) for `tg diff-docs` (#38) -- never shipped,
+  precision signal falsified at 20k FP, superseded by docs-coverage --stale, revival gated on 3
+  stated criteria.
+
+No code changes. Docs-only; not pushed -- the orchestrator reviews and drains this as a docs PR.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.65.5 (2026-07-12)
 
 ### Bug Fixes
