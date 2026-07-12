@@ -81,7 +81,9 @@ signed consumable tg outputs.
   GPU code cleanup.
 
 ### P1 — moat / features
-- **#94** flip warm daemon to DEFAULT (20.9x proven, fail-open) — AFTER #498 merges (all blockers cleared).
+- **#94** flip warm daemon to DEFAULT (20.9x proven, fail-open) — PR-1 built on
+  `feat/warm-daemon-default` (opt-out flag flip + daemon/client package-version-skew guard +
+  conftest test-isolation fixture); pending the mandatory session_daemon Opus gate + PR/merge.
 - **#124** EvidenceReceipt **P2** (HMAC signing + `tg evidence verify`) → **P3** (MCP tool, gated). P1=#510
   in drain. Gaps: persist checkpoint undo_argv + manifest rollback field.
 - **#118** #93 **SUB-3** unscoped-refuse (hard-refuse vendored-top-level; fixes the dogfood 60s-hang) —

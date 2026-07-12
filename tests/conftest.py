@@ -64,3 +64,40 @@ def cleanup_external_lsp_providers():
     manager = getattr(repo_map_module, "_EXTERNAL_LSP_PROVIDER_MANAGER", None)
     if manager is not None:
         manager.stop_all()
+
+
+@pytest.fixture(autouse=True)
+def _disable_session_daemon_autostart_by_default():
+    """Task #94 PR-1 trap T3: TG_SESSION_DAEMON_AUTOSTART now defaults ON (opt-out, see
+    ``_session_daemon_autostart_enabled`` in ``src/tensor_grep/cli/main.py``). Without this,
+    hundreds of unrelated CliRunner tests across the suite that invoke defs/impact/refs/callers/
+    blast-radius would each try to autostart a REAL background session-daemon subprocess on a
+    dev box -- the CI/GITHUB_ACTIONS force-off baked into that function does not cover a local
+    ``pytest`` run. Force the flag off for the whole suite; individual daemon tests (see
+    ``tests/unit/test_symbol_daemon_autostart.py``) opt back in per-test via their own
+    ``monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", "1")``, which overrides the value set
+    here for the remainder of that test only (restored below on teardown either way).
+
+    Deliberately does NOT take a ``monkeypatch`` fixture parameter -- taking one here would pull
+    ``monkeypatch`` into this autouse fixture's setup, which changes ITS position (and therefore
+    ``monkeypatch``'s own teardown position) in pytest's per-test fixture finalization stack
+    relative to every OTHER fixture that also depends on ``monkeypatch``, including a test's own
+    explicit ``monkeypatch`` parameter. That reordering was verified to break the existing
+    ``cleanup_external_lsp_providers`` fixture above: in
+    ``tests/unit/test_semantic_provider_navigation.py`` tests that
+    ``monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())``, adding a
+    monkeypatch-dependent autouse fixture here made ``cleanup_external_lsp_providers``'s teardown
+    run BEFORE ``monkeypatch`` reverted that attribute, so it called ``.stop_all()`` on the test's
+    fake manager instead of on ``None`` -- ``AttributeError: '_FakeManager' object has no
+    attribute 'stop_all'``. Save/restore ``os.environ`` directly instead, which keeps this
+    fixture dependency-free and leaves the pre-existing fixture graph untouched.
+    """
+    previous = os.environ.get("TG_SESSION_DAEMON_AUTOSTART")
+    os.environ["TG_SESSION_DAEMON_AUTOSTART"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TG_SESSION_DAEMON_AUTOSTART", None)
+        else:
+            os.environ["TG_SESSION_DAEMON_AUTOSTART"] = previous

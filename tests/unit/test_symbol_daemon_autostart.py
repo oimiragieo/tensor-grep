@@ -1,14 +1,16 @@
-"""TDD for task #94 Part A: the default-OFF warm-daemon Tier-1 fast path.
+"""TDD for task #94: the warm-daemon Tier-1 fast path.
 
-Scope: the 5 symbol commands (defs/impact/refs/callers/blast-radius) gain an OPTIONAL
-default routing path through a running ``tg session daemon``, gated end-to-end behind the
-net-new ``TG_SESSION_DAEMON_AUTOSTART`` env flag (default OFF -- today's cold-path behavior
-is byte-for-byte unchanged unless a caller opts in).
+Scope: the 5 symbol commands (defs/impact/refs/callers/blast-radius) gain a routing path
+through a running ``tg session daemon``, gated end-to-end behind the ``TG_SESSION_DAEMON_AUTOSTART``
+env flag. Part A (this file's original version) shipped the flag DEFAULT OFF (opt-in). Task #94
+PR-1 flips it to DEFAULT ON (opt-out): unset -- or any value other than an explicit falsy token
+(``0``/``false``/``no``/``off``) -- now enables the fast path; the cold-path behavior when
+disabled (explicitly or via the CI/GITHUB_ACTIONS force-off) is still byte-for-byte unchanged.
 
 Covers, in file order, one section per must-fix from the design-gate verdict (SHIP-WITH-CHANGES):
 
-- Must-fix 4: TG_SESSION_DAEMON_AUTOSTART default-OFF-is-a-no-op, plus the CI/GITHUB_ACTIONS
-  force-off.
+- Must-fix 4: TG_SESSION_DAEMON_AUTOSTART default-ON-unless-explicitly-disabled, plus the
+  CI/GITHUB_ACTIONS force-off.
 - Must-fix 1 (CORE SCOPE-FIX): ``_implicit_session_id_for_request`` (session_daemon.py)
   previously only recognized context_render/context_edit_plan; a symbol command sent to the
   daemon with no explicit session_id fell through to ``get_session("", path)`` ->
@@ -18,11 +20,14 @@ Covers, in file order, one section per must-fix from the design-gate verdict (SH
   contract (docs/CONTRACTS.md:109) via the daemon route.
 - Must-fix 3: the fire-and-forget non-blocking spawn primitive never blocks/polls waiting for
   warmup.
+- Trap T3 (task #94 PR-1): the autouse tests/conftest.py fixture that forces the now-default-ON
+  flag back off for the whole suite, so an ordinary CliRunner test never spawns a real daemon.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -89,26 +94,37 @@ def _autostart_env(monkeypatch, *, enabled: bool) -> None:
     if enabled:
         monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", "1")
     else:
-        monkeypatch.delenv("TG_SESSION_DAEMON_AUTOSTART", raising=False)
+        # Default-ON (task #94 PR-1): unset no longer means disabled, so "disabled" must be
+        # spelled as an explicit falsy token, not a delenv.
+        monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", "0")
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
 
 # ------------------------------------------------------------------------------------------
-# Must-fix 4: TG_SESSION_DAEMON_AUTOSTART -- default OFF, forced off in CI.
+# Must-fix 4: TG_SESSION_DAEMON_AUTOSTART -- default ON (opt-out), forced off in CI.
 # ------------------------------------------------------------------------------------------
 
 
-def test_autostart_disabled_when_unset(monkeypatch) -> None:
+def test_autostart_enabled_when_unset(monkeypatch) -> None:
+    """Task #94 PR-1: the conscious flip. Unset now means ENABLED, not disabled."""
     monkeypatch.delenv("TG_SESSION_DAEMON_AUTOSTART", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    assert _session_daemon_autostart_enabled() is False
+    assert _session_daemon_autostart_enabled() is True
 
 
 def test_autostart_enabled_when_flag_truthy(monkeypatch) -> None:
     _autostart_env(monkeypatch, enabled=True)
     assert _session_daemon_autostart_enabled() is True
+
+
+def test_autostart_disabled_when_explicit_falsy(monkeypatch) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    for token in ("0", "false", "no", "off", "FALSE", "Off"):
+        monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", token)
+        assert _session_daemon_autostart_enabled() is False, token
 
 
 def test_autostart_forced_off_in_ci(monkeypatch) -> None:
@@ -122,6 +138,16 @@ def test_autostart_forced_off_in_github_actions(monkeypatch) -> None:
     monkeypatch.setenv("TG_SESSION_DAEMON_AUTOSTART", "1")
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert _session_daemon_autostart_enabled() is False
+
+
+def test_autostart_forced_off_in_ci_even_when_unset(monkeypatch) -> None:
+    """The CI force-off must win over the new default-ON, not just over an explicit opt-in --
+    otherwise a CI job that never touches TG_SESSION_DAEMON_AUTOSTART would now autostart a
+    background daemon it never used to."""
+    monkeypatch.delenv("TG_SESSION_DAEMON_AUTOSTART", raising=False)
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     assert _session_daemon_autostart_enabled() is False
 
 
@@ -653,3 +679,51 @@ def test_defs_cold_call_not_blocked_by_autostart(tmp_path: Path, monkeypatch) ->
     # noise band (well under half the blocking threshold) avoids flaking on a loaded CI box
     # while still failing hard if the fast path regresses to the blocking start_session_daemon.
     assert elapsed < 2.5, f"cold call took {elapsed:.2f}s -- must not block on daemon warmup"
+
+
+# ------------------------------------------------------------------------------------------
+# Trap T3 (task #94 PR-1): the autouse tests/conftest.py fixture, not a local monkeypatch,
+# must keep an ordinary CliRunner test daemon-free now that the flag defaults ON.
+# ------------------------------------------------------------------------------------------
+
+
+def test_conftest_autouse_fixture_forces_autostart_off_by_default() -> None:
+    """Direct proof the global fixture applied, independent of this file's own _autostart_env
+    helper (which this test deliberately never calls)."""
+    assert os.environ.get("TG_SESSION_DAEMON_AUTOSTART") == "0"
+    assert _session_daemon_autostart_enabled() is False
+
+
+def test_conftest_autouse_fixture_keeps_ordinary_cli_test_daemon_free(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """End-to-end proof via a plain CliRunner invocation that never calls _autostart_env.
+
+    Records touches to a list rather than raising inside the stub: `_maybe_symbol_command_via_
+    running_daemon` in main.py wraps its daemon calls in a broad `except Exception: return None`
+    fail-open (by design, see main.py ~:7935), which would silently swallow a raised
+    AssertionError and let the command still exit 0 with a correct (cold-path) answer -- masking
+    exactly the regression this test exists to catch. Asserting on the list AFTER `runner.invoke`
+    returns sidesteps that.
+    """
+    project = _project(tmp_path)
+    touched: list[str] = []
+
+    def _record_request(*args: object, **kwargs: object) -> dict[str, Any] | None:
+        touched.append("request_running_session_daemon")
+        return None
+
+    def _record_spawn(*args: object, **kwargs: object) -> bool:
+        touched.append("maybe_autostart_session_daemon_nonblocking")
+        return False
+
+    monkeypatch.setattr(session_daemon, "request_running_session_daemon", _record_request)
+    monkeypatch.setattr(session_daemon, "maybe_autostart_session_daemon_nonblocking", _record_spawn)
+
+    result = runner.invoke(app, ["defs", str(project), "helper", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert touched == [], (
+        "the autouse conftest fixture should have kept TG_SESSION_DAEMON_AUTOSTART off; the "
+        f"daemon module was touched anyway: {touched}"
+    )

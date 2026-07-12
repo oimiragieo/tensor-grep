@@ -15,6 +15,19 @@ def env_flag_enabled(name: str) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def env_flag_disabled(name: str) -> bool:
+    """Mirror of ``env_flag_enabled`` for a default-ON, opt-out env flag.
+
+    ``env_flag_enabled`` cannot express "on unless explicitly turned off" -- it treats unset as
+    falsy. This answers the opt-out question directly: true only when the variable is explicitly
+    set to a recognized falsy token (``0``/``false``/``no``/``off``, case-insensitive, trimmed).
+    An unset variable -- or any other value -- is NOT "disabled"; the caller applies its own
+    default-on behavior via ``not env_flag_disabled(...)``.
+    """
+    value = os.environ.get(name, "").strip().lower()
+    return value in {"0", "false", "no", "off"}
+
+
 def _current_python_bin_dirs() -> set[Path]:
     executable = Path(sys.executable)
     bin_dirs = {executable.parent}

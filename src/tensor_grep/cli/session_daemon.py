@@ -21,6 +21,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
+from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
@@ -487,6 +488,16 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     except Exception:
         return None
     if not response.get("ok"):
+        return None
+    # Task #94 PR-1 safety addition: a daemon can survive a `tg upgrade` (daemons live up to
+    # TG_SESSION_DAEMON_MAX_UPTIME_SECONDS, 24h default) and keep serving stale-code responses
+    # to a freshly-upgraded client. Treat a package-version mismatch -- including a pre-PR-1
+    # daemon.json with no `package_version` field at all -- identically to "no daemon reachable":
+    # the caller's existing cold path + non-blocking respawn self-heals, since
+    # `_spawn_daemon_subprocess` unconditionally removes the stale daemon.json before launching a
+    # fresh one. The now-orphaned stale daemon process eventually shuts itself down via the
+    # existing idle/max-uptime lifecycle monitor.
+    if metadata.get("package_version") != _expected_tg_version():
         return None
     return metadata
 
@@ -1844,6 +1855,10 @@ def run_session_daemon_server(path: str = ".") -> None:
             root,
             {
                 "version": _SESSION_VERSION,
+                # Task #94 PR-1: the installed tensor-grep PACKAGE version (distinct from
+                # `version` above, which is the payload-schema version) -- see the matching
+                # `_probe_daemon` skew check for why this is needed.
+                "package_version": _expected_tg_version(),
                 "root": str(root),
                 "host": host,
                 "port": int(port),
