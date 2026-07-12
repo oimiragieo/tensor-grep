@@ -18,7 +18,7 @@ from collections import defaultdict
 
 from tensor_grep.core.result import SearchResult
 from tensor_grep.core.retrieval_bm25 import Bm25Index
-from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
+from tensor_grep.core.retrieval_chunker import MAX_CHUNKS, Chunk, chunk_file
 from tensor_grep.core.retrieval_dense import DenseIndex
 from tensor_grep.core.retrieval_fusion import DEFAULT_K, reciprocal_rank_fusion
 from tensor_grep.core.retrieval_late import LateReranker, LateRerankUnavailableError
@@ -51,6 +51,19 @@ _RERANK_BUDGET_MS_ENV: str = "TG_RERANK_BUDGET_MS"
 _DEFAULT_RERANK_POOL_K: int = 50
 _MAX_RERANK_POOL_K: int = 100
 _DEFAULT_RERANK_BUDGET_MS: int = 2000
+
+# #128d (backlog cluster-1 P0-CORRECTNESS, MED-1): retrieval_chunker.MAX_CHUNKS bounds a single
+# chunk_file() call (per FILE). A matched-file set of many small files can still blow past a sane
+# CORPUS-wide total even though no single file trips the per-file guard -- plain `tg search --rank`
+# (CLI cli/main.py:7222-7225, MCP cli/mcp_server.py:4258-4263, both funnel through the
+# `index is None` / `bm25_index is None` branches below) had NO total cap at all, unlike the
+# `--semantic` path's `_SEMANTIC_CORPUS_CHUNK_CAP` (cli/main.py, shipped by #527/A2). This mirrors
+# that cap at the shared reranker.py chokepoint instead, so CLI, MCP, and any future caller are
+# covered with ZERO call-site edits. Env-tunable (unlike the semantic path's plain constant)
+# because an operator may want to raise/lower it without a code change; the default equals
+# MAX_CHUNKS, the same threshold the per-file guard and the semantic cap already share, so there is
+# still exactly one number to tune in the common case.
+_RANK_CORPUS_CHUNK_CAP_ENV: str = "TG_RANK_CORPUS_CHUNK_CAP"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -90,6 +103,61 @@ def _path_channel_ranking(chunks: list[Chunk], query: str) -> list[int]:
     return [chunk_index for chunk_index, _overlap in ranked]
 
 
+def _rank_corpus_chunk_cap() -> int:
+    """The corpus-wide chunk cap for the ``index is None`` / ``bm25_index is None`` build loops
+    below -- ``TG_RANK_CORPUS_CHUNK_CAP`` if set to a valid positive int, else :data:`MAX_CHUNKS`.
+    A non-positive or malformed override falls back to the default rather than pathologically
+    capping at (near) zero -- the same "a malformed override must degrade gracefully" spirit as
+    :func:`_int_env`."""
+    cap = _int_env(_RANK_CORPUS_CHUNK_CAP_ENV, MAX_CHUNKS)
+    return cap if cap > 0 else MAX_CHUNKS
+
+
+def _chunk_corpus_with_total_cap(
+    file_paths: list[str],
+    *,
+    chunk_size: int,
+    overlap: int,
+) -> tuple[list[Chunk], str | None]:
+    """Chunk every file in ``file_paths`` in order, STOPPING before the accumulated chunk count
+    would exceed :func:`_rank_corpus_chunk_cap` -- the chokepoint fix for #128d (MED-1): plain
+    `tg search --rank` previously chunked the ENTIRE matched-file set with no total bound (only a
+    per-FILE bound existed, ``retrieval_chunker.MAX_CHUNKS``), so a broad query on a large repo
+    could rechunk thousands of files before ranking even started -- unbounded CPU/memory, reachable
+    from both the CLI and the MCP ``rank``/``tg_search`` tool.
+
+    Returns ``(chunks, fallback_reason)``. ``fallback_reason`` is ``None`` when every file was
+    chunked (the common case -- byte-identical to the pre-cap behavior). When the cap trips it is a
+    human-readable string the caller MUST surface on the returned ``SearchResult`` (append, never
+    clobber -- the same convention every other rank/semantic degrade in this codebase follows, see
+    ``rerank_hybrid``'s late-rerank combination below and ``cli/main.py``'s semantic-cap degrade) --
+    silently truncating would be indistinguishable from "the corpus was simply small", exactly the
+    suppression-reads-as-absence failure the Backend Fail-Closed Contract forbids for a full engine
+    swap and this project's partial-results contract forbids for a soft per-item suppression.
+
+    Matches are NEVER dropped by this cap -- the rerank contract is order-only (see each caller's
+    docstring). Files left unchunked past the trip point simply have no scored chunk, so their
+    matches sink to the end via the existing zero-score path -- identical to how an unmatched file
+    behaves today.
+    """
+    cap = _rank_corpus_chunk_cap()
+    chunks: list[Chunk] = []
+    fallback_reason: str | None = None
+    chunked_file_count = 0
+    for path in file_paths:
+        chunks.extend(chunk_file(path, chunk_size=chunk_size, overlap=overlap))
+        chunked_file_count += 1
+        if len(chunks) > cap:
+            fallback_reason = (
+                f"bm25 rank corpus cap reached ({cap} chunks over {chunked_file_count} of "
+                f"{len(file_paths)} matched files); ranking covers the first "
+                f"{chunked_file_count} files, remaining matches keep grep order"
+            )
+            sys.stderr.write(f"tg: {fallback_reason}\n")
+            break
+    return chunks, fallback_reason
+
+
 def rerank_by_bm25(
     result: SearchResult,
     query: str,
@@ -99,14 +167,21 @@ def rerank_by_bm25(
     overlap: int = 5,
     index: Bm25Index | None = None,
 ) -> SearchResult:
-    """Return a copy of ``result`` with matches re-sorted by best BM25 chunk score (desc)."""
+    """Return a copy of ``result`` with matches re-sorted by best BM25 chunk score (desc).
+
+    When ``index`` is not supplied, the corpus built from ``file_paths`` is bounded by
+    :func:`_chunk_corpus_with_total_cap` (#128d) -- see its docstring for the chokepoint fix.
+    Passing a prebuilt ``index`` (e.g. a caller's own deliberately-capped corpus, as the
+    ``--semantic`` degrade path does) bypasses this bound entirely, same as before.
+    """
     if not result.matches:
         return dataclasses.replace(result, matches=list(result.matches))
 
+    corpus_cap_reason: str | None = None
     if index is None:
-        chunks: list[Chunk] = []
-        for path in file_paths:
-            chunks.extend(chunk_file(path, chunk_size=chunk_size, overlap=overlap))
+        chunks, corpus_cap_reason = _chunk_corpus_with_total_cap(
+            file_paths, chunk_size=chunk_size, overlap=overlap
+        )
         index = Bm25Index(chunks)
 
     # Best score per chunk index for this query.
@@ -126,6 +201,16 @@ def rerank_by_bm25(
 
     # Stable sort by descending score (Python's sort is stable -> ties keep grep order).
     reranked = sorted(result.matches, key=match_score, reverse=True)
+    if corpus_cap_reason is not None:
+        # Append rather than overwrite: a pre-existing reason on the input result (should a future
+        # caller ever pass one in) must survive alongside the corpus-cap reason -- mirrors
+        # rerank_hybrid's late-rerank combination below and cli/main.py's semantic-cap degrade.
+        combined_reason = (
+            f"{result.rank_fallback_reason}; {corpus_cap_reason}"
+            if result.rank_fallback_reason
+            else corpus_cap_reason
+        )
+        return dataclasses.replace(result, matches=reranked, rank_fallback_reason=combined_reason)
     return dataclasses.replace(result, matches=reranked)
 
 
@@ -178,10 +263,11 @@ def rerank_hybrid(
     if not result.matches:
         return dataclasses.replace(result, matches=list(result.matches))
 
+    corpus_cap_reason: str | None = None
     if bm25_index is None:
-        chunks: list[Chunk] = []
-        for path in file_paths:
-            chunks.extend(chunk_file(path, chunk_size=chunk_size, overlap=overlap))
+        chunks, corpus_cap_reason = _chunk_corpus_with_total_cap(
+            file_paths, chunk_size=chunk_size, overlap=overlap
+        )
         bm25_index = Bm25Index(chunks)
     chunks = bm25_index.chunks
 
@@ -286,15 +372,19 @@ def rerank_hybrid(
 
     # Stable sort by descending fused score (Python's sort is stable -> ties keep grep order).
     reranked = sorted(result.matches, key=match_score, reverse=True)
-    if late_rank_fallback_reason is not None:
-        # Append rather than overwrite: an earlier (e.g. dense-leg) fallback reason must survive
-        # alongside the late-stage one -- see T6's bidirectional invariant (exactly one of "order
-        # provably changed, reason untouched" / "reason non-None" holds; this is the "reason
-        # non-None" side for the late stage specifically).
-        combined_reason = (
-            f"{result.rank_fallback_reason}; {late_rank_fallback_reason}"
-            if result.rank_fallback_reason
-            else late_rank_fallback_reason
+    # Append rather than overwrite, folding in EVERY reason source in the order it was produced:
+    # the caller's own pre-existing reason (e.g. a dense-leg degrade set before this call), then
+    # the corpus-cap reason (#128d, set while building the BM25 index above), then the late-rerank
+    # reason (set last, during the late-interaction stage above) -- see T6's bidirectional
+    # invariant (exactly one of "order provably changed, reason untouched" / "reason non-None"
+    # holds; this is the "reason non-None" side, generalized from two sources to three).
+    combined_parts = [
+        part
+        for part in (result.rank_fallback_reason, corpus_cap_reason, late_rank_fallback_reason)
+        if part
+    ]
+    if combined_parts:
+        return dataclasses.replace(
+            result, matches=reranked, rank_fallback_reason="; ".join(combined_parts)
         )
-        return dataclasses.replace(result, matches=reranked, rank_fallback_reason=combined_reason)
     return dataclasses.replace(result, matches=reranked)

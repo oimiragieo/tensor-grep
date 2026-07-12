@@ -963,6 +963,55 @@ def test_tg_search_rank_reranks_by_bm25(monkeypatch):
     assert payload["total_matches"] == 1
 
 
+def test_tg_search_rank_corpus_cap_sets_fallback_reason(tmp_path, monkeypatch):
+    """#128d (backlog cluster-1 P0-CORRECTNESS, MED-1): the MCP `rank=True` path funnels through
+    the SAME reranker.py chokepoint as the CLI --rank path (cli/main.py:7222-7225 /
+    cli/mcp_server.py:4258-4263 both call rerank_by_bm25 unmodified) -- a matched set exceeding
+    the total chunk cap must bound chunking AND surface rank_fallback_reason in the MCP JSON
+    envelope too. Unlike test_tg_search_rank_reranks_by_bm25 above, rerank_by_bm25 is NOT mocked
+    here -- it runs for real (against real tmp_path files) to prove the cap actually applies on
+    this call site, not just that the function gets called."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_RANK_CORPUS_CHUNK_CAP", "1")
+    monkeypatch.chdir(tmp_path)  # an in-root path so _confine_mcp_path's confinement check passes
+
+    files = []
+    for i in range(3):
+        f = tmp_path / f"f{i}.py"
+        f.write_text(f"def make_invoice_{i}(x):\n    return x\n", encoding="utf-8")
+        files.append(str(f))
+
+    def _search_result_for(current_file, *_args, **_kwargs):
+        return SearchResult(
+            matches=[MatchLine(line_number=1, text="def make_invoice", file=current_file)],
+            matched_file_paths=[current_file],
+            total_files=1,
+            total_matches=1,
+        )
+
+    fake_backend = MagicMock()
+    fake_backend.search.side_effect = _search_result_for
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_native"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = files
+
+        out = mcp_server.tg_search("invoice", str(tmp_path), rank=True)
+
+    payload = json.loads(out)
+    assert payload["total_matches"] == 3, f"expected all 3 matches preserved, got: {payload}"
+    assert "corpus cap" in payload.get("rank_fallback_reason", "")
+
+
 def test_tg_search_semantic_applies_hybrid_rerank(monkeypatch):
     from tensor_grep.cli import mcp_server
 
