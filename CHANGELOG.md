@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.64.1 (2026-07-12)
+
+### Bug Fixes
+
+- **repo-map**: Bound the AST parse cache by memory, not entry count
+  ([#539](https://github.com/oimiragieo/tensor-grep/pull/539),
+  [`14fd1d6`](https://github.com/oimiragieo/tensor-grep/commit/14fd1d6dd9f7972c821f4eabb0ab3b1b2266e7e8))
+
+External-audit #138 item #3: bound the warm-daemon AST parse cache by total source bytes (SHA-256
+  content-key, per-entry-ceiling bypass) instead of entry count, fixing unbounded daemon memory
+  growth. Real-venv gated (ruff/format/mypy/pytest green, 5 new + 89 regression tests).
+
+
 ## v1.64.0 (2026-07-12)
 
 ### Documentation
