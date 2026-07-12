@@ -192,7 +192,78 @@ def test_python_cli_classify_reports_clear_error_for_literal_input():
 
     assert result.exit_code == 1
     assert "classify expects a file path" in result.stderr
-    assert "--text/stdin literal classification is not supported yet" in result.stderr
+    assert "use --text for a literal string or --stdin to read from stdin" in result.stderr
+
+
+def test_python_cli_classify_text_flag_classifies_literal(monkeypatch):
+    """#92: --text classifies a literal string via the pure-Python front door."""
+    from tensor_grep.cli.main import app
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    result = CliRunner().invoke(
+        app,
+        ["classify", "--format", "json", "--text", "2026-05-26 ERROR payment retry failed"],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert len(payload["classifications"]) == 1
+    assert payload["classifications"][0]["label"] == "error"
+    assert payload["classifications"][0]["file"] is None
+    assert payload["classifications"][0]["path"] is None
+
+
+def test_python_cli_classify_stdin_flag_classifies_piped_content(monkeypatch):
+    """#92: --stdin classifies piped content via the pure-Python front door."""
+    from tensor_grep.cli.main import app
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+
+    result = CliRunner().invoke(
+        app,
+        ["classify", "--format", "json", "--stdin"],
+        input="INFO ok\nERROR database failed\nWARN retrying\n",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert len(payload["classifications"]) == 3
+    assert payload["classifications"][1]["label"] == "error"
+    assert payload["classifications"][1]["file"] is None
+
+
+def test_python_cli_classify_stdin_empty_input_degrades_cleanly():
+    """TRAP coverage: empty stdin must exit cleanly, not hang and not crash."""
+    from tensor_grep.cli.main import app
+
+    result = CliRunner().invoke(app, ["classify", "--stdin"], input="")
+
+    assert result.exit_code == 1
+    assert "no content to classify" in result.stderr
+
+
+def test_python_cli_classify_stdin_and_text_together_is_a_clean_error():
+    from tensor_grep.cli.main import app
+
+    result = CliRunner().invoke(app, ["classify", "--stdin", "--text", "literal"])
+
+    assert result.exit_code == 1
+    assert "--stdin" in result.stderr
+    assert "--text" in result.stderr
+
+
+def test_python_cli_classify_text_and_file_path_together_is_a_clean_error(tmp_path):
+    from tensor_grep.cli.main import app
+
+    log_path = tmp_path / "app.log"
+    log_path.write_text("INFO ok\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["classify", "--text", "literal", str(log_path)])
+
+    assert result.exit_code == 1
+    assert "--text" in result.stderr
+    assert "file path" in result.stderr
 
 
 def test_sidecar_classify_accepts_explicit_max_lines(monkeypatch):

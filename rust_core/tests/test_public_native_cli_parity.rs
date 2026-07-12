@@ -1852,6 +1852,8 @@ fn test_classify_help_describes_local_default_provider_contract() {
 
 #[test]
 fn test_classify_reports_clear_error_for_literal_input_on_public_native_frontdoor() {
+    // #92: a bare positional that isn't a real file path must still fail -- literal
+    // classification is only supported via the explicit --text flag now, not by accident.
     let output = tg()
         .current_dir(repo_root())
         .args([
@@ -1865,13 +1867,89 @@ fn test_classify_reports_clear_error_for_literal_input_on_public_native_frontdoo
 
     assert!(
         !output.status.success(),
-        "literal classify input should fail until literal/stdin mode exists"
+        "a non-existent positional path should still fail without --text/--stdin"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("classify expects a file path")
-            && stderr.contains("--text/stdin literal classification is not supported yet"),
-        "classify literal error should be actionable: {stderr}"
+            && stderr.contains("use --text for a literal string or --stdin to read from stdin"),
+        "classify literal error should point at the new --text/--stdin flags: {stderr}"
+    );
+}
+
+#[test]
+fn test_classify_help_lists_stdin_and_text_flags_on_public_native_frontdoor() {
+    let output = tg()
+        .current_dir(repo_root())
+        .args(["classify", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--stdin"),
+        "classify --help missing --stdin: {stdout}"
+    );
+    assert!(
+        stdout.contains("--text"),
+        "classify --help missing --text: {stdout}"
+    );
+}
+
+#[test]
+fn test_classify_stdin_and_text_together_is_a_clean_error_on_public_native_frontdoor() {
+    // Validation must happen BEFORE any stdin read, so this can never hang even though we
+    // pass an empty (immediately-closed) stdin pipe as a hang-safety belt-and-suspenders.
+    let mut command = tg();
+    command.current_dir(repo_root()).args([
+        "classify",
+        "--stdin",
+        "--text",
+        "2026-05-26 ERROR payment retry failed",
+    ]);
+    let output = run_command_with_stdin(command, b"");
+
+    assert!(
+        !output.status.success(),
+        "tg classify --stdin --text should be a clean, immediate error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--stdin") && stderr.contains("--text"),
+        "mutual-exclusion error should name both flags: {stderr}"
+    );
+}
+
+#[test]
+fn test_classify_text_and_file_path_together_is_a_clean_error_on_public_native_frontdoor() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("sample.log");
+    fs::write(&file, "INFO ok\n").unwrap();
+
+    let mut command = tg();
+    command
+        .current_dir(repo_root())
+        .arg("classify")
+        .arg("--text")
+        .arg("literal input")
+        .arg(&file);
+    let output = run_command_with_stdin(command, b"");
+
+    assert!(
+        !output.status.success(),
+        "tg classify --text PATH should be a clean, immediate error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--text") && stderr.contains("file path"),
+        "mutual-exclusion error should name the conflicting flag and file path: {stderr}"
     );
 }
 
