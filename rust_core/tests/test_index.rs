@@ -322,7 +322,19 @@ fn test_tg_search_index_no_match_returns_zero() {
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    // Audit fix #1 fold-in (a): rg exit-parity. --count still prints "0", but the process must
+    // now exit 1 (not 0) on zero matches, matching the native CPU/GPU engines
+    // (run_native_search_with_optional_rg_fallback / emit_multi_pattern_native_results), which
+    // already did this -- run_index_query previously always returned Ok(()) (exit 0) regardless
+    // of match count. See test_tg_search_index_count_no_match_exits_one_rg_parity and
+    // test_tg_search_index_plain_no_match_exits_one_rg_parity below for the dedicated coverage.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let count: usize = String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse()
@@ -1331,4 +1343,480 @@ fn test_tg_search_warm_auto_index_smart_case_lowercase_pattern_matches_native() 
         "warm auto-routed -S (all-lowercase) must honor smart-case like native"
     );
     assert_eq!(match_tuples(&warm_json), match_tuples(&native_json));
+}
+
+// -- Audit fix #1 (2026-07-11): exhaustive --index capability validator -------------------
+//
+// H1a (above) hand-listed 6 refused flags; `index_flag_violations` (rust_core/src/main.rs)
+// replaces that ad-hoc list with an exhaustive per-field classification (Honor / PassthroughSafe
+// / Refuse) covering every `SearchArgs` field, shared by both the explicit `--index` gate
+// (`handle_index_search`) and the warm auto-routing gate (`detect_warm_index_state`). The
+// runtime-backstop exhaustiveness test (`index_flag_policy_table_is_exhaustive_over_search_args_
+// clap_ids`) plus several fast direct-call unit tests for `index_flag_violations` itself live in
+// rust_core/src/main.rs's own `#[cfg(test)] mod tests`, NOT here -- `SearchArgs` and
+// `index_flag_violations` are private to that binary crate, so an external integration test file
+// cannot call them directly (house rule: dogfood the real binary; these tests below do that for
+// the observable CLI contract).
+
+#[test]
+fn test_tg_search_explicit_index_refuses_flags_outside_the_original_six() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Build the index first so a missing/stale index cannot itself explain a non-zero exit.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+
+    // --json guarantees reaching handle_index_search for every case: route_search checks
+    // explicit_index (set by --index) ahead of everything except `--pcre2 && rg_available`, and
+    // none of these cases pass --pcre2. (Several of these flags -- hidden, max_depth, file_type,
+    // sort*, column, vimgrep, null, count_matches, replace, only_matching, path_separator,
+    // no_ignore_vcs -- are ALSO in search_requires_ripgrep_passthrough's non-json OR-list, so a
+    // *plain* (non-json) invocation would instead be intercepted by handle_ripgrep_search's early
+    // rg-passthrough branch before route_search ever runs -- see index_flag_violations's doc
+    // comment for the same reachability shape as the pre-existing H1e smart-case tests above.)
+    //
+    // Deliberately EXCLUDES require_git, passthru, null_data, multiline(+dotall), and the
+    // no_ignore_dot/exclude/files/global/parent family: these are all separately intercepted
+    // even earlier, by `search_format_python_passthrough_args`'s SEARCH_PYTHON_PASSTHROUGH_FLAGS
+    // allowlist (require_git, unconditionally) or its `--json`-gated third/fourth checks
+    // (passthru/no_ignore_dot/.../no_config; -U/multiline/multiline-dotall/null-data) -- BEFORE
+    // `--index` is even parsed by clap. In an environment with a working Python sidecar on PATH,
+    // that pre-existing, unrelated dispatcher forwards the raw args to Python, which has no
+    // `--index` concept at all and errors out ("No such option '--index'") rather than reaching
+    // this binary's own routing. That is a real, separate gap in
+    // `search_format_python_passthrough_args` (main.rs) worth its own audit item; it is NOT
+    // something `index_flag_violations` can address (it never runs). These 9 flags' Refuse
+    // classification is still covered by the direct-call unit tests in main.rs's `mod tests`
+    // (`index_flag_violations_catches_flags_outside_the_original_six`), which call the function
+    // directly and are unaffected by CLI/Python dispatch.
+    let cases: &[(&[&str], &str)] = &[
+        (&["--hidden"], "hidden"),
+        (&["--max-depth", "2"], "max-depth"),
+        (&["-t", "py"], "type"),
+        (&["--sort", "path"], "sort"),
+        (&["--sortr", "path"], "sortr"),
+        (&["--sort-files"], "sort-files"),
+        (&["-o"], "only-matching"),
+        (&["-r", "X"], "replace"),
+        (&["--max-filesize", "10K"], "max-filesize"),
+        (&["--no-ignore-vcs"], "no-ignore-vcs"),
+        (&["-L"], "follow"),
+        (&["-a"], "text"),
+        (&["-l"], "files-with-matches"),
+        (&["--files-without-match"], "files-without-match"),
+        (&["--column"], "column"),
+        (&["--count-matches"], "count-matches"),
+        (&["--vimgrep"], "vimgrep"),
+        (&["--null"], "null"),
+        (&["--path-separator", "/"], "path-separator"),
+    ];
+
+    for (extra, needle) in cases {
+        let mut cmd = tg();
+        cmd.arg("search").arg("--index").arg("--json");
+        for arg in *extra {
+            cmd.arg(arg);
+        }
+        let output = cmd.arg("hello").arg(dir.path()).output().unwrap();
+        assert!(
+            !output.status.success(),
+            "expected --index {extra:?} to fail closed; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        assert!(
+            stderr.contains(needle),
+            "error for {extra:?} should name the incompatible flag (expected {needle:?}): stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn test_tg_search_explicit_index_refuses_contradictory_engine_flags() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // fold-in (c): --index combined with an explicit alternate engine is contradictory.
+    // route_search checks explicit_index ahead of force_cpu/explicit_gpu_device_ids, so without
+    // this check the engine flag would be silently dropped (the index would just be used)
+    // instead of honored or refused.
+    let cpu = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !cpu.status.success(),
+        "--index --cpu requests contradictory engines and must fail closed; stdout={} stderr={}",
+        String::from_utf8_lossy(&cpu.stdout),
+        String::from_utf8_lossy(&cpu.stderr)
+    );
+
+    let gpu = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !gpu.status.success(),
+        "--index --gpu-device-ids requests contradictory engines and must fail closed; stdout={} stderr={}",
+        String::from_utf8_lossy(&gpu.stdout),
+        String::from_utf8_lossy(&gpu.stderr)
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_allows_passthrough_safe_flags_and_matches_baseline() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let baseline = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+    let baseline_json: Value = serde_json::from_slice(&baseline.stdout).unwrap();
+
+    // Deliberately excludes no_fixed_strings/no_invert_match/ignore/no_hidden/pcre2_unicode/
+    // messages/no_config/auto_hybrid_regex from this black-box bundle: those PassthroughSafe
+    // flags are ALSO in search_format_python_passthrough_args's SEARCH_PYTHON_PASSTHROUGH_FLAGS
+    // allowlist (unconditionally, or via its --json-gated third check for no_config/
+    // auto_hybrid_regex) -- an earlier, unrelated dispatcher that forwards to the Python sidecar
+    // before `--index` is even parsed by clap (see the comment on
+    // test_tg_search_explicit_index_refuses_flags_outside_the_original_six above for the same
+    // gap). Their PassthroughSafe classification is covered by the direct-call unit test
+    // `index_flag_violations_allows_passthrough_safe_bundle` in main.rs's `mod tests` instead.
+    let passthrough_safe = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("--no-column")
+        .arg("--unicode")
+        .arg("--color")
+        .arg("auto")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        passthrough_safe.status.success(),
+        "PassthroughSafe flags must not be refused; stderr={}",
+        String::from_utf8_lossy(&passthrough_safe.stderr)
+    );
+    let passthrough_json: Value = serde_json::from_slice(&passthrough_safe.stdout).unwrap();
+    assert_eq!(
+        match_tuples(&passthrough_json),
+        match_tuples(&baseline_json),
+        "PassthroughSafe flags must not change the result set"
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_color_always_is_refused_but_never_and_auto_are_not() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    for mode in ["never", "auto"] {
+        let output = tg()
+            .arg("search")
+            .arg("--index")
+            .arg("--fixed-strings")
+            .arg("--count")
+            .arg("--color")
+            .arg(mode)
+            .arg("hello")
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "--color {mode} must not be refused; stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let always = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--color")
+        .arg("always")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !always.status.success(),
+        "--color always asks for output the index path cannot produce and must be refused"
+    );
+}
+
+#[test]
+fn test_tg_search_warm_auto_index_reroutes_instead_of_dropping_hidden_files() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+    fs::write(dir.path().join(".hidden_secret.txt"), "hello hidden\n").unwrap();
+
+    // Build a warm index. The trigram build walker hardcodes hidden-file exclusion
+    // (`WalkBuilder::hidden(true)` in index.rs), so .hidden_secret.txt is never indexed
+    // regardless of this build's own flags.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+    assert!(dir.path().join(".tg_index").exists());
+
+    // NO --index: --hidden combined with --json reaches detect_warm_index_state's gate the same
+    // way the pre-existing H1e smart-case tests above reach handle_index_search's (a plain/non-
+    // json --hidden invocation is instead intercepted earlier by search_prefers_ripgrep_
+    // passthrough's rg-passthrough branch in handle_ripgrep_search). --json also makes the
+    // eventual reroute destination deterministic regardless of whether `rg` happens to be on
+    // PATH: once detect_warm_index_state denies warm-index eligibility, route_search's
+    // `structured_output` branch sends it to native_cpu_json unconditionally.
+    //
+    // Before audit fix #1, detect_warm_index_state's 6-flag gate didn't cover --hidden, so this
+    // query would have silently auto-routed to the (hidden-file-blind) warm index and missed
+    // .hidden_secret.txt.
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("--verbose")
+        .arg("--hidden")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("routing_backend=TrigramIndex"),
+        "--hidden must reroute past the warm index (which cannot see hidden files), not use it: stderr={stderr}"
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let files = match_tuples(&payload)
+        .into_iter()
+        .map(|(file, _, _)| file)
+        .collect::<Vec<_>>();
+    assert!(
+        files.iter().any(|f| f.contains(".hidden_secret.txt")),
+        "warm auto-routing must reroute to an engine that honors --hidden, not silently drop it: matches={files:?}"
+    );
+}
+
+#[test]
+fn test_tg_search_index_count_no_match_exits_one_rg_parity() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("zzzzzznotfound")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // fold-in (a): native CPU/GPU already exit(1) on zero matches; run_index_query previously
+    // always returned Ok(()) (exit 0) regardless of match count.
+    assert_eq!(output.status.code(), Some(1));
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "the count itself is unaffected, only the exit code"
+    );
+}
+
+#[test]
+fn test_tg_search_index_plain_no_match_exits_one_rg_parity() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("zzzzzznotfound")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+}
+
+#[test]
+fn test_tg_search_index_plain_match_still_exits_zero() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "a real match must still exit 0; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// NOTE on -N/--no-line-number specifically: `-N`/`--no-line-number` cannot be exercised via the
+// top-level `tg search --index -N ...` CLI in an environment with a working Python sidecar on
+// PATH. `-N` is unconditionally in `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (main.rs), so
+// `search_format_python_passthrough_args` forwards the ENTIRE invocation to the Python sidecar
+// before `--index` is even parsed by this binary's own clap `SearchArgs` -- and Python has no
+// `--index` concept, so it errors ("No such option '--index'") instead of ever reaching
+// `run_index_query`. That is a real, separate, pre-existing gap in the Rust/Python dispatch
+// layer (confirmed present on main before this fix too), not something `index_flag_violations`
+// or the fold-in (b) line-number threading can address -- fixing it would mean touching
+// `search_format_python_passthrough_args`'s allowlist or the Python CLI itself, well outside
+// this audit item's scope. `-N`'s Honor classification (not refused) is covered by the
+// direct-call unit test `index_flag_violations_honors_original_six_plus_no_line_number` in
+// main.rs's `mod tests`, which calls `index_flag_violations` directly and is unaffected by CLI
+// dispatch. The test below instead exercises the SAME `line_number && !no_line_number`
+// expression's "numbers shown" branch via `-n` (which is NOT in any Python-dispatch allowlist),
+// proving the threading fold-in (b) added end to end -- through the real shipped binary.
+#[test]
+fn test_tg_search_explicit_index_line_number_shown_via_n_matches_native() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Single-match query ("goodbye" appears exactly once, in a.txt only) so the comparison
+    // isn't confounded by the trigram-index engine and the native-CPU engine returning
+    // multi-file matches in different (each internally consistent, but mutually different)
+    // orders -- an orthogonal, pre-existing characteristic unrelated to line-number rendering
+    // (TrigramIndex::search's postings order vs native's explicit sort_search_matches).
+    //
+    // TG_DISABLE_RG=1 pins the no-index baseline to the native CPU engine deterministically --
+    // without it, route_search sends a plain (non-json) query to rg passthrough whenever `rg`
+    // happens to be on PATH, which would make this comparison's baseline engine (and thus its
+    // exact byte format) depend on the test machine (the "golden test rg-backend sensitivity"
+    // trap this repo has hit before).
+    let native = tg()
+        .env("TG_DISABLE_RG", "1")
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-n")
+        .arg("goodbye")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+    assert!(
+        String::from_utf8_lossy(&native.stdout).contains(":3:"),
+        "sanity: 'goodbye world' is line 3 of a.txt; stdout={}",
+        String::from_utf8_lossy(&native.stdout)
+    );
+
+    let indexed = tg()
+        .env("TG_DISABLE_RG", "1")
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-n")
+        .arg("goodbye")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&indexed.stdout),
+        String::from_utf8_lossy(&native.stdout),
+        "-n output via --index must byte-match the no-index route"
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_default_line_number_behavior_matches_native() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // No -n/-N: the index path's default must now byte-match the no-index route's default,
+    // since both compute the same `line_number && !no_line_number` expression (fold-in b)
+    // instead of the index path's old hardcoded `true`. Single-match query + TG_DISABLE_RG=1:
+    // see the ordering/rg-sensitivity notes above.
+    let native = tg()
+        .env("TG_DISABLE_RG", "1")
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("goodbye")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(native.status.success());
+
+    let indexed = tg()
+        .env("TG_DISABLE_RG", "1")
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("goodbye")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&indexed.stdout),
+        String::from_utf8_lossy(&native.stdout),
+        "default (no -n/-N) output via --index must byte-match the no-index route"
+    );
 }
