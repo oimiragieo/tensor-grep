@@ -1056,6 +1056,16 @@ def main_entry() -> None:
         ) or _search_args_include_unbounded_broad_scan(passthrough_search_args)
         invalid_regex = _search_args_include_obviously_invalid_regex(passthrough_search_args)
 
+        # task #121 note: `--count-matches` is excluded from `_can_delegate_to_native_tg_search`
+        # (it needs rg for its per-occurrence count, which the native binary's fallback engine
+        # cannot produce), but the `_prefer_rust_first_search()` OR-branch below can STILL route
+        # a bare `--count-matches` search to the native binary when TG_RUST_FIRST_SEARCH=1
+        # (`--count-matches` is not a `_requires_full_cli` flag). That is SAFE and deliberately
+        # NOT special-cased here: the native binary self-refuses count_matches via
+        # `require_ripgrep_or_exit` (rust_core/src/main.rs) when rg is unresolvable -- a clean
+        # exit-2, never a silent wrong count. Locked by
+        # test_cli_bootstrap.py::test_rust_first_count_matches_refuses_via_native_self_guard so a
+        # future routing change to this branch cannot silently reopen the silent-wrong-count.
         if (
             not explicit_rg_json
             and native_binary is not None

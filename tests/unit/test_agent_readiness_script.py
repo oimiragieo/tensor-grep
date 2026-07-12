@@ -1020,6 +1020,151 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     assert any(command.startswith("tg --count-matches") for command in flattened)
 
 
+def _flag_sweep_help_stdout() -> str:
+    """The advertised-flag help block the flag sweep validates against (covers every flag
+    the sweep probes exercise, so the missing-flag pre-check passes). Shared by the #121
+    count-matches refuse-tolerance tests below."""
+    return "\n".join([
+        "Usage: tg search [OPTIONS]",
+        "  -H, --with-filename",
+        "  -I, --no-filename",
+        "  -q, --quiet",
+        "  -N, --no-line-number",
+        "      --stats",
+        "      --debug",
+        "      --trace",
+        "      --pcre2-unicode",
+        "      --no-pcre2-unicode",
+        "      --no-auto-hybrid-regex",
+        "      --no-text",
+        "      --no-binary",
+        "      --no-follow",
+        "      --no-glob-case-insensitive",
+        "      --no-ignore-file-case-insensitive",
+        "      --ignore",
+        "      --ignore-dot",
+        "      --ignore-exclude",
+        "      --ignore-files",
+        "      --ignore-global",
+        "      --ignore-messages",
+        "      --ignore-parent",
+        "      --ignore-vcs",
+        "      --messages",
+        "      --require-git",
+        "      --no-hidden",
+        "      --no-one-file-system",
+        "      --no-block-buffered",
+        "      --no-byte-offset",
+        "      --column",
+        "      --no-column",
+        "      --no-crlf",
+        "      --no-encoding",
+        "      --no-fixed-strings",
+        "      --no-invert-match",
+        "      --no-mmap",
+        "      --no-multiline",
+        "      --no-multiline-dotall",
+        "      --no-pcre2",
+        "      --no-pre",
+        "      --no-search-zip",
+        "      --no-context-separator",
+        "      --no-include-zero",
+        "      --no-line-buffered",
+        "      --no-max-columns-preview",
+        "      --no-trim",
+        "      --no-json",
+        "      --no-stats",
+        "      --engine <ENGINE>",
+        "  -s, --case-sensitive",
+        "  -x, --line-regexp",
+        "  -j, --threads <THREADS>",
+        "      --iglob <GLOB>",
+        "  -T, --type-not <TYPE>",
+        "  -u, --unrestricted",
+        "      --sort <SORTBY>",
+        "      --format <FORMAT>",
+        "  -t, --type <TYPE>",
+        "      --count-matches",
+        "  -n, --line-number",
+        "  -F, --fixed-strings",
+    ])
+
+
+# The #121 structured refuse the tg CLI emits (plain-text path) when `--count-matches` is
+# invoked with rg unresolvable. Matches cli/main.py's `_exit_search_error` detail text.
+_COUNT_MATCHES_REFUSE_STDERR = (
+    "Error: --count-matches reports ripgrep's per-occurrence match count, which requires "
+    "the 'rg' binary; rg was not found (checked TG_RG_PATH, PATH, and the bundled fallback)."
+)
+
+
+def _make_flag_sweep_fake_run(count_matches_returncode: int):
+    """Build a fake `subprocess.run` for the flag sweep: real help advertisement, exit 0 for
+    every probe EXCEPT the count-matches probe, which returns `count_matches_returncode` with
+    the #121 refuse on stderr."""
+
+    def fake_run(command, **_kwargs):
+        if command == ["tg", "search", "--help"]:
+            return subprocess.CompletedProcess(
+                args=command, returncode=0, stdout=_flag_sweep_help_stdout(), stderr=""
+            )
+        if len(command) >= 2 and command[0] == "tg" and command[1] == "--count-matches":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=count_matches_returncode,
+                stdout="",
+                stderr=_COUNT_MATCHES_REFUSE_STDERR if count_matches_returncode == 2 else "",
+            )
+        return subprocess.CompletedProcess(
+            args=command, returncode=0, stdout="accepted\n", stderr=""
+        )
+
+    return fake_run
+
+
+def test_agent_readiness_count_matches_probe_tolerates_rg_unresolvable_refuse(
+    monkeypatch, tmp_path
+) -> None:
+    # task #121: when rg is unresolvable, the `--count-matches` probe now gets a clean
+    # structured exit-2 refuse (it needs rg for its per-occurrence count) -- the sweep must
+    # TOLERATE that instead of raising ReadinessError, mirroring the golden-test skip.
+    module = _load_script_module()
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+    monkeypatch.setattr(module, "_ripgrep_available", lambda: False)
+    monkeypatch.setattr(
+        module.subprocess, "run", _make_flag_sweep_fake_run(count_matches_returncode=2)
+    )
+
+    # Must NOT raise -- the exit-2 count-matches refuse is expected when rg is absent.
+    module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+
+
+def test_agent_readiness_count_matches_probe_still_fails_exit2_when_rg_available(
+    monkeypatch, tmp_path
+) -> None:
+    # Bidirectional guard: the #121 tolerance is gated on rg being ABSENT. When rg IS
+    # available, an exit-2 from the count-matches probe is a real regression and must still
+    # fail the sweep -- otherwise the tolerance would mask a genuinely broken flag.
+    module = _load_script_module()
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+    monkeypatch.setattr(module, "_ripgrep_available", lambda: True)
+    monkeypatch.setattr(
+        module.subprocess, "run", _make_flag_sweep_fake_run(count_matches_returncode=2)
+    )
+
+    try:
+        module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+    except module.ReadinessError as exc:
+        assert "root-option-first-count-matches" in str(exc)
+        assert "exit=2" in str(exc)
+    else:
+        raise AssertionError("expected exit-2 count-matches probe to fail when rg IS available")
+
+
 def test_agent_readiness_public_search_flag_sweep_rejects_missing_help_advertisement(
     monkeypatch, tmp_path
 ) -> None:

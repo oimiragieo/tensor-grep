@@ -269,12 +269,23 @@ def _search_flag_tokens_for_sweep(command: list[str]) -> set[str]:
     return tokens
 
 
+def _ripgrep_available() -> bool:
+    """Whether tg can resolve a ripgrep binary (TG_RG_PATH / PATH / bundled). Gates the
+    #121 tolerance in the flag sweep below: `--count-matches` needs rg for its per-occurrence
+    count, so both tg front doors refuse cleanly (structured exit 2) when rg is unresolvable
+    instead of emitting a silently-wrong line count."""
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    return bool(RipgrepBackend().is_available())
+
+
 def validate_public_search_advertised_flag_sweep(
     _stdout: str, repo_root: Path, _expected_version: str
 ) -> None:
     if shutil.which("tg") is None:
         raise ReadinessError("could not resolve public tg command for search flag sweep")
 
+    rg_available = _ripgrep_available()
     probe_dir = repo_root / "artifacts" / "agent_readiness" / "public_search_flags"
     probe_dir.mkdir(parents=True, exist_ok=True)
     (probe_dir / "app.log").write_text("ERROR failed\nINFO ok\n", encoding="utf-8")
@@ -322,6 +333,18 @@ def validate_public_search_advertised_flag_sweep(
         )
         stderr = completed.stderr.strip()
         stdout = completed.stdout.strip()
+        # task #121: `--count-matches` needs rg for its per-occurrence count; both tg front
+        # doors refuse cleanly (structured exit 2) when rg is unresolvable rather than emit a
+        # silently-wrong line count. Accept that refuse here instead of flagging it as a sweep
+        # failure -- but ONLY when rg is genuinely absent (when rg IS available the probe must
+        # still exit 0/1 as before, so a real regression that breaks the flag still fails).
+        if (
+            label == "root-option-first-count-matches"
+            and not rg_available
+            and completed.returncode == 2
+            and "count-matches" in stderr.lower()
+        ):
+            continue
         if completed.returncode not in {0, 1}:
             failures.append(
                 f"{label}: exit={completed.returncode}, command={command!r}, "
