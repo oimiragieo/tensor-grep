@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.66.1 (2026-07-12)
+
+### Performance Improvements
+
+- **cli**: Defer heavy launcher-path imports to cut cold-start shim tax (#94)
+  ([#552](https://github.com/oimiragieo/tensor-grep/pull/552),
+  [`1d70571`](https://github.com/oimiragieo/tensor-grep/commit/1d705716b44503b62d87f9eafb695631a70c4635))
+
+Move 6 non-fast-path top-level imports in cli/main.py to function-local (lazy) imports at their sole
+  real use sites, trimming the Python launcher shim's cold-start import cost paid by every `tg`
+  invocation. Pure import relocation; no command semantics, --help text, or error messages change.
+
+Moved: - import html -> lazy in _candidate_versions_from_pypi_simple_index (tg upgrade) -
+  BackendExecutionError -> lazy at top of search_command body - ast_workflows -> lazy in test() (tg
+  test) -- biggest importtime chunk - BroadScanRefusedError -> lazy in scan() (tg scan) -
+  ensure_scan_not_broad -> lazy in _run_ast_scan_payload - MatchLine -> moved under TYPE_CHECKING
+  (annotation-only; 4 sig sites quoted)
+
+Cold-start (perf_counter, .pyc cleared + cold warm-up, 8 warm samples): median 151.1ms -> 141.05ms
+  (-6.7%); min 140.1 -> 135.3ms. Independent controlled run: avg 153.0 -> 138.4ms (-9.5%). Cold
+  first-import 527 -> 459ms.
+
+gate-free: import relocation only, no semantic change.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.66.0 (2026-07-12)
 
 ### Features
