@@ -1,5 +1,4 @@
 import dataclasses
-import html
 import json
 import os
 import re
@@ -26,8 +25,6 @@ import click
 import typer
 from typer.core import TyperGroup
 
-from tensor_grep.backends.base import BackendExecutionError
-from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version,
@@ -39,9 +36,7 @@ from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
-from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 from tensor_grep.core.observability import nvtx_range
-from tensor_grep.core.result import MatchLine
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
 from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
@@ -49,7 +44,7 @@ from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import MatchLine, SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 # backlog #1 (Fable+thinktank plan, 2026-07-06): kept numerically in sync with
@@ -399,6 +394,8 @@ def _candidate_versions_from_pypi_json(payload: object) -> list[str]:
 
 
 def _candidate_versions_from_pypi_simple_index(simple_index: str) -> list[str]:
+    import html
+
     candidates: list[str] = []
     for match in _PYPI_SIMPLE_ANCHOR_RE.finditer(simple_index):
         attrs = match.group("attrs")
@@ -4472,8 +4469,8 @@ def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
 
 
 def _replace_lines(
-    matches: list[MatchLine], pattern: str, config: "SearchConfig"
-) -> list[MatchLine]:
+    matches: list["MatchLine"], pattern: str, config: "SearchConfig"
+) -> list["MatchLine"]:
     if config.replace_str is None:
         return matches
 
@@ -4577,8 +4574,8 @@ def _expand_ripgrep_replacement(template: str, match: re.Match[str]) -> str:
 
 
 def _only_matching_lines(
-    matches: list[MatchLine], pattern: str, config: "SearchConfig"
-) -> list[MatchLine]:
+    matches: list["MatchLine"], pattern: str, config: "SearchConfig"
+) -> list["MatchLine"]:
     flags = 0
     if config.ignore_case or (config.smart_case and pattern.islower()):
         flags |= re.IGNORECASE
@@ -5392,6 +5389,7 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.scan_guardrails import ensure_scan_not_broad
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -6445,6 +6443,12 @@ def search_command(
     Search files for a regex pattern. GPU routing is experimental and opt-in via --gpu-device-ids; CPU/ripgrep is the default and the current speed baseline.
     The stable text-search contract is the validated rg-compatible surface documented in docs/CONTRACTS.md.
     """
+    # Perf (#94 Part-B): lazy-imported here (not at module top) so non-search commands don't pay
+    # for backends.base's transitive core.config/core.result chain. search_command is the sole
+    # runtime user of BackendExecutionError in this module (except-clauses further below), and
+    # this sits before any loop, so it costs exactly one import per invocation, not per iteration.
+    from tensor_grep.backends.base import BackendExecutionError
+
     # Just forward to CPU backend for now as a stub.
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
     args = positionals or []
@@ -11656,6 +11660,7 @@ def scan(
     """Scan code with tensor-grep's bounded AST rule/config surface."""
     from tensor_grep.backends.ast_backend import normalize_ast_language
     from tensor_grep.cli.rule_packs import resolve_rule_pack
+    from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 
     inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
     if inline_source_count > 1:
@@ -11870,6 +11875,8 @@ def test(
     ),
 ) -> None:
     """Test structural rules in tensor-grep's bounded AST workflow slice."""
+    from tensor_grep.cli import ast_workflows
+
     exit_code = ast_workflows.test_command(config)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
