@@ -1951,3 +1951,136 @@ def test_run_policy_command_denies_when_exec_parent_canonicalization_fails(
     assert result["passed"] is False
     assert not spawn_calls
     assert "could not canonicalize" in str(result["detail"])
+
+
+# --- #126 Opus re-gate: the 4th same-class edge -- UNC / network-share smuggling ---
+#
+# The gate reproduced a fourth bypass END-TO-END against the real _run_policy_command: a UNC
+# loopback admin-share spelling of the identical in-repo shadow gets SPAWNED. argv[0] spellings of
+# <untrusted-repo>\evil.cmd like \\127.0.0.1\C$\...\untrusted-repo\evil.cmd, \\localhost\C$\...,
+# and \\?\UNC\127.0.0.1\C$\... all pass the guard and reach subprocess.run because Path.resolve()
+# does NOT map the \\host\C$\... admin-share namespace back to C:\..., so _canonicalize_exec_parent
+# returns a still-UNC parent and neither the raw-stripped nor the canonical beneath-compare starts
+# with the repo-root string. A UNC-spelled executable can never be confined to a LOCAL drive-letter
+# repo root by a string comparison, so _run_policy_command now refuses any UNC executable path
+# outright (fail closed). Verified empirically: a legitimate local tool always resolves to a
+# drive-letter path (C:\..., and \\?\C:\...->C:\... after the ext-length strip), never a UNC prefix.
+
+
+@pytest.mark.parametrize(
+    "unc_prefix",
+    [
+        "\\\\127.0.0.1\\C$\\",  # loopback IP admin share
+        "\\\\localhost\\C$\\",  # loopback hostname admin share
+        "\\\\?\\UNC\\127.0.0.1\\C$\\",  # extended-length UNC form of the same
+    ],
+)
+def test_run_policy_command_rejects_unc_admin_share_shadow_inside_repo(
+    tmp_path: Path, monkeypatch, unc_prefix: str
+) -> None:
+    r"""#126 bidirectional oracle (UNC / admin-share edge). A repo-local shadow is reached via a
+    UNC loopback admin-share (C$) spelling of the identical on-disk file. Pre-fix: fail open
+    (Path.resolve() leaves the parent UNC, so no beneath-compare matches -> spawned). Post-fix:
+    _run_policy_command refuses any UNC-spelled executable outright (it can never be confined to
+    a local drive-letter repo root).
+
+    Platform-agnostic on purpose: the refusal is a pure string check on argv[0]'s shape (does it
+    resolve to a \\... UNC path), which behaves identically on any OS -- no live C$ share or admin
+    token is needed to exercise the guard, only to exploit the underlying bypass. shutil.which()
+    returns an already-path-shaped argv[0] unchanged (no PATH search, no canonicalization), so the
+    UNC spelling reaches the guard verbatim."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    shadow = _write_fake_executable(repo, "pytest", "shadow-pwned")
+
+    # Build the UNC spelling of the SAME on-disk shadow. Only the drive-letter tail is reused; the
+    # UNC prefix (loopback admin share) is what Path.resolve() cannot fold back to a local path.
+    drive_tail = str(shadow.resolve())[3:]  # strip "C:\" -> "Users\...\untrusted-repo\pytest.cmd"
+    unc_shadow = unc_prefix + drive_tail
+    monkeypatch.setattr(
+        apply_policy.shutil,
+        "which",
+        lambda cmd, path=None: unc_shadow if cmd == "pytest" else None,
+    )
+    spawn_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        apply_policy.subprocess,
+        "run",
+        lambda argv, **kwargs: spawn_calls.append(list(argv)),
+    )
+
+    result = apply_policy._run_policy_command("test", "pytest --check", repo, timeout=10)
+
+    assert result["passed"] is False
+    assert not spawn_calls, "a UNC-spelled repo-local shadow must never be spawned"
+    assert "UNC/network-share" in str(result["detail"])
+
+
+def test_run_policy_command_rejects_unc_share_even_when_outside_repo(
+    tmp_path: Path, monkeypatch
+) -> None:
+    r"""A UNC path is refused REGARDLESS of what it points to -- even a genuinely off-box
+    \\fileserver\share\tool.exe. A network-share executable can't be confined to (or reasoned
+    about against) the local repo root by a string comparison at all, so it fails closed. This
+    also documents the (rare, acceptable) behavior change: a policy that deliberately invoked a
+    tool off a mapped UNC share would now be refused; the security posture (never run an
+    unconfinable network binary against an untrusted checkout) wins over that niche convenience."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    repo.mkdir()
+    unc_tool = "\\\\fileserver\\tools\\ruff.exe"
+    monkeypatch.setattr(
+        apply_policy.shutil,
+        "which",
+        lambda cmd, path=None: unc_tool if cmd == "ruff" else None,
+    )
+    spawn_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        apply_policy.subprocess,
+        "run",
+        lambda argv, **kwargs: spawn_calls.append(list(argv)),
+    )
+
+    result = apply_policy._run_policy_command("lint", "ruff check .", repo, timeout=10)
+
+    assert result["passed"] is False
+    assert not spawn_calls
+    assert "UNC/network-share" in str(result["detail"])
+
+
+def test_run_policy_command_allows_local_drive_letter_tool_not_flagged_as_unc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    r"""No regression from the UNC guard: an ordinary local drive-letter tool (C:\... or its
+    \\?\C:\... extended-length form, which strips to C:\...) is NOT a UNC path and still runs."""
+    from tensor_grep.cli import apply_policy
+
+    repo = tmp_path / "untrusted-repo"
+    repo.mkdir()
+    trusted = tmp_path / "trusted-bin"
+    real_tool = _write_fake_executable(trusted, "ruff", "real-tool")
+
+    # Exercise BOTH the plain and the \\?\-extended local spelling; both must be allowed.
+    for which_return in (str(real_tool), "\\\\?\\" + str(real_tool.resolve())):
+        monkeypatch.setattr(
+            apply_policy.shutil,
+            "which",
+            lambda cmd, path=None, _r=which_return: _r if cmd == "ruff" else None,
+        )
+        captured: dict[str, object] = {}
+
+        def _fake_run(argv, _cap=captured, **kwargs):
+            _cap["argv"] = list(argv)
+            import subprocess as _sp
+
+            return _sp.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(apply_policy.subprocess, "run", _fake_run)
+
+        result = apply_policy._run_policy_command("lint", "ruff check .", repo, timeout=10)
+
+        assert result["passed"] is True, f"local tool spelled {which_return!r} must run"
+        assert captured.get("argv") is not None
+        assert "UNC" not in str(result["detail"])

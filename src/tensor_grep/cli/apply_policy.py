@@ -645,6 +645,29 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
             detail=f"{name} command executable {(argv[0] if argv else command)!r} was not found on PATH.",
         )
     resolved_path = Path(os.path.abspath(resolved_executable))
+
+    # #126 (Opus re-gate, 4th same-class edge -- UNC / network-share smuggling): a UNC spelling of
+    # the executable -- \\host\share\..., the loopback admin-share \\127.0.0.1\C$\...\<repo>\evil.cmd
+    # / \\localhost\C$\..., or the \\?\UNC\... extended form -- names the SAME on-disk in-repo shadow
+    # through the network/admin-share namespace, which Path.resolve() does NOT map back to its C:\
+    # drive-letter form (verified empirically). So _canonicalize_exec_parent returns a still-UNC
+    # parent and NEITHER the raw-stripped nor the canonical beneath-compare starts with the local
+    # repo-root string -- the OR-guard below would pass and the shadow would spawn (reproduced live
+    # end-to-end by the adversarial gate on a box where the C$ admin share is reachable). A
+    # UNC-spelled executable can never be confined to a LOCAL drive-letter repo root by a string
+    # comparison, and a legitimate local tool always resolves to a drive-letter path (C:\..., and
+    # \\?\C:\... -> C:\... after the ext-length strip -- NOT a UNC prefix), so refuse any UNC
+    # executable path outright. Fail closed, before the beneath-guard.
+    stripped_exec = _strip_extended_length_prefix(str(resolved_path))
+    if stripped_exec.startswith("\\\\"):
+        return _command_result(
+            passed=False,
+            detail=(
+                f"{name} command executable {argv[0]!r}: refusing a UNC/network-share "
+                f"executable path {resolved_path} (cannot be confined to the local repo root)."
+            ),
+        )
+
     try:
         untrusted_root = cwd.resolve()
     except OSError:
