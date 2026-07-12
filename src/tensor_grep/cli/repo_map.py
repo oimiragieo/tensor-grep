@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import atexit
+import hashlib
 import json
 import math
 import os
@@ -327,6 +328,12 @@ _DEFAULT_REPO_CONTEXT_CACHE_MAX_ROOTS = 32
 # multi-MB bundled/generated files.  Override with env var.
 _MAX_PARSE_BYTES_ENV = "TENSOR_GREP_MAX_PARSE_BYTES"
 _DEFAULT_MAX_PARSE_BYTES = 2_000_000
+# Total-resident-bytes budget for the content-addressed AST parse cache (see
+# _cached_ast_parse below).  Bounds DAEMON MEMORY -- independent of _MAX_PARSE_BYTES_ENV
+# above, which only bounds a single file's eligibility to be parsed/cached at all.
+# Override with env var.
+_AST_CACHE_BYTES_ENV = "TENSOR_GREP_AST_CACHE_BYTES"
+_DEFAULT_AST_CACHE_BYTES = 64 * 1024 * 1024  # 64 MiB
 _RUST_TEST_FN_PATTERN = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
@@ -357,6 +364,11 @@ def _repo_context_cache_max_roots() -> int:
 def _max_parse_bytes() -> int:
     """Return the per-file byte cap for AST parsing (O2)."""
     return _configured_positive_int(_MAX_PARSE_BYTES_ENV, _DEFAULT_MAX_PARSE_BYTES)
+
+
+def _ast_cache_byte_budget() -> int:
+    """Return the total-resident-bytes budget for the AST parse cache."""
+    return _configured_positive_int(_AST_CACHE_BYTES_ENV, _DEFAULT_AST_CACHE_BYTES)
 
 
 def _remember_repo_context(
@@ -1661,21 +1673,129 @@ def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
     return entries
 
 
-@lru_cache(maxsize=2048)
+# ---------------------------------------------------------------------------
+# Content-addressed, memory-bounded AST parse cache backing _cached_ast_parse below.
+#
+# Was `@lru_cache(maxsize=2048)` -- an ENTRY-COUNT bound, not a memory bound. 2048 cached ASTs
+# of large files is unbounded resident-memory growth in the long-lived warm daemon (external-
+# audit finding: an OOM/DoS vector). Replaced with a hand-rolled LRU bounded by TOTAL CACHED
+# SOURCE BYTES (`_ast_cache_byte_budget()`, env-configurable, default 64 MiB), evicting
+# least-recently-used entries on insert -- same eviction shape as
+# `_remember_repo_context`/`_get_repo_context_cache_entry` above, just keyed by cumulative bytes
+# instead of entry count.
+# ---------------------------------------------------------------------------
+
+
+class _AstCacheInfo(NamedTuple):
+    """Observability snapshot for `_cached_ast_parse`'s cache. `hits`/`misses` match
+    `functools.lru_cache.cache_info()`'s field names (this was a plain lru_cache before);
+    `evictions`/`current_bytes`/`current_entries` are new for the byte-budgeted design."""
+
+    hits: int
+    misses: int
+    evictions: int
+    current_bytes: int
+    current_entries: int
+
+
+_ast_cache: OrderedDict[str, tuple[ast.Module, int]] = OrderedDict()
+_ast_cache_lock = threading.Lock()
+_ast_cache_stats: dict[str, int] = {"hits": 0, "misses": 0, "evictions": 0, "current_bytes": 0}
+
+
 def _cached_ast_parse(source: str) -> ast.Module:
     """Content-addressed AST parse cache. `build_agent_capsule` parses each Python file 2-3x
     across phases -- once in the map-build imports/symbols pass and again in the caller/blast-radius
     consumer scan (and the `tg imports`/`importers` extractors) -- all on the SAME source read the
     same way (`path.read_text(encoding="utf-8")`). Profiling `tg agent` on an 872-file repo (2026-
     07-11) showed ~40% of the wall in `ast.parse` + `ast.walk` over those duplicate parses (1512
-    parses for ~783 files). Keying on the source TEXT (not the path) is staleness-free: an edited
-    file has different content -> a fresh key -> a fresh parse, so this stays correct even under the
-    reused session-daemon process (no mtime races). Callers only ever READ the tree (`tree.body` /
-    `ast.walk` + `isinstance`, no mutation -- audited), so sharing one parsed tree is safe. Raises
-    on invalid syntax exactly like `ast.parse` (lru_cache does not cache the exception, so a
-    syntax-error file simply re-raises + re-parses each time -- the caller's try/except is
-    unchanged). Bounded at 2048 entries to cap resident memory in the long-lived daemon."""
-    return ast.parse(source)
+    parses for ~783 files).
+
+    Bounded by TOTAL CACHED SOURCE BYTES (`_ast_cache_byte_budget()`, default 64 MiB), not entry
+    count -- see the module comment above. A source larger than `_max_parse_bytes()` (or larger
+    than the byte budget itself) BYPASSES the cache: it is still fully parsed and a real
+    `ast.Module` is returned, it is just never stored. Bypass must never degrade into a skip --
+    several of this function's ~9 call sites have no size guard of their own and would silently
+    lose symbols/imports/callers if this returned anything less than a fully parsed tree.
+
+    Keying on the source TEXT (not the path) is staleness-free: an edited file has different
+    content -> a fresh sha256 key -> a fresh parse, so this stays correct even under the reused
+    session-daemon process (no mtime races, and no path-keyed staleness risk -- see the #535
+    daemon-staleness regression this design must never reintroduce). Callers only ever READ the
+    tree (`tree.body` / `ast.walk` + `isinstance`, no mutation -- audited), so sharing one parsed
+    tree across callers is safe. Raises on invalid syntax exactly like `ast.parse` (a syntax-error
+    source is never cached -- it simply re-raises + re-parses each time; callers' try/except is
+    unchanged).
+
+    Thread safety: the daemon calls this concurrently. The lock is held ONLY around the
+    dict/counter mutations, never around `ast.parse()` itself -- holding it there would serialize
+    all parsing across every concurrent caller. Two threads racing on the same brand-new source
+    may both parse outside the lock; the loser's redundant tree is discarded under the lock and
+    counted as a hit (a benign, tolerated double-parse race)."""
+    key = hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+    with _ast_cache_lock:
+        cached = _ast_cache.get(key)
+        if cached is not None:
+            _ast_cache.move_to_end(key)
+            _ast_cache_stats["hits"] += 1
+            return cached[0]
+
+    # Miss: parse OUTSIDE the lock (see docstring -- never serialize concurrent parsing).
+    tree = ast.parse(source)
+    size = len(source.encode("utf-8"))
+    budget = _ast_cache_byte_budget()
+
+    if size > _max_parse_bytes() or size > budget:
+        # Per-entry ceiling: too large to cache (or larger than the whole budget). Bypass means
+        # "parse, don't store" -- the caller still gets a real, correct ast.Module.
+        with _ast_cache_lock:
+            _ast_cache_stats["misses"] += 1
+        return tree
+
+    with _ast_cache_lock:
+        raced = _ast_cache.get(key)
+        if raced is not None:
+            # Another thread inserted this exact key while we were parsing above.
+            _ast_cache.move_to_end(key)
+            _ast_cache_stats["hits"] += 1
+            return raced[0]
+
+        _ast_cache_stats["misses"] += 1
+        while _ast_cache and _ast_cache_stats["current_bytes"] + size > budget:
+            _, (_, evicted_size) = _ast_cache.popitem(last=False)
+            _ast_cache_stats["current_bytes"] -= evicted_size
+            _ast_cache_stats["evictions"] += 1
+        _ast_cache[key] = (tree, size)
+        _ast_cache_stats["current_bytes"] += size
+
+    return tree
+
+
+def _ast_cache_info() -> _AstCacheInfo:
+    """Return a snapshot of the AST parse cache's counters (see `_AstCacheInfo`)."""
+    with _ast_cache_lock:
+        return _AstCacheInfo(
+            hits=_ast_cache_stats["hits"],
+            misses=_ast_cache_stats["misses"],
+            evictions=_ast_cache_stats["evictions"],
+            current_bytes=_ast_cache_stats["current_bytes"],
+            current_entries=len(_ast_cache),
+        )
+
+
+def _ast_cache_clear() -> None:
+    """Clear the AST parse cache and reset its counters (mirrors `lru_cache.cache_clear()`)."""
+    with _ast_cache_lock:
+        _ast_cache.clear()
+        _ast_cache_stats["hits"] = 0
+        _ast_cache_stats["misses"] = 0
+        _ast_cache_stats["evictions"] = 0
+        _ast_cache_stats["current_bytes"] = 0
+
+
+_cached_ast_parse.cache_info = _ast_cache_info  # type: ignore[attr-defined]
+_cached_ast_parse.cache_clear = _ast_cache_clear  # type: ignore[attr-defined]
 
 
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
