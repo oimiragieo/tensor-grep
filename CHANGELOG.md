@@ -1,6 +1,74 @@
 # CHANGELOG
 
 
+## v1.65.5 (2026-07-12)
+
+### Bug Fixes
+
+- **index**: Atomic + locked .tg_index persistence -- crash-corruption and concurrent-writer
+  lost-update (audit #138 #2) ([#546](https://github.com/oimiragieo/tensor-grep/pull/546),
+  [`aa57254`](https://github.com/oimiragieo/tensor-grep/commit/aa5725405ee7b9e28779a9f417d30def435311ba))
+
+index.json (the persisted .tg_index trigram index) was written via a direct std::fs::write with no
+  cross-process coordination: a crash mid-write left a truncated/corrupt index behind, and
+  concurrent writers could race a read-modify-write cycle and lose each other's updates. Re-fired
+  after a prior session died mid-task (STEP0-only, no commits landed on that attempt).
+
+- rust_core/src/index_lock.rs (new): O_CREAT|O_EXCL write lock mirroring
+  src/tensor_grep/cli/_index_lock.py -- pid+random-token ownership, mtime stale-reclaim at >10s, 12s
+  acquire timeout (H9: timeout must exceed stale, enforced with a compile-time assertion, not just
+  documented), a heartbeat thread that keeps a live holder's lock fresh so a waiter never mistakes
+  "slow" for "dead". Also carries replace_with_retry (Windows transient PermissionError retry) and a
+  std-only random_token() (no new dependency).
+
+- rust_core/src/index.rs: TrigramIndex::save/save_json now go through a new atomic_write_bytes
+  helper -- write a temp file IN THE DESTINATION DIR, fsync, atomic rename via
+  index_lock::replace_with_retry, then (cfg(unix) only) fsync the parent directory. The destination
+  is untouched until the single atomic rename, so a crash before it leaves the prior content (or
+  nothing) and a crash cannot land a torn/partial file.
+
+- rust_core/src/main.rs: the write lock is acquired ONLY around save() (the new save_index_locked
+  helper) -- detect_warm_index_state and TrigramIndex::load stay fully lock-free, per the "never
+  lock the read path" invariant (a wrong lock there would serialize or deadlock every `tg`
+  invocation against a warm index). On a lock-acquire timeout, or an actual write failure,
+  save_index_locked warns to stderr and returns without persisting; the caller's already-built
+  in-memory index still answers the search (Backend Fail-Closed Contract governs results, not the
+  cache). Also fixes a redundant double-load found while wiring this up: detect_warm_index_state now
+  returns the Option<TrigramIndex> it already loaded so handle_index_search reuses it instead of
+  re-reading and re-deserializing the same .tg_index a second time.
+
+- rust_core/tests/test_index_lock_concurrency.rs (new): TDD coverage on the real compiled tg binary
+  (no CliRunner-equivalent) -- * hammer: 20 concurrent `tg search --index` against one fresh root;
+  every process returns correct results, the final index loads cleanly, no lock file survives, and
+  per-acquisition interval logging proves no two writers ever held the lock at the same instant. *
+  atomic-crash: repeated kill-mid-rebuild (process_control terminate on a short jittered bound)
+  never leaves a torn/unloadable .tg_index. * lock-timeout: a held+heartbeating lock forces the
+  competing process to wait out the full ~12s production timeout, then it still returns correct
+  results and skips persistence (no hang, no error). * stale-reclaim: an abandoned
+  (non-heartbeating, backdated) lock is reclaimed in well under the timeout, not waited out. `tg
+  index` does not exist as a bare subcommand in this codebase (verified: no Commands::Index variant,
+  no bootstrap/typer routing) -- `tg search --index` is the actual, and only, persistence entry
+  point; the tests exercise that.
+
+A thread-level hammer test in index_lock.rs's own unit suite caught a real lost-wakeup race during
+  development (a stop signal sent before the heartbeat thread's first wait could be missed, since
+  Condvar::notify_all only wakes threads already waiting) -- fixed by checking the stop flag before
+  AND after waiting. Two unit tests were also found to be flaky under `cargo test`'s parallel load
+  (heartbeat thread starved past an artificially tight stale_after) and were widened to
+  production-realistic margins; re-verified stable across repeated runs including a 32-thread stress
+  run.
+
+Gate: cargo check --bin tg and --bin tg --features cuda both 0 new warnings; cargo fmt --check
+  clean; cargo clippy --all-targets 0 new warnings (1 pre-existing, unrelated, in
+  rg_passthrough.rs); cargo test --bin tg (80/80), --lib (100/100), --test test_index (42/42),
+  --test test_routing (81/81), --test test_index_lock_concurrency (4/4, new) all green, plus a full
+  `cargo test --no-default-features` sweep across every test binary in the crate, all green.
+
+No push, no PR.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.65.4 (2026-07-12)
 
 ### Bug Fixes
