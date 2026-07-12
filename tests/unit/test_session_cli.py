@@ -1738,7 +1738,7 @@ def test_session_daemon_lifecycle(tmp_path: Path) -> None:
     assert status["response_cache_oversized_skips"] == 0
     assert status["response_cache_scope"] == (
         "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
-        "blast-radius requests"
+        "blast-radius/orient/agent requests"
     )
     assert status["response_cache_stale_detection"] == "snapshot_mtime_only"
     assert status["response_cache_added_file_detection"] is False

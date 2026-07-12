@@ -122,7 +122,7 @@ def test_capsule_uplifts_confidence_for_corroborated_token_budget_omission(
     paths = _write_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=paths["handler"].resolve(),
             caller_file=paths["caller"].resolve(),
@@ -163,7 +163,7 @@ def test_capsule_keeps_safety_floor_when_symbol_not_named_and_no_call_sites(
     paths = _write_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload(
             primary_file=paths["handler"].resolve(),
             caller_file=paths["caller"].resolve(),
@@ -205,7 +205,7 @@ def test_capsule_keeps_safety_floor_for_genuine_misroute_even_with_corroboration
         }
         return payload
 
-    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", fake_context_render)
 
     payload = agent_capsule.build_agent_capsule(
         _PRIMARY_SYMBOL,
@@ -282,7 +282,7 @@ def test_capsule_uplifts_confidence_for_corroborated_targeted_validation_evidenc
     paths = _write_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload_with_validation_plan(
             primary_file=paths["handler"].resolve(),
             caller_file=paths["caller"].resolve(),
@@ -320,7 +320,7 @@ def test_capsule_repo_scope_step_never_earns_targeted_validation_uplift(
     paths = _write_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _context_payload_with_validation_plan(
             primary_file=paths["handler"].resolve(),
             caller_file=paths["caller"].resolve(),
@@ -364,7 +364,7 @@ def test_capsule_keeps_safety_floor_for_misroute_even_with_targeted_validation_e
         }
         return payload
 
-    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", fake_context_render)
 
     payload = agent_capsule.build_agent_capsule(
         _PRIMARY_SYMBOL,

@@ -540,6 +540,133 @@ def _collect_capsule_call_site_evidence(
     return related_call_sites, evidence
 
 
+def _collect_capsule_call_site_evidence_from_map(
+    query: str,
+    rm: dict[str, Any],
+    target: dict[str, Any],
+    *,
+    include_blast_radius: bool,
+    max_files: int,
+    seed_confidence: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
+    """Task #108 (Tier-2 daemon moat) map-based sibling of ``_collect_capsule_call_site_evidence``:
+    identical gating + evidence shape, but resolves the blast radius against an already-built
+    ``rm`` (e.g. the warm session daemon's cached map) via ``build_symbol_blast_radius_from_map``
+    instead of re-scanning through the cold ``build_symbol_blast_radius`` wrapper.
+
+    TRAP A (audit #107 class): the cold wrapper transparently retries a truncated no_match via
+    ``_literal_symbol_seed_files`` (see ``build_symbol_blast_radius``); the map-based lookup here
+    has NO such rescue available (there is no filesystem to re-scan -- only the map already in
+    hand). A no_match on a possibly-truncated map is therefore UNRELIABLE here in a way it is not
+    on the cold path: the symbol may simply live outside the daemon session's scan window rather
+    than genuinely be absent. Returns a third element, ``daemon_unreliable``, True in exactly that
+    case -- reusing ``repo_map._blast_radius_no_match_is_possibly_truncated`` so this arm and the
+    cold arm's own rescue trigger agree verbatim on when a no_match is trustworthy. The caller
+    (``build_agent_capsule_from_map``) surfaces this as a top-level sentinel so the daemon client
+    wrapper (``main._maybe_agent_via_running_daemon``) can discard the whole response and fall
+    back to cold, exactly like the existing #107 fix for the standalone ``blast-radius`` command.
+    Every OTHER early return below mirrors the cold sibling's reasons exactly and is always
+    reliable (nothing about them depends on the map's scan window), so they report False.
+    """
+    if not include_blast_radius:
+        return (
+            [],
+            {
+                "status": "disabled",
+                "reason": "call-site evidence disabled by caller",
+            },
+            False,
+        )
+    target_symbol = str(target.get("symbol") or "")
+    if not target_symbol:
+        return (
+            [],
+            {
+                "status": "skipped",
+                "reason": "primary target has no symbol",
+            },
+            False,
+        )
+    if not _target_symbol_was_explicitly_requested(query, target):
+        return (
+            [],
+            {
+                "status": "skipped",
+                "reason": "primary symbol was not explicitly requested by query",
+            },
+            False,
+        )
+    if seed_confidence < 0.75:
+        return (
+            [],
+            {
+                "status": "skipped",
+                "reason": "primary target confidence below call-site collection threshold",
+            },
+            False,
+        )
+
+    max_callers = max(1, min(int(max_files) * 2, 8))
+    try:
+        radius_payload = repo_map.build_symbol_blast_radius_from_map(
+            rm,
+            target_symbol,
+            max_depth=1,
+        )
+        radius_payload = repo_map._apply_blast_radius_output_limits(
+            radius_payload,
+            max_callers=max_callers,
+            max_files=max_callers,
+        )
+    except Exception as exc:  # pragma: no cover - defensive evidence side path
+        return (
+            [],
+            {
+                "status": "error",
+                "reason": "call-site evidence collection failed",
+                "error": str(exc),
+            },
+            False,
+        )
+
+    if radius_payload.get("no_match"):
+        daemon_unreliable = repo_map._blast_radius_no_match_is_possibly_truncated(radius_payload)
+        return (
+            [],
+            {
+                "status": "skipped",
+                "reason": "primary symbol definition was not found by blast-radius",
+                "symbol": target_symbol,
+            },
+            daemon_unreliable,
+        )
+
+    related_call_sites = [
+        record
+        for record in (
+            _related_call_site_record(caller, target_symbol=target_symbol)
+            for caller in _as_list_of_dicts(radius_payload.get("callers"))
+        )
+        if record is not None
+    ]
+    output_limit = _as_dict(radius_payload.get("output_limit"))
+    provenance = _dedupe([
+        str(record.get("provenance") or "heuristic") for record in related_call_sites
+    ])
+    evidence = {
+        "status": "collected" if related_call_sites else "collected_no_call_sites",
+        "symbol": target_symbol,
+        "routing_reason": str(radius_payload.get("routing_reason") or "symbol-blast-radius"),
+        "max_callers": max_callers,
+        "returned_call_sites": len(related_call_sites),
+        "omitted_call_sites": int(output_limit.get("omitted_callers", 0) or 0),
+        "provenance": provenance,
+        "graph_trust_summary": _as_dict(radius_payload.get("graph_trust_summary")),
+        "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
+    }
+    return related_call_sites, evidence, False
+
+
 # DAR (Dependency-Aware Retrieval, arxiv steal #4): surface the primary target's OUTBOUND
 # dependencies (imports + callees) as budget-isolated related-context, so an agent can edit
 # without extra file reads. THE TRAP: `payload["symbols"]`/`payload["imports"]` (the whole-repo
@@ -1836,27 +1963,108 @@ def build_agent_capsule(
     gpu_timeout_s: float = 5.0,
     ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    resolved_path = str(Path(path).resolve())
+    """Thin cold-path wrapper (task #108): build the repo map (the more expensive of the two
+    scans this capsule used to run independently -- see ``build_agent_capsule_from_map``'s
+    docstring) and delegate everything else, so the warm session-daemon fast path (which reuses
+    an already-cached map for BOTH sub-steps) shares one code path with the cold path -- parity
+    by construction rather than a second, driftable implementation."""
+    from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
+
+    effective_max_repo_files = (
+        max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
+    )
+    rm = repo_map.build_repo_map(path, max_repo_files=effective_max_repo_files)
+    return build_agent_capsule_from_map(
+        rm,
+        query,
+        max_files=max_files,
+        max_sources=max_sources,
+        max_tokens=max_tokens,
+        max_repo_files=max_repo_files,
+        model=model,
+        include_blast_radius=include_blast_radius,
+        semantic_provider=semantic_provider,
+        gpu_device_ids=gpu_device_ids,
+        gpu_timeout_s=gpu_timeout_s,
+        ignore=ignore,
+    )
+
+
+def build_agent_capsule_from_map(
+    rm: dict[str, Any],
+    query: str,
+    *,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_tokens: int | None = 1200,
+    max_repo_files: int | None = None,
+    model: str | None = None,
+    include_blast_radius: bool = True,
+    semantic_provider: str = "native",
+    gpu_device_ids: list[int] | None = None,
+    gpu_timeout_s: float = 5.0,
+    ignore: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Task #108 (Tier-2 daemon moat): the map-based core of ``build_agent_capsule``, taking an
+    already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
+    the filesystem itself. ``build_agent_capsule`` is a thin wrapper around this function, so
+    cold and warm output are identical by construction for the same map.
+
+    Before this refactor the cold path ran TWO independent ``build_repo_map`` scans at the same
+    ``max_repo_files`` cap -- one inside ``build_context_render`` (primary-target ranking) and a
+    SECOND inside ``_collect_capsule_call_site_evidence``'s call to ``build_symbol_blast_radius``
+    (call-site evidence). Both sub-steps here reuse the ONE ``rm`` the caller already has, which is
+    both the daemon-moat win (skip the second re-scan too, not just the first) and the reason
+    ``_raw_context_ref``'s echoed ``max_repo_files`` is kept as an explicit parameter here rather
+    than derived from ``rm`` -- it never drove a second scan in the first place, only a
+    documentation string.
+
+    ``include_blast_radius``/``gpu_device_ids``/``gpu_timeout_s`` are accepted for full parity
+    with ``build_agent_capsule``'s signature (a direct caller may still want them), but the
+    session daemon's own dispatch (``session_store._serve_session_request_from_payload``) never
+    forwards a non-default ``gpu_device_ids`` -- the client wrapper (``main.
+    _maybe_agent_via_running_daemon``) refuses to route a ``--gpu-device-ids`` request to the
+    daemon at all, because the GPU evidence probe shells out to a fresh ``tg search`` subprocess
+    (``_agent_gpu_evidence`` below) that must never run inside a long-lived daemon worker thread.
+    """
+    # Local import avoids a module-level circular import (orient_capsule imports repo_map, which
+    # this module also imports) -- same discipline repo_map.build_context_render's own reuse of
+    # this helper uses, and the same reasoning as the _suggested_scope_from_map import below.
+    from tensor_grep.cli.orient_capsule import _apply_ignore_globs
+
+    rm = _apply_ignore_globs(rm, ignore)
+    resolved_path = str(rm["path"])
     requested_semantic_provider = semantic_provider
     effective_semantic_provider = (
         "hybrid"
         if semantic_provider == "native" and _capsule_lsp_confidence_boost_enabled()
         else semantic_provider
     )
-    payload = repo_map.build_context_render(
+    payload = repo_map.build_context_render_from_map(
+        rm,
         query,
-        path,
         max_files=max_files,
-        max_repo_files=max_repo_files,
         max_sources=max_sources,
         max_tokens=max_tokens,
         model=model,
         optimize_context=True,
         render_profile="full",
         semantic_provider=effective_semantic_provider,
-        ignore=ignore,
-        include_suggested_scope=True,
     )
+    # TRAP B (task #108 design review): `suggested_scope` is computed in the WRAPPER
+    # (`build_context_render`, repo_map.py) via `include_suggested_scope=True`, NOT inside
+    # `build_context_render_from_map` -- replicate that exact block here (same gate, same
+    # helper) against OUR OWN `rm`, or a warm capsule would silently drop `suggested_scope` on a
+    # truncated scan. Mirrors repo_map.build_context_render's own comment/logic verbatim.
+    scan_limit_for_suggested_scope = rm.get("scan_limit")
+    if isinstance(scan_limit_for_suggested_scope, dict) and scan_limit_for_suggested_scope.get(
+        "possibly_truncated"
+    ):
+        from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
+
+        suggested_scope_from_map = _suggested_scope_from_map(rm)
+        if suggested_scope_from_map is not None:
+            payload["suggested_scope"] = suggested_scope_from_map
     # PR-1 (1D): whether the underlying repo scan itself (not the capsule's own snippet/token
     # output budget) was truncated -- gates the exit-2-on-scan-truncation contract below and
     # disqualifies the T2 corroborated-resolution confidence uplift (a capped-scan primary may
@@ -2139,14 +2347,15 @@ def build_agent_capsule(
             or requested_semantic_provider
         ),
     )
-    related_call_sites, call_site_evidence = _collect_capsule_call_site_evidence(
-        query,
-        resolved_path,
-        target,
-        include_blast_radius=include_blast_radius,
-        max_files=max_files,
-        max_repo_files=max_repo_files,
-        seed_confidence=primary_target_seed_confidence,
+    related_call_sites, call_site_evidence, call_site_evidence_daemon_unreliable = (
+        _collect_capsule_call_site_evidence_from_map(
+            query,
+            rm,
+            target,
+            include_blast_radius=include_blast_radius,
+            max_files=max_files,
+            seed_confidence=primary_target_seed_confidence,
+        )
     )
     # F4: verified call-site evidence is only available NOW (after the collection above), so the
     # token-budget-omission confidence uplift must happen here, post-hoc, rather than inside
@@ -2308,6 +2517,16 @@ def build_agent_capsule(
     if outbound_dependencies:
         result["outbound_dependencies"] = outbound_dependencies
         result["outbound_dependency_evidence"] = outbound_dependency_evidence
+    # TRAP A (task #108, the audit #107 divergence class): the call-site-evidence collector above
+    # hit a no_match it cannot trust (possibly-truncated map, no literal-seed rescue available on
+    # the _from_map path -- see _collect_capsule_call_site_evidence_from_map's docstring). Stamp an
+    # internal-only sentinel the daemon client wrapper (main._maybe_agent_via_running_daemon)
+    # checks to discard this WHOLE response and fall back to cold, which DOES have the rescue.
+    # Never set on the cold path (the cold call-site-evidence collector always runs its rescue
+    # internally, so this condition cannot arise there) -- additive + conditional, same pattern as
+    # scan_limit/suggested_scope above, so a reliable capsule stays byte-identical.
+    if call_site_evidence_daemon_unreliable:
+        result["daemon_evidence_unreliable"] = True
     return result
 
 

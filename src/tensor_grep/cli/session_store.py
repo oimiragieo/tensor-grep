@@ -15,6 +15,8 @@ from typing import Any, TextIO, cast
 from uuid import uuid4
 
 from tensor_grep.cli._index_lock import index_lock, replace_with_retry
+from tensor_grep.cli.agent_capsule import build_agent_capsule_from_map
+from tensor_grep.cli.orient_capsule import build_orient_capsule_from_map
 from tensor_grep.cli.repo_map import (
     DEFAULT_AGENT_REPO_MAP_LIMIT,
     _clear_all_source_caches,
@@ -54,6 +56,12 @@ _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # Same underlying value as the context-render/edit-plan limits above (kept as a distinct name
 # for intent clarity at the call site, not a distinct behavior).
 _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+# task #108 (Tier-2 daemon moat): same underlying default as every limit above -- `orient` has no
+# CLI --max-repo-files flag at all (always resolves this value), `agent`'s mirrors the
+# symbol-command default. Kept as distinct names for intent clarity at the call site, not a
+# distinct behavior.
+_DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+_DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # audit I2: bound on-disk session retention; keep at most N newest explicit sessions per root
 # so per-open cost and disk usage stay bounded. Configurable via TG_SESSION_MAX.
 _SESSION_MAX_ENV = "TG_SESSION_MAX"
@@ -1356,6 +1364,60 @@ def _serve_session_request_from_payload(
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-plan"
+        return response
+
+    if command == "orient":
+        # Task #108 (Tier-2 daemon moat): no _limited_session_repo_map slicing, unlike
+        # context_render/context_edit_plan/blast_radius_plan above -- orient's centrality ranking
+        # is a whole-map graph computation (import in-degree/out-degree over ALL scanned files);
+        # slicing an already-cached bigger map down to N files post-hoc is not equivalent to
+        # having scanned only N files (importers of the dropped files would still count edges
+        # into files no longer present), so it must see the whole cached map, exactly like the 5
+        # symbol commands above (none of which slice either).
+        response = build_orient_capsule_from_map(
+            repo_map,
+            max_tokens=int(request.get("max_tokens", 3000)),
+            max_central_files=int(request.get("max_central_files", 10)),
+            ignore=tuple(request.get("ignore") or ()),
+            auto_deweight=bool(request.get("auto_deweight", True)),
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-orient"
+        return response
+
+    if command == "agent":
+        query = str(request.get("query", "")).strip()
+        if not query:
+            raise ValueError("agent requests require a non-empty query")
+        # Same no-slicing reasoning as orient above: build_agent_capsule_from_map's OWN two
+        # sub-steps (context-render-equivalent ranking + blast-radius-equivalent call-site
+        # evidence) both need the whole cached map, not a per-call subset.
+        raw_max_tokens = request.get("max_tokens", 1200)
+        raw_max_repo_files = request.get("max_repo_files", _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT)
+        response = build_agent_capsule_from_map(
+            repo_map,
+            query,
+            max_files=int(request.get("max_files", 3)),
+            max_sources=int(request.get("max_sources", 5)),
+            max_tokens=(
+                None if raw_max_tokens in (None, "") else int(cast(int | str, raw_max_tokens))
+            ),
+            max_repo_files=(
+                None
+                if raw_max_repo_files in (None, "")
+                else int(cast(int | str, raw_max_repo_files))
+            ),
+            model=(None if request.get("model") in (None, "") else str(request["model"])),
+            semantic_provider=provider,
+            ignore=tuple(request.get("ignore") or ()),
+            # include_blast_radius/gpu_device_ids/gpu_timeout_s deliberately NOT threaded from
+            # `request` -- the CLI has no flag reaching the first, and the client wrapper
+            # (main._maybe_agent_via_running_daemon) refuses to route a --gpu-device-ids request
+            # to the daemon at all (see build_agent_capsule_from_map's own docstring), so both
+            # keep their build_agent_capsule_from_map defaults (True / None / 5.0).
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-agent"
         return response
 
     raise ValueError(f"unknown session command: {command or '<empty>'}")

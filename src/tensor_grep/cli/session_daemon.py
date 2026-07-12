@@ -23,8 +23,10 @@ from uuid import uuid4
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
+    _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
     _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
     _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
@@ -65,7 +67,7 @@ _DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
 _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES = 16
 _DAEMON_RESPONSE_CACHE_SCOPE = (
     "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
-    "blast-radius requests"
+    "blast-radius/orient/agent requests"
 )
 _DAEMON_RESPONSE_CACHE_STALE_DETECTION = "snapshot_mtime_only"
 _DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION = False
@@ -117,6 +119,9 @@ _DAEMON_METRICS_EXPENSIVE_COMMANDS = frozenset({
     "blast_radius",
     "blast_radius_render",
     "blast_radius_plan",
+    # task #108 (Tier-2 daemon moat): orient/agent join the expensive-command set.
+    "orient",
+    "agent",
 })
 _DAEMON_METRICS_SYMBOL_COMMANDS = frozenset({
     "defs",
@@ -969,6 +974,61 @@ def _symbol_command_response_cache_key(
     )
 
 
+def _orient_response_cache_key(
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[str, ...]:
+    # task #108 (Tier-2 daemon moat): `orient` has NO query (it is a whole-repo capsule, unlike
+    # every other cacheable command) -- the literal "orient" command-string field below is what
+    # keeps this key isolated from every OTHER command's key space (test: orient-key never
+    # collides with agent-key), same anti-bleed discipline as _symbol_command_response_cache_key.
+    return (
+        _path_cache_key(path),
+        session_id,
+        *_session_payload_fingerprint(payload),
+        "orient",
+        _request_cache_value(request, "max_tokens", 3000),
+        _request_cache_value(request, "max_central_files", 10),
+        str(tuple(request.get("ignore") or ())),
+        _request_cache_value(request, "auto_deweight", True),
+    )
+
+
+def _agent_response_cache_key(
+    session_id: str,
+    path: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[str, ...]:
+    # task #108 (Tier-2 daemon moat): EVERY output-affecting flag `tg agent` exposes is a key
+    # field (query + max_files/max_sources/max_tokens/model/provider/max_repo_files/ignore) -- a
+    # missing field here would let two requests differing only in that field collide on the same
+    # cached answer, same discipline as _context_render_response_cache_key /
+    # _symbol_command_response_cache_key above. `include_blast_radius`/`gpu_device_ids` are
+    # deliberately excluded: neither is reachable from a daemon request (see
+    # build_agent_capsule_from_map's docstring), so there is nothing to distinguish.
+    return (
+        _path_cache_key(path),
+        session_id,
+        *_session_payload_fingerprint(payload),
+        "agent",
+        str(request.get("query", "")).strip(),
+        _request_cache_value(request, "max_files", 3),
+        _request_cache_value(request, "max_sources", 5),
+        _request_cache_value(request, "max_tokens", 1200),
+        _request_cache_value(request, "model"),
+        _request_cache_value(request, "provider", "native"),
+        str(tuple(request.get("ignore") or ())),
+        _request_cache_value(
+            request,
+            "max_repo_files",
+            _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
+        ),
+    )
+
+
 def _response_cache_key_for_command(
     command: str,
     session_id: str,
@@ -980,6 +1040,10 @@ def _response_cache_key_for_command(
         return _context_render_response_cache_key(session_id, path, request, payload)
     if command == "context_edit_plan":
         return _context_edit_plan_response_cache_key(session_id, path, request, payload)
+    if command == "orient":
+        return _orient_response_cache_key(session_id, path, request, payload)
+    if command == "agent":
+        return _agent_response_cache_key(session_id, path, request, payload)
     if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS:
         return _symbol_command_response_cache_key(command, session_id, path, request, payload)
     return None
@@ -1023,9 +1087,23 @@ _IMPLICIT_SESSION_SYMBOL_COMMANDS = frozenset({
     "callers",
     "blast_radius",
 })
-_IMPLICIT_SESSION_COMMANDS = frozenset({"context_render", "context_edit_plan"}) | (
-    _IMPLICIT_SESSION_SYMBOL_COMMANDS
+# task #108: orient/agent gain an implicit session exactly like the 5 symbol commands above (no
+# explicit session_id required from the client) -- kept as a separate frozenset (not folded into
+# _IMPLICIT_SESSION_SYMBOL_COMMANDS) since neither is symbol-shaped (no `symbol` request field,
+# no `_symbol_command_response_cache_key` sharing) and that name is reused verbatim elsewhere for
+# the 5-command-specific added-file discipline (audit #113).
+_TIER2_MAP_CAPSULE_COMMANDS = frozenset({"orient", "agent"})
+_IMPLICIT_SESSION_COMMANDS = (
+    frozenset({"context_render", "context_edit_plan"})
+    | _IMPLICIT_SESSION_SYMBOL_COMMANDS
+    | _TIER2_MAP_CAPSULE_COMMANDS
 )
+# audit #113 extended to task #108: orient/agent are ALSO added-file-sensitive like the 5 symbol
+# commands (a new central file changes orient's centrality ranking; a new call site changes
+# agent's call-site evidence) -- see _serve_daemon_response_with_cache's detect_added_files gate
+# below, which branches on this set instead of _IMPLICIT_SESSION_SYMBOL_COMMANDS directly so a
+# cached response for either family busts on an added file, not just on a modified/removed one.
+_ADDED_FILE_SENSITIVE_COMMANDS = _IMPLICIT_SESSION_SYMBOL_COMMANDS | _TIER2_MAP_CAPSULE_COMMANDS
 
 
 def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> int | None:
@@ -1038,6 +1116,10 @@ def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> i
         return _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT
     if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS:
         return _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT
+    if command == "orient":
+        return _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT
+    if command == "agent":
+        return _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT
     return None
 
 
@@ -1115,14 +1197,17 @@ def _serve_daemon_response_with_cache(
     # audit #113 trap #1: context_render/context_edit_plan intentionally use
     # detect_added_files=False here (see docs/CONTRACTS.md) so a cache HIT never pays for a
     # directory walk -- new files stay invisible to those two commands until an explicit
-    # refresh. The 5 symbol commands are a correctness-sensitive code-intelligence surface (a
+    # refresh. The 5 symbol commands (task #108: now also orient/agent, via
+    # _ADDED_FILE_SENSITIVE_COMMANDS) are a correctness-sensitive code-intelligence surface (a
     # blast-radius/callers answer that silently omits a newly-added call site is a WRONG
-    # answer, not just a stale one), so they must honor the caller's real refresh_on_stale flag
-    # here instead of copying the context-command False -- a new call site in a brand-new file
-    # (nothing about any already-tracked file changes) must still bust the cache.
+    # answer, not just a stale one -- and identically, a new central file changes orient's
+    # ranking and a new call site changes agent's call-site evidence), so they must honor the
+    # caller's real refresh_on_stale flag here instead of copying the context-command False -- a
+    # new call site in a brand-new file (nothing about any already-tracked file changes) must
+    # still bust the cache.
     detect_added_files = (
         bool(session_request.get("refresh_on_stale", False))
-        if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS
+        if command in _ADDED_FILE_SENSITIVE_COMMANDS
         else False
     )
     _ensure_session_not_stale(payload, detect_added_files=detect_added_files)
@@ -1753,11 +1838,12 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_count": server.payload_cache.session_count,
                     "root_count": server.payload_cache.root_count,
                 }
-                # audit #113: observability now covers all 7 response-cacheable commands (the
-                # original context_render/context_edit_plan plus the 5 symbol commands) -- the
-                # SAME set _response_cache_key_for_command treats as cacheable. session_timing's
-                # build_metric naming below stays scoped to the original 2 (out of scope here).
-                if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS or command in {
+                # audit #113 (task #108: extended to 9): observability now covers all 9
+                # response-cacheable commands (the original context_render/context_edit_plan, the
+                # 5 symbol commands, and orient/agent) -- the SAME set _response_cache_key_for_
+                # command treats as cacheable. session_timing's build_metric naming below stays
+                # scoped to the original 2 (out of scope here).
+                if command in _ADDED_FILE_SENSITIVE_COMMANDS or command in {
                     "context_edit_plan",
                     "context_render",
                 }:

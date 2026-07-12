@@ -766,7 +766,7 @@ def test_capsule_uplifts_render_truncated_confidence_for_corroborated_primary(
     paths = _write_t2_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _t2_context_payload(
             primary_file=paths["handler"].resolve(),
             caller_file=paths["caller"].resolve(),
@@ -815,7 +815,7 @@ def test_capsule_scan_truncated_disqualifies_render_truncated_uplift(
         payload["scan_remediation"] = "raise --max-repo-files"
         return payload
 
-    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", fake_context_render)
 
     payload = agent_capsule.build_agent_capsule(
         _T2_PRIMARY_SYMBOL,
@@ -877,7 +877,7 @@ def test_capsule_render_truncated_genuine_tie_still_requires_confirmation(
         ]
         return payload
 
-    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", fake_context_render)
 
     payload = agent_capsule.build_agent_capsule(
         _T2_PRIMARY_SYMBOL,
@@ -910,7 +910,7 @@ def test_capsule_render_truncated_genuine_misroute_still_requires_confirmation(
         }
         return payload
 
-    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", fake_context_render)
 
     payload = agent_capsule.build_agent_capsule(
         _T2_PRIMARY_SYMBOL,

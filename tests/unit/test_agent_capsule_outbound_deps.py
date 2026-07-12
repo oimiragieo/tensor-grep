@@ -226,7 +226,7 @@ def test_dar_surfaces_known_outbound_dependency_with_resolved_location(
     paths = _write_dar_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _dar_context_payload(
             primary_file=paths["primary"].resolve(),
             file_summaries=[
@@ -322,7 +322,7 @@ def test_dar_no_deps_emits_neither_key_and_matches_kill_switch_output(
     primary_source = f"def {_PRIMARY_SYMBOL}(payload):\n    return payload\n"
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _dar_context_payload(
             primary_file=paths["primary"].resolve(),
             primary_source=primary_source,
@@ -370,7 +370,7 @@ def test_dar_caps_at_k_and_never_crowds_upstream_budget(
             file_summaries=file_summaries,
         )
 
-    monkeypatch.setattr(repo_map, "build_context_render", _payload)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", _payload)
 
     payload_on = agent_capsule.build_agent_capsule(
         _PRIMARY_SYMBOL,
@@ -407,7 +407,7 @@ def test_dar_records_ship_without_text_when_preview_budget_exhausted(
     paths = _write_dar_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _dar_context_payload(
             primary_file=paths["primary"].resolve(),
             file_summaries=[
@@ -446,7 +446,7 @@ def test_dar_never_mutates_confidence_or_consistency_state(
     paths = _write_confidence_isolation_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _dar_context_payload(
             primary_file=paths["primary"].resolve(),
             file_summaries=[
@@ -482,9 +482,26 @@ def test_dar_fail_safe_on_parse_error_emits_no_keys_and_does_not_raise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _write_dar_project(tmp_path)
+    # task #108: build_agent_capsule now runs a REAL build_repo_map before delegating to
+    # build_agent_capsule_from_map (the map is shared with the daemon-moat call-site-evidence
+    # step instead of a second independent scan) -- that initial scan would ALSO hit the
+    # _imports_and_symbols_for_path mock below and blow up before DAR's own fail-safe is ever
+    # exercised. Mock it out with a minimal map, same isolation boundary the full
+    # build_context_render mock gave this test before the refactor (it swallowed the internal
+    # scan entirely); only DAR's OWN targeted parse of the primary file should remain real+raising.
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_repo_map",
+        lambda *args, **kwargs: {
+            "path": str(paths["project"].resolve()),
+            "files": [],
+            "symbols": [],
+            "imports": [],
+        },
+    )
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render_from_map",
         lambda *args, **kwargs: _dar_context_payload(
             primary_file=paths["primary"].resolve(),
             file_summaries=[
@@ -518,7 +535,7 @@ def test_dar_fail_safe_when_primary_snippet_missing(
         payload["sources"] = []  # primary never lands in `snippets` at all
         return payload
 
-    monkeypatch.setattr(repo_map, "build_context_render", _payload)
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", _payload)
 
     payload = agent_capsule.build_agent_capsule(_PRIMARY_SYMBOL, paths["project"])
 
@@ -538,7 +555,7 @@ def test_dar_kill_switch_suppresses_real_dependencies(
     paths = _write_dar_project(tmp_path)
     monkeypatch.setattr(
         repo_map,
-        "build_context_render",
+        "build_context_render_from_map",
         lambda *args, **kwargs: _dar_context_payload(
             primary_file=paths["primary"].resolve(),
             file_summaries=[
