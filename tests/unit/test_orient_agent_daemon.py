@@ -628,3 +628,143 @@ def test_agent_never_touches_daemon_when_forced_off_in_ci(tmp_path: Path, monkey
 
     result = runner.invoke(app, ["agent", str(project), "helper", "--json"])
     assert result.exit_code == 0, result.output
+
+
+# ------------------------------------------------------------------------------------------
+# 12. Opus-gate FIX-FIRST: the COLD `tg agent` path must keep the literal-seed rescue (recover
+#     callers whose symbol def sorts BEYOND the scan cap). The task #108 refactor accidentally
+#     routed cold through the rescue-LESS `_from_map` collector (making the rescue-equipped
+#     `_collect_capsule_call_site_evidence` dead code AND letting the internal
+#     `daemon_evidence_unreliable` sentinel leak into cold output). The fix: cold uses the
+#     rescue-equipped collector; only the warm/daemon path uses the rescue-less one + sentinel.
+# ------------------------------------------------------------------------------------------
+
+
+def _def_out_of_window_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A repo where `compute_widget_total`'s DEF (`src/zzz_target.py`, sorts LAST) sits beyond a
+    `--max-repo-files 1` cap while its CALLER (`src/aaa_caller.py`, sorts FIRST) is in-window.
+    On the capped map, blast-radius `no_match`es the def (possibly_truncated); only the literal-
+    seed rescue (grep the FS -> rebuild with the def file -> re-run) recovers the in-window
+    caller. Returns (project, caller_file, def_file)."""
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    caller = src / "aaa_caller.py"
+    caller.write_text(
+        "from zzz_target import compute_widget_total\n\n\n"
+        "def invoke_widget():\n    return compute_widget_total(1, 2)\n",
+        encoding="utf-8",
+    )
+    definition = src / "zzz_target.py"
+    definition.write_text("def compute_widget_total(a, b):\n    return a + b\n", encoding="utf-8")
+    return project.resolve(), caller.resolve(), definition.resolve()
+
+
+def test_cold_call_site_evidence_collector_rescues_out_of_window_def(tmp_path: Path) -> None:
+    """The bidirectional oracle that would have caught the bug (collector level, no ranking): on
+    a truncated map whose target-symbol DEF is out of window, the RESCUE-equipped collector
+    (`_collect_capsule_call_site_evidence`, used by the COLD path) RECOVERS the in-window caller,
+    while the RESCUE-LESS collector (`_collect_capsule_call_site_evidence_from_map`, used by the
+    WARM/daemon path) returns EMPTY and flags `daemon_unreliable=True` so the client falls to
+    cold. Routing cold through the rescue-less one (the bug) would silently drop the caller."""
+    project, caller, _definition = _def_out_of_window_repo(tmp_path)
+    rm = repo_map.build_repo_map(str(project), max_repo_files=1)
+    assert rm["scan_limit"]["possibly_truncated"] is True
+    target = {"symbol": "compute_widget_total", "confidence": 0.9}
+
+    # WARM/daemon collector: no rescue -> empty + flagged unreliable.
+    related_warm, evidence_warm, unreliable = (
+        agent_capsule._collect_capsule_call_site_evidence_from_map(
+            "compute_widget_total",
+            rm,
+            target,
+            include_blast_radius=True,
+            max_files=3,
+            seed_confidence=0.9,
+        )
+    )
+    assert related_warm == []
+    assert evidence_warm["status"] == "skipped"
+    assert unreliable is True
+
+    # COLD collector: rescue recovers the in-window caller from a def-out-of-window truncated scan.
+    related_cold, evidence_cold = agent_capsule._collect_capsule_call_site_evidence(
+        "compute_widget_total",
+        str(project),
+        target,
+        include_blast_radius=True,
+        max_files=3,
+        max_repo_files=1,
+        seed_confidence=0.9,
+    )
+    assert evidence_cold["status"] == "collected"
+    assert len(related_cold) >= 1
+    assert any(str(caller) in str(record.get("file", "")) for record in related_cold), related_cold
+
+
+def test_cold_agent_capsule_recovers_out_of_window_callers_and_omits_sentinel(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """End-to-end cold `build_agent_capsule` recall guarantee. Native ranking cannot surface an
+    out-of-window symbol as the primary target (its def is unscanned), so force the primary to
+    `compute_widget_total` via the ranking seam (mirrors how an LSP cross-project resolution
+    could) -- the REAL rescue-equipped evidence collector then runs against the REAL FS. The cold
+    path MUST recover the caller AND MUST NOT leak the internal `daemon_evidence_unreliable`
+    sentinel. Under the pre-fix bug (cold routed through the rescue-less `_from_map` collector)
+    this returned zero callers and stamped the sentinel."""
+    project, caller, definition = _def_out_of_window_repo(tmp_path)
+
+    real_render = repo_map.build_context_render_from_map
+
+    def _force_out_of_window_primary(
+        rm: dict[str, Any], query: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        payload = real_render(rm, query, **kwargs)
+        seed = dict(payload.get("edit_plan_seed") or {})
+        seed["primary_file"] = str(definition)
+        seed["primary_symbol"] = {
+            "name": "compute_widget_total",
+            "kind": "function",
+            "file": str(definition),
+            "line": 1,
+        }
+        seed["primary_span"] = {"start_line": 1, "end_line": 2}
+        seed["confidence"] = {"overall": 0.9}
+        payload["edit_plan_seed"] = seed
+        return payload
+
+    monkeypatch.setattr(
+        agent_capsule.repo_map, "build_context_render_from_map", _force_out_of_window_primary
+    )
+
+    capsule = agent_capsule.build_agent_capsule(
+        "compute_widget_total", str(project), max_repo_files=1
+    )
+
+    assert capsule["primary_target"]["symbol"] == "compute_widget_total"
+    assert capsule["call_site_evidence"]["status"] == "collected"
+    assert len(capsule.get("related_call_sites", [])) >= 1
+    assert any(
+        str(caller) in str(record.get("file", ""))
+        for record in capsule.get("related_call_sites", [])
+    )
+    # The invariant the false comment claimed but the bug violated: never on the cold path.
+    assert "daemon_evidence_unreliable" not in capsule
+
+
+def test_daemon_evidence_unreliable_never_leaks_into_direct_cold_agent_json(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Direct-cold `tg agent --json` (autostart OFF, no daemon) on a truncated repo must NEVER
+    carry the internal `daemon_evidence_unreliable` sentinel -- it is a warm/daemon-only signal.
+    Real ranking (no monkeypatch), so the exit-2-on-truncation contract is exercised too."""
+    project = _flat_repo(tmp_path, 6)
+    _autostart_env(monkeypatch, enabled=False)  # explicit falsy -> never touches the daemon
+
+    result = runner.invoke(
+        app, ["agent", str(project), "helper_0", "--max-repo-files", "1", "--json"]
+    )
+    assert result.exit_code == 2, result.output  # truncated scan
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    assert "daemon_evidence_unreliable" not in payload

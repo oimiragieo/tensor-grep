@@ -1963,11 +1963,19 @@ def build_agent_capsule(
     gpu_timeout_s: float = 5.0,
     ignore: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Thin cold-path wrapper (task #108): build the repo map (the more expensive of the two
-    scans this capsule used to run independently -- see ``build_agent_capsule_from_map``'s
-    docstring) and delegate everything else, so the warm session-daemon fast path (which reuses
-    an already-cached map for BOTH sub-steps) shares one code path with the cold path -- parity
-    by construction rather than a second, driftable implementation."""
+    """Thin cold-path wrapper (task #108): build the repo map (the outer of the two scans this
+    capsule used to run independently -- see ``build_agent_capsule_from_map``'s docstring) and
+    delegate the RANKING + suggested-scope sub-steps, which are byte-identical cold-vs-warm for
+    the same map. Call-site EVIDENCE is the deliberate exception: the cold path passes
+    ``_rescue_call_site_evidence=True`` so it collects through the RESCUE-equipped
+    ``_collect_capsule_call_site_evidence`` (a second FS-backed ``build_symbol_blast_radius`` scan
+    that literal-seed-recovers an out-of-window symbol def on a truncated no_match), recovering
+    exactly the callers pre-PR ``main`` did. The warm/daemon caller keeps the single-map win by
+    using the rescue-less ``_from_map`` collector and instead stamps the
+    ``daemon_evidence_unreliable`` sentinel, which routes the client back to THIS cold path (see
+    ``build_agent_capsule_from_map`` + ``main._maybe_agent_via_running_daemon``). Cost: the cold
+    path pays its pre-PR second blast-radius scan again -- ACCEPTED, because recall on a
+    scan-capped repo must not regress and the daemon path (the whole point) keeps the single map."""
     from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
 
     effective_max_repo_files = (
@@ -1987,6 +1995,7 @@ def build_agent_capsule(
         gpu_device_ids=gpu_device_ids,
         gpu_timeout_s=gpu_timeout_s,
         ignore=ignore,
+        _rescue_call_site_evidence=True,
     )
 
 
@@ -2004,28 +2013,37 @@ def build_agent_capsule_from_map(
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
     ignore: tuple[str, ...] = (),
+    _rescue_call_site_evidence: bool = False,
 ) -> dict[str, Any]:
     """Task #108 (Tier-2 daemon moat): the map-based core of ``build_agent_capsule``, taking an
     already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
-    the filesystem itself. ``build_agent_capsule`` is a thin wrapper around this function, so
-    cold and warm output are identical by construction for the same map.
+    the filesystem itself. The RANKING (context-render) + suggested-scope sub-steps here read only
+    ``rm``, so they are byte-identical cold-vs-warm for the same map.
 
-    Before this refactor the cold path ran TWO independent ``build_repo_map`` scans at the same
-    ``max_repo_files`` cap -- one inside ``build_context_render`` (primary-target ranking) and a
-    SECOND inside ``_collect_capsule_call_site_evidence``'s call to ``build_symbol_blast_radius``
-    (call-site evidence). Both sub-steps here reuse the ONE ``rm`` the caller already has, which is
-    both the daemon-moat win (skip the second re-scan too, not just the first) and the reason
-    ``_raw_context_ref``'s echoed ``max_repo_files`` is kept as an explicit parameter here rather
-    than derived from ``rm`` -- it never drove a second scan in the first place, only a
-    documentation string.
+    ``_rescue_call_site_evidence`` (the ONE sub-step that MUST differ cold-vs-warm, Opus-gate
+    FIX-FIRST):
+      * ``True`` -- the COLD (direct ``build_agent_capsule``) path. Collect call-site evidence
+        through the RESCUE-equipped ``_collect_capsule_call_site_evidence`` -> the FS-backed
+        ``build_symbol_blast_radius`` wrapper, which on a truncated no_match literal-seed-recovers
+        an out-of-window symbol def (``repo_map._literal_symbol_seed_files`` -> rebuild w/
+        ``extra_files`` -> re-run) and thus the in-window callers. This is a SECOND repo scan, but
+        it is the pre-PR ``main`` behavior and is what keeps recall from regressing on a repo
+        larger than the ``--max-repo-files`` cap. Never stamps the ``daemon_evidence_unreliable``
+        sentinel (the rescue already ran here).
+      * ``False`` (default) -- the WARM/DAEMON (``session_store._serve_session_request_from_
+        payload``) path. Collect through the RESCUE-LESS
+        ``_collect_capsule_call_site_evidence_from_map``, which resolves against the ONE cached
+        ``rm`` (no second FS scan -- the daemon-moat win) and CANNOT rescue an out-of-window def.
+        On that exact untrustworthy no_match it flags ``daemon_evidence_unreliable``, which the
+        client (``main._maybe_agent_via_running_daemon``) treats like a transport error and falls
+        back to the cold path above -- which DOES have the rescue.
 
     ``include_blast_radius``/``gpu_device_ids``/``gpu_timeout_s`` are accepted for full parity
     with ``build_agent_capsule``'s signature (a direct caller may still want them), but the
-    session daemon's own dispatch (``session_store._serve_session_request_from_payload``) never
-    forwards a non-default ``gpu_device_ids`` -- the client wrapper (``main.
-    _maybe_agent_via_running_daemon``) refuses to route a ``--gpu-device-ids`` request to the
-    daemon at all, because the GPU evidence probe shells out to a fresh ``tg search`` subprocess
-    (``_agent_gpu_evidence`` below) that must never run inside a long-lived daemon worker thread.
+    session daemon's own dispatch never forwards a non-default ``gpu_device_ids`` -- the client
+    wrapper refuses to route a ``--gpu-device-ids`` request to the daemon at all, because the GPU
+    evidence probe shells out to a fresh ``tg search`` subprocess (``_agent_gpu_evidence`` below)
+    that must never run inside a long-lived daemon worker thread.
     """
     # Local import avoids a module-level circular import (orient_capsule imports repo_map, which
     # this module also imports) -- same discipline repo_map.build_context_render's own reuse of
@@ -2347,16 +2365,35 @@ def build_agent_capsule_from_map(
             or requested_semantic_provider
         ),
     )
-    related_call_sites, call_site_evidence, call_site_evidence_daemon_unreliable = (
-        _collect_capsule_call_site_evidence_from_map(
+    if _rescue_call_site_evidence:
+        # COLD path (Opus-gate FIX-FIRST): recover out-of-window callers via the RESCUE-equipped
+        # collector (a second FS-backed build_symbol_blast_radius scan that literal-seed-rescues a
+        # truncated no_match), exactly like pre-PR main. resolved_path is str(rm["path"]);
+        # max_repo_files is the caller's cap so the rescue scan uses the same window as ranking.
+        # The sentinel below CANNOT arise on this path (the rescue already ran) -- hardcode False.
+        related_call_sites, call_site_evidence = _collect_capsule_call_site_evidence(
             query,
-            rm,
+            resolved_path,
             target,
             include_blast_radius=include_blast_radius,
             max_files=max_files,
+            max_repo_files=max_repo_files,
             seed_confidence=primary_target_seed_confidence,
         )
-    )
+        call_site_evidence_daemon_unreliable = False
+    else:
+        # WARM/DAEMON path: rescue-less _from_map collector (single cached map, no second scan);
+        # on a truncated no_match it flags daemon_unreliable so the client falls back to cold.
+        related_call_sites, call_site_evidence, call_site_evidence_daemon_unreliable = (
+            _collect_capsule_call_site_evidence_from_map(
+                query,
+                rm,
+                target,
+                include_blast_radius=include_blast_radius,
+                max_files=max_files,
+                seed_confidence=primary_target_seed_confidence,
+            )
+        )
     # F4: verified call-site evidence is only available NOW (after the collection above), so the
     # token-budget-omission confidence uplift must happen here, post-hoc, rather than inside
     # `_confidence` -- see `_apply_capsule_token_budget_confidence_uplift`'s docstring.
@@ -2517,14 +2554,16 @@ def build_agent_capsule_from_map(
     if outbound_dependencies:
         result["outbound_dependencies"] = outbound_dependencies
         result["outbound_dependency_evidence"] = outbound_dependency_evidence
-    # TRAP A (task #108, the audit #107 divergence class): the call-site-evidence collector above
-    # hit a no_match it cannot trust (possibly-truncated map, no literal-seed rescue available on
-    # the _from_map path -- see _collect_capsule_call_site_evidence_from_map's docstring). Stamp an
-    # internal-only sentinel the daemon client wrapper (main._maybe_agent_via_running_daemon)
-    # checks to discard this WHOLE response and fall back to cold, which DOES have the rescue.
-    # Never set on the cold path (the cold call-site-evidence collector always runs its rescue
-    # internally, so this condition cannot arise there) -- additive + conditional, same pattern as
-    # scan_limit/suggested_scope above, so a reliable capsule stays byte-identical.
+    # TRAP A (task #108, the audit #107 divergence class): the WARM/DAEMON call-site-evidence
+    # collector above (_from_map, taken only when _rescue_call_site_evidence is False) hit a
+    # no_match it cannot trust (possibly-truncated map, no literal-seed rescue available on that
+    # path). Stamp an internal-only sentinel the daemon client wrapper
+    # (main._maybe_agent_via_running_daemon) checks to discard this WHOLE response and fall back to
+    # cold, which DOES run the rescue. This is structurally impossible on the COLD path:
+    # _rescue_call_site_evidence=True there hardcodes call_site_evidence_daemon_unreliable=False
+    # above (the rescue-equipped collector returns no such flag), so a direct-cold capsule -- and
+    # a warm-fell-to-cold capsule -- NEVER carries this key. Additive + conditional, same pattern
+    # as scan_limit/suggested_scope above, so a reliable capsule stays byte-identical.
     if call_site_evidence_daemon_unreliable:
         result["daemon_evidence_unreliable"] = True
     return result
