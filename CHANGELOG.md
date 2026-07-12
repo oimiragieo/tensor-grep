@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.66.0 (2026-07-12)
+
+### Features
+
+- **classify**: Add --stdin and --text flags for log-streaming agents (#92)
+  ([#549](https://github.com/oimiragieo/tensor-grep/pull/549),
+  [`7f11bc0`](https://github.com/oimiragieo/tensor-grep/commit/7f11bc08df79f75c91a6461bedbdfd593dd774e4))
+
+Adds `tg classify --stdin` (read text to classify from stdin) and `tg classify --text <literal>`
+  (classify a literal string) to both front doors, reusing the sidecar's existing
+  `payload["content"]` path end-to-end (rust_core/src/python_sidecar.rs,
+  src/tensor_grep/sidecar.py:_classify_payload) with no protocol changes.
+
+Rust native front door (rust_core/src/main.rs): - ClassifyArgs gains --stdin (bool) and --text
+  (Option<String>); file_path becomes Option<String> so a bare `tg classify FILE` keeps working
+  unchanged. - New handle_classify_command() validates the three sources are mutually exclusive,
+  reads stdin to EOF (or takes --text) and dispatches through the sidecar's content payload; the
+  file-path path is unchanged. - handle_sidecar_command() now takes an Option<Value> payload instead
+  of always passing None, since it is the shared dispatch helper.
+
+Python front door (src/tensor_grep/cli/main.py classify command): - Mirrors the same three-way
+  validation and stdin/--text/file branching directly against the local heuristic classifier, so
+  `python -m tensor_grep classify --text/--stdin` matches the native binary byte-for-byte.
+
+Traps covered: --stdin and --text are mutually exclusive (clean error, no sidecar/stdin touched
+  before the check); a bare positional file path keeps working; empty stdin/--text degrades cleanly
+  (exit 1, explanatory message) using the sidecar's existing empty-content branch rather than
+  hanging.
+
+Tests: new dual-front-door parity tests in rust_core/tests/test_sidecar_ipc.rs (native tg.exe vs
+  `python -m tensor_grep`, byte-identical stdout/stderr/exit code, real heuristic classification)
+  and mutual-exclusion/help-text tests in test_public_native_cli_parity.rs; updated the two tests
+  that pinned the old "not supported yet" contract (Rust + tests/unit/test_sidecar_classify.py) and
+  added equivalent CliRunner coverage for the Python front door.
+
+Co-authored-by: Claude Sonnet 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.65.6 (2026-07-12)
 
 ### Bug Fixes
