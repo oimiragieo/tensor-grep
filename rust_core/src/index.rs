@@ -11,6 +11,7 @@ use regex_syntax::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -848,13 +849,12 @@ impl TrigramIndex {
         &self.root
     }
 
+    /// Persists the bincode-serialized index atomically -- see [`atomic_write_bytes`]. Audit
+    /// #138 item #1: the previous `std::fs::write(path, ...)` here wrote the destination
+    /// in-place, so a crash mid-write left a truncated/corrupt `.tg_index` behind.
     pub fn save(&self, path: &Path) -> Result<()> {
         let data = bincode_serialize(self)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, &data)
-            .with_context(|| format!("failed to write index to {}", path.display()))
+        atomic_write_bytes(path, &data)
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -863,14 +863,12 @@ impl TrigramIndex {
         bincode_deserialize(&data)
     }
 
+    /// Persists the legacy JSON index representation atomically -- see [`atomic_write_bytes`].
+    /// Same audit #138 item #1 rationale as [`Self::save`].
     pub fn save_json(&self, path: &Path) -> Result<()> {
         let data =
             serde_json::to_vec(&self.to_serializable()).context("failed to serialize index")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, &data)
-            .with_context(|| format!("failed to write index to {}", path.display()))
+        atomic_write_bytes(path, &data)
     }
 
     pub fn load_json(path: &Path) -> Result<Self> {
@@ -892,6 +890,66 @@ impl TrigramIndex {
     pub fn total_postings(&self) -> usize {
         self.postings.values().map(|v| v.len()).sum()
     }
+}
+
+/// Writes `data` to `path` via write-temp-then-atomic-rename, mirroring
+/// `checkpoint_store.py::_write_json_atomic`: the temp file lives in the SAME directory as
+/// `path` (so the rename is same-filesystem and therefore atomic), is fsync'd before the rename
+/// so a crash between the write and the rename can never publish a truncated file (the rename
+/// simply never happens -- `path` itself is untouched until it atomically becomes the new
+/// complete content in one indivisible step), and the rename is retried via
+/// `index_lock::replace_with_retry` to absorb the transient Windows "destination momentarily
+/// held open by a reader/AV scanner" case. On `cfg(unix)` the parent directory is ALSO fsync'd
+/// after the rename, best-effort, for durability of the directory entry itself (skipped on
+/// Windows, where a directory handle cannot be fsync'd this way). Audit #138 item #1.
+fn atomic_write_bytes(path: &Path, data: &[u8]) -> Result<()> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create parent dir for {}", path.display()))?;
+
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("index");
+    let tmp_path = parent.join(format!(
+        ".{file_name}.{}.tmp",
+        crate::index_lock::random_token()
+    ));
+
+    let write_result = (|| -> io::Result<()> {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        file.write_all(data)?;
+        // fsync the data before the rename so a crash can never publish a truncated index --
+        // the rename below is the ONLY step that makes the new content visible at `path`.
+        file.sync_all()
+    })();
+
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp_path); // best-effort cleanup; the original at `path` is untouched
+        return Err(e).with_context(|| format!("failed to write temp file {}", tmp_path.display()));
+    }
+
+    if let Err(e) = crate::index_lock::replace_with_retry(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| {
+            format!(
+                "failed to atomically rename {} -> {}",
+                tmp_path.display(),
+                path.display()
+            )
+        });
+    }
+
+    #[cfg(unix)]
+    {
+        // Best-effort durability of the rename's directory entry; a failure here does not
+        // invalidate the already-completed atomic rename above.
+        if let Ok(dir_file) = std::fs::File::open(parent) {
+            let _ = dir_file.sync_all();
+        }
+    }
+
+    Ok(())
 }
 
 fn collect_file_entries(root: &Path, no_ignore: bool) -> Vec<FileEntry> {
@@ -1319,6 +1377,80 @@ mod tests {
 
         let results = loaded.search("hello", false, true).unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    // -- Audit #138 item #1: atomic save -----------------------------------------------------
+
+    #[test]
+    fn test_save_leaves_no_temp_file_behind_after_success() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+
+        assert!(index_path.exists());
+        let stray_tmp_files: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(
+            stray_tmp_files.is_empty(),
+            "a successful save must not leave a temp file behind: {stray_tmp_files:?}"
+        );
+    }
+
+    #[test]
+    fn test_save_overwrite_fully_replaces_previous_content_not_a_merge() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let index_path = dir.path().join(".tg_index");
+
+        let first = TrigramIndex::build(dir.path()).unwrap();
+        first.save(&index_path).unwrap();
+        assert_eq!(TrigramIndex::load(&index_path).unwrap().file_count(), 1);
+
+        write_test_file(dir.path(), "b.txt", "goodbye moon\n");
+        let second = TrigramIndex::build(dir.path()).unwrap();
+        second.save(&index_path).unwrap();
+
+        let reloaded = TrigramIndex::load(&index_path).unwrap();
+        assert_eq!(
+            reloaded.file_count(),
+            2,
+            "the second save must fully replace the destination's content"
+        );
+    }
+
+    #[test]
+    fn atomic_write_bytes_rename_failure_cleans_up_temp_and_returns_err() {
+        // Cross-platform deterministic failure injection: renaming a regular file onto a path
+        // that is an existing DIRECTORY fails on both POSIX (EISDIR) and Windows -- regardless
+        // of the temp file's randomly-generated name, so this does not need to predict it.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".tg_index");
+        fs::create_dir(&path).unwrap();
+
+        let result = atomic_write_bytes(&path, b"NEW_CONTENT_MUST_NOT_LAND");
+        assert!(
+            result.is_err(),
+            "rename onto an existing directory must fail"
+        );
+        assert!(
+            path.is_dir(),
+            "a failed atomic_write_bytes must not have disturbed the destination"
+        );
+
+        let stray_tmp_files: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(
+            stray_tmp_files.is_empty(),
+            "a failed atomic_write_bytes must clean up its own temp file: {stray_tmp_files:?}"
+        );
     }
 
     #[test]

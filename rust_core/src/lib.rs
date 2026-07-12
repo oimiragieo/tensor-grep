@@ -9,6 +9,7 @@ pub mod editor_plane;
 #[cfg(feature = "cuda")]
 pub mod gpu_native;
 pub mod index;
+pub mod index_lock;
 pub mod mmap_arrow;
 pub mod native_search;
 pub mod python_sidecar;
