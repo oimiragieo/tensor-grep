@@ -1,6 +1,154 @@
 # CHANGELOG
 
 
+## v1.68.1 (2026-07-12)
+
+### Bug Fixes
+
+- **security**: Canonicalize exec parent (8.3/junction/\?\) before apply_policy to close fail-open
+  edges (#126) ([#556](https://github.com/oimiragieo/tensor-grep/pull/556),
+  [`d8cf53c`](https://github.com/oimiragieo/tensor-grep/commit/d8cf53ca0f35d47bdcb0e69ea71b85492ec7b3ec))
+
+* fix(security): canonicalize exec parent (8.3/junction/\?\) before apply_policy to close fail-open
+  edges (#126)
+
+_run_policy_command's shadow-executable guard confines the resolved validation-command executable to
+  os.path.abspath(resolved_executable) (deliberately lexical, never Path.resolve() -- the #453
+  defense: a repo-local shadow that is itself a symlink must be judged by where it lexically sits,
+  not where it points). Commit e10c91d (H2, #509) fixed the beneath-or-equal depth bug but
+  explicitly deferred this: "the parent-canonicalization hardening (8.3/junction/\?\ edges) is
+  intentionally NOT applied here -- it is a tracked fast-follow."
+
+That lexical-only comparison is bypassable in the OTHER direction: an 8.3 short name (PROGRA~1 vs
+  "Program Files"), an NTFS junction alias, or an explicit \?\ / \?\UNC\ extended-length prefix in
+  the policy's lint_cmd/test_cmd can all name a location INSIDE the untrusted repo while spelling it
+  differently from the repo root's own canonical string, so _abspath_beneath_or_equal silently
+  returns False (not beneath) for a path that IS beneath -- fail open, reaching subprocess.run.
+
+Fix: _canonicalize_exec_parent() resolves ONLY the executable's parent directory
+  (Path.resolve(strict=True) -- never the full path, which would dereference the leaf and reopen
+  #453) and _abspath_beneath_or_equal() strips a \?\ / \?\UNC\ prefix before the normcase/normpath
+  comparison. _run_policy_command denies when EITHER the raw lexical form OR the canonical form
+  lands beneath the untrusted root, and fails closed (denies) when canonicalization itself fails.
+
+Verified empirically on Windows (this box): Path.resolve(strict=True) on a path's parent expands 8.3
+  short-name components (GetFinalPathNameByHandleW returns the canonical long name directly) and
+  fully traverses NTFS junctions in one call; both os.path.abspath and Path.resolve() preserve a \?\
+  prefix verbatim (neither strips it).
+
+Tests (tests/unit/test_apply_policy.py): bidirectional oracle per edge -- a real \?\ -prefixed
+  shadow (via the policy's own command string) and a real mklink /J junction alias are both denied
+  pre-fix-RED / accepted-safe post-fix-GREEN end-to-end; the 8.3 edge is proven at two layers (a
+  direct unit test against the OS's own always-present C:\PROGRA~1 short name -- forcing FRESH 8.3
+  generation needs an elevated volume handle, verified "Access is denied" without admin on this box
+  -- plus a wiring-level _run_policy_command test). Also: the #453 leaf-non-dereference property, a
+  canonicalization-failure fail-closed test, and two "legitimate case still passes" tests (an
+  outside-root binary reached via a fixture that now must be real, and a trusted binary reached via
+  a legitimate outside-repo junction alias). Full suite green: 66/66 in test_apply_policy.py, no
+  regressions in test_mcp_server.py's policy/apply/rewrite subset, 4310 passed / 2
+  pre-existing-unrelated-failed (test_retrieval_dense.py, confirmed via empty `git diff --stat
+  1d70571 --` for that file) / 13 skipped across the full unit suite.
+
+4-gate: ruff check, ruff format --check --preview, mypy src/tensor_grep, pytest -- all green.
+
+Opus-gate PENDING (apply_policy is a mandatory-Opus-gate surface).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(security): also refuse UNC/network-share exec paths in apply_policy (4th same-class edge, Opus
+  re-gate #126)
+
+The Opus security gate reproduced a 4th same-class canonicalization bypass END-TO-END against the
+  real _run_policy_command: a UNC loopback admin-share spelling of the identical in-repo shadow gets
+  SPAWNED. These argv[0] spellings of <untrusted-repo>\evil.cmd all pass the beneath-guard and reach
+  subprocess.run: \127.0.0.1\C$\...\untrusted-repo\evil.cmd
+  \localhost\C$\...\untrusted-repo\evil.cmd \?\UNC\127.0.0.1\C$\...\untrusted-repo\evil.cmd
+
+Root cause: Path.resolve() does NOT map the \host\C$\... admin-share namespace back to C:\...
+  (verified empirically on this box), so _canonicalize_exec_parent returns a still-UNC parent ->
+  neither the raw-stripped compare nor the canonical compare starts with the local drive-letter
+  repo-root string -> _abspath_beneath_or_equal returns False on both -> the OR-guard passes -> the
+  shadow spawns. This falsified the prior commit's own "shadow must never be spawned" contract.
+  Pre-existing on main + gated on the C$ admin share being reachable / an elevated token, but it
+  fired live on this Windows box, so it is real for the local-admin environment this hardening
+  targets.
+
+Fix: right after resolved_path is built, before the beneath-guard, refuse ANY executable whose path
+  (after stripping a \?\ / \?\UNC\ extended-length prefix) is a UNC path (starts with \). A
+  UNC-spelled executable can never be confined to a LOCAL drive-letter repo root by a string
+  comparison; a legitimate local tool always resolves to a drive-letter path (C:\..., and \?\C:\...
+  -> C:\... after the strip -- NOT a UNC prefix), so local invocations are unaffected. Fail closed.
+
+Tests (tests/unit/test_apply_policy.py): a 3-way parametrized bidirectional oracle (\127.0.0.1\C$,
+  \localhost\C$, \?\UNC\127.0.0.1\C$ spellings of a real in-repo shadow) proven RED against the
+  pre-UNC-guard source (git-stash of the fix: the mocked subprocess.run was reached = shadow
+  SPAWNED) and GREEN with it; an off-box \fileserver\share refusal test; and a no-regression test
+  proving a local C:\... tool and its \?\C:\... extended form both still run and are not flagged
+  UNC. Full apply_policy suite: 71/71 green (66 prior + 5 new).
+
+Rebased onto main@35868fa which includes the #558 doc-format hotfix. 4-gate: - ruff check . -- PASS
+  (whole repo) - ruff format --check --preview . -- CI-clean; the only local flags are 4 UNTOUCHED
+  docs (docs/architecture.md, docs/planning/PROJECT_PLAN.md,
+  docs/plans/backlog-100/cluster-124-evidence-signing.md,
+  docs/plans/design-tensor-grep-2026-04-29_01-45-34.md) that are LF-in-index / CRLF-in-my-
+  Windows-worktree -- an EOL-only false-alarm (proven: CRLF->LF normalize makes all 4 pass), CI
+  checks them out LF on Linux and passes. My two changed files pass. - mypy src/tensor_grep -- PASS
+  (80 files) - pytest tests/unit/test_apply_policy.py -- 71 passed
+
+Opus-gate PENDING (apply_policy is a mandatory-Opus-gate surface) -- focused re-gate.
+
+* test(apply-policy): platform-gate the Windows-path-namespace exec-confinement tests to win32 (#126
+  CI cross-platform fix)
+
+CI was RED on ubuntu-latest + macos-latest (py3.11 AND py3.12) + test-gpu-nvidia:
+  test_run_policy_command_rejects_extended_length_prefix_shadow_inside_repo FAILED. My 4-gate and
+  the Opus re-gate both ran on Windows only, which masked the gap.
+
+Root cause is a TEST-FIXTURE Windows-assumption, NOT a Linux logic gap. 8.3 short-names, NTFS
+  junctions, \?\ extended-length prefixes, and \host\C$ UNC admin-shares are Windows path-namespace
+  concepts. On POSIX those argv[0] strings are literal filenames (backslash is a valid filename
+  char, there is no C: drive), so e.g. shutil.which("\?\/tmp/.../evil") returns None for the
+  non-existent literal path -> the shadow is still DENIED fail-closed, but via the not-found-on-PATH
+  (or could-not-canonicalize) branch rather than the Windows-specific "refusing a repo-local
+  executable shadow" / "UNC/network-share" detail string the assertion checks. The security LOGIC is
+  Linux-safe (fail-closed on all platforms); only the Windows-specific assertions don't hold.
+
+Fix (test-only; the SHIP-approved apply_policy.py logic is unchanged): add
+  @pytest.mark.skipif(sys.platform != "win32", ...) to the 7 Windows-path-namespace scenario tests:
+  - test_run_policy_command_rejects_extended_length_prefix_shadow_inside_repo (the CI failure) -
+  test_run_policy_command_rejects_junction_alias_shadow_inside_repo (mklink /J via cmd.exe) -
+  test_run_policy_command_allows_junction_alias_that_resolves_outside_repo (mklink /J via cmd.exe) -
+  test_run_policy_command_rejects_8dot3_alias_shadow_inside_repo (8.3 short-name scenario) -
+  test_run_policy_command_rejects_unc_admin_share_shadow_inside_repo (x3) (\127.0.0.1\C$,
+  \localhost\C$, \?\UNC\) - test_run_policy_command_rejects_unc_share_even_when_outside_repo
+  (\fileserver UNC) - test_run_policy_command_allows_local_drive_letter_tool_not_flagged_as_unc
+  (\?\C:\ local extended spelling)
+
+Deliberately NOT gated (platform-agnostic-correct, must keep running everywhere -- and CI's -x
+  already confirmed the first five PASS on Linux since they are defined before the failing test; the
+  sixth is monkeypatched): -
+  test_strip_extended_length_prefix_{removes_prefix,removes_unc_prefix,is_a_noop_for_normal_paths}
+  (pure string) - test_canonicalize_exec_parent_fails_closed_on_nonexistent_parent
+  (resolve(strict=True) raises on all OS) -
+  test_canonicalize_exec_parent_does_not_dereference_the_leaf_symlink (symlink + parent-only
+  resolve) - test_run_policy_command_denies_when_exec_parent_canonicalization_fails (monkeypatches
+  canonicalize -> None) The 4 pre-existing win32-gated tests (abspath ext-length x2, real-8.3,
+  real-junction) stay gated.
+
+Verified: introspection confirms exactly 11 win32-gated / 6 ungated (the intended split);
+
+Windows run stays green (skipif is a no-op on win32): pytest tests/unit/test_apply_policy.py = 71
+  passed. Linux/macOS CI will now SKIP the 7 Windows-only tests -> no failure (cannot run the POSIX
+  leg locally; relying on CI to confirm). ruff check . + ruff format --check --preview (my file)
+  clean.
+
+Test-only fix; logic already Opus-SHIP-approved -> CI-green confirmation, no full re-gate.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.68.0 (2026-07-12)
 
 ### Features
