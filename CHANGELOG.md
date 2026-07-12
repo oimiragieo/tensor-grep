@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.67.1 (2026-07-12)
+
+### Bug Fixes
+
+- **mcp**: Default tg_session_open max_repo_files to 2000 to match sibling tools (#98)
+  ([#554](https://github.com/oimiragieo/tensor-grep/pull/554),
+  [`c41a4ba`](https://github.com/oimiragieo/tensor-grep/commit/c41a4ba6ec61639000386a11ced473341a2390c3))
+
+The MCP tg_session_open tool defaulted max_repo_files to a hardcoded 512 while every sibling routing
+  tool (tg_repo_map, tg_agent_capsule, etc.) defaults to the shared _DEFAULT_MCP_REPO_SCAN_LIMIT
+  (2000). Because open_session forwards a non-None requested value straight through
+  (_effective_session_max_repo_files only falls back to the 2000 default when requested is None),
+  omitting the param -- the normal agent-call case -- silently capped the initial session repo-map
+  scan at 512.
+
+Point the default at _DEFAULT_MCP_REPO_SCAN_LIMIT (the last remaining 512 drift), update the
+  docstring and docs/harness_api.md example, and add a signature-level governance test mirroring
+  audit #114's tg_repo_map fix.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.67.0 (2026-07-12)
 
 ### Bug Fixes
