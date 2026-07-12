@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v1.68.2 (2026-07-12)
+
+### Bug Fixes
+
+- **count**: --count-matches refuses cleanly instead of silently under-counting when rg is
+  unresolvable (#121) ([#557](https://github.com/oimiragieo/tensor-grep/pull/557),
+  [`87515df`](https://github.com/oimiragieo/tensor-grep/commit/87515df114774d0090e6f20ffb7687a8bcc5b9e5))
+
+* fix(count): --count-matches refuses cleanly instead of silently under-counting when rg is
+  unresolvable (#121)
+
+The reported "hard-error" premise does not reproduce on current main: the actual bug is worse --
+  --count-matches silently returns the WRONG number (a line-count mislabeled as an occurrence-count)
+  with exit 0 and no visible signal, because every rg-less fallback engine (RustCoreBackend,
+  CPUBackend, and the compiled native tg binary) only ever emits one match per line and cannot
+  compute rg's true per-occurrence --count-matches semantics.
+
+Fix: refuse cleanly (structured exit 2, actionable message, never a bare crash) at both front doors
+  that can route a count-matches request without rg -- cli/main.py's search_command (the primary
+  gap) and cli/bootstrap.py's pre-Typer native-delegation gate (a second front door that
+  independently bypassed the first fix whenever --count-matches was combined with
+  --json/--ndjson/--cpu/--force-cpu/--gpu-device-ids, handing the request straight to the compiled
+  native binary). -c/--count is unaffected; its line-count contract is exactly what the fallback
+  engines already provide correctly, so it keeps degrading via the existing count_rust_fast_path /
+  native delegation.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(count): update the 3 governance surfaces pinning the old --count-matches contract (#121)
+
+The #121 fix changes --count-matches from a silent-wrong line-count to a clean structured exit-2
+  refuse when rg is unresolvable. Three governance surfaces pinned the OLD contract and go RED with
+  the PR's own new error string; per the repo rule (contract changes are updated in the SAME PR),
+  fix all three:
+
+1) tests/e2e/test_output_golden_contract.py: skip the count_matches_multi_file /
+  count_matches_single_file golden cases when rg is unresolvable (run_tg hard-asserts exit 0; both
+  launchers now refuse with exit 2). Not re-snapshotted -- the recorded values are correct only
+  because occurrence-count == line-count for this fixture WHEN rg is available; with rg absent the
+  output is a structured error, not a count.
+
+2) scripts/agent_readiness.py: make the root-option-first-count-matches probe tolerant of the
+  structured exit-2 refuse when RipgrepBackend().is_available() is False (was treated as a fatal
+  exit-not-in-{0,1}). Gated on rg-absence so a real regression still fails when rg IS available.
+
+3) Lock the third native-delegation path (bootstrap _prefer_rust_first_search /
+  TG_RUST_FIRST_SEARCH): it can still route --count-matches to the native binary, which is SAFE
+  because the native binary self-refuses via require_ripgrep_or_exit (rust_core/src/main.rs). Added
+  a call-site comment + a dogfood lock-test
+  (test_rust_first_count_matches_refuses_via_native_self_guard) so a future routing change cannot
+  silently reopen the silent-wrong-count.
+
+Bidirectional coverage added for the readiness tolerance (still fails on exit-2 when rg IS
+  available). All new tests confirmed RED-before / GREEN-after.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.68.1 (2026-07-12)
 
 ### Bug Fixes
