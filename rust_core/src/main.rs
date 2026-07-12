@@ -6626,14 +6626,26 @@ fn run_index_query(
     }
 
     if args.count {
-        let unique_count = unique_line_matches(&matches).len();
-        println!("{unique_count}");
-        // fold-in (a): rg exit-parity. The native CPU (run_native_search_with_optional_rg_
-        // fallback) and multi-pattern (emit_multi_pattern_native_results) engines both already
-        // exit(1) on zero matches; run_index_query never did, so `--index --count` on a
-        // no-match query printed "0" but exited 0 -- indistinguishable from "found nothing but
-        // still succeeded" instead of rg's "no match" signal.
-        if unique_count == 0 {
+        // Audit fix #1 must-fix (Opus adversarial gate on PR #541): emit per-file `path:count`
+        // via the SAME emit_count_search_matches the sibling native aggregate path already uses
+        // (emit_multi_pattern_native_results below), NOT a bare aggregate total. The old
+        // `println!("{unique_count}")` printed a single number (e.g. `3`) while every other count
+        // emitter -- `rg -c`, the native CPU engine's append_count_output_bytes, and
+        // emit_count_search_matches -- prints per-file counts. Because `count` is (correctly) an
+        // Honor flag, the WARM auto-index path reaches here too, so a plain `tg search -c <pat>
+        // <dir>` silently changed output shape (per-file -> bare aggregate) the moment a `.tg_index`
+        // happened to exist -- exactly the silent-wrong-shape-with-exit-0 this validator exists to
+        // prevent. emit_count_search_matches omits zero-count files, byte-matching `rg -c` (the
+        // rg-compat target); the native CPU engine's separate grep-style zero-count emission is its
+        // own pre-existing divergence, deliberately not replicated on the index fast path.
+        emit_count_search_matches(request.primary_path(), &matches);
+        // fold-in (a): rg exit-parity. `rg -c` (and the native CPU / multi-pattern engines) exit 1
+        // on zero matches; run_index_query never did, so `--index --count` on a no-match query
+        // exited 0 -- indistinguishable from a successful search. `matches.is_empty()` is
+        // equivalent to the old `unique_count == 0` (unique_line_matches never empties a non-empty
+        // set), and emit_count_search_matches prints nothing for an empty set on a dir target,
+        // matching `rg -c`'s empty-stdout-plus-exit-1 no-match contract.
+        if matches.is_empty() {
             std::process::exit(1);
         }
         return Ok(());

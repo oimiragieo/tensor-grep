@@ -126,6 +126,39 @@ fn match_tuples(payload: &Value) -> Vec<(String, u64, String)> {
         .collect()
 }
 
+/// Audit fix #1 must-fix (Opus gate on PR #541): `tg search --index -c` (and warm-index `-c`)
+/// now emit per-file `path:count` output -- one `<path>:<count>` line per MATCHED file, matching
+/// `rg -c` and the native aggregate emitter (`emit_count_search_matches`) -- instead of the old
+/// bare aggregate total. This parses that shape into a basename->count map so the assertions are
+/// path-format-agnostic. Splits on the LAST `:` because a Windows path itself contains one
+/// (`C:/...`). Returns an empty map for empty stdout (the no-match / zero-file case).
+fn parse_per_file_counts(stdout: &[u8]) -> std::collections::BTreeMap<String, usize> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut counts = std::collections::BTreeMap::new();
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        let (path, count) = line
+            .rsplit_once(':')
+            .unwrap_or_else(|| panic!("per-file count line must be `path:count`, got {line:?}"));
+        let base = Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+        let count = count
+            .trim()
+            .parse::<usize>()
+            .unwrap_or_else(|_| panic!("count must be a number, got {count:?}"));
+        counts.insert(base, count);
+    }
+    counts
+}
+
+/// The per-file counts for the `hello` query over `write_corpus`: a.txt and b.txt each have one
+/// `hello` line; c.log has none (omitted, matching `rg -c`). Named so the many count tests share
+/// one source of truth for the expected shape.
+fn hello_per_file_counts() -> std::collections::BTreeMap<String, usize> {
+    std::collections::BTreeMap::from([("a.txt".to_string(), 1), ("b.txt".to_string(), 1)])
+}
+
 #[test]
 fn test_tg_search_index_builds_and_returns_results() {
     let dir = tempdir().unwrap();
@@ -170,11 +203,12 @@ fn test_tg_search_index_count_mode() {
         .unwrap();
 
     assert!(output.status.success());
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count, 2);
+    // Audit fix #1 must-fix (PR #541): `--index -c` now emits per-file `path:count` (matching
+    // `rg -c`), not the old bare aggregate `2`. hello matches one line each in a.txt and b.txt.
+    assert_eq!(
+        parse_per_file_counts(&output.stdout),
+        hello_per_file_counts()
+    );
 }
 
 #[test]
@@ -322,11 +356,12 @@ fn test_tg_search_index_no_match_returns_zero() {
         .output()
         .unwrap();
 
-    // Audit fix #1 fold-in (a): rg exit-parity. --count still prints "0", but the process must
-    // now exit 1 (not 0) on zero matches, matching the native CPU/GPU engines
-    // (run_native_search_with_optional_rg_fallback / emit_multi_pattern_native_results), which
-    // already did this -- run_index_query previously always returned Ok(()) (exit 0) regardless
-    // of match count. See test_tg_search_index_count_no_match_exits_one_rg_parity and
+    // Audit fix #1 fold-in (a) + must-fix (PR #541): rg exit-parity AND rg output-shape parity.
+    // `rg -c` on a no-match dir search prints NOTHING and exits 1. run_index_query previously
+    // always returned Ok(()) (exit 0) and, once the count arm emitted a bare aggregate, printed
+    // "0"; it now routes through emit_count_search_matches (empty stdout for an empty match set on
+    // a dir target) AND exits 1, matching `rg -c` exactly. See
+    // test_tg_search_index_count_no_match_exits_one_rg_parity and
     // test_tg_search_index_plain_no_match_exits_one_rg_parity below for the dedicated coverage.
     assert_eq!(
         output.status.code(),
@@ -335,11 +370,11 @@ fn test_tg_search_index_no_match_returns_zero() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count, 0);
+    assert!(
+        output.stdout.is_empty(),
+        "no-match --index -c must print nothing (rg -c parity), got {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 #[test]
@@ -358,11 +393,8 @@ fn test_tg_search_index_rebuilds_on_stale() {
         .output()
         .unwrap();
     assert!(out1.status.success());
-    let count1: usize = String::from_utf8_lossy(&out1.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count1, 2);
+    // Audit fix #1 must-fix (PR #541): per-file `path:count`, not a bare aggregate.
+    assert_eq!(parse_per_file_counts(&out1.stdout), hello_per_file_counts());
 
     // Modify corpus
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -380,11 +412,14 @@ fn test_tg_search_index_rebuilds_on_stale() {
         .output()
         .unwrap();
     assert!(out2.status.success());
-    let count2: usize = String::from_utf8_lossy(&out2.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count2, 3, "should find hello in the new file too");
+    // The rebuild must surface the new d.txt as an additional per-file count entry.
+    let mut expected = hello_per_file_counts();
+    expected.insert("d.txt".to_string(), 1);
+    assert_eq!(
+        parse_per_file_counts(&out2.stdout),
+        expected,
+        "should find hello in the new file too"
+    );
     let stderr = String::from_utf8_lossy(&out2.stderr);
     assert!(
         stderr.contains("stale") || stderr.contains("rebuilding"),
@@ -412,11 +447,11 @@ fn test_tg_search_index_handles_corrupt_index() {
         .unwrap();
 
     assert!(output.status.success(), "should recover from corrupt index");
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count, 2);
+    // Audit fix #1 must-fix (PR #541): per-file `path:count`, not a bare aggregate.
+    assert_eq!(
+        parse_per_file_counts(&output.stdout),
+        hello_per_file_counts()
+    );
 }
 
 #[test]
@@ -452,11 +487,14 @@ fn test_tg_search_auto_routes_to_warm_index() {
         stderr.contains("warm index found") || stderr.contains("TrigramIndex"),
         "should auto-route to index: stderr={stderr}"
     );
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count, 2);
+    // Audit fix #1 must-fix (PR #541): the whole point of the must-fix -- warm auto-routed `-c`
+    // (count is an Honor flag, so it still uses the index) must emit per-file `path:count`
+    // matching `rg -c`, NOT the old bare aggregate `2`. Before the fix, a plain `tg search -c`
+    // silently changed shape to a bare number the moment a `.tg_index` existed.
+    assert_eq!(
+        parse_per_file_counts(&output.stdout),
+        hello_per_file_counts()
+    );
 }
 
 #[test]
@@ -644,11 +682,11 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
         .unwrap();
 
     assert!(output.status.success(), "should recover from old format");
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count, 2);
+    // Audit fix #1 must-fix (PR #541): per-file `path:count`, not a bare aggregate.
+    assert_eq!(
+        parse_per_file_counts(&output.stdout),
+        hello_per_file_counts()
+    );
 
     let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
     assert_eq!(&rebuilt[0..4], b"TGI\x00");
@@ -683,11 +721,12 @@ fn test_tg_search_index_case_insensitive() {
         .unwrap();
 
     assert!(output.status.success());
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(count, 2);
+    // Audit fix #1 must-fix (PR #541): per-file `path:count`, not a bare aggregate. Case-insensitive
+    // `HELLO` matches the lowercase `hello` line in a.txt and b.txt (one each).
+    assert_eq!(
+        parse_per_file_counts(&output.stdout),
+        hello_per_file_counts()
+    );
 }
 
 #[test]
@@ -1056,12 +1095,12 @@ fn test_tg_search_explicit_index_no_ignore_flip_off_to_on_finds_newly_included_f
         .output()
         .unwrap();
     assert!(build.status.success());
-    let build_count: usize = String::from_utf8_lossy(&build.stdout)
-        .trim()
-        .parse()
-        .unwrap();
+    // Audit fix #1 must-fix (PR #541): `-c` is now per-file `path:count`. The invariant this test
+    // guards is the FILE SET (is secret.txt indexed?), captured order-independently by the count
+    // map's keys. Default build: only visible.txt (secret.txt gitignored).
     assert_eq!(
-        build_count, 1,
+        parse_per_file_counts(&build.stdout),
+        std::collections::BTreeMap::from([("visible.txt".to_string(), 1)]),
         "sanity: only visible.txt should be indexed by default"
     );
 
@@ -1087,12 +1126,12 @@ fn test_tg_search_explicit_index_no_ignore_flip_off_to_on_finds_newly_included_f
         "stderr={}",
         String::from_utf8_lossy(&requeried.stderr)
     );
-    let requeried_count: usize = String::from_utf8_lossy(&requeried.stdout)
-        .trim()
-        .parse()
-        .unwrap();
     assert_eq!(
-        requeried_count, 2,
+        parse_per_file_counts(&requeried.stdout),
+        std::collections::BTreeMap::from([
+            ("secret.txt".to_string(), 1),
+            ("visible.txt".to_string(), 1),
+        ]),
         "--no-ignore query must rebuild the index and include the gitignored file"
     );
 }
@@ -1119,12 +1158,13 @@ fn test_tg_search_explicit_index_no_ignore_flip_on_to_off_does_not_leak_gitignor
         .output()
         .unwrap();
     assert!(build.status.success());
-    let build_count: usize = String::from_utf8_lossy(&build.stdout)
-        .trim()
-        .parse()
-        .unwrap();
+    // Audit fix #1 must-fix (PR #541): per-file count map; the FILE SET is the invariant.
     assert_eq!(
-        build_count, 2,
+        parse_per_file_counts(&build.stdout),
+        std::collections::BTreeMap::from([
+            ("secret.txt".to_string(), 1),
+            ("visible.txt".to_string(), 1),
+        ]),
         "sanity: --no-ignore build should index both visible.txt and secret.txt"
     );
 
@@ -1147,12 +1187,9 @@ fn test_tg_search_explicit_index_no_ignore_flip_on_to_off_does_not_leak_gitignor
         "stderr={}",
         String::from_utf8_lossy(&requeried.stderr)
     );
-    let requeried_count: usize = String::from_utf8_lossy(&requeried.stdout)
-        .trim()
-        .parse()
-        .unwrap();
     assert_eq!(
-        requeried_count, 1,
+        parse_per_file_counts(&requeried.stdout),
+        std::collections::BTreeMap::from([("visible.txt".to_string(), 1)]),
         "default query must rebuild the index and exclude the gitignored file, not leak it"
     );
 }
@@ -1657,16 +1694,16 @@ fn test_tg_search_index_count_no_match_exits_one_rg_parity() {
         .output()
         .unwrap();
 
-    // fold-in (a): native CPU/GPU already exit(1) on zero matches; run_index_query previously
-    // always returned Ok(()) (exit 0) regardless of match count.
+    // fold-in (a) + must-fix (PR #541): native CPU/GPU already exit(1) on zero matches;
+    // run_index_query previously always returned Ok(()) (exit 0). And with the count arm now
+    // routed through emit_count_search_matches, a no-match dir search prints NOTHING (an empty
+    // match set yields no per-file lines), byte-matching `rg -c`'s empty-stdout + exit-1 contract
+    // -- not the old bare `0`.
     assert_eq!(output.status.code(), Some(1));
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
-    assert_eq!(
-        count, 0,
-        "the count itself is unaffected, only the exit code"
+    assert!(
+        output.stdout.is_empty(),
+        "no-match --index -c must print nothing (rg -c parity), got {:?}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 
@@ -1707,6 +1744,192 @@ fn test_tg_search_index_plain_match_still_exits_zero() {
         "a real match must still exit 0; stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+// -- Audit fix #1 MUST-FIX (Opus gate on PR #541): --index/warm `-c` per-file output shape -------
+//
+// The index count arm used to emit a bare aggregate total (`println!("{unique_count}")`, e.g.
+// `3`) while `rg -c`, the native CPU engine, and the sibling native aggregate emitter all print
+// per-file `path:count`. Because `count` is an Honor flag (correctly -- the index HAS the matches,
+// so refusing would needlessly disable a fast count), the WARM auto-index path reaches the same
+// arm; so a plain `tg search -c <pat> <dir>` silently changed output shape the moment a `.tg_index`
+// existed -- the silent-wrong-shape-with-exit-0 this validator exists to prevent. Fixed by routing
+// the arm through emit_count_search_matches (rg-compatible per-file counts, zero-count files
+// omitted). These tests pin the fixed shape end to end through the real binary.
+
+#[test]
+fn test_tg_search_explicit_index_count_emits_per_file_not_bare_aggregate() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        indexed.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+
+    // Deterministic (the index count path is rg-independent): one `path:count` line per MATCHED
+    // file, zero-count c.log omitted -- exactly `rg -c`'s shape.
+    assert_eq!(
+        parse_per_file_counts(&indexed.stdout),
+        hello_per_file_counts()
+    );
+
+    // Regression guard against the old bare-aggregate emitter: the output must NOT be a single
+    // parseable number (it printed `2` before the fix). Two per-file lines can't parse as one usize.
+    let stdout = String::from_utf8_lossy(&indexed.stdout);
+    assert!(
+        stdout.trim().parse::<usize>().is_err(),
+        "--index -c must be per-file `path:count`, not a bare aggregate number: {stdout:?}"
+    );
+    assert_eq!(
+        stdout.lines().count(),
+        2,
+        "one line per matched file: {stdout:?}"
+    );
+}
+
+#[test]
+fn test_tg_search_explicit_index_count_matches_rg_oracle_per_file_when_rg_present() {
+    // The coordinator's requested parity: `tg search --index -c` must match `tg search -c`
+    // (no --index). Compared by per-file COUNT MAP, not raw bytes: `rg -c` emits files in
+    // nondeterministic parallel-walk order (observed b,a in one run and a,b in another), whereas
+    // the index path's emit_count_search_matches is BTreeMap-sorted -- so a raw byte-match against
+    // rg is inherently flaky (the "golden-test rg-backend sensitivity" trap this repo has hit
+    // before). The order-independent count map is the meaningful, deterministic invariant. When rg
+    // is ABSENT the oracle falls to the native CPU engine, which additionally emits grep-style
+    // `<file>:0` zero-count lines (a pre-existing native-vs-rg divergence out of scope here) -- so
+    // the oracle comparison is asserted ONLY when the oracle used rg, detected by the absence of
+    // any `:0` line (which rg never emits). The deterministic index-side shape is asserted
+    // unconditionally.
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let oracle = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        oracle.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&oracle.stderr)
+    );
+    let oracle_used_rg = !String::from_utf8_lossy(&oracle.stdout)
+        .lines()
+        .any(|line| line.ends_with(":0"));
+
+    let indexed = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+
+    // Always-true deterministic invariant: rg-compatible per-file counts (zero-count c.log omitted).
+    assert_eq!(
+        parse_per_file_counts(&indexed.stdout),
+        hello_per_file_counts()
+    );
+
+    if oracle_used_rg {
+        assert_eq!(
+            parse_per_file_counts(&indexed.stdout),
+            parse_per_file_counts(&oracle.stdout),
+            "--index -c must match the `rg -c` oracle's per-file counts. indexed={:?} oracle={:?}",
+            String::from_utf8_lossy(&indexed.stdout),
+            String::from_utf8_lossy(&oracle.stdout)
+        );
+    }
+}
+
+#[test]
+fn test_tg_search_warm_index_count_shape_does_not_depend_on_hidden_index_file() {
+    // The coordinator's CORE correctness concern: a plain `tg search -c <pat> <dir>` must NOT
+    // silently change output SHAPE when a `.tg_index` appears on disk. Capture the cold oracle
+    // BEFORE the index exists, build the index, then re-run the SAME plain `-c` (now warm
+    // auto-routed to the index) and require the same per-file counts. Compared by count MAP, not
+    // raw bytes, for the same rg-nondeterministic-order reason as the sibling test above.
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+    assert!(!dir.path().join(".tg_index").exists());
+
+    let cold = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(cold.status.success());
+    let cold_used_rg = !String::from_utf8_lossy(&cold.stdout)
+        .lines()
+        .any(|line| line.ends_with(":0"));
+
+    // Build the warm index (this run ALSO now emits per-file, which is fine).
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success());
+    assert!(dir.path().join(".tg_index").exists());
+
+    // Same plain `-c` again -- now warm auto-routes to the index (count is an Honor flag).
+    let warm = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--verbose")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        warm.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+    // Confirm it actually used the index (else the "shape unchanged" assertion would be vacuous).
+    assert!(
+        String::from_utf8_lossy(&warm.stderr).contains("TrigramIndex"),
+        "warm `-c` should auto-route to the trigram index: stderr={}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+    // Deterministic: warm `-c` emits per-file counts, NOT the old bare aggregate `3`.
+    assert_eq!(parse_per_file_counts(&warm.stdout), hello_per_file_counts());
+    // The whole point: per-file counts must not depend on whether a hidden `.tg_index` exists.
+    if cold_used_rg {
+        assert_eq!(
+            parse_per_file_counts(&warm.stdout),
+            parse_per_file_counts(&cold.stdout),
+            "warm-index `-c` must match the pre-index (rg) `-c` per-file counts; a hidden \
+             `.tg_index` must not change output shape. warm={:?} cold={:?}",
+            String::from_utf8_lossy(&warm.stdout),
+            String::from_utf8_lossy(&cold.stdout)
+        );
+    }
 }
 
 // NOTE on -N/--no-line-number specifically: `-N`/`--no-line-number` cannot be exercised via the
