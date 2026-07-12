@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -39,6 +40,18 @@ def _copy_fixture(dest_parent: Path) -> Path:
     dest = dest_parent / "repo"
     shutil.copytree(FIXTURE_ROOT, dest)
     return dest
+
+
+def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True)
+
+
+def _init_git_repo(repo: Path) -> None:
+    _run_git(["init", "-b", "main", "."], cwd=repo)
+    _run_git(["config", "user.email", "test@example.com"], cwd=repo)
+    _run_git(["config", "user.name", "Test User"], cwd=repo)
+    _run_git(["add", "-A"], cwd=repo)
+    _run_git(["commit", "-m", "initial commit"], cwd=repo)
 
 
 def _build(repo: Path, **kwargs):
@@ -308,6 +321,66 @@ def test_json_output_is_parseable_and_matches_build_codemap(tmp_path: Path) -> N
     assert parsed["files_total"] > 0
     assert "written_files" in parsed
     assert parsed["revision"]["commit_sha"] == _FIXED_REVISION["commit_sha"]
+
+
+# ---------------------------------------------------------------------------
+# (14) tracked-only map universe: untracked/gitignored files never enter the payload
+# ---------------------------------------------------------------------------
+
+
+def test_untracked_source_file_is_excluded_from_map_payload(tmp_path: Path) -> None:
+    """A stray untracked .py file (never `git add`ed) must not appear as a mapped file -- its
+    volatile existence/mtime must never leak into the persisted, browsable inventory."""
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+
+    (repo / "pkg" / "untracked_scratch.py").write_text(
+        "def scratch():\n    return 1\n", encoding="utf-8"
+    )
+
+    payload = _build(repo)
+
+    pkg_page = (Path(payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+    assert "### untracked_scratch.py" not in pkg_page
+
+
+def test_gitignored_source_file_is_excluded_from_map_payload(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+    (repo / ".gitignore").write_text("pkg/ignored_scratch.py\n", encoding="utf-8")
+    _init_git_repo(repo)
+
+    (repo / "pkg" / "ignored_scratch.py").write_text(
+        "def ignored():\n    return 1\n", encoding="utf-8"
+    )
+
+    payload = _build(repo)
+
+    pkg_page = (Path(payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+    assert "### ignored_scratch.py" not in pkg_page
+
+
+def test_tracked_files_still_appear_in_map_payload_in_a_git_repo(tmp_path: Path) -> None:
+    """The tracked-only filter must not become an accidental deny-all: every file that IS tracked
+    keeps appearing exactly as before."""
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+
+    payload = _build(repo)
+
+    pkg_page = (Path(payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+    assert "### core.py" in pkg_page
+
+
+def test_non_git_repo_map_payload_degrades_gracefully_keeps_all_files(tmp_path: Path) -> None:
+    """Outside a git repo, the tracked-only filter must degrade to a no-op (keep everything), not
+    crash and not silently produce an empty map."""
+    repo = _copy_fixture(tmp_path)  # never git-init'd
+
+    payload = _build(repo)
+
+    assert payload["files_total"] > 0
+    pkg_page = (Path(payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+    assert "### core.py" in pkg_page
 
 
 # ---------------------------------------------------------------------------

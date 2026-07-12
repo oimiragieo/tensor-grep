@@ -82,6 +82,19 @@ jobs:
           grep -F "tests/golden/fixture_data/readme.txt:ERROR: do not delete" smoke.out
           grep -F "tests/golden/fixture_data/server_0.log:ERROR database timeout" smoke.out
 
+      # Regenerate-then-check in the SAME clean checkout: a real end-to-end proof (real git, real
+      # working tree) that generating the code map never makes `--check` read the repo as stale
+      # against its own freshly-written output (the git-dirty-oracle false positive this exercises
+      # -- see evidence_receipt._repo_revision_identity's exclude_prefixes and
+      # codemap._revision_exclude_prefixes). Complements the unit tests, which mock/construct git
+      # state directly; this runs the real binary against the real repo's real git history.
+      - name: Codemap freshness smoke (regenerate must not read as stale)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python -m tensor_grep codemap
+          uv run python -m tensor_grep codemap --check
+
   release-readiness:
     name: release-readiness
     needs: smoke
