@@ -281,14 +281,41 @@ def public_key_info(private_key_path: str | Path) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def previous_receipt_digest(path: str | Path) -> str:
+def _read_bounded_file_bytes(resolved: Path, *, max_bytes: int, description: str) -> bytes:
+    """Bounded file read shared by EVERY receipt-file reader -- the primary `read_receipt_file` AND
+    the `--previous` chain reader `previous_receipt_digest`. Reads at most `max_bytes + 1` and
+    refuses anything over the cap BEFORE any decode/parse/hash, so no receipt-file path (primary or
+    chain, `emit` or `verify`) can be pointed at a huge file to exhaust memory (AGENTS.md "pre-auth
+    unbounded read", applied to a local file). `resolved` is assumed already
+    `.expanduser().resolve()`-d by the caller."""
+    if not resolved.exists():
+        raise EvidenceSigningError(f"{description} not found: {resolved}")
+    try:
+        with resolved.open("rb") as handle:
+            raw = handle.read(max_bytes + 1)
+    except OSError as exc:
+        raise EvidenceSigningError(f"{description} could not be read: {resolved} ({exc})") from exc
+    if len(raw) > max_bytes:
+        raise EvidenceSigningError(
+            f"{description} at {resolved} exceeds the {max_bytes}-byte limit; refusing to read "
+            "(DoS guard)."
+        )
+    return raw
+
+
+def previous_receipt_digest(path: str | Path, *, max_bytes: int = _MAX_RECEIPT_FILE_BYTES) -> str:
     """Mirrors `audit_manifest._previous_manifest_digest`: prefer the prior receipt's own stored
     `receipt_sha256`, else fall back to the sha256 of its raw file bytes (covers a pre-P2 receipt
-    that predates this field)."""
+    that predates this field).
+
+    Reachable from BOTH `tg evidence emit --previous` and `tg evidence verify --previous`, so the
+    file read is bounded (`_read_bounded_file_bytes`) exactly like the primary receipt read -- an
+    oversized `--previous` file is refused with a bounded error instead of OOMing on
+    `read_bytes()`."""
     resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        raise EvidenceSigningError(f"Previous evidence receipt not found: {resolved}")
-    raw = resolved.read_bytes()
+    raw = _read_bounded_file_bytes(
+        resolved, max_bytes=max_bytes, description="Previous evidence receipt"
+    )
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception:
@@ -500,20 +527,7 @@ def read_receipt_file(
     path: str | Path, *, max_bytes: int = _MAX_RECEIPT_FILE_BYTES
 ) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        raise EvidenceSigningError(f"Evidence receipt not found: {resolved}")
-    try:
-        with resolved.open("rb") as handle:
-            raw = handle.read(max_bytes + 1)
-    except OSError as exc:
-        raise EvidenceSigningError(
-            f"Evidence receipt could not be read: {resolved} ({exc})"
-        ) from exc
-    if len(raw) > max_bytes:
-        raise EvidenceSigningError(
-            f"Evidence receipt at {resolved} exceeds the {max_bytes}-byte verify limit; refusing "
-            "to parse (DoS guard)."
-        )
+    raw = _read_bounded_file_bytes(resolved, max_bytes=max_bytes, description="Evidence receipt")
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

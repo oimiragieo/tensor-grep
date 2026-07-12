@@ -514,6 +514,31 @@ def test_read_receipt_file_rejects_missing_file(tmp_path: Path) -> None:
         evidence_signing.read_receipt_file(tmp_path / "does_not_exist.json")
 
 
+def test_previous_receipt_digest_rejects_oversized_file(tmp_path: Path) -> None:
+    """The `--previous` chain reader (reachable from BOTH emit and verify) must be DoS-bounded
+    exactly like the primary receipt read -- never an unbounded `read_bytes()` that a huge file can
+    OOM. Uses a small explicit cap so the test stays fast."""
+    huge_path = tmp_path / "huge_previous.json"
+    huge_path.write_text('{"receipt_sha256": "' + ("a" * 4096) + '"}', encoding="utf-8")
+
+    with pytest.raises(evidence_signing.EvidenceSigningError, match="exceeds"):
+        evidence_signing.previous_receipt_digest(huge_path, max_bytes=1024)
+
+
+def test_previous_receipt_digest_accepts_normal_file_and_prefers_stored_digest(
+    tmp_path: Path,
+) -> None:
+    previous = _sample_receipt()
+    previous["receipt_sha256"] = evidence_signing.receipt_digest(previous)
+    previous_path = tmp_path / "previous.json"
+    previous_path.write_text(json.dumps(previous), encoding="utf-8")
+
+    assert (
+        evidence_signing.previous_receipt_digest(previous_path, max_bytes=1024)
+        == previous["receipt_sha256"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # 13. real-binary dogfood e2e: bootstrap.main_entry() (the pyproject.toml entry point), NOT
 # typer.testing.CliRunner -- CliRunner invokes the Typer `app` object directly and bypasses
@@ -610,3 +635,156 @@ def test_real_binary_dogfood_tampered_receipt_exits_nonzero(
     )
 
     assert verify_code == 1, verify_out
+
+
+# ---------------------------------------------------------------------------
+# 14. Opus-gate FIX-FIRST follow-ups: (a) the `--previous` file read is DoS-bounded on BOTH the
+# emit and verify CLI paths, and (b) a visible stderr warning fires when a trusted key is supplied
+# without --require-trusted (the un-enforced-trust footgun). Real front door, not CliRunner.
+# ---------------------------------------------------------------------------
+
+
+def _run_main_entry_full(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> tuple[int, str, str]:
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+    code = excinfo.value.code
+    captured = capsys.readouterr()
+    return (int(code) if isinstance(code, int) else 0), captured.out, captured.err
+
+
+def _oversized_receipt_file(path: Path) -> Path:
+    # Just over the wired 5 MB default cap, so this exercises the REAL default bound (not an
+    # explicit small max_bytes) end-to-end through the CLI.
+    padding = "x" * (evidence_signing._MAX_RECEIPT_FILE_BYTES + 4096)
+    path.write_text('{"padding": "' + padding + '"}', encoding="utf-8")
+    return path
+
+
+def test_cli_verify_previous_oversized_fails_closed_not_oom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipt = _sample_receipt(previous_receipt_sha256="a" * 64)
+    receipt["receipt_sha256"] = evidence_signing.receipt_digest(receipt)
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    huge_previous = _oversized_receipt_file(tmp_path / "huge_previous.json")
+
+    code, out, err = _run_main_entry_full(
+        ["tg", "evidence", "verify", str(receipt_path), "--previous", str(huge_previous)],
+        monkeypatch,
+        capsys,
+    )
+
+    # Fails closed (exit 1) with a bounded "exceeds" reason -- never an OOM. On verify the oversized
+    # --previous is a soft chain failure (surfaced as chain_error on stdout); on emit it raises to
+    # stderr. Check the combined output so the assertion is stream-agnostic.
+    assert code == 1
+    assert "exceeds" in (out + err)
+
+
+def test_cli_emit_previous_oversized_fails_closed_not_oom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    out_path = tmp_path / "receipt.json"
+    huge_previous = _oversized_receipt_file(tmp_path / "huge_previous.json")
+
+    code, out, err = _run_main_entry_full(
+        [
+            "tg",
+            "evidence",
+            "emit",
+            str(repo_dir),
+            "--previous",
+            str(huge_previous),
+            "--out",
+            str(out_path),
+        ],
+        monkeypatch,
+        capsys,
+    )
+
+    assert code == 1
+    assert "exceeds" in (out + err)
+    assert not out_path.exists(), "a bounded-read failure must not leave a receipt on disk"
+
+
+def _keygen_emit_signed_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> tuple[Path, str]:
+    key_path = tmp_path / "keys" / "evidence_ed25519.key"
+    receipt_path = tmp_path / "receipt.json"
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setenv("TG_EVIDENCE_SIGNING_KEY", str(key_path))
+    monkeypatch.delenv("TG_EVIDENCE_TRUSTED_KEYS", raising=False)
+
+    _code, keygen_out, _err = _run_main_entry_full(
+        ["tg", "evidence", "keygen", "--json"], monkeypatch, capsys
+    )
+    public_key = json.loads(keygen_out)["public_key"]
+    _run_main_entry_full(
+        ["tg", "evidence", "emit", str(repo_dir), "--sign", "--out", str(receipt_path)],
+        monkeypatch,
+        capsys,
+    )
+    return receipt_path, public_key
+
+
+def test_cli_verify_warns_when_trusted_key_without_require_trusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipt_path, public_key = _keygen_emit_signed_receipt(tmp_path, monkeypatch, capsys)
+
+    code, _out, err = _run_main_entry_full(
+        ["tg", "evidence", "verify", str(receipt_path), "--trusted-key", public_key],
+        monkeypatch,
+        capsys,
+    )
+
+    # Behavior unchanged: the correctly-signed, correctly-pinned receipt is still valid (exit 0)...
+    assert code == 0
+    # ... but the un-enforced-trust footgun warning MUST fire, visibly, on stderr, ASCII-only.
+    assert "warning:" in err
+    assert "--require-trusted" in err
+    err.encode("ascii")
+
+
+def test_cli_verify_no_warning_when_require_trusted_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipt_path, public_key = _keygen_emit_signed_receipt(tmp_path, monkeypatch, capsys)
+
+    code, _out, err = _run_main_entry_full(
+        [
+            "tg",
+            "evidence",
+            "verify",
+            str(receipt_path),
+            "--trusted-key",
+            public_key,
+            "--require-trusted",
+        ],
+        monkeypatch,
+        capsys,
+    )
+
+    assert code == 0  # correct key is pinned AND enforced -> valid
+    assert "warning:" not in err
+
+
+def test_cli_verify_no_warning_when_no_trusted_key_supplied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipt_path, _public_key = _keygen_emit_signed_receipt(tmp_path, monkeypatch, capsys)
+
+    code, _out, err = _run_main_entry_full(
+        ["tg", "evidence", "verify", str(receipt_path)], monkeypatch, capsys
+    )
+
+    assert code == 0
+    assert "warning:" not in err

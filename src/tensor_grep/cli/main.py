@@ -13667,6 +13667,17 @@ def evidence_verify(
 
     try:
         trusted_keys = resolve_trusted_public_keys(trusted_key)
+        # Least-surprise guard: supplying a specific trusted key strongly implies intent to ENFORCE
+        # it, but without --require-trusted an embedded attacker key still yields valid=true (only
+        # key_trusted=false). Warn VISIBLY on stderr (never touching --json stdout, never silently
+        # changing `valid`) so the caller notices the un-enforced trust. ASCII-only (Windows cp1252).
+        if trusted_keys and not require_trusted:
+            typer.echo(
+                "warning: --trusted-key/TG_EVIDENCE_TRUSTED_KEYS supplied without "
+                "--require-trusted; an untrusted key will still report valid=true. Pass "
+                "--require-trusted to enforce.",
+                err=True,
+            )
         payload = verify_evidence_receipt(
             receipt_path,
             trusted_public_keys=trusted_keys,
@@ -13716,6 +13727,12 @@ def evidence_verify(
         chain = payload.get("chain")
         if isinstance(chain, dict):
             typer.echo(f"  chain_valid={chain['chain_valid']}")
+            # Surface WHY the chain failed (e.g. an oversized/missing --previous file, or a digest
+            # mismatch) in text mode too, not only in --json -- otherwise a bounded-read refusal or
+            # a mismatch reads as a bare `chain_valid=False` with no actionable reason.
+            chain_error = chain.get("chain_error")
+            if chain_error:
+                typer.echo(f"  chain_error: {chain_error}")
         for error in cast(list[object], payload.get("errors") or []):
             typer.echo(f"  error: {error}")
 
