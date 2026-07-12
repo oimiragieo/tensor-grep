@@ -13602,6 +13602,25 @@ def evidence_emit(
         help="OPT-IN: recompute blast-radius for --query instead of aggregating only. "
         "OFF by default (performance contract: no re-scan unless explicitly requested).",
     ),
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Ed25519-sign the receipt. FAILS CLOSED: a non-zero exit and NO receipt is written "
+        "(to --out or stdout) if no signing key resolves -- never emits unsigned when --sign was "
+        "requested.",
+    ),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        help="Path to the Ed25519 private key used with --sign. Falls back to "
+        "TG_EVIDENCE_SIGNING_KEY, then ~/.tensor-grep/keys/evidence_ed25519.key.",
+    ),
+    previous: str | None = typer.Option(
+        None,
+        "--previous",
+        help="Path to a prior receipt to chain to; attaches previous_receipt_sha256 "
+        "(independent of --sign).",
+    ),
     output_path: str | None = typer.Option(
         None, "--out", help="Optional file path where the receipt JSON should be written."
     ),
@@ -13611,6 +13630,7 @@ def evidence_emit(
 ) -> None:
     """Emit a versioned EvidenceReceipt aggregating tg's existing outputs (no re-scan)."""
     from tensor_grep.cli.evidence_receipt import build_evidence_receipt
+    from tensor_grep.cli.evidence_signing import EvidenceSigningError
 
     try:
         receipt = build_evidence_receipt(
@@ -13623,7 +13643,25 @@ def evidence_emit(
             model=model,
             cost_json_path=cost_json,
             recompute=recompute,
+            sign=sign,
+            signing_key_path=signing_key,
+            previous_receipt_path=previous,
         )
+    except EvidenceSigningError as exc:
+        # Backend Fail-Closed Contract: --sign with no resolvable key (or a broken crypto
+        # install) lands here -- NEVER falls through to the write-to-`--out`/stdout step below.
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _evidence_error_payload(
+                        str(exc), code="signing_error", routing_reason="evidence-receipt-emit"
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
         if json_output:
             typer.echo(
@@ -13656,6 +13694,193 @@ def evidence_emit(
         block = receipt.get(block_name)
         status = block.get("status", "unknown") if isinstance(block, dict) else "unknown"
         typer.echo(f"  {block_name}.status={status}")
+    signing_block = receipt.get("signing")
+    if isinstance(signing_block, dict):
+        typer.echo(f"  signed=True key_id={signing_block.get('key_id')}")
+    else:
+        typer.echo(f"  signed=False receipt_sha256={receipt.get('receipt_sha256')}")
+
+
+@evidence_app.command("verify")
+def evidence_verify(
+    receipt_path: str = typer.Argument(..., help="Path to an EvidenceReceipt JSON file to verify."),
+    trusted_key: list[str] | None = typer.Option(
+        None,
+        "--trusted-key",
+        help="A pinned base64 Ed25519 public key (from `tg evidence pubkey`) to trust. "
+        "Repeatable. Falls back to TG_EVIDENCE_TRUSTED_KEYS (comma-separated).",
+    ),
+    require_trusted: bool = typer.Option(
+        False,
+        "--require-trusted",
+        help="Fail closed (valid=false) unless the embedded key matches a --trusted-key. "
+        "Without this flag, an untrusted key is still reported (key_trusted=false) but does not "
+        "by itself fail `valid`.",
+    ),
+    previous_path: str | None = typer.Option(
+        None,
+        "--previous",
+        help="Path to the prior receipt this one should chain to; checks previous_receipt_sha256.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the verify result as JSON."),
+) -> None:
+    """Verify an EvidenceReceipt's digest, signature, trust, and (optional) chain link."""
+    from tensor_grep.cli.evidence_receipt import verify_evidence_receipt
+    from tensor_grep.cli.evidence_signing import EvidenceSigningError, resolve_trusted_public_keys
+
+    try:
+        trusted_keys = resolve_trusted_public_keys(trusted_key)
+        # Least-surprise guard: supplying a specific trusted key strongly implies intent to ENFORCE
+        # it, but without --require-trusted an embedded attacker key still yields valid=true (only
+        # key_trusted=false). Warn VISIBLY on stderr (never touching --json stdout, never silently
+        # changing `valid`) so the caller notices the un-enforced trust. ASCII-only (Windows cp1252).
+        if trusted_keys and not require_trusted:
+            typer.echo(
+                "warning: --trusted-key/TG_EVIDENCE_TRUSTED_KEYS supplied without "
+                "--require-trusted; an untrusted key will still report valid=true. Pass "
+                "--require-trusted to enforce.",
+                err=True,
+            )
+        payload = verify_evidence_receipt(
+            receipt_path,
+            trusted_public_keys=trusted_keys,
+            require_trusted=require_trusted,
+            previous_receipt_path=previous_path,
+        )
+    except EvidenceSigningError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _evidence_error_payload(
+                        str(exc), code="signing_error", routing_reason="evidence-receipt-verify"
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _evidence_error_payload(
+                        str(exc), code="internal_error", routing_reason="evidence-receipt-verify"
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"Evidence receipt: {payload['receipt_path']}")
+        typer.echo(f"  valid={payload['valid']}")
+        typer.echo(f"  signed={payload['signed']}")
+        checks = cast(dict[str, object], payload["checks"])
+        typer.echo(
+            f"  digest_valid={checks['digest_valid']} signature_valid={checks['signature_valid']} "
+            f"key_trusted={checks['key_trusted']}"
+        )
+        if payload.get("key_id"):
+            typer.echo(f"  key_id={payload['key_id']}")
+        chain = payload.get("chain")
+        if isinstance(chain, dict):
+            typer.echo(f"  chain_valid={chain['chain_valid']}")
+            # Surface WHY the chain failed (e.g. an oversized/missing --previous file, or a digest
+            # mismatch) in text mode too, not only in --json -- otherwise a bounded-read refusal or
+            # a mismatch reads as a bare `chain_valid=False` with no actionable reason.
+            chain_error = chain.get("chain_error")
+            if chain_error:
+                typer.echo(f"  chain_error: {chain_error}")
+        for error in cast(list[object], payload.get("errors") or []):
+            typer.echo(f"  error: {error}")
+
+    if not payload["valid"]:
+        raise typer.Exit(code=1)
+
+
+@evidence_app.command("keygen")
+def evidence_keygen(
+    out_path: str | None = typer.Option(
+        None,
+        "--out",
+        help="Where to write the private key. Defaults to TG_EVIDENCE_SIGNING_KEY or "
+        "~/.tensor-grep/keys/evidence_ed25519.key.",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing key file at the target path."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the keygen result as JSON."),
+) -> None:
+    """Generate a new Ed25519 signing keypair for `tg evidence emit --sign`."""
+    from tensor_grep.cli.evidence_receipt import keygen_evidence_receipt
+    from tensor_grep.cli.evidence_signing import EvidenceSigningError
+
+    try:
+        payload = keygen_evidence_receipt(out_path, force=force)
+    except EvidenceSigningError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _evidence_error_payload(
+                        str(exc), code="signing_error", routing_reason="evidence-receipt-keygen"
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"Private key: {payload['private_key_path']}")
+    typer.echo(f"Public key:  {payload['public_key_path']}")
+    typer.echo(f"key_id={payload['key_id']}")
+    typer.echo(f"public_key={payload['public_key']}")
+    typer.echo("Register the key_id/public_key with your downstream verifier (e.g. gotcontext).")
+
+
+@evidence_app.command("pubkey")
+def evidence_pubkey(
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        help="Path to the private key file. Defaults to TG_EVIDENCE_SIGNING_KEY or "
+        "~/.tensor-grep/keys/evidence_ed25519.key.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the pubkey result as JSON."),
+) -> None:
+    """Print the public key + key_id for the resolved signing key (for verifier registration)."""
+    from tensor_grep.cli.evidence_receipt import pubkey_evidence_receipt
+    from tensor_grep.cli.evidence_signing import EvidenceSigningError
+
+    try:
+        payload = pubkey_evidence_receipt(signing_key)
+    except EvidenceSigningError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _evidence_error_payload(
+                        str(exc), code="signing_error", routing_reason="evidence-receipt-pubkey"
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"key_id={payload['key_id']}")
+    typer.echo(f"public_key={payload['public_key']}")
 
 
 @app.command("update")

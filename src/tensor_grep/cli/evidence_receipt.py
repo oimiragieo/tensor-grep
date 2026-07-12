@@ -15,8 +15,13 @@ Hard contract (Backend Fail-Closed Contract, applied to receipt emission):
     (`repo_map.build_symbol_blast_radius`) -- never the session daemon, MCP server, or apply
     policy (out of scope for Phase 1; see AGENTS.md "Backend Fail-Closed Contract").
 
-P2 (signing: `receipt_sha256` / `signature` / `previous_receipt_sha256` / `tg evidence verify`) is
-a separate PR -- this module intentionally does not emit those fields.
+P2 (signing): `receipt_sha256` is now ALWAYS attached (keyless integrity/dedup/chain digest); the
+`signing` / `signature` blocks and `previous_receipt_sha256` are added only when the caller passes
+`sign=True` (`tg evidence emit --sign`) or `previous_receipt_path` (`--previous`). ALL cryptography
+lives in `tensor_grep.cli.evidence_signing` -- this module only threads flags/paths through to it,
+per the Backend Fail-Closed Contract: `sign=True` with no resolvable key raises (never emits an
+unsigned receipt while signing was requested), and this function never catches that error itself
+so the CLI layer's `except Exception` never gets a chance to write a partial receipt to `--out`.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import evidence_signing
 from tensor_grep.cli.audit_manifest import (
     _envelope,
     _json_output_version,
@@ -716,13 +722,23 @@ def build_evidence_receipt(
     model: str | None = None,
     cost_json_path: str | Path | None = None,
     recompute: bool = False,
+    sign: bool = False,
+    signing_key_path: str | Path | None = None,
+    previous_receipt_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Aggregate an EvidenceReceipt v1 payload (Phase 1: no signature).
+    """Aggregate an EvidenceReceipt v1 payload and attach its keyless integrity digest, optionally
+    Ed25519-signing it (P2).
 
     Reads at most two persisted JSON files (`--manifest`, `--capsule`) plus at most 2 git
     subprocess calls (`_repo_revision_identity`). Never re-scans the repo unless `recompute=True`
     AND `query` is given, in which case exactly one already-cited REUSE producer
     (`repo_map.build_symbol_blast_radius`) is invoked for the blast_radius block only.
+
+    `receipt_sha256` is ALWAYS attached, signed or not. `sign=True` additionally attaches
+    `signing`/`signature` (Ed25519 over the canonical bytes) and FAILS CLOSED -- raising
+    `evidence_signing.EvidenceSigningError` -- if no signing key resolves or `cryptography` is
+    unavailable; it never falls back to emitting an unsigned receipt. `previous_receipt_path`
+    (`--previous`) attaches `previous_receipt_sha256` independent of `sign`.
     """
     root = _resolve_root(Path(path))
 
@@ -796,6 +812,28 @@ def build_evidence_receipt(
         "session_id": None,  # Phase 1 deliberately does not wire session-daemon reads (see AGENTS.md)
         "recomputed": bool(recompute and blast_radius.get("source") == "recomputed"),
     }
+
+    resolved_previous_digest: str | None = None
+    if previous_receipt_path is not None:
+        resolved_previous_digest = evidence_signing.previous_receipt_digest(previous_receipt_path)
+
+    if sign:
+        # Deliberately NOT wrapped in try/except here: a signing failure (no key, bad key,
+        # missing `cryptography`) must propagate all the way out of build_evidence_receipt so the
+        # CLI layer's existing `except Exception` in `evidence_emit` reports it and exits non-zero
+        # WITHOUT ever reaching the `--out` write step -- the Backend Fail-Closed Contract applied
+        # to receipt emission ("never emit an unsigned receipt while --sign was requested").
+        resolved_key_path = evidence_signing.resolve_signing_key_path(signing_key_path)
+        receipt = evidence_signing.sign_receipt(
+            receipt,
+            private_key_path=resolved_key_path,
+            previous_receipt_sha256=resolved_previous_digest,
+        )
+    else:
+        if resolved_previous_digest is not None:
+            receipt["previous_receipt_sha256"] = resolved_previous_digest
+        receipt["receipt_sha256"] = evidence_signing.receipt_digest(receipt)
+
     return receipt
 
 
@@ -810,6 +848,9 @@ def build_evidence_receipt_json(
     model: str | None = None,
     cost_json_path: str | Path | None = None,
     recompute: bool = False,
+    sign: bool = False,
+    signing_key_path: str | Path | None = None,
+    previous_receipt_path: str | Path | None = None,
 ) -> str:
     return json.dumps(
         build_evidence_receipt(
@@ -822,6 +863,90 @@ def build_evidence_receipt_json(
             model=model,
             cost_json_path=cost_json_path,
             recompute=recompute,
+            sign=sign,
+            signing_key_path=signing_key_path,
+            previous_receipt_path=previous_receipt_path,
         ),
         indent=2,
     )
+
+
+# ---------------------------------------------------------------------------
+# P2: verify / keygen / pubkey -- thin envelope wrappers around evidence_signing (all crypto stays
+# isolated there); mirrors audit_manifest.py's verify_review_bundle/_json pairing.
+# ---------------------------------------------------------------------------
+
+
+def verify_evidence_receipt(
+    receipt_path: str | Path,
+    *,
+    trusted_public_keys: Sequence[str] | None = None,
+    require_trusted: bool = False,
+    previous_receipt_path: str | Path | None = None,
+) -> dict[str, Any]:
+    resolved_receipt_path = Path(receipt_path).expanduser().resolve()
+    receipt = evidence_signing.read_receipt_file(resolved_receipt_path)
+    result = evidence_signing.verify_receipt(
+        receipt,
+        trusted_public_keys=list(trusted_public_keys) if trusted_public_keys else None,
+        require_trusted=require_trusted,
+    )
+    if previous_receipt_path is not None:
+        chain = evidence_signing.verify_receipt_chain(receipt, previous_path=previous_receipt_path)
+        result = dict(result)
+        result["chain"] = chain
+        result["valid"] = bool(result["valid"]) and bool(chain["chain_valid"])
+
+    payload = _evidence_envelope(routing_reason="evidence-receipt-verify")
+    payload["receipt_path"] = str(resolved_receipt_path)
+    payload.update(result)
+    return payload
+
+
+def verify_evidence_receipt_json(
+    receipt_path: str | Path,
+    *,
+    trusted_public_keys: Sequence[str] | None = None,
+    require_trusted: bool = False,
+    previous_receipt_path: str | Path | None = None,
+) -> str:
+    return json.dumps(
+        verify_evidence_receipt(
+            receipt_path,
+            trusted_public_keys=trusted_public_keys,
+            require_trusted=require_trusted,
+            previous_receipt_path=previous_receipt_path,
+        ),
+        indent=2,
+    )
+
+
+def keygen_evidence_receipt(
+    out_path: str | Path | None = None, *, force: bool = False
+) -> dict[str, Any]:
+    resolved_out = (
+        Path(out_path).expanduser().resolve()
+        if out_path is not None
+        else evidence_signing.resolve_signing_key_path(None)
+    )
+    result = evidence_signing.generate_keypair(resolved_out, force=force)
+    payload = _evidence_envelope(routing_reason="evidence-receipt-keygen")
+    payload.update(result)
+    return payload
+
+
+def keygen_evidence_receipt_json(out_path: str | Path | None = None, *, force: bool = False) -> str:
+    return json.dumps(keygen_evidence_receipt(out_path, force=force), indent=2)
+
+
+def pubkey_evidence_receipt(signing_key_path: str | Path | None = None) -> dict[str, Any]:
+    resolved_key_path = evidence_signing.resolve_signing_key_path(signing_key_path)
+    result = evidence_signing.public_key_info(resolved_key_path)
+    payload = _evidence_envelope(routing_reason="evidence-receipt-pubkey")
+    payload["signing_key_path"] = str(resolved_key_path)
+    payload.update(result)
+    return payload
+
+
+def pubkey_evidence_receipt_json(signing_key_path: str | Path | None = None) -> str:
+    return json.dumps(pubkey_evidence_receipt(signing_key_path), indent=2)

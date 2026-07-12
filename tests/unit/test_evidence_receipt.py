@@ -906,14 +906,40 @@ def test_sources_block_when_nothing_supplied(git_repo: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# No P2 (signing) leakage: receipt_sha256 / signature / previous_receipt_sha256
-# must NOT appear in the Phase-1 schema.
+# P2: receipt_sha256 is ALWAYS attached (keyless integrity/dedup/chain digest); signature/signing/
+# previous_receipt_sha256 stay absent unless the caller passes sign=True / previous_receipt_path.
+# See test_evidence_signing.py for the full Ed25519 sign/verify/keygen/pubkey surface.
 # ---------------------------------------------------------------------------
 
 
-def test_phase1_receipt_has_no_signing_fields(git_repo: Path) -> None:
+def test_unsigned_receipt_always_has_a_digest_but_no_signature_fields(git_repo: Path) -> None:
     receipt = evidence_receipt.build_evidence_receipt(git_repo)
 
-    assert "receipt_sha256" not in receipt
+    assert isinstance(receipt.get("receipt_sha256"), str) and receipt["receipt_sha256"]
+    assert receipt["receipt_sha256"] == evidence_receipt.evidence_signing.receipt_digest({
+        k: v for k, v in receipt.items() if k != "receipt_sha256"
+    })
     assert "signature" not in receipt
+    assert "signing" not in receipt
     assert "previous_receipt_sha256" not in receipt
+
+
+def test_sign_true_attaches_signing_and_signature_blocks(git_repo: Path, tmp_path: Path) -> None:
+    key_path = tmp_path / "key"
+    evidence_receipt.evidence_signing.generate_keypair(key_path)
+
+    receipt = evidence_receipt.build_evidence_receipt(
+        git_repo, sign=True, signing_key_path=key_path
+    )
+
+    assert receipt["signing"]["algorithm"] == "ed25519"
+    assert receipt["signature"]["value"]
+    result = evidence_receipt.evidence_signing.verify_receipt(receipt)
+    assert result["valid"] is True
+
+
+def test_sign_true_with_no_resolvable_key_fails_closed(git_repo: Path, tmp_path: Path) -> None:
+    missing_key = tmp_path / "does_not_exist" / "key"
+
+    with pytest.raises(evidence_receipt.evidence_signing.EvidenceSigningError):
+        evidence_receipt.build_evidence_receipt(git_repo, sign=True, signing_key_path=missing_key)

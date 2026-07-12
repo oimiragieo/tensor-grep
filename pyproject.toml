@@ -524,6 +524,11 @@ dependencies = [
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
     "importlib-metadata<8.5.0; python_version < '3.12'",
+    # Ed25519 EvidenceReceipt signing (`tg evidence emit --sign` / verify / keygen / pubkey,
+    # task #124). Already resolved transitively via mcp>=1.2.0 -> pyjwt[crypto] -> cryptography
+    # (uv.lock) and pinned >=48.0.1 in [tool.uv].constraint-dependencies above -- promoting it to a
+    # direct core dependency is a zero-additional-install-cost change.
+    "cryptography>=48.0.1",
 ]
 
 [project.optional-dependencies]
