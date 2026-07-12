@@ -54,6 +54,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "lsp-setup",
     "map",
     "orient",
+    "codemap",
     "inventory",
     "docs-coverage",
     "session",
