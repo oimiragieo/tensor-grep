@@ -17,6 +17,7 @@ EXPECTED_EXAMPLES = {
         "edit_plan_seed",
         "navigation_pack",
         "validation_commands",
+        "validation_plan",
     ),
     "context_render.json": (
         "query",
@@ -398,6 +399,14 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert isinstance(payload["candidate_edit_targets"]["spans"], list)
                 assert payload["candidate_edit_targets"]["spans"]
                 assert 0.0 <= payload["edit_plan_seed"]["rollback_risk"] <= 1.0
+            if file_name == "edit_plan.json":
+                # Parity fix (v1.71.1 dogfood): edit-plan's top-level `validation_plan` must
+                # exist, be non-empty, and correspond exactly to `edit_plan_seed.validation_plan`
+                # -- additive alongside the pre-existing top-level `validation_commands`.
+                assert isinstance(payload["validation_plan"], list)
+                assert payload["validation_plan"]
+                assert payload["validation_plan"] == payload["edit_plan_seed"]["validation_plan"]
+                assert payload["validation_commands"]
             if file_name in {"context_render.json", "blast_radius_render.json"}:
                 assert isinstance(payload["navigation_pack"]["follow_up_reads"], list)
                 assert payload["navigation_pack"]["follow_up_reads"]

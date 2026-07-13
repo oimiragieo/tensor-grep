@@ -893,6 +893,12 @@ struct ValidationPlanStepExample {
     scope: String,
     runner: String,
     confidence: f64,
+    // Pre-existing contract field (docs/CONTRACTS.md, docs/harness_api.md): every real
+    // `validation_plan[]` step carries `detection` (`detected`/`heuristic`/`generic`). This
+    // struct predates any active caller exercising it (see `#[allow(dead_code)]`), so the gap
+    // was latent until the new top-level `validation_plan` assertion below started deserializing
+    // real payload steps through it.
+    detection: String,
     #[serde(default)]
     target: Option<String>,
 }
@@ -3408,6 +3414,64 @@ fn assert_context_edit_plan_example(path: &Path) {
             .and_then(|value| value.as_object())
             .is_some(),
         "{} navigation_pack missing",
+        path.display()
+    );
+    // Parity fix (v1.71.1 dogfood): top-level `validation_plan` is an ADDITIVE sibling of the
+    // pre-existing top-level `validation_commands` -- it must be a non-empty array of structured
+    // steps, mirroring the `agent` capsule's own top-level `validation_plan` contract.
+    let validation_plan: Vec<ValidationPlanStepExample> = serde_json::from_value(
+        object
+            .get("validation_plan")
+            .cloned()
+            .unwrap_or_else(|| panic!("{} top-level validation_plan missing", path.display())),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "{} invalid top-level validation_plan: {error}",
+            path.display()
+        )
+    });
+    assert!(
+        !validation_plan.is_empty(),
+        "{} top-level validation_plan must not be empty",
+        path.display()
+    );
+    for step in &validation_plan {
+        assert!(
+            !step.command.is_empty(),
+            "{} top-level validation_plan command must not be empty",
+            path.display()
+        );
+        assert!(
+            matches!(step.scope.as_str(), "symbol" | "file" | "repo"),
+            "{} top-level validation_plan scope must be symbol, file, or repo",
+            path.display()
+        );
+        assert!(
+            !step.runner.is_empty(),
+            "{} top-level validation_plan runner must not be empty",
+            path.display()
+        );
+        assert!(
+            (0.0..=1.0).contains(&step.confidence),
+            "{} top-level validation_plan confidence must be normalized",
+            path.display()
+        );
+        assert!(
+            matches!(
+                step.detection.as_str(),
+                "detected" | "heuristic" | "generic"
+            ),
+            "{} top-level validation_plan detection must be detected, heuristic, or generic",
+            path.display()
+        );
+    }
+    assert!(
+        object
+            .get("validation_commands")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
+        "{} top-level validation_commands missing or empty",
         path.display()
     );
 }

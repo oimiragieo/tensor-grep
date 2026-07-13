@@ -414,5 +414,30 @@
     "uv run pytest tests/test_payments.py -k test_create_invoice -q",
     "uv run pytest tests/test_payments.py -q",
     "uv run pytest -q"
+  ],
+  "validation_plan": [
+    {
+      "command": "uv run pytest tests/test_payments.py -k test_create_invoice -q",
+      "scope": "symbol",
+      "runner": "pytest",
+      "confidence": 0.95,
+      "detection": "detected",
+      "target": "tests/test_payments.py"
+    },
+    {
+      "command": "uv run pytest tests/test_payments.py -q",
+      "scope": "file",
+      "runner": "pytest",
+      "confidence": 0.82,
+      "detection": "detected",
+      "target": "tests/test_payments.py"
+    },
+    {
+      "command": "uv run pytest -q",
+      "scope": "repo",
+      "runner": "pytest",
+      "confidence": 0.55,
+      "detection": "detected"
+    }
   ]
 }
