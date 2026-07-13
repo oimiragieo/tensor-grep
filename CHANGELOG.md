@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.70.1 (2026-07-13)
+
+### Bug Fixes
+
+- **index**: Honor root .gitignore in non-git dirs (add_ignore trio)
+  ([#570](https://github.com/oimiragieo/tensor-grep/pull/570),
+  [`2c07e0a`](https://github.com/oimiragieo/tensor-grep/commit/2c07e0aae60d602886f24429133d3ac17d4d218f))
+
+The trigram index-build WalkBuilders (index.rs collect_file_entries + new-file scan) set
+  .git_ignore(!no_ignore) but no .add_ignore, so outside a git repo they honored zero .gitignore ->
+  index pollution (#127). Mirrors the sibling add_ignore trio (main.rs:5695 /
+  native_search.rs:1471): adds root-level .ignore/.gitignore/.rgignore via add_ignore, keeping tg's
+  gitignore behavior uniform across search + index. Deliberately NOT require_git(false)
+  (BACKLOG.md:154: it would create nested/global-gitignore divergence vs tg search). Behavior inside
+  git repos unchanged.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- De-flake incremental-vs-full repo_map perf assertion (#156)
+  ([#569](https://github.com/oimiragieo/tensor-grep/pull/569),
+  [`6eaf384`](https://github.com/oimiragieo/tensor-grep/commit/6eaf384bc5b303ad893d86e0e778d0925482e804))
+
+The shared graph/PageRank/assembly overhead in both build_repo_map and build_repo_map_incremental
+  was ~equal to the per-file sleep savings, pinning the incremental/full ratio at ~0.5 and flaking
+  on ubuntu-py3.12 CI (assert 0.2126 < 0.2113, missed by 0.0013s -- blocked the v1.69.4 release that
+  carries the #152 sys.path.insert HIGH fix).
+
+Raise the per-file parse cost so the timing reflects the real 1-of-80 file-count savings (ratio ->
+  ~0.13) and relax the threshold to 0.65 for ~14x overhead-noise headroom. Still catches the
+  regression class (incremental accidentally reparsing every file -> ratio -> ~1.0). Test-only; no
+  production change. Verified 3/3 local passes.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.70.0 (2026-07-13)
 
 ### Documentation
