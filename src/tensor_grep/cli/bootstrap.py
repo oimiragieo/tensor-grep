@@ -15,7 +15,12 @@ from tensor_grep.cli.runtime_paths import (
     resolve_ripgrep_binary,
 )
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
-from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+from tensor_grep.io.directory_scanner import (
+    BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
+    BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
+    BROAD_WORKSPACE_PROJECT_MARKERS,
+    UNBOUNDED_VENDORED_ROOT_DIR_NAMES,
+)
 
 # Saved at import time so _streaming_passthrough_returncode can detect when
 # run_subprocess has been monkey-patched by a test (old mock pattern).
@@ -140,19 +145,11 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "target",
     "venv",
 }
-_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
-_BROAD_WORKSPACE_PROJECT_MARKERS = {
-    ".git",
-    "Cargo.toml",
-    "build.gradle",
-    "composer.json",
-    "deno.json",
-    "go.mod",
-    "package.json",
-    "pom.xml",
-    "pyproject.toml",
-    "settings.gradle",
-}
+# Single source of truth: `io/directory_scanner.py` (item #154) -- keeps this file and
+# `cli/main.py`'s equivalent guard from drifting out of sync.
+_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+_BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+_BROAD_WORKSPACE_PROJECT_MARKERS = BROAD_WORKSPACE_PROJECT_MARKERS
 _SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
 _SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
 _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
@@ -614,8 +611,17 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
             continue
         path = Path(raw_path)
         try:
-            if not path.is_dir() or _path_has_project_marker(path):
+            if not path.is_dir():
                 continue
+            # Item #154: mirrors cli/main.py's `_workspace_project_child_names` -- a root
+            # carrying its own project marker is not skipped outright, it just needs more
+            # marked children (the higher "marked-root" threshold) before it counts as a
+            # workspace parent too.
+            threshold = (
+                _BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+                if _path_has_project_marker(path)
+                else _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+            )
             project_children = 0
             for child in path.iterdir():
                 try:
@@ -623,7 +629,7 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
                         project_children += 1
                 except OSError:
                     continue
-                if project_children >= _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD:
+                if project_children >= threshold:
                     return True
         except OSError:
             continue
@@ -631,10 +637,12 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
 
 
 # Critical unscoped-search-hang fix C: heavy vendored dirs that can sit at the TOP LEVEL of
-# a single project root -- `_search_paths_include_workspace_root` above SKIPS any root that
-# is itself a project (has its own marker like package.json/.git) and only fires when it
-# finds >= 3 sibling project dirs, so a single huge vendored repo (its own project, one
-# giant `node_modules`/`external_repos`/etc. at the top) always slipped past it. This check
+# a single project root -- `_search_paths_include_workspace_root` above only fires on
+# independently-MARKED children (a `.git`/`package.json`/etc. of their own; item #154 raised
+# the marked-root threshold from a flat skip to >= 8 marked children), and a single huge
+# vendored repo's own `node_modules`/`external_repos`/etc. is not itself marked that way, so a
+# single huge vendored repo (one giant vendored dir at the top, however few or many marked
+# siblings) always slipped past it. This check
 # MUST live here (not just in cli/main.py's equivalent guard) because `main_entry` below
 # decides whether to delegate straight to the native `tg` binary or to `rg` passthrough --
 # both of which bypass cli/main.py's Python guards entirely. Without this, an unscoped

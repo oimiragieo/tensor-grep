@@ -199,6 +199,45 @@ def test_main_entry_should_not_passthrough_unbounded_workspace_root_search(
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_not_passthrough_marked_workspace_root_with_many_marked_children(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Item #154: reported repro is an unscoped `tg search "def main" <root> --json` from a
+    multi-root workspace parent that ALSO carries its own top-level project marker (a real
+    example: a workspace dir with a top-level `package.json`, like `C:/dev/projects`) --
+    `_search_paths_include_workspace_root` used to skip any root with its own marker
+    unconditionally, so this exact shape always fell through to an unbounded native/rg walk
+    (the reported 60s timeout) instead of refusing fast. A marked root must still refuse once
+    it has enough independently-marked children (the higher marked-root threshold)."""
+    called = {"full_cli": False}
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "package.json").write_text("{}", encoding="utf-8")
+    for index in range(8):
+        child = root / f"project-{index}"
+        child.mkdir()
+        (child / "package.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "def main", str(root), "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native passthrough should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_not_passthrough_single_project_root_with_top_level_vendored_dir(
     monkeypatch, tmp_path: Path
 ) -> None:

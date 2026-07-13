@@ -38,7 +38,12 @@ from tensor_grep.cli.runtime_paths import (
 )
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
-from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+from tensor_grep.io.directory_scanner import (
+    BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
+    BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
+    BROAD_WORKSPACE_PROJECT_MARKERS,
+    UNBOUNDED_VENDORED_ROOT_DIR_NAMES,
+)
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 
 if TYPE_CHECKING:
@@ -93,19 +98,11 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "target",
     "venv",
 }
-_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
-_BROAD_WORKSPACE_PROJECT_MARKERS = {
-    ".git",
-    "Cargo.toml",
-    "build.gradle",
-    "composer.json",
-    "deno.json",
-    "go.mod",
-    "package.json",
-    "pom.xml",
-    "pyproject.toml",
-    "settings.gradle",
-}
+# Single source of truth: `io/directory_scanner.py` (item #154) -- keeps this file and
+# `cli/bootstrap.py`'s front-door mirror from drifting out of sync.
+_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+_BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+_BROAD_WORKSPACE_PROJECT_MARKERS = BROAD_WORKSPACE_PROJECT_MARKERS
 _GUARDED_BROAD_ROOT_RG_GLOBS = (
     "!context/**",
     "!**/context/**",
@@ -4045,8 +4042,20 @@ def _workspace_project_child_names(paths: list[str]) -> list[str]:
             continue
         path = Path(raw_path)
         try:
-            if not path.is_dir() or _path_has_project_marker(path):
+            if not path.is_dir():
                 continue
+            # Item #154: a root carrying its OWN project marker (e.g. a top-level
+            # `package.json`) is not skipped outright -- it can *also* be a workspace parent
+            # (a real repro: a workspace dir with its own `package.json` that also contains
+            # dozens of independently-marked sibling projects). A marked root uses the higher
+            # "marked-root" threshold, since an ordinary single project can legitimately carry
+            # a handful of marked children without being a workspace parent; an unmarked root
+            # keeps the original (lower) threshold.
+            threshold = (
+                _BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+                if _path_has_project_marker(path)
+                else _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+            )
             child_project_names: list[str] = []
             for child in path.iterdir():
                 try:
@@ -4054,7 +4063,7 @@ def _workspace_project_child_names(paths: list[str]) -> list[str]:
                         child_project_names.append(child.name)
                 except OSError:
                     continue
-            if len(child_project_names) >= _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD:
+            if len(child_project_names) >= threshold:
                 found.update(child_project_names)
         except OSError:
             continue
@@ -4076,10 +4085,11 @@ def _should_refuse_unbounded_workspace_root_scan(
 
 # Critical unscoped-search-hang fix C: heavy vendored/index directories that can sit at the
 # TOP LEVEL of a single project root -- a root `_workspace_project_child_names` never flags
-# because the guard above SKIPS any root that is itself a project (has its own marker like
-# pyproject.toml/.git) and only fires when it finds >= 3 sibling project dirs. A single huge
-# vendored repo (its own project, one giant `node_modules`/`external_repos`/etc. at the top)
-# always slips past that guard.
+# on their account because that guard only fires on independently-MARKED children (a
+# `.git`/`pyproject.toml`/etc. of their own), and a single huge vendored repo's own
+# `node_modules`/`external_repos`/etc. is not itself marked that way (item #154 raised the
+# marked-root threshold from a flat skip to >= 8 marked children, but a bare vendored dir still
+# never counts as one). That single huge vendored repo always slips past that guard.
 #
 # Deliberately EXCLUDES tg's own index/reference dirs (`.tensor-grep`, `_tg_refs`,
 # `.tg_semantic_index`): those are already (a) skipped by repo_map's walk (Fix A), (b)
