@@ -47,7 +47,7 @@ Verified against **tg 1.71.1** (2026-07-13 workspace dogfood on `/mnt/c/dev/proj
 | Whole-repo agent (native) | **OK** (~26s on tensor-grep, exit 0); WSL `/mnt/c` amplifies to 75s = 9p artifact, not a native regression |
 | Large JS/TS agent trees | Open — `agent-studio` slow on WSL; needs NATIVE repro before claiming a real timeout |
 | Complete callers at repo root | Still prefer `src/` |
-| `codemap` production-ready | Open (timeouts) |
+| `codemap` agent-loop-safe | **Fixed** (#153 deadline; native ~41s whole-repo, bounded/partial) |
 | Agent accuracy gate (top-k / MRR / false-primary) | Missing |
 | GPU promotion / LSP proof | Experimental / not claimed |
 | Cold text search vs `rg` claims | `rg` remains baseline |

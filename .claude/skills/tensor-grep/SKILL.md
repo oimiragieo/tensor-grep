@@ -92,7 +92,7 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 **Workspace `tg orient .` works** (~53s on v1.71.1). Per-repo orient is faster (~24s).
 
-**`tg codemap` still not agent-loop ready.** No JSON within 90s on tensor-grep under WSL; write to `/tmp` if you try it. Default `--out` is `/docs/code-map`.
+**`tg codemap` is agent-loop-safe since #153 (v1.71.0).** Native: src `~15s`, whole-repo `~41s` (844 files), both `partial=false` complete; the default wall-clock deadline bounds it (returns `partial=true`, never hangs). The old "90s timeout" was WSL `/mnt/c` 9p amplification. Default `--out` is `docs/code-map`.
 
 **`tg inventory --deadline` returns a floor** (workspace 525 files incomplete at 30s on v1.71.1). Prefer per-repo inventory without a tight deadline when totals must be trusted.
 

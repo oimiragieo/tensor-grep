@@ -44,7 +44,7 @@ tg dogfood --root . --output /tmp/dogfood-ws.json
 | blast/impact/defs/source/context*/evidence/session | ✅ | |
 | Unscoped workspace search | ✅** | **fixed** — refuse in ~1.1s (exit 2), was 60s hang |
 | `tg scan` WSL | ✅** | **fixed** — exit 0 (~1.4s); may warn on WSL path shim |
-| `tg codemap` | ❌ | TIMEOUT 90s |
+| `tg codemap` | ✅ | native ~41s whole-repo complete; #153 deadline bounds it (WSL 90s = 9p artifact) |
 | inventory/map/importers deadlines | ⚠️ | incomplete floors |
 
 TSV: `/tmp/tg-dogfood-v8/report.tsv` — **37 PASS / 5 INCOMPLETE / 3 TIMEOUT** (no FAIL)
@@ -62,7 +62,7 @@ TSV: `/tmp/tg-dogfood-v8/report.tsv` — **37 PASS / 5 INCOMPLETE / 3 TIMEOUT** 
 
 1. Prefer `REPO/src` for complete callers and reliable agent capsules (root agent flaky again).
 2. Unscoped multi-project search now fails fast — scope or opt in explicitly; do not treat exit 2 as “zero matches”.
-3. `codemap` not agent-loop ready.
+3. `codemap` is agent-loop-safe (#153 deadline; native ~41s whole-repo) — the WSL 90s was a 9p artifact.
 4. `tg scan` may PASS while still skipping paths under WSL — read stderr warnings.
 5. Honor `tie_requires_confirmation` / `partial` / `result_incomplete` hard stops.
 6. Harness/noisy repos can pick weak primaries — corroborate with `callers` + search.
