@@ -15112,10 +15112,28 @@ def build_file_importers_from_map(
     if not resolved_file.exists():
         raise FileNotFoundError(f"File not found: {resolved_file}")
     target_file = str(resolved_file)
+    # Honesty fix (dogfood, published v1.69.2 wheel): a purely lexical containment check --
+    # both paths are already `.resolve()`d above, so this touches no filesystem state beyond
+    # what the code above already did. A relative FILE (the daemon/session convention, joined
+    # onto repo_root by the `if not resolved_file.is_absolute()` branch above) stays a
+    # descendant of repo_root for the normal in-repo convention, so it does not trip this; a
+    # net-escaping `..` relative path (e.g. `../other/mod.py`) correctly DOES. The usual
+    # outside-root case is an already-absolute FILE (the CLI cold-tier caller, pre-resolved
+    # against cwd by `build_file_importers` before this function ever sees it). `relative_to` raises ValueError both for a genuinely
+    # unrelated path and for a different Windows drive -- both mean "outside root" here. Without
+    # this signal, an outside-root FILE silently reported `importer_count: 0`, indistinguishable
+    # from a genuine "unimported inside ROOT" answer, when the real problem was ROOT defaulting
+    # to the wrong scan boundary (e.g. CWD instead of the repo that actually contains FILE).
+    try:
+        resolved_file.relative_to(repo_root)
+        file_outside_root = False
+    except ValueError:
+        file_outside_root = True
 
     payload = _envelope(repo_root)
     payload["routing_reason"] = "file-importers"
     payload["file"] = target_file
+    payload["file_outside_root"] = file_outside_root
 
     all_files = [str(current) for current in repo_map.get("files", [])]
     imports_by_file = {
@@ -15180,6 +15198,21 @@ def build_file_importers_from_map(
             "importer_candidates_scanned": scanned_count,
             "importer_candidates_total": len(bounded_candidates),
         }
+    # Stamped LAST (after _copy_scan_limit and the ceiling/deadline blocks above), only when no
+    # more specific remediation already claimed the slot: _copy_scan_limit unconditionally copies
+    # the repo-map's own `scan_remediation` (often `None` on a complete ROOT scan) whenever the
+    # repo-map carried a `scan_limit` dict, and the ceiling-hit branch above stamps its own
+    # narrower message first via `_mark_result_incomplete` -- either would silently clobber this
+    # one if it ran earlier (backlog #57 taught the same lesson for the ceiling-hit remediation
+    # above). `file_outside_root` is additive-only: it never flips `result_incomplete`/`partial`
+    # or changes exit code, since a truly outside-root FILE always finds zero prefiltered
+    # candidates (never ceiling- or deadline-bound).
+    if file_outside_root and not payload.get("scan_remediation"):
+        payload["scan_remediation"] = (
+            f"FILE {resolved_file} is outside the scanned ROOT {repo_root}; the importers scan "
+            "only covers ROOT, so 0 importers here does NOT mean the file is unused. Pass the "
+            "repo containing FILE as ROOT (tg importers FILE <its-repo>) or run from inside it."
+        )
     payload["resolution_gaps"] = list(repo_map.get("resolution_gaps", []))
     return payload
 
