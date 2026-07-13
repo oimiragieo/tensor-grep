@@ -1,6 +1,73 @@
 # CHANGELOG
 
 
+## v1.69.0 (2026-07-13)
+
+### Documentation
+
+- **agents**: Explain why ruff format's whole-repo '.' scope is load-bearing
+  ([#560](https://github.com/oimiragieo/tensor-grep/pull/560),
+  [`4f41090`](https://github.com/oimiragieo/tensor-grep/commit/4f41090a80c1baa59ce544a3bea440ecf7a01e8d))
+
+Under --preview, ruff (0.15.20, verified) formats Python code fences INSIDE Markdown, so a scoped
+  `ruff format --check --preview src/tensor_grep tests` passes locally yet misses an unformatted
+  docs/**/*.md snippet that reds CI's release-gating static-analysis job. That blocked v1.67.0 and
+  failed the static-analysis on #555/#556/#557 (which merely inherited the bad doc). Adds a prose
+  note to Required Local Validation so build agents run the whole-repo `.` form, not a src/tests
+  subset. No code or config change.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **backlog**: Reconcile ledger to v1.67.0 + 4-PR drain state
+  ([#559](https://github.com/oimiragieo/tensor-grep/pull/559),
+  [`f0da9fb`](https://github.com/oimiragieo/tensor-grep/commit/f0da9fb945456dbdb46be8095023cde08a78be6d))
+
+* docs(backlog): reconcile ledger to v1.66.1 live / v1.67.0 building + 4-PR drain
+
+CURRENT STATE / SHIPPING / SHIPPED were stale at v1.64.3 / "0 open PRs / WIP=0". Refresh to reality:
+  v1.66.1 live, v1.67.0 building (#553 Ed25519 evidence-signing + #558 release-blocker hotfix), 4
+  open PRs (#554-557) draining one-per-publish, plus the v1.59-v1.66.1 shipped window.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(backlog): campaign #142 complete — reconcile ledger to drain-clear
+
+All 4 campaign PRs drained one-per-publish: #554->v1.67.1, #555->v1.68.0 (daemon ~16x latency,
+  dogfood-verified on the published wheel), #556->v1.68.1 (apply_policy UNC + cross-platform
+  hardening), #557->v1.68.2 (count-matches). Refresh CURRENT STATE / SHIPPING (drain clear) /
+  SHIPPED.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **backlog**: Refresh ledger to v1.68.2 live + post-campaign #559/#560 merged
+  ([#561](https://github.com/oimiragieo/tensor-grep/pull/561),
+  [`d4eb699`](https://github.com/oimiragieo/tensor-grep/commit/d4eb6995d191b8804b4395f21cd5a7622dc4d868))
+
+CURRENT STATE said "v1.68.1 live, v1.68.2 building" but v1.68.2 has been the live PyPI release for
+  many ticks; #559 (backlog-reconcile) and #560 (AGENTS.md whole-repo ruff-scope hardening) also
+  merged post-campaign, docs-only/no-release. Also records the local-git hygiene pass (46 stale
+  branches + 9 remote refs cleaned). Ledger-currency only; no product or config change.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **codemap**: Add --ignore glob + --deadline wall-clock bound
+  ([#562](https://github.com/oimiragieo/tensor-grep/pull/562),
+  [`158f106`](https://github.com/oimiragieo/tensor-grep/commit/158f1063107a427177f279ead65459c8cabd413b))
+
+Closes two gaps vs sibling commands from the v1.68.1 dogfood: codemap now accepts repeatable
+  --ignore globs (reusing the shared _apply_ignore_globs helper, same as orient/agent) and a
+  --deadline threaded into build_repo_map (sets the existing partial/partial_reason on cutoff, like
+  callers/refs/impact/ inventory). Default invocation (no flags) is byte-identical. Motivation: 58%
+  of codemap's generated pages on this repo were benchmark-fixture noise a user had no way to
+  exclude.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.68.2 (2026-07-12)
 
 ### Bug Fixes
