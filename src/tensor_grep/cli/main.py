@@ -12442,8 +12442,6 @@ def lsp(
     """
     import os
 
-    from tensor_grep.cli.lsp_server import run_lsp
-
     normalized_provider = provider.strip().lower()
     if normalized_provider not in {"native", "lsp", "hybrid"}:
         typer.echo(
@@ -12464,6 +12462,19 @@ def lsp(
         if status.get("health_status") != "ready":
             raise typer.Exit(code=1)
         return
+    # The LSP server needs the optional `ast` extra (pygls/lsprotocol). Import it lazily and
+    # fail closed with an actionable message rather than leaking a ModuleNotFoundError traceback
+    # (item #159). Provider validation and --debug-trace above deliberately run first: they must
+    # work on a bare `pip install tensor-grep` without the extra.
+    try:
+        from tensor_grep.cli.lsp_server import run_lsp
+    except ImportError as exc:
+        typer.echo(
+            "tg lsp requires the optional 'ast' extra (language-server support). "
+            'Install it with: pip install "tensor-grep[ast]"',
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
     os.environ["TG_LSP_PROVIDER"] = normalized_provider
     run_lsp()
 

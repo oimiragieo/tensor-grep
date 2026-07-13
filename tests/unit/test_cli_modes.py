@@ -1798,6 +1798,44 @@ def test_lsp_rejects_unknown_provider_mode() -> None:
     assert "native, lsp, hybrid" in combined_output
 
 
+def test_lsp_reports_clean_error_when_ast_extra_missing(monkeypatch) -> None:
+    """Item #159: `tg lsp` with a VALID provider must emit a clean, actionable error (name the
+    `ast` extra + the install command) instead of a raw `ModuleNotFoundError` traceback when the
+    optional `ast` extra (pygls/lsprotocol) is not installed. Simulate the missing extra by
+    poisoning the lazy `lsp_server` import so it raises ImportError, exactly as a bare install
+    would. Env-robust: this passes whether or not the extra is installed in the test venv."""
+    monkeypatch.setitem(sys.modules, "tensor_grep.cli.lsp_server", None)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp", "--provider", "native"])
+
+    assert result.exit_code != 0
+    combined_output = _strip_ansi(result.stdout + result.stderr)
+    assert "ast" in combined_output.lower()
+    assert "pip install" in combined_output.lower()
+    # The whole point: a clean message, NOT a leaked traceback / exception.
+    assert "Traceback" not in combined_output
+    assert "ModuleNotFoundError" not in combined_output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_lsp_rejects_unknown_provider_without_needing_ast_extra(monkeypatch) -> None:
+    """Item #159: validating `--provider` must not require the optional `ast` extra -- an invalid
+    provider yields the clean "Unsupported LSP provider mode" error even when `lsp_server`
+    (pygls/lsprotocol) is unavailable, because provider validation now precedes the lazy import.
+    This is the env-robust twin of `test_lsp_rejects_unknown_provider_mode` (which relies on the
+    extra being present in the CI venv)."""
+    monkeypatch.setitem(sys.modules, "tensor_grep.cli.lsp_server", None)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp", "--provider", "remote"])
+
+    assert result.exit_code == 2
+    combined_output = _strip_ansi(result.stdout + result.stderr)
+    assert "Unsupported LSP provider mode" in combined_output
+    assert "Traceback" not in combined_output
+
+
 def test_lsp_debug_trace_emits_json_probe_payload(monkeypatch, tmp_path) -> None:
     from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
 
