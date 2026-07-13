@@ -1,6 +1,85 @@
 # CHANGELOG
 
 
+## v1.72.0 (2026-07-13)
+
+### Documentation
+
+- **backlog**: Refresh CURRENT STATE + SHIPPED to v1.71.2 (#157)
+  ([#579](https://github.com/oimiragieo/tensor-grep/pull/579),
+  [`b6402c5`](https://github.com/oimiragieo/tensor-grep/commit/b6402c54ebfc23b3fd527656edf043b9991cc271))
+
+Ledger led with "Live PyPI: v1.70.0 / draining #570" and "SHIPPED up to v1.69.3" -- ~6 releases
+  stale. Refresh: new CURRENT STATE lead bullet for the v1.70.0-> v1.71.2 wave (#152 sys.path / #127
+  gitignore / #90b doctor-honesty / #153 codemap deadline / #154 search fast-refuse / #158 scan
+  workspace refuse -- all dogfood-verified on published wheels, zero broken releases); SHIPPING =
+  #578 (docs) + v1.71.3 (#159) releasing; SHIPPED window extended to v1.71.2 + the CodeQL #13
+  resolution and moat dogfood-verification noted. Sections below stay HISTORICAL per the file's own
+  convention. Docs-only; holds behind the drain (push-race).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **skills**: Refresh 4 tg skills to v1.71.1 + correct a WSL /mnt/c false-regression
+  ([#578](https://github.com/oimiragieo/tensor-grep/pull/578),
+  [`a6e1ba3`](https://github.com/oimiragieo/tensor-grep/commit/a6e1ba3aa554cfc735a9019a7cef0f5b815a81b2))
+
+* docs(skills): refresh 4 tg skills to v1.71.1 + correct a WSL /mnt/c false-regression
+
+An earlier workspace-dogfood refresh (pre-compaction) recorded whole-repo `tg agent` as "regressed /
+  TIMEOUT 75s on v1.71.1" across 4 skills. Native repro this session disproves it: whole-repo `tg
+  agent` on tensor-grep runs ~26s (exit 0, valid capsule) -- the 75s figure was WSL /mnt/c
+  9p-latency amplification, the exact artifact the WSL-latency-artifact lesson warns to reproduce
+  natively before calling a regression. Corrected the framing in all 4 skills (native OK, WSL slow,
+  NOT a v1.71.1 native regression) while keeping the accurate 1.71.1 findings (fast-refuse verified,
+  scan-on-WSL fixed, scoped-search guidance).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(skills): correct a missed WSL /mnt/c false-regression line (follow-up to d5fe685)
+
+One residual "whole-repo tg agent timed out at 75s again" line in the tensor-grep skill still framed
+  the WSL 9p-latency artifact as a regression. Native is ~26s (exit 0). Now WSL-qualified like the
+  other three skills.
+
+* docs(skills): correct stale codemap "timeout/not-ready" claim (#153 landing dogfood)
+
+Native dogfood this session: `tg codemap` src ~15s, whole-repo ~41s (844 files), both partial=false
+  complete, exit 0. #153 (v1.71.0) added a default wall-clock deadline so codemap is agent-loop-safe
+  (returns partial within the deadline, never hangs). The 4 skills' "codemap TIMEOUT 90s / not
+  agent-loop ready / production Open" claim was WSL /mnt/c 9p amplification + pre-#153. Corrected
+  across all 4.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **edit-plan**: Surface top-level validation_plan for parity with tg agent
+  ([#580](https://github.com/oimiragieo/tensor-grep/pull/580),
+  [`92c2f9c`](https://github.com/oimiragieo/tensor-grep/commit/92c2f9c161bb67bedbe83353c551add27228bff6))
+
+`tg edit-plan --json` already exposed a flat top-level `validation_commands` list but dropped the
+  structured top-level `validation_plan` that `tg agent --json` already surfaces at its own top
+  level, even though the structured steps already existed at `edit_plan_seed.validation_plan`.
+
+Add `_top_level_validation_plan()` (mirrors `_top_level_validation_commands`) and wire it into
+  `build_context_edit_plan_from_map`, the single builder shared by the cold CLI path, the MCP tool,
+  and the warm session-daemon path (session_store.py's `session_context_edit_plan` /
+  `_serve_session_request_from_payload`). Purely additive: deep-copies each step dict so mutation is
+  safe, and never touches the existing `validation_commands`/`suggested_validation_commands` keys.
+
+Also fixes a latent gap surfaced by the new Rust contract check: the (previously dead-code, now
+  exercised) `ValidationPlanStepExample` struct in test_schema_compat.rs was missing the `detection`
+  field every real validation_plan step already carries.
+
+Updates docs/examples/edit_plan.json, docs/CONTRACTS.md, docs/harness_api.md,
+  tests/unit/test_harness_api_docs.py, and rust_core/tests/test_schema_compat.rs to pin the new
+  additive field.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.71.3 (2026-07-13)
 
 ### Bug Fixes
