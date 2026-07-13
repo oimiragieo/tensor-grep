@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.69.1 (2026-07-13)
+
+### Bug Fixes
+
+- **imports**: Resolve nested (function/conditional-scoped) imports in tg imports/importers
+  ([#563](https://github.com/oimiragieo/tensor-grep/pull/563),
+  [`80b2e3b`](https://github.com/oimiragieo/tensor-grep/commit/80b2e3b1695e7b91807aa32f7de5827a399c0d5f))
+
+tg imports/importers silently missed any import written inside a function, if/try/TYPE_CHECKING
+  block (unflagged, result_incomplete=false) -- even the repo's own main.py->repo_map.py edge. Root
+  cause: two `for node in tree.body:` loops (repo_map.py _python_imports_with_lines +
+  _python_imports_and_symbols) visited only module-top-level statements. Changed both to `for node
+  in ast.walk(tree)` (strict superset; entry shape + line numbers unchanged). Recall-only/additive;
+  Opus-gated SHIP (try/except double-edge disproven, deterministic, fail-closed). From the v1.68.1
+  dogfood.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.69.0 (2026-07-13)
 
 ### Documentation
