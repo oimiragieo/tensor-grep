@@ -4,6 +4,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from tensor_grep.io.directory_scanner import (
+    BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
+    BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
+    BROAD_WORKSPACE_PROJECT_MARKERS,
+)
+
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "__pycache__",
     ".cache",
@@ -37,19 +43,9 @@ _BROAD_SYSTEM_SCAN_DIR_NAMES = {
     "windows",
 }
 
-_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
-_BROAD_WORKSPACE_PROJECT_MARKERS = {
-    ".git",
-    "Cargo.toml",
-    "build.gradle",
-    "composer.json",
-    "deno.json",
-    "go.mod",
-    "package.json",
-    "pom.xml",
-    "pyproject.toml",
-    "settings.gradle",
-}
+_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+_BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+_BROAD_WORKSPACE_PROJECT_MARKERS = BROAD_WORKSPACE_PROJECT_MARKERS
 
 
 @dataclass(frozen=True)
@@ -158,8 +154,20 @@ def _workspace_project_child_names(paths: list[str]) -> list[str]:
             continue
         path = _safe_resolve(Path(raw_path))
         try:
-            if not path.is_dir() or _path_has_project_marker(path):
+            if not path.is_dir():
                 continue
+            # Item #158 (`tg scan` sibling of #154 in main.py): a root carrying its OWN project
+            # marker is not skipped outright -- it can *also* be a workspace parent (a marked
+            # root with its own `package.json` that also holds many independently-marked sibling
+            # projects). A marked root uses the higher "marked-root" threshold, since an ordinary
+            # single project can legitimately carry a handful of marked children (a Cargo
+            # workspace member, a vendored submodule) without being a workspace parent; an
+            # unmarked root keeps the original (lower) threshold.
+            threshold = (
+                _BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+                if _path_has_project_marker(path)
+                else _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+            )
             child_project_names: list[str] = []
             for child in path.iterdir():
                 try:
@@ -167,7 +175,7 @@ def _workspace_project_child_names(paths: list[str]) -> list[str]:
                         child_project_names.append(child.name)
                 except OSError:
                     continue
-            if len(child_project_names) >= _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD:
+            if len(child_project_names) >= threshold:
                 found.update(child_project_names)
         except OSError:
             continue
