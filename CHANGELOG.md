@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.69.2 (2026-07-13)
+
+### Bug Fixes
+
+- **agent**: Emit suggested_scope on tie_requires_confirmation (v1.68.1 dogfood)
+  ([#564](https://github.com/oimiragieo/tensor-grep/pull/564),
+  [`a82c15a`](https://github.com/oimiragieo/tensor-grep/commit/a82c15a07faf81a43e83aab9c8991c9d0dea8d86))
+
+tg agent on a big/ambiguous repo returned tie_requires_confirmation with suggested_scope=null and 0
+  commands -- a dead-end. The tie path now emits a narrowing scope (reuse orient's
+  _suggested_scope_from_map, else the deepest common parent of the tied target files) so a caller
+  can retry scoped. Narrow trigger, no-clobber, same output shape as the existing scan-truncation
+  hint.
+
+Opus security gate: SHIP. Plus the gate-recommended defense-in-depth: the confinement guard now
+  lexically collapses `..` (os.path.normpath) before the containment check so it is self-enforcing,
+  never silently reliant on callers pre-resolving paths -- closes a latent path-escape if a future
+  caller ever fed an unresolved path into this MCP-reachable guard. Probe test locks it.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.69.1 (2026-07-13)
 
 ### Bug Fixes
