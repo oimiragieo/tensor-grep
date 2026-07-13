@@ -45,6 +45,37 @@ _ALL_HEAVY_ROOT_DIR_NAMES = frozenset({
 })
 UNBOUNDED_VENDORED_ROOT_DIR_NAMES = frozenset(_ALL_HEAVY_ROOT_DIR_NAMES - _GENERATED_DIR_NAMES)
 
+# Project-marker names that flag a directory as an independent project root, plus the
+# child-count thresholds that decide when a root "looks like" a multi-project workspace
+# parent (item #154). Single source of truth: both `cli/main.py`'s
+# `_should_refuse_unbounded_workspace_root_scan` and `cli/bootstrap.py`'s front-door mirror
+# `_search_paths_include_workspace_root` import `BROAD_WORKSPACE_PROJECT_MARKERS` and the two
+# thresholds below from here rather than each hardcoding their own copy, so the two guards can
+# never drift out of sync.
+BROAD_WORKSPACE_PROJECT_MARKERS = frozenset({
+    ".git",
+    "Cargo.toml",
+    "build.gradle",
+    "composer.json",
+    "deno.json",
+    "go.mod",
+    "package.json",
+    "pom.xml",
+    "pyproject.toml",
+    "settings.gradle",
+})
+# An UNMARKED root (no project marker of its own -- e.g. a plain folder of unrelated repos) is
+# flagged as a workspace parent once it has this many independently-marked children.
+BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
+# A MARKED root (carries its own project marker, e.g. a top-level `package.json`) is NOT
+# skipped outright (item #154, reported repro: an unscoped search from a workspace parent that
+# itself has a top-level `package.json` timed out instead of fast-refusing): such a root can
+# *also* be a workspace parent once it has enough independently-marked children. It uses a
+# HIGHER threshold than an unmarked root, since one ordinary project can legitimately carry a
+# handful of marked children (a Cargo workspace member, a vendored submodule) without itself
+# being a workspace parent.
+BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = 8
+
 # The Rust PyO3 directory scanner (`RustDirectoryScanner`) is NOT exported by the `rust_core`
 # extension (only `RustBackend` + functions are), so the old `from rust_core import
 # RustDirectoryScanner` always raised and this flag was permanently False — the Python walk below was

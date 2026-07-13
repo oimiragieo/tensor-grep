@@ -736,6 +736,56 @@ def test_workspace_root_guard_allows_real_repo_root(tmp_path: Path):
     assert project_dirs == []
 
 
+def test_workspace_root_guard_refuses_marked_root_with_many_marked_children(tmp_path: Path):
+    """Item #154: a root carrying its OWN project marker (e.g. a real-world multi-project
+    workspace parent with a top-level `pyproject.toml`/`package.json`) must NOT be skipped
+    outright -- it can *also* be a workspace parent when it has many independently-marked
+    children. 8 marked children clears the higher marked-root threshold, so the guard must
+    still refuse (the reported bug: this case previously always slipped past unbounded)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text("", encoding="utf-8")
+    for index in range(8):
+        project = workspace / f"project-{index}"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(workspace)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+        paths_defaulted=False,
+    )
+
+    assert refused is True
+    assert project_dirs == [f"project-{index}" for index in range(8)]
+
+
+def test_workspace_root_guard_allows_marked_root_with_seven_marked_children(tmp_path: Path):
+    """Boundary pin for item #154's marked-root threshold (N=8): a marked root with exactly
+    7 marked children must stay UNREFUSED -- one short of the higher bar a marked root needs
+    before it counts as a workspace parent too (an ordinary single project can legitimately
+    carry a handful of marked children, e.g. Cargo workspace members or vendored submodules,
+    without itself being a workspace parent)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text("", encoding="utf-8")
+    for index in range(7):
+        project = workspace / f"project-{index}"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refused, project_dirs = _should_refuse_unbounded_workspace_root_scan(
+        [str(workspace)],
+        SearchConfig(),
+        allow_broad_generated_scan=False,
+        paths_defaulted=False,
+    )
+
+    assert refused is False
+    assert project_dirs == []
+
+
 def test_workspace_root_guard_refuses_glob_with_implicit_path(tmp_path: Path):
     """Bug #88 (dogfood v1.54.0): `--glob` narrows WHICH files match, it does not bound how
     much of the tree must be walked to find them. When PATH was left to default (no explicit
