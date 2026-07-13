@@ -6,7 +6,7 @@ description: Use when running the `tg` CLI day-to-day — exact syntax for orien
 # tensor-grep run & operate
 
 An imperative, copy-pasteable runbook for **running** `tg` (the tensor-grep CLI). Ground-truthed
-against `src/tensor_grep/cli/main.py` at **released v1.69.3**, re-verified
+against `src/tensor_grep/cli/main.py` at **released v1.71.1**, re-verified
 **2026-07-13** (workspace dogfood on `/mnt/c/dev/projects`). Every command below is a real `@app.command` in that file — re-verify with the
 commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag on a
 newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as an
@@ -411,9 +411,9 @@ not a reason to fork the contract. The **restored, current** rule: any `partial`
 
 ```python
 if payload.get("partial") or payload.get("result_incomplete"):
-    raise typer.Exit(2)      # truncated (found OR empty) -> INCOMPLETE, never reads as complete
+    raise typer.Exit(2)  # truncated (found OR empty) -> INCOMPLETE, never reads as complete
 if not_found:
-    raise typer.Exit(1)      # complete + empty -> real not-found
+    raise typer.Exit(1)  # complete + empty -> real not-found
 # complete + found -> exit 0
 ```
 
