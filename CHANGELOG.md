@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.71.1 (2026-07-13)
+
+### Bug Fixes
+
+- **search**: Fast-refuse unscoped scan of a marked workspace-parent root with many marked children
+  (#154) ([#574](https://github.com/oimiragieo/tensor-grep/pull/574),
+  [`0da18a2`](https://github.com/oimiragieo/tensor-grep/commit/0da18a2b43308547b52cb6d15665361c52f2fe43))
+
+An unscoped `tg search` from a workspace-parent root that ALSO carries its own top-level project
+  marker (e.g. a dev-projects folder with a top-level package.json) slipped past both workspace-root
+  guards and ran an unbounded walk instead of fast-refusing: `_workspace_project_child_names`
+  (main.py) and `_search_paths_include_workspace_root` (bootstrap.py) both skipped any root with its
+  own marker unconditionally, before ever counting marked children. bootstrap.py's copy is the one
+  that actually matters for the reported repro -- it gates whether the request reaches main.py's
+  guard at all, via `main_entry`'s native/rg-passthrough fast path.
+
+Adds `BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD` (8) alongside the existing marker set + child
+  threshold (3) as a shared single source of truth in `io/directory_scanner.py`, mirroring the
+  vendored-root-dir-names pattern already used there. A marked root is no longer skipped outright;
+  it now selects the higher marked-root threshold instead of the unmarked root's threshold, so a
+  genuine multi-project workspace parent still refuses even when it happens to carry its own marker,
+  while an ordinary single project (a handful of marked children -- a Cargo workspace member, a
+  vendored submodule) still runs unbounded as before.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.71.0 (2026-07-13)
 
 ### Features
