@@ -832,6 +832,8 @@ def build_codemap(
     index: str | Path | None = None,
     max_repo_files: int = DEFAULT_MAX_REPO_FILES,
     max_symbols_per_file: int = DEFAULT_MAX_SYMBOLS_PER_FILE,
+    ignore: tuple[str, ...] = (),
+    deadline_seconds: float | None = None,
     _revision_identity: Callable[[Path], dict[str, Any]] | None = None,
     _now: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
@@ -839,6 +841,14 @@ def build_codemap(
     to ``<out>/_coverage.json``, minus the ``written_files`` key added only to the return value /
     ``--json`` output). ``_revision_identity``/``_now`` are injectable so callers (tests) can force
     byte-identical output across repeated runs -- default to the real git oracle / real UTC clock.
+
+    ``ignore`` drops matching files (basename or repo-relative path glob, repeatable) before the
+    folder grouping -- the same ``orient_capsule._apply_ignore_globs`` helper `tg orient`/`tg
+    agent` already use, so the exclusion semantics stay identical across commands. ``deadline_seconds``
+    bounds the underlying repo scan's wall-clock time (mirrors ``build_symbol_impact`` et al.): a
+    cutoff sets the existing ``partial``/``partial_reason`` fields (``partial_reason="deadline"``)
+    instead of inventing a new field, and still returns a valid (partial) result -- never hangs,
+    never crashes. Both are additive no-ops at their defaults (``()``/``None``).
     """
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -859,7 +869,15 @@ def build_codemap(
     now_iso = _format_utc_iso(now)
     stamp_line = _format_stamp_line(revision, now_iso)
 
-    rm = _repo_map.build_repo_map(root, max_repo_files=max_repo_files)
+    # moat P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
+    # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into build_repo_map so a
+    # huge tree degrades to a partial result instead of running unbounded.
+    deadline_monotonic = _repo_map._deadline_monotonic_from_seconds(deadline_seconds)
+
+    rm = _repo_map.build_repo_map(
+        root, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
+    )
+    rm = _orient_capsule._apply_ignore_globs(rm, ignore)
     rm = _exclude_output_paths(rm, out_dir=out_dir, index_path=index_path)
     rm = _exclude_untracked_paths(rm, root=root)
 
@@ -879,8 +897,12 @@ def build_codemap(
 
     scan_limit = rm.get("scan_limit")
     possibly_truncated = bool(isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"))
+    # build_repo_map's own --deadline cutoff signal (moat P0-6): a fired deadline sets rm["partial"]
+    # (never present -- not False -- when no deadline was supplied), which is DISTINCT from
+    # scan_limit's file-COUNT cap (task #384-#395 deadline program parity with callers/refs/impact).
+    deadline_hit = bool(rm.get("partial"))
     self_verify_ok = _self_verify_universe_coverage(universe, folders)
-    partial = possibly_truncated or not self_verify_ok
+    partial = possibly_truncated or deadline_hit or not self_verify_ok
 
     partial_reason: str | None = None
     remediation: str | None = None
@@ -889,6 +911,12 @@ def build_codemap(
         remediation = (
             "The scan hit --max-repo-files before covering the whole tree. Re-run with a higher "
             "--max-repo-files, or scope PATH to a subdirectory."
+        )
+    elif deadline_hit:
+        partial_reason = "deadline"
+        remediation = (
+            "The scan hit --deadline before covering the whole tree. Re-run with a higher "
+            "--deadline, or scope PATH to a subdirectory."
         )
     elif not self_verify_ok:
         partial_reason = "self_verify"

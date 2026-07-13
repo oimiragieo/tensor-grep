@@ -7783,6 +7783,23 @@ def codemap(
         min=1,
         help="Per-file symbol cap before an overflow pointer line (defaults to 50).",
     ),
+    ignore: list[str] = typer.Option(
+        [],
+        "--ignore",
+        help="Glob(s) of source files to exclude entirely (repeatable). Matched against the "
+        "repo-relative path and basename, e.g. --ignore 'benchmarks/**' --ignore '*.stub.py'. "
+        "Excluded paths never reach the generated pages or index.",
+    ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial map "
+            "(partial=true, partial_reason='deadline') with whatever was found so far, instead "
+            "of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Render a persisted, browsable folder->file->symbol code map (lean index + per-folder pages)."""
@@ -7814,6 +7831,8 @@ def codemap(
             index=index_file,
             max_repo_files=max_repo_files,
             max_symbols_per_file=max_symbols_per_file,
+            ignore=tuple(ignore),
+            deadline_seconds=deadline,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
         typer.echo(str(exc), err=True)
