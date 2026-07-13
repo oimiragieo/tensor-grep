@@ -174,6 +174,195 @@ def test_build_file_imports_resolves_python_relative_import(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------------------------
+# Nested-scope import STATEMENTS (function-scoped / conditional-scoped): `_python_imports_with_lines`
+# used to walk only `tree.body` (module top-level statements), so a plain `import`/`from ... import`
+# statement written inside a function body, an `if TYPE_CHECKING:` guard, or a `try`/`except` block
+# was invisible to both `tg imports` (forward) and the `tg importers` CONFIRM step (reverse) --
+# silently, with `result_incomplete` staying False. The dynamic-import-call detector
+# (`_python_dynamic_import_entries`) already walked the whole tree for `__import__`/`import_module(...)`
+# CALLS; this closes the same gap for plain static import STATEMENTS by switching the extractor's
+# main loop from `tree.body` to `ast.walk(tree)`.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_imports_resolves_function_scoped_import(tmp_path: Path) -> None:
+    """A `from pkg.mod import x` written inside a function body (not at module level) must still
+    resolve. This is the exact regression shape that motivated the fix: a nested
+    `from tensor_grep.perf_guard import write_json` inside `def main()` was invisible to
+    `tg imports` before it."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        "def run():\n    from pkg.helpers import foo\n    return foo()\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    assert payload["result_incomplete"] is False
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["resolved"] == str(helpers_path.resolve())
+    assert entry["line"] == 2
+    assert entry["external"] is False
+
+
+def test_build_file_imports_resolves_conditional_type_checking_import(tmp_path: Path) -> None:
+    """`if TYPE_CHECKING: import X` (a common type-only-import pattern) lives inside an `If`
+    block, not module top-level -- must resolve like any other import."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("class Helper:\n    pass\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        "from typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n"
+        "    from pkg.helpers import Helper\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    assert payload["result_incomplete"] is False
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["resolved"] == str(helpers_path.resolve())
+    assert entry["line"] == 4
+
+
+def test_build_file_imports_resolves_import_inside_try_except_block(tmp_path: Path) -> None:
+    """A conditional `try:/except ImportError:` guarded import -- another common real-world
+    scope-nesting shape distinct from a function body or `if TYPE_CHECKING:`."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        "try:\n    from pkg.helpers import foo\nexcept ImportError:\n    foo = None\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["resolved"] == str(helpers_path.resolve())
+    assert entry["line"] == 2
+
+
+def test_build_file_imports_module_top_level_and_nested_both_resolve_no_regression(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: a module-top-level import and a function-scoped import of a DIFFERENT
+    target in the SAME file must both resolve -- fixing the nested-scope gap must not disturb
+    the pre-existing top-level extraction."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    top_target = pkg / "top_helper.py"
+    top_target.write_text("def top():\n    return 1\n", encoding="utf-8")
+    nested_target = pkg / "nested_helper.py"
+    nested_target.write_text("def nested():\n    return 2\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        "from pkg.top_helper import top\n\n"
+        "def run():\n"
+        "    from pkg.nested_helper import nested\n"
+        "    return top() + nested()\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    modules = {current["module"] for current in payload["imports"]}
+    assert modules == {"pkg.top_helper", "pkg.nested_helper"}
+    top_entry = next(c for c in payload["imports"] if c["module"] == "pkg.top_helper")
+    nested_entry = next(c for c in payload["imports"] if c["module"] == "pkg.nested_helper")
+    assert top_entry["resolved"] == str(top_target.resolve())
+    assert top_entry["line"] == 1
+    assert nested_entry["resolved"] == str(nested_target.resolve())
+    assert nested_entry["line"] == 4
+
+
+def test_build_file_importers_confirm_step_finds_nested_import_when_prefiltered(
+    tmp_path: Path,
+) -> None:
+    """`tg importers`' CONFIRM step (`_confirm_import_edges`) re-parses each PREFILTERED
+    candidate via the same extractor `tg imports` uses. Once a candidate is already in the
+    prefilter (here, via its OWN top-level `import pkg.helpers`), a nested import of the same
+    target inside a function must ALSO be confirmed as a second edge, not just the top-level
+    one -- proving the forward-extractor fix widens the reverse CONFIRM step's recall too."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    # Top-level `import pkg.helpers` puts main.py in the alias prefilter for helpers.py; the
+    # NESTED `from pkg.helpers import foo` inside run() is the entry this fix newly confirms.
+    consumer.write_text(
+        "import pkg.helpers\n\ndef run():\n    from pkg.helpers import foo\n    return foo()\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    importer_files = set(payload["importer_files"])
+    assert str(consumer.resolve()) in importer_files
+    lines = sorted(
+        int(edge["line"])
+        for edge in payload["importers"]
+        if edge["file"] == str(consumer.resolve())
+    )
+    # Both the top-level (line 1) AND the nested (line 4) import must confirm as edges.
+    assert lines == [1, 4]
+
+
+def test_build_file_importers_prefilter_discovers_importer_with_only_nested_import(
+    tmp_path: Path,
+) -> None:
+    """The PREFILTER (`_reverse_importers`, fed by `_python_imports_and_symbols`'s alias-graph
+    list) used to build its candidate set from module-top-level imports only -- a file whose
+    ONLY import of the target is scope-nested (no top-level import at all) never became a
+    CANDIDATE, so the precise CONFIRM step never even got a chance to look at it. This is the
+    real-world shape that motivated the fix: a lazy, function-scoped import (e.g. to avoid a
+    circular import or defer an expensive load) with no companion top-level import of the same
+    package."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    # NO top-level import of pkg.helpers anywhere -- the only reference is nested.
+    consumer.write_text(
+        "def run():\n    from pkg.helpers import foo\n    return foo()\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    importer_files = set(payload["importer_files"])
+    assert str(consumer.resolve()) in importer_files
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["line"] == 2
+    assert edge["module"] == "pkg.helpers"
+
+
+# ---------------------------------------------------------------------------------------------
 # Reverse EXACTNESS: 1 real importer + 2 precision traps, both excluded.
 # ---------------------------------------------------------------------------------------------
 

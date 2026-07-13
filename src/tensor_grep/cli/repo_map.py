@@ -1810,7 +1810,21 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
     imports: list[str] = []
     symbols: list[dict[str, Any]] = []
 
-    for node in tree.body:
+    # Nested-scope recall fix (companion to the same change in `_python_imports_with_lines`):
+    # `ast.walk` (not `tree.body`) so a plain `import`/`from ... import` STATEMENT nested inside a
+    # function body, an `if`/`try` block, or an `if TYPE_CHECKING:` guard feeds this alias-graph
+    # list too. This list becomes `repo_map["imports"]` (`build_repo_map`'s per-file entries),
+    # which is the ONLY source `_reverse_importers`'s alias PREFILTER reads (see
+    # `build_file_importers_from_map`, `build_symbol_callers_from_map`,
+    # `build_symbol_blast_radius_from_map`, `build_context_render`'s agent-capsule scoring) --
+    # a candidate file whose ONLY import of a target is scope-nested was previously invisible to
+    # the prefilter, so it never even reached the reverse `tg importers` CONFIRM step
+    # (`_confirm_import_edges`) regardless of that step's own recall. Verified low-risk: this is a
+    # strict superset (`ast.walk` visits everything `tree.body` did, plus more), it only ADDS
+    # entries (recall-only, never removes/reorders an existing one), and the full relevant test
+    # suite (agent/blast-radius/callers/refs/orient/importers, 500+ tests) is green across this
+    # change with zero new failures.
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.append(alias.name)
@@ -5824,7 +5838,15 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
         return []
 
     entries: list[dict[str, Any]] = []
-    for node in tree.body:
+    # Nested-scope recall fix: `ast.walk` (not `tree.body`) so a plain `import`/`from ... import`
+    # STATEMENT nested inside a function body, an `if`/`try` block, or an `if TYPE_CHECKING:`
+    # guard is collected too -- `tree.body` only ever visited module-top-level statements,
+    # silently missing anything scope-nested (a `tg imports`/`tg importers` recall gap;
+    # `result_incomplete` stayed False, so the omission was invisible). This mirrors
+    # `_python_dynamic_import_entries` below, which already whole-tree-walks for dynamic
+    # `__import__`/`import_module(...)` CALLS; this closes the same gap for static import
+    # statements, the shape `tg imports`/`tg importers` mostly see.
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 entries.append({"module": alias.name, "line": int(node.lineno), "level": 0})
@@ -5847,8 +5869,8 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
                     })
     # #93 SUB-1: `ast.walk` (not `tree.body`) picks up `__import__`/`import_module`/
     # `importlib.import_module` calls anywhere -- inside a function, a conditional, a
-    # try/except -- that the static scan above (top-level Import/ImportFrom statements only)
-    # never visits.
+    # try/except -- that the static scan above (now itself an `ast.walk`, see above) never
+    # visits, since these are `ast.Call` expressions, a different node type entirely.
     entries.extend(_python_dynamic_import_entries(tree))
     return entries
 
