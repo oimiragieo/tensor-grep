@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.71.3 (2026-07-13)
+
+### Bug Fixes
+
+- **lsp**: Fail closed with an actionable message when the optional 'ast' extra is missing (#159)
+  ([#577](https://github.com/oimiragieo/tensor-grep/pull/577),
+  [`9532533`](https://github.com/oimiragieo/tensor-grep/commit/9532533486b0de85b94eb7026b887d8cc1d04591))
+
+`tg lsp` imported `run_lsp` from lsp_server at the TOP of the command, before validating --provider.
+  On a bare `pip install tensor-grep` (no `ast` extra) that import raised a raw
+  `ModuleNotFoundError: No module named 'lsprotocol'` traceback -- for ANY invocation, including an
+  invalid --provider that should simply be rejected. Move --provider validation (and --debug-trace,
+  which needs only lsp_external_provider, not lsprotocol) ahead of the lazy import, and guard the
+  run_lsp import with try/except ImportError -> a clean "requires the 'ast' extra: pip install
+  tensor-grep[ast]" message + exit 1. Fail-Closed-Contract UX: a missing optional dependency must
+  yield an actionable error, never a leaked traceback.
+
+TDD: two env-robust tests (sys.modules-poisoned so they pass with OR without the extra installed) --
+  a valid provider yields the clean extra-missing message with no traceback; an invalid provider is
+  rejected without needing the extra. Also un-breaks test_lsp_rejects_unknown_provider_mode on venvs
+  that lack the extra.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.71.2 (2026-07-13)
 
 ### Bug Fixes
