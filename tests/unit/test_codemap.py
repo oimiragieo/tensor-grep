@@ -384,6 +384,98 @@ def test_non_git_repo_map_payload_degrades_gracefully_keeps_all_files(tmp_path: 
 
 
 # ---------------------------------------------------------------------------
+# (15) --ignore excludes matching files/folders from the generated pages + index (mirrors
+# orient_capsule._apply_ignore_globs, the same repeatable glob-exclude helper `tg orient`/`tg
+# agent` already use).
+# ---------------------------------------------------------------------------
+
+
+def test_ignore_glob_excludes_matching_file_from_pages_and_index(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+    payload = _build(repo, ignore=("native/*",))
+
+    index_text = Path(payload["index"]).read_text(encoding="utf-8")
+    assert "`native`" not in index_text
+    assert not (Path(payload["out"]) / "native.md").exists()
+
+    # A file untouched by the glob must still be mapped exactly as before.
+    pkg_page = (Path(payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+    assert "### core.py" in pkg_page
+
+
+def test_repeatable_ignore_globs_both_apply(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+    payload = _build(repo, ignore=("native/*", "pkg/sub/*"))
+
+    index_text = Path(payload["index"]).read_text(encoding="utf-8")
+    assert "`native`" not in index_text
+    assert "`pkg/sub`" not in index_text
+    assert "`pkg`" in index_text  # pkg/core.py etc. is untouched by either glob
+
+    assert not (Path(payload["out"]) / "native.md").exists()
+    assert not (Path(payload["out"]) / "pkg_sub.md").exists()
+    assert (Path(payload["out"]) / "pkg.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# (16) --deadline bounds the scan: an expired budget yields partial:true + partial_reason
+# "deadline" and STILL returns a valid, usable result (no hang, no crash); a generous budget
+# yields partial:false. Deterministic via the relative-seconds form of
+# test_repo_map_deadline.py's already-expired-deadline idiom (deadline_monotonic =
+# time.monotonic() - 1.0) -- never a real wall-clock race (anti-hang-test-protocol).
+# ---------------------------------------------------------------------------
+
+
+def test_expired_deadline_yields_partial_true_with_deadline_reason(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+    payload = _build(repo, deadline_seconds=-1.0)
+
+    assert payload["partial"] is True
+    assert payload["partial_reason"] == "deadline"
+    assert payload["remediation"]
+    # Still a VALID, usable result -- build_codemap must not hang or raise.
+    assert isinstance(payload["files_total"], int)
+    assert Path(payload["index"]).is_file()
+    coverage_path = Path(payload["out"]) / _codemap._COVERAGE_FILENAME
+    json.loads(coverage_path.read_text(encoding="utf-8"))  # persisted coverage stays valid JSON
+
+
+def test_generous_deadline_yields_partial_false(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+    payload = _build(repo, deadline_seconds=120.0)
+
+    assert payload["partial"] is False
+    assert payload["partial_reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# (17) additive contract: omitting --ignore/--deadline (or passing their explicit no-op
+# defaults) must remain byte-identical to today's output.
+# ---------------------------------------------------------------------------
+
+
+def test_default_invocation_matches_explicit_noop_ignore_and_deadline(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+
+    default_payload = _build(repo)
+    default_index = Path(default_payload["index"]).read_text(encoding="utf-8")
+    default_pkg = (Path(default_payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+
+    explicit_payload = _build(repo, ignore=(), deadline_seconds=None)
+    explicit_index = Path(explicit_payload["index"]).read_text(encoding="utf-8")
+    explicit_pkg = (Path(explicit_payload["out"]) / "pkg.md").read_text(encoding="utf-8")
+
+    assert default_index == explicit_index
+    assert default_pkg == explicit_pkg
+    assert default_payload["partial"] is False
+    assert explicit_payload["partial"] is False
+    assert default_payload["partial_reason"] is None
+    assert explicit_payload["partial_reason"] is None
+    assert default_payload["files_total"] == explicit_payload["files_total"]
+    assert default_payload["tree_manifest_sha256"] == explicit_payload["tree_manifest_sha256"]
+
+
+# ---------------------------------------------------------------------------
 # PATH contract: a file path must error, never silently scan the parent.
 # ---------------------------------------------------------------------------
 
