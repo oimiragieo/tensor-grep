@@ -12,9 +12,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from tensor_grep.cli import codemap as _codemap
 from tensor_grep.cli.codemap import build_codemap, build_codemap_json
+from tensor_grep.cli.main import app
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "codemap_repo"
 
@@ -446,6 +448,97 @@ def test_generous_deadline_yields_partial_false(tmp_path: Path) -> None:
 
     assert payload["partial"] is False
     assert payload["partial_reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# #153: the `tg codemap` CLI front door defaults --deadline to a bounded value (was None/unbounded,
+# which could hang ~90s on a huge multi-root workspace) -- build_codemap's own library default
+# stays None (see test_default_invocation_matches_explicit_noop_ignore_and_deadline above, which
+# must stay untouched). These are the first CliRunner-based tests in this file: they spy on
+# codemap.build_codemap (monkeypatched on the module, picked up by main.py's lazy
+# `from tensor_grep.cli.codemap import build_codemap` at call time -- the same pattern
+# tests/unit/test_cli_deadline_flag.py uses for repo_map.build_symbol_callers) so no real repo scan
+# runs.
+# ---------------------------------------------------------------------------
+
+
+def _stub_cli_codemap_payload(path: str | Path) -> dict:
+    out_dir = Path(path) / "docs" / "code-map"
+    return {
+        "path": str(path),
+        "out": str(out_dir),
+        "index": str(out_dir / "index.md"),
+        "folders_total": 0,
+        "files_total": 0,
+        "symbols_total": 0,
+        "partial": False,
+        "partial_reason": None,
+    }
+
+
+def test_codemap_cli_defaults_to_bounded_deadline(tmp_path: Path, monkeypatch) -> None:
+    recorded: dict = {}
+
+    def _spy(path, *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_cli_codemap_payload(path)
+
+    monkeypatch.setattr(_codemap, "build_codemap", _spy)
+    result = CliRunner().invoke(app, ["codemap", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") == 60.0
+
+
+def test_codemap_cli_no_deadline_flag_passes_none(tmp_path: Path, monkeypatch) -> None:
+    recorded: dict = {"deadline_seconds": "sentinel-untouched"}
+
+    def _spy(path, *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_cli_codemap_payload(path)
+
+    monkeypatch.setattr(_codemap, "build_codemap", _spy)
+    result = CliRunner().invoke(app, ["codemap", str(tmp_path), "--no-deadline"])
+
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") is None
+
+
+def test_codemap_cli_explicit_deadline_still_overrides_default(tmp_path: Path, monkeypatch) -> None:
+    recorded: dict = {}
+
+    def _spy(path, *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_cli_codemap_payload(path)
+
+    monkeypatch.setattr(_codemap, "build_codemap", _spy)
+    result = CliRunner().invoke(app, ["codemap", str(tmp_path), "--deadline", "30"])
+
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") == 30.0
+
+
+def test_default_cli_deadline_literal_pins_main_py_option(tmp_path: Path, monkeypatch) -> None:
+    """Guard test: main.py's --deadline typer.Option hardcodes a literal 60.0 (to keep the heavy
+    codemap import lazy -- the same pattern DEFAULT_MAX_REPO_FILES/50_000 uses). Nothing else pins
+    that literal against codemap.DEFAULT_CLI_DEADLINE_SECONDS, so the two could silently drift.
+    (A comment near main.py's max_repo_files option claims an analogous guard test already exists
+    for the 50_000 literal -- it doesn't; grepping the test suite confirms no such test. This is a
+    real guard, for the new constant.)"""
+    assert _codemap.DEFAULT_CLI_DEADLINE_SECONDS == 60.0
+
+    recorded: dict = {}
+
+    def _spy(path, *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_cli_codemap_payload(path)
+
+    monkeypatch.setattr(_codemap, "build_codemap", _spy)
+    CliRunner().invoke(app, ["codemap", str(tmp_path)])
+
+    # The CLI's actual (hardcoded-in-main.py) default must match the module constant -- not just
+    # two independently-hardcoded 60.0s that happen to agree today.
+    assert recorded.get("deadline_seconds") == _codemap.DEFAULT_CLI_DEADLINE_SECONDS
 
 
 # ---------------------------------------------------------------------------

@@ -7790,15 +7790,23 @@ def codemap(
         "repo-relative path and basename, e.g. --ignore 'benchmarks/**' --ignore '*.stub.py'. "
         "Excluded paths never reach the generated pages or index.",
     ),
-    deadline: float | None = typer.Option(
-        None,
+    deadline: float = typer.Option(
+        # Literal mirrors codemap.DEFAULT_CLI_DEADLINE_SECONDS (kept literal so the heavy codemap
+        # import stays lazy, matching max_repo_files' pattern above); a guard test pins them.
+        60.0,
         "--deadline",
         min=0.1,
         help=(
             "Stop the underlying repo scan after N seconds and return a partial map "
             "(partial=true, partial_reason='deadline') with whatever was found so far, instead "
-            "of running unbounded."
+            "of running unbounded. Defaults to 60s so a huge multi-root workspace can't hang an "
+            "agent loop; pass --no-deadline to disable the bound."
         ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Disable the default --deadline bound; let the scan run unbounded.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
@@ -7824,6 +7832,7 @@ def codemap(
             raise typer.Exit(1)
         return
 
+    effective_deadline = None if no_deadline else deadline
     try:
         payload = build_codemap(
             path,
@@ -7832,7 +7841,7 @@ def codemap(
             max_repo_files=max_repo_files,
             max_symbols_per_file=max_symbols_per_file,
             ignore=tuple(ignore),
-            deadline_seconds=deadline,
+            deadline_seconds=effective_deadline,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
         typer.echo(str(exc), err=True)

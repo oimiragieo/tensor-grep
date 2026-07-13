@@ -49,6 +49,14 @@ from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, ru
 DEFAULT_MAX_REPO_FILES = 50_000
 DEFAULT_MAX_SYMBOLS_PER_FILE = 50
 
+# CLI-ONLY default (#153): a huge multi-root workspace can make `tg codemap` hang for ~90s because
+# the --deadline CLI option used to default to None (unbounded). This constant is read by main.py's
+# --deadline option (literal-mirrored there, like DEFAULT_MAX_REPO_FILES above, to keep the heavy
+# codemap import lazy) and pinned against it by a guard test. It intentionally does NOT change
+# build_codemap's own `deadline_seconds: float | None = None` signature default below -- a direct
+# library call stays unbounded by default; only the CLI front door is agent-loop-safe by default.
+DEFAULT_CLI_DEADLINE_SECONDS = 60.0
+
 _COVERAGE_SCHEMA_VERSION = 1
 _COVERAGE_FILENAME = "_coverage.json"
 
