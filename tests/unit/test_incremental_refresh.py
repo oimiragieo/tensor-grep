@@ -508,8 +508,18 @@ def test_incremental_repo_map_is_faster_than_full_rebuild_for_small_changes(
 
     original = repo_map._imports_and_symbols_for_path
 
+    # The per-file parse cost must DOMINATE the fixed graph/PageRank/assembly
+    # overhead that BOTH paths share (the ``all_files`` loop in
+    # build_repo_map_incremental + build_repo_map). With a small sleep that
+    # shared overhead was ~equal to the sleep-savings, pinning the ratio at
+    # ~0.5 and flaking on CI (assert 0.2126 < 0.2113, missed by 0.0013s). A
+    # larger per-file sleep makes the timing reflect the real file-count
+    # savings (incremental reparses 1 of 80 files, ratio -> ~0.13), so the
+    # threshold below has ~14x headroom against overhead noise.
+    per_file_parse_cost = 0.02
+
     def slow_parser(path: Path) -> tuple[list[str], list[dict[str, object]]]:
-        time.sleep(0.005)
+        time.sleep(per_file_parse_cost)
         return original(path)
 
     monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", slow_parser)
@@ -525,4 +535,7 @@ def test_incremental_repo_map_is_faster_than_full_rebuild_for_small_changes(
     repo_map.build_repo_map(project)
     full_duration = time.perf_counter() - start
 
-    assert incremental_duration < (full_duration * 0.5)
+    # Incremental reparses 1 file; full reparses all 80. The real ratio is
+    # ~0.13; 0.65 catches the regression class (incremental accidentally
+    # reparsing every file -> ratio -> ~1.0) while tolerating CI overhead noise.
+    assert incremental_duration < (full_duration * 0.65)
