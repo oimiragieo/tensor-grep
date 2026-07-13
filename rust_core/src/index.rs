@@ -825,10 +825,20 @@ impl TrigramIndex {
         if self.root.is_dir() {
             // Mirror collect_file_entries' walk semantics exactly -- this was hardcoded
             // .git_ignore(true) regardless of no_ignore (audit H1d), so the new-file scan
-            // could disagree with how this index would actually be rebuilt.
-            let current_files: Vec<PathBuf> = ignore::WalkBuilder::new(&self.root)
-                .hidden(true)
-                .git_ignore(!self.no_ignore)
+            // could disagree with how this index would actually be rebuilt. #127: also mirror
+            // collect_file_entries' add_ignore trio so this scan agrees with it outside a git
+            // repo too (see that function for the require_git(false) rationale).
+            let mut builder = ignore::WalkBuilder::new(&self.root);
+            builder.hidden(true).git_ignore(!self.no_ignore);
+            if !self.no_ignore {
+                for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
+                    let ignore_path = self.root.join(ignore_name);
+                    if ignore_path.is_file() {
+                        builder.add_ignore(ignore_path);
+                    }
+                }
+            }
+            let current_files: Vec<PathBuf> = builder
                 .build()
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
@@ -953,9 +963,25 @@ fn atomic_write_bytes(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 fn collect_file_entries(root: &Path, no_ignore: bool) -> Vec<FileEntry> {
-    ignore::WalkBuilder::new(root)
-        .hidden(true)
-        .git_ignore(!no_ignore)
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder.hidden(true).git_ignore(!no_ignore);
+    // #127: outside a directory the `ignore` crate recognizes as an actual git repo (no
+    // `.git`/`.jj` marker in any ancestor), `.git_ignore(true)` alone never auto-discovers
+    // `.gitignore` files -- the crate only applies them once it has detected a git repo, so a
+    // root `.gitignore` was silently a no-op there (index pollution). Deliberately NOT
+    // `.require_git(false)`: that would additionally pull in nested/global gitignores outside
+    // git, diverging from `tg search`'s own root-only behavior (BACKLOG #127). Mirror the
+    // sibling `add_ignore` trio instead (main.rs:5695 / native_search.rs:1471) -- explicitly
+    // added ignore files are honored by the `ignore` crate unconditionally, git repo or not.
+    if !no_ignore {
+        for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
+            let ignore_path = root.join(ignore_name);
+            if ignore_path.is_file() {
+                builder.add_ignore(ignore_path);
+            }
+        }
+    }
+    builder
         .build()
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
@@ -1874,5 +1900,124 @@ mod tests {
         let preserved = update.index.search("gamma keep", false, true).unwrap();
         assert_eq!(preserved.len(), 1);
         assert!(preserved[0].file.ends_with("c.txt"));
+    }
+
+    // -- #127: index-build silently no-ops a root .gitignore outside a git repo ------------
+    //
+    // Both index-build WalkBuilders (collect_file_entries + staleness_reason's new-file scan)
+    // set `.git_ignore(!no_ignore)` but never called `.add_ignore(..)`. The `ignore` crate only
+    // auto-discovers per-directory `.gitignore` files once it has detected an actual git repo
+    // (a `.git`/`.jj` marker in some ancestor); outside one, `.git_ignore(true)` alone is a
+    // no-op and gitignored files leak into the index. Fix: mirror the sibling `add_ignore` trio
+    // already used by `tg search`'s own walkers (main.rs / native_search.rs) -- explicitly
+    // added ignore files are honored by the `ignore` crate unconditionally, git repo or not.
+    // Deliberately NOT `.require_git(false)`: that would additionally pull in nested/global
+    // gitignores outside git, diverging from the root-only add_ignore behavior of `tg search`
+    // (BACKLOG #127).
+
+    fn names_of(entries: &[FileEntry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| e.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn collect_file_entries_honors_root_gitignore_outside_git_repo() {
+        let dir = tempdir().unwrap();
+        assert!(
+            !dir.path().join(".git").exists(),
+            "sanity: a bare tempdir must not already look like a git repo"
+        );
+        write_test_file(dir.path(), ".gitignore", "ignoreme.py\n");
+        write_test_file(dir.path(), "ignoreme.py", "excluded\n");
+        write_test_file(dir.path(), "keep.py", "kept\n");
+
+        let names = names_of(&collect_file_entries(dir.path(), false));
+
+        assert!(
+            !names.contains(&"ignoreme.py".to_string()),
+            "root .gitignore must be honored outside a git repo: names={names:?}"
+        );
+        assert!(
+            names.contains(&"keep.py".to_string()),
+            "non-ignored files must still be indexed: names={names:?}"
+        );
+    }
+
+    #[test]
+    fn collect_file_entries_honors_root_gitignore_inside_git_repo() {
+        // Positive control: must stay green both before and after the fix. Inside a git repo,
+        // .gitignore was already honored via the `ignore` crate's native git-repo
+        // auto-discovery. Mirrors the crate's own test-suite idiom of a bare `mkdirp(.git)`
+        // marker (dir.rs) rather than a real `git init` -- the crate detects "is a repo" purely
+        // by the existence of a `.git`/`.jj` entry, not by its contents.
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        write_test_file(dir.path(), ".gitignore", "ignoreme.py\n");
+        write_test_file(dir.path(), "ignoreme.py", "excluded\n");
+        write_test_file(dir.path(), "keep.py", "kept\n");
+
+        let names = names_of(&collect_file_entries(dir.path(), false));
+
+        assert!(
+            !names.contains(&"ignoreme.py".to_string()),
+            "root .gitignore must be honored inside a git repo: names={names:?}"
+        );
+        assert!(
+            names.contains(&"keep.py".to_string()),
+            "non-ignored files must still be indexed: names={names:?}"
+        );
+    }
+
+    #[test]
+    fn collect_file_entries_no_ignore_still_includes_gitignored_file_outside_git_repo() {
+        // --no-ignore must keep overriding gitignore entirely (unchanged behavior) -- the fix
+        // must gate the new add_ignore loop on `!no_ignore`, not add it unconditionally.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), ".gitignore", "ignoreme.py\n");
+        write_test_file(dir.path(), "ignoreme.py", "excluded\n");
+
+        let names = names_of(&collect_file_entries(dir.path(), true));
+
+        assert!(
+            names.contains(&"ignoreme.py".to_string()),
+            "--no-ignore must still include the gitignored file: names={names:?}"
+        );
+    }
+
+    #[test]
+    fn staleness_new_file_scan_honors_root_gitignore_outside_git_repo() {
+        // Sibling site: staleness_reason's own WalkBuilder (the new-file scan) must not
+        // disagree with collect_file_entries -- a gitignored new file must not be reported as
+        // "new" (and therefore must not force a rebuild) outside a git repo either.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), ".gitignore", "ignoreme.py\n");
+        write_test_file(dir.path(), "keep.py", "kept\n");
+        let index = TrigramIndex::build_with_options(dir.path(), false).unwrap();
+        assert!(index.staleness_reason(false).is_none());
+
+        write_test_file(dir.path(), "ignoreme.py", "should stay invisible\n");
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "a gitignored new file must not trigger staleness outside a git repo"
+        );
+    }
+
+    #[test]
+    fn staleness_new_file_scan_honors_root_gitignore_inside_git_repo() {
+        // Positive control for the new-file-scan site: must stay green before and after.
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        write_test_file(dir.path(), ".gitignore", "ignoreme.py\n");
+        write_test_file(dir.path(), "keep.py", "kept\n");
+        let index = TrigramIndex::build_with_options(dir.path(), false).unwrap();
+        assert!(index.staleness_reason(false).is_none());
+
+        write_test_file(dir.path(), "ignoreme.py", "should stay invisible\n");
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "a gitignored new file must not trigger staleness inside a git repo either"
+        );
     }
 }
