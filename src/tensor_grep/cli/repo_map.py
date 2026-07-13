@@ -5976,17 +5976,292 @@ def _python_relative_base_dir(importer_path: Path, level: int) -> Path:
     return current
 
 
+# #152 fix (CEO v1.69.3 dogfood, 2 HIGH): a Python file that path-hacks its own module
+# resolution via `sys.path.insert(...)`/`sys.path.append(...)` -- a common same-repo vendoring
+# idiom, e.g.:
+#
+#     import sys, os
+#     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
+#     from ultrathink_routing import route   # lib/ultrathink_routing.py
+#
+# -- used to be invisible to `_python_candidate_roots` below (whose docstring said so outright:
+# "no `sys.path` to consult") and, transitively, to both its forward (`tg imports`) and reverse
+# (`tg importers`) consumers, which BOTH funnel through it via `_python_module_candidates` --
+# fixing that one chokepoint fixes both directions instead of duplicating the logic twice.
+#
+# Deliberately narrow: only a handful of common, STATICALLY-resolvable directory-argument idioms
+# are recognized --
+#   * a bare string literal:              sys.path.insert(0, "lib")
+#   * os.path.join(DIRNAME_EXPR, "SUB"[, "SUB2", ...])
+#   * DIRNAME_EXPR alone (os.path.dirname(__file__) / os.path.dirname(os.path.abspath(__file__)))
+#   * Path(__file__).parent / "SUB" (chained; optionally str(...)-wrapped)
+#   * os.path.join(HERE, "SUB") where HERE = os.path.dirname(__file__) earlier in the module
+# -- anything with a dynamic/computed component (a variable holding an unknown value, an
+# f-string, an environment lookup, any non-literal expression) is left alone: the module stays
+# `external`/`resolved=None`, honest, the same fail-closed posture as every other resolver in
+# this file. A resolved directory is also required to EXIST and stay INSIDE the scanned repo
+# root (`_path_is_relative_to`, the same containment guard used elsewhere in this module) -- a
+# `..`-escape or an absolute path outside the root is silently ignored, never followed.
+def _python_sys_path_dunder_file(node: ast.AST) -> bool:
+    """True for the bare `__file__` name expression."""
+    return isinstance(node, ast.Name) and node.id == "__file__"
+
+
+def _python_sys_path_os_path_call_args(node: ast.AST, attr: str) -> list[ast.expr] | None:
+    """If `node` is exactly `os.path.<attr>(...)` (the literal dotted chain -- an aliased
+    `import os.path as op` or `from os.path import dirname` is left alone), return its call
+    arguments; else None."""
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr == attr
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "path"
+        and isinstance(func.value.value, ast.Name)
+        and func.value.value.id == "os"
+    ):
+        return None
+    return node.args
+
+
+def _python_sys_path_file_dirname_expr(node: ast.AST) -> bool:
+    """True for `os.path.dirname(__file__)` or `os.path.dirname(os.path.abspath(__file__))` --
+    both mean "this file's own directory"."""
+    args = _python_sys_path_os_path_call_args(node, "dirname")
+    if args is None or len(args) != 1:
+        return False
+    arg = args[0]
+    if _python_sys_path_dunder_file(arg):
+        return True
+    abspath_args = _python_sys_path_os_path_call_args(arg, "abspath")
+    return (
+        abspath_args is not None
+        and len(abspath_args) == 1
+        and _python_sys_path_dunder_file(abspath_args[0])
+    )
+
+
+def _python_sys_path_file_parent_expr(node: ast.AST) -> bool:
+    """True for `Path(__file__).parent` (bare `Path` or a dotted `pathlib.Path`) -- the pathlib
+    equivalent of `_python_sys_path_file_dirname_expr`."""
+    if not (isinstance(node, ast.Attribute) and node.attr == "parent"):
+        return False
+    call = node.value
+    if not (isinstance(call, ast.Call) and len(call.args) == 1):
+        return False
+    if not _python_sys_path_dunder_file(call.args[0]):
+        return False
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id == "Path"
+    return isinstance(func, ast.Attribute) and func.attr == "Path"
+
+
+def _python_sys_path_file_dir_expr(node: ast.AST) -> bool:
+    """True for any expression meaning "this file's own directory" (os.path or pathlib style)."""
+    return _python_sys_path_file_dirname_expr(node) or _python_sys_path_file_parent_expr(node)
+
+
+def _python_sys_path_static_str(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _python_sys_path_join_suffix(node: ast.AST, here_names: frozenset[str]) -> str | None:
+    """`os.path.join(FILE_DIR_EXPR, "SUB"[, "SUB2", ...])` -> `"SUB/SUB2"` (a single "/"-joined
+    suffix to append to the file's own directory), or None if `node` isn't this shape or any
+    "SUB" component isn't a plain string literal. `here_names` lets a `HERE = os.path.dirname(
+    __file__)`-style module-level alias (see `_python_sys_path_here_aliases`) stand in for the
+    literal FILE_DIR_EXPR as the join's first argument."""
+    args = _python_sys_path_os_path_call_args(node, "join")
+    if not args:
+        return None
+    first, *rest = args
+    is_file_dir = _python_sys_path_file_dir_expr(first) or (
+        isinstance(first, ast.Name) and first.id in here_names
+    )
+    if not is_file_dir or not rest:
+        return None
+    parts: list[str] = []
+    for arg in rest:
+        literal = _python_sys_path_static_str(arg)
+        if literal is None:
+            return None
+        parts.append(literal)
+    return "/".join(parts)
+
+
+def _python_sys_path_truediv_suffix(node: ast.AST) -> str | None:
+    """`Path(__file__).parent / "SUB"` (chained divisions allowed, optionally `str(...)`-wrapped)
+    -> `"SUB"`, or None if `node` isn't this shape or any segment isn't a plain string literal."""
+    current: ast.AST = node
+    if (
+        isinstance(current, ast.Call)
+        and isinstance(current.func, ast.Name)
+        and current.func.id == "str"
+        and len(current.args) == 1
+    ):
+        current = current.args[0]
+    parts: list[str] = []
+    while isinstance(current, ast.BinOp) and isinstance(current.op, ast.Div):
+        literal = _python_sys_path_static_str(current.right)
+        if literal is None:
+            return None
+        parts.append(literal)
+        current = current.left
+    if not parts or not _python_sys_path_file_parent_expr(current):
+        return None
+    parts.reverse()
+    return "/".join(parts)
+
+
+def _python_sys_path_here_aliases(tree: ast.Module) -> frozenset[str]:
+    """Module-level `HERE = os.path.dirname(__file__)`-style aliases (the optional bullet #5 of
+    the #152 idiom list above) -- lets `os.path.join(HERE, "SUB")` resolve the same as spelling
+    the dirname expression out inline. Deliberately broad-recall (`ast.walk`, not just
+    `tree.body`), matching this module's established nested-scope extraction posture -- a name
+    later reassigned to something else is a rare, low-risk over-recognition: it only ever WIDENS
+    which directories get tried, it never resolves to a wrong FILE (the final candidate still
+    has to exist on disk, inside the repo root)."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and _python_sys_path_file_dir_expr(node.value):
+            names.add(target.id)
+    return frozenset(names)
+
+
+def _python_sys_path_insert_or_append_arg(node: ast.Call) -> ast.expr | None:
+    """`sys.path.insert(idx, ARG)` / `sys.path.append(ARG)` -> `ARG`, else None. Only the plain,
+    unaliased `sys.path` attribute chain is recognized (`import sys` then `sys.path....`) -- an
+    aliased `sys` import (`import sys as _sys`) is left alone, the same fail-closed posture as
+    every other idiom this fix does not try to statically resolve."""
+    func = node.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "path"
+        and isinstance(func.value.value, ast.Name)
+        and func.value.value.id == "sys"
+    ):
+        return None
+    if func.attr == "insert" and len(node.args) >= 2:
+        return node.args[1]
+    if func.attr == "append" and len(node.args) >= 1:
+        return node.args[0]
+    return None
+
+
+def _python_sys_path_arg_to_dir(
+    arg: ast.expr, filedir: Path, here_names: frozenset[str]
+) -> Path | None:
+    """Resolve one `sys.path.insert`/`.append` directory ARGUMENT expression to an absolute
+    `Path` relative to `filedir` (the importing file's own directory) -- or None if `arg` isn't
+    one of the recognized static idioms."""
+    if _python_sys_path_file_dir_expr(arg):
+        return filedir
+    join_suffix = _python_sys_path_join_suffix(arg, here_names)
+    if join_suffix is not None:
+        return filedir / join_suffix
+    truediv_suffix = _python_sys_path_truediv_suffix(arg)
+    if truediv_suffix is not None:
+        return filedir / truediv_suffix
+    literal = _python_sys_path_static_str(arg)
+    if literal is not None:
+        return filedir / literal
+    return None
+
+
+@_mtime_aware_cache(maxsize=1024)  # #152 fix: mtime+size in key; one AST walk per file, shared
+def _python_sys_path_hack_dirs(path_str: str) -> tuple[str, ...]:
+    """Statically-resolvable absolute directories this Python file adds to `sys.path` via
+    `sys.path.insert`/`sys.path.append` (see the idiom list in the block comment above). Returns
+    `()` for a file with no such calls, or where every call's directory argument is a
+    non-literal/dynamic expression.
+
+    Cached by (path, mtime, size) -- a pure function of the file's own source text -- so a file
+    with N raw import entries (`_python_candidate_roots` runs once PER entry) parses and walks
+    its own AST for this exactly once, not N times.
+
+    Deliberately returns raw, un-containment-checked strings: existence + "stays inside the
+    scanned repo root" is enforced by the caller (`_python_sys_path_hack_roots`), which has the
+    `repo_root` this function does not need in its cache key -- the same file's sys.path hacks
+    resolve to the same absolute dirs regardless of which root the caller is scanning from.
+    """
+    try:
+        file_size = Path(path_str).stat().st_size
+    except OSError:
+        file_size = 0
+    if file_size > _max_parse_bytes():
+        return ()
+    try:
+        source = _read_source_text_cached(path_str)
+    except (OSError, UnicodeDecodeError):
+        return ()
+    if "sys.path" not in source:
+        # Fast-reject the overwhelming common case (no sys.path manipulation at all) without
+        # paying for a full `ast.walk` -- both recognized calls (`sys.path.insert`/`.append`)
+        # always contain this literal substring, so this can never skip a real hit.
+        return ()
+    try:
+        tree = _cached_ast_parse(source)
+    except SyntaxError:
+        return ()
+
+    filedir = Path(path_str).parent
+    here_names = _python_sys_path_here_aliases(tree)
+    dirs: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        arg = _python_sys_path_insert_or_append_arg(node)
+        if arg is None:
+            continue
+        resolved_dir = _python_sys_path_arg_to_dir(arg, filedir, here_names)
+        if resolved_dir is not None:
+            dirs.append(str(resolved_dir))
+    return tuple(dict.fromkeys(dirs))
+
+
+def _python_sys_path_hack_roots(
+    importer_path: Path, repo_root: Path | str | None
+) -> tuple[Path, ...]:
+    """Existing, containment-checked sys.path-hacked directories for `importer_path` (raw
+    extraction: `_python_sys_path_hack_dirs`). Shared by `_python_candidate_roots` (folds these
+    into the general search-root list, tried FIRST) and `_python_module_candidates` (tags the
+    winning candidate's provenance as "sys-path-insert") so the existence/containment check
+    itself lives in exactly one place. Returns `()` when `repo_root` is unknown (`None`) -- no
+    root means no containment boundary to enforce, so this resolves nothing rather than guess.
+    """
+    normalized_root = _normalized_repo_root(repo_root)
+    if normalized_root is None:
+        return ()
+    validated: list[Path] = []
+    for hacked_dir in _python_sys_path_hack_dirs(str(importer_path)):
+        candidate_dir = Path(hacked_dir)
+        if candidate_dir.is_dir() and _path_is_relative_to(candidate_dir, normalized_root):
+            validated.append(candidate_dir)
+    return tuple(validated)
+
+
 def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -> list[Path]:
-    """Plausible absolute-import search roots for a Python file with no `sys.path` to consult.
+    """Plausible absolute-import search roots for a Python file.
 
     Unlike JS/TS (tsconfig baseUrl/paths) or Rust (Cargo.toml workspace members), tensor-grep
     has no primed "project context" for Python module resolution -- this is the net-new
     resolution seam the #74 design flagged as the highest-risk part of `tg imports`. Tries, in
-    order: the repo root, a `src/` layout root, the importer's own directory, and each ancestor
-    directory up to the repo root (covers same-package absolute imports without a full
-    `sys.path` simulation). A bare specifier that is a local workspace package NOT reachable via
-    one of these roots is honestly misclassified as external -- see the module docstring risk
-    note; recall gaps here are disclosed via ``external``/``unresolved``, never silently hidden.
+    order: any directory the file itself adds via a statically-resolvable
+    `sys.path.insert`/`.append` call (#152 fix -- see `_python_sys_path_hack_roots`), the repo
+    root, a `src/` layout root, the importer's own directory, and each ancestor directory up to
+    the repo root (covers same-package absolute imports without a full `sys.path` simulation). A
+    bare specifier that is a local workspace package NOT reachable via one of these roots is
+    honestly misclassified as external -- see the module docstring risk note; recall gaps here
+    are disclosed via ``external``/``unresolved``, never silently hidden.
     """
     roots: list[Path] = []
     seen: set[str] = set()
@@ -5999,6 +6274,8 @@ def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -
             seen.add(key)
             roots.append(candidate)
 
+    for hacked_root in _python_sys_path_hack_roots(importer_path, repo_root):
+        _add(hacked_root)
     normalized_root = _normalized_repo_root(repo_root)
     _add(normalized_root)
     if normalized_root is not None:
@@ -6038,9 +6315,14 @@ def _python_module_candidates(
 ) -> dict[str, Any]:
     parts = _python_module_parts(module_name)
     if not parts:
-        return {"paths": [], "provenance": [], "confidence": 0.0}
+        return {"paths": [], "provenance": [], "confidence": 0.0, "path_provenance": {}}
 
     candidates: list[Path] = []
+    # #152 fix: per-candidate provenance override, keyed by the candidate's OWN resolved path
+    # string -- lets a candidate reached ONLY via a sys.path-hacked root report its specific
+    # "sys-path-insert" provenance instead of the generic "python-path-heuristic" every other
+    # absolute-import candidate gets, without changing `provenance`'s existing list-of-str shape.
+    path_provenance: dict[str, str] = {}
     if level > 0:
         base_dir = _python_relative_base_dir(importer_path, level)
         target = base_dir.joinpath(*parts)
@@ -6049,9 +6331,22 @@ def _python_module_candidates(
         provenance = ["relative"]
         confidence = 1.0
     else:
+        hacked_roots = {
+            str(current) for current in _python_sys_path_hack_roots(importer_path, repo_root)
+        }
         for root in _python_candidate_roots(importer_path, repo_root):
-            candidates.append(root.joinpath(*parts).with_suffix(".py"))
-            candidates.append(root.joinpath(*parts, "__init__.py"))
+            module_file = root.joinpath(*parts).with_suffix(".py")
+            package_init = root.joinpath(*parts, "__init__.py")
+            candidates.append(module_file)
+            candidates.append(package_init)
+            if str(root) in hacked_roots:
+                for hacked_candidate in (module_file, package_init):
+                    try:
+                        path_provenance[_resolved_path_str(str(hacked_candidate))] = (
+                            "sys-path-insert"
+                        )
+                    except OSError:
+                        continue
         provenance = ["python-path-heuristic"]
         confidence = 0.7
 
@@ -6065,7 +6360,12 @@ def _python_module_candidates(
         if key not in seen:
             seen.add(key)
             deduped.append(Path(key))
-    return {"paths": deduped, "provenance": provenance, "confidence": confidence}
+    return {
+        "paths": deduped,
+        "provenance": provenance,
+        "confidence": confidence,
+        "path_provenance": path_provenance,
+    }
 
 
 def _python_module_match_details(
@@ -6093,9 +6393,13 @@ def _python_module_match_details(
     candidate_info = _python_module_candidates(importer_path, module_name, repo_root, level=level)
     resolved_definition = _resolved_path_str(definition_path)
     if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
+        provenance = list(candidate_info["provenance"])
+        tagged_provenance = candidate_info.get("path_provenance", {}).get(resolved_definition)
+        if tagged_provenance is not None:
+            provenance = [tagged_provenance]
         return {
             "matched": True,
-            "provenance": list(candidate_info["provenance"]),
+            "provenance": provenance,
             "confidence": float(candidate_info["confidence"] or 1.0),
         }
     return {"matched": False, "provenance": [], "confidence": 0.0}
@@ -14909,6 +15213,12 @@ def _resolve_raw_import_entry(
         )
         external = resolved is None
         provenance = list(candidate_info["provenance"])
+        if resolved is not None:
+            # #152 fix: report the specific "sys-path-insert" provenance when this candidate was
+            # reached only via a sys.path-hacked root, instead of the generic heuristic tag.
+            tagged_provenance = candidate_info.get("path_provenance", {}).get(resolved)
+            if tagged_provenance is not None:
+                provenance = [tagged_provenance]
         confidence = float(candidate_info["confidence"]) if resolved is not None else 0.0
     else:
         resolved, external, provenance, confidence = None, True, [], 0.0

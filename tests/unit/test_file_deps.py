@@ -1168,4 +1168,284 @@ def test_build_file_importers_never_asserts_edge_for_unresolved_dynamic_import(
     payload = repo_map.build_file_importers(target, project)
 
     assert payload["importer_files"] == []
-    assert payload["importer_count"] == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# #152 fix (CEO v1.69.3 dogfood, 2 HIGH): `sys.path.insert`/`sys.path.append` path-hacked
+# modules. Before this fix, a file that made a sibling/vendored directory importable via a
+# same-repo path hack (e.g. `sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))`
+# then `from mymod import x`) was left `external`/`resolved=None` on the forward side
+# (`build_file_imports`) and its importer was invisible to the reverse side
+# (`build_file_importers` reported no importer at all, the CLI's `not_found: true`).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_imports_resolves_sys_path_insert_hacked_module(tmp_path: Path) -> None:
+    """The exact CEO dogfood repro shape: `sys.path.insert(0, os.path.join(
+    os.path.dirname(__file__), "lib"))` then `from mymod import x` must resolve `mymod` to the
+    real file under `lib/`, not stay external."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    mymod_path = lib_dir / "mymod.py"
+    mymod_path.write_text("def x():\n    return 1\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))\n'
+        "from mymod import x\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "mymod")
+    assert entry["resolved"] == str(mymod_path.resolve())
+    assert entry["external"] is False
+    assert entry["provenance"] == ["sys-path-insert"]
+    assert payload["resolved_files"] == [str(mymod_path.resolve())]
+    assert str(mymod_path.resolve()) not in payload["external_modules"]
+
+
+def test_build_file_importers_finds_sys_path_insert_hacked_importer(tmp_path: Path) -> None:
+    """The reverse direction of the same fixture: `tg importers lib/mymod.py <root>` must find
+    `app.py` as an importer (not report zero importers / `not_found`)."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    mymod_path = lib_dir / "mymod.py"
+    mymod_path.write_text("def x():\n    return 1\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))\n'
+        "from mymod import x\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(mymod_path, project)
+
+    assert payload["importer_count"] >= 1
+    assert str(app_py.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(app_py.resolve())
+    )
+    assert edge["module"] == "mymod"
+    assert edge["line"] == 3
+
+
+def test_sys_path_hack_present_stdlib_import_stays_external(tmp_path: Path) -> None:
+    """Regression guard (a): a genuinely-external stdlib import in the SAME file as a sys.path
+    hack must stay external -- the hack must not make everything in the file resolve."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    (lib_dir / "mymod.py").write_text("def x():\n    return 1\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))\n'
+        "from mymod import x\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    os_entry = next(current for current in payload["imports"] if current["module"] == "os")
+    assert os_entry["external"] is True
+    assert os_entry["resolved"] is None
+    sys_entry = next(current for current in payload["imports"] if current["module"] == "sys")
+    assert sys_entry["external"] is True
+    assert sys_entry["resolved"] is None
+
+
+def test_dynamic_sys_path_insert_leaves_module_external(tmp_path: Path) -> None:
+    """Regression guard (b): a DYNAMIC sys.path argument (a computed variable, not a literal)
+    must leave the module external -- never guess at a directory we can't statically prove."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    (lib_dir / "mymod.py").write_text("def x():\n    return 1\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys\n"
+        "extra_dir = compute_extra_dir()\n"
+        "sys.path.insert(0, extra_dir)\n"
+        "from mymod import x\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "mymod")
+    assert entry["external"] is True
+    assert entry["resolved"] is None
+    assert "mymod" in payload["external_modules"]
+
+
+def test_sys_path_insert_escape_outside_root_does_not_resolve(tmp_path: Path) -> None:
+    """Regression guard (c): a `sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+    "..", "outside_lib"))`-style escape must NOT resolve to a module outside the scanned repo
+    root, even though the literal-join idiom is otherwise identical to the working case."""
+    outside_dir = tmp_path / "outside_lib"
+    outside_dir.mkdir()
+    (outside_dir / "mymod.py").write_text("def x():\n    return 99\n", encoding="utf-8")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    # Pin `_infer_project_root`'s walk to stop exactly HERE (a marker file makes `project/` the
+    # very first candidate that matches) -- otherwise it keeps walking up looking for a project-
+    # root marker and could pick a much broader ancestor, which would make `outside_lib` no
+    # longer an actual escape relative to whatever (wider) root gets inferred.
+    (project / "pyproject.toml").write_text("", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os\n"
+        "sys.path.insert(\n"
+        '    0, os.path.join(os.path.dirname(__file__), "..", "outside_lib")\n'
+        ")\n"
+        "from mymod import x\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "mymod")
+    assert entry["external"] is True
+    assert entry["resolved"] is None
+
+
+def test_relative_import_still_works_in_file_with_sys_path_insert(tmp_path: Path) -> None:
+    """Regression guard (d): a normal relative import (`from . import sibling`) in a file that
+    ALSO does a sys.path hack must still resolve exactly as before -- adding extra search roots
+    must not disturb the existing relative-import resolution path."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    sibling_path = pkg / "sibling.py"
+    sibling_path.write_text("def y():\n    return 2\n", encoding="utf-8")
+    vendor_dir = pkg / "vendor"
+    vendor_dir.mkdir()
+    vendor_mod = vendor_dir / "mymod.py"
+    vendor_mod.write_text("def x():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        "import sys, os\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "vendor"))\n'
+        "from mymod import x\n"
+        "from . import sibling\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    sibling_entry = next(c for c in payload["imports"] if c["module"] == "sibling")
+    assert sibling_entry["resolved"] == str(sibling_path.resolve())
+    assert sibling_entry["provenance"] == ["relative"]
+    mymod_entry = next(c for c in payload["imports"] if c["module"] == "mymod")
+    assert mymod_entry["resolved"] == str(vendor_mod.resolve())
+    assert mymod_entry["external"] is False
+
+
+def test_build_file_imports_sys_path_append_bare_literal_resolves_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """`sys.path.append("extra")` (append, not insert; a bare string literal, not an
+    `os.path.join`) is a distinct idiom from the main fix test -- must also resolve, and must
+    carry the "sys-path-insert" provenance tag."""
+    project = tmp_path / "project"
+    extra_dir = project / "extra"
+    extra_dir.mkdir(parents=True)
+    extra_mod = extra_dir / "extramod.py"
+    extra_mod.write_text("def q():\n    return 6\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        'import sys\nsys.path.append("extra")\nfrom extramod import q\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "extramod")
+    assert entry["resolved"] == str(extra_mod.resolve())
+    assert entry["external"] is False
+    assert entry["provenance"] == ["sys-path-insert"]
+
+
+def test_build_file_imports_sys_path_insert_dirname_abspath_variant_resolves(
+    tmp_path: Path,
+) -> None:
+    """`os.path.dirname(os.path.abspath(__file__))` (instead of the bare `os.path.dirname(
+    __file__)`) is an equally common same-repo vendoring idiom -- must resolve the same way."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib2"
+    lib_dir.mkdir(parents=True)
+    lib_mod = lib_dir / "absmod.py"
+    lib_mod.write_text("def v():\n    return 5\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os\n"
+        "sys.path.insert(\n"
+        '    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib2")\n'
+        ")\n"
+        "from absmod import v\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "absmod")
+    assert entry["resolved"] == str(lib_mod.resolve())
+    assert entry["external"] is False
+
+
+def test_build_file_imports_sys_path_insert_pathlib_parent_variant_resolves(
+    tmp_path: Path,
+) -> None:
+    """`str(Path(__file__).parent / "vendor")` -- the pathlib-style idiom -- must resolve the
+    same way as the `os.path.join` idiom."""
+    project = tmp_path / "project"
+    vendor_dir = project / "vendor"
+    vendor_dir.mkdir(parents=True)
+    vendor_mod = vendor_dir / "vendored_mod.py"
+    vendor_mod.write_text("def z():\n    return 3\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        'sys.path.insert(0, str(Path(__file__).parent / "vendor"))\n'
+        "from vendored_mod import z\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "vendored_mod")
+    assert entry["resolved"] == str(vendor_mod.resolve())
+    assert entry["external"] is False
+
+
+def test_build_file_imports_sys_path_insert_here_alias_resolves(tmp_path: Path) -> None:
+    """Optional bullet #5: `HERE = os.path.dirname(__file__)` assigned earlier in the module,
+    then `os.path.join(HERE, "lib")` -- must resolve the same as spelling the dirname expression
+    out inline."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    lib_mod = lib_dir / "aliasmod.py"
+    lib_mod.write_text("def w():\n    return 4\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os\n"
+        "HERE = os.path.dirname(__file__)\n"
+        'sys.path.insert(0, os.path.join(HERE, "lib"))\n'
+        "from aliasmod import w\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "aliasmod")
+    assert entry["resolved"] == str(lib_mod.resolve())
+    assert entry["external"] is False
