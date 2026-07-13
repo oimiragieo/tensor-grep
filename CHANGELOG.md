@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.71.2 (2026-07-13)
+
+### Bug Fixes
+
+- **scan**: Apply the #154 marked-root workspace threshold to tg scan's broad-scan guard (#158)
+  ([#576](https://github.com/oimiragieo/tensor-grep/pull/576),
+  [`6565ccb`](https://github.com/oimiragieo/tensor-grep/commit/6565ccb0e7953f14296fdffa2a453a7901ac3729))
+
+scan_guardrails.py's `_workspace_project_child_names` skipped any root carrying its own project
+  marker outright, so `tg scan` over a marked monorepo/workspace parent never fast-refused -- the
+  exact gap #154 closed for `tg search`, still open on the scan front door. Mirror #154: drop the
+  unconditional marker-skip, source the shared thresholds + marker set from directory_scanner.py,
+  and gate a marked root on the higher marked-root child threshold (8) while an unmarked root keeps
+  the original threshold (3). Marker sets were already identical, so the constant swap is
+  behaviour-preserving for `_path_has_project_marker`.
+
+TDD: RED reproduced (a marked root + 8 marked children returned no refusal); GREEN + the #154
+  search-guard tests + the scan-guardrail DoS suite all pass.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.71.1 (2026-07-13)
 
 ### Bug Fixes
