@@ -194,6 +194,58 @@ def _tied_alternative_targets(
     return tied
 
 
+def _suggested_scope_from_tied_targets(
+    root: Path,
+    target: dict[str, Any],
+    tied_alternative_targets: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Fallback narrowing hint for a genuine ``tie_requires_confirmation`` ambiguity when
+    ``orient_capsule._suggested_scope_from_map``'s whole-repo centrality rollup declines to answer
+    (it returns ``None`` whenever the signal is flat or the top two directories are tied/near-tied --
+    exactly the common shape on a big/ambiguous repo: the confirmation-tie case this fallback
+    targets). Derives the deepest common parent DIRECTORY of every tied candidate's file path (the
+    primary target plus each ``tied_alternative_targets`` entry) instead of a centrality guess, so
+    the hint is always anchored to the files the tie itself implicates, never a repo-wide heuristic
+    that may have nothing to do with the ambiguous symbols.
+
+    Returns ``None`` (never fabricates a guess) when:
+      * there are no candidate file paths to compare;
+      * the paths don't share a common parent at all (``ValueError`` from ``os.path.commonpath``,
+        e.g. mixed drives on Windows);
+      * the common parent is ``root`` itself or lies OUTSIDE ``root`` -- re-suggesting the scan root
+        is not a narrowing hint, and a path outside root is nonsensical for a re-scoped
+        ``tg agent <suggested_scope>`` re-run.
+    """
+    candidate_files = [str(target.get("file") or "")]
+    candidate_files.extend(
+        str(alternative.get("file") or "") for alternative in tied_alternative_targets
+    )
+    directories = sorted({
+        str(Path(file_path).parent) for file_path in candidate_files if file_path
+    })
+    if not directories:
+        return None
+    try:
+        common_parent = Path(os.path.commonpath(directories))
+    except ValueError:
+        return None  # e.g. mixed drives on Windows -- no meaningful common parent
+    # Defense-in-depth: lexically collapse any ``..`` before the containment check so this
+    # confinement guard is self-enforcing and never silently depends on callers pre-resolving
+    # paths (every current caller does, but a future refactor might not -- a latent path-escape
+    # if it ever regresses). ``os.path.normpath``, NOT ``Path.resolve()``: resolve() touches the
+    # filesystem and would inject a drive letter on the synthetic paths used in unit tests; we
+    # only want a lexical ``..`` collapse here.
+    normalized_parent = Path(os.path.normpath(str(common_parent)))
+    normalized_root = Path(os.path.normpath(str(root)))
+    try:
+        relative = normalized_parent.relative_to(normalized_root)
+    except ValueError:
+        return None  # common parent is not under the scan root (incl. a ``..``-escape past it)
+    if relative == Path() or ".." in relative.parts:
+        return None  # common parent IS the scan root, or escaped it via ``..`` -- suggest neither
+    return {"dirs": [str(normalized_parent)], "confidence": "heuristic"}
+
+
 def _primary_target_is_unrequested_marker_helper(
     query: str,
     primary_target: dict[str, Any],
@@ -2310,6 +2362,33 @@ def build_agent_capsule_from_map(
             ambiguity["resolution_evidence"] = targeted_validation_evidence
         elif tie_resolved_by == "lsp":
             ambiguity["resolution_evidence"] = lsp_resolution_evidence
+    # Dogfood fix: a genuine confirmation-tie on a big/ambiguous repo previously left
+    # `suggested_scope` null -- it was populated ONLY on a scan-LIMIT truncation (the block right
+    # after `payload = repo_map.build_context_render_from_map(...)` above), never on a tie. That
+    # was a dead end for the caller: 0 actionable validation commands AND no hint to narrow and
+    # re-run scoped. Additive-only: never runs when `suggested_scope` is already populated (e.g. by
+    # the scan-truncation path above -- that hint wins), never touches confidence, tie detection,
+    # or validation commands. Prefer the same centrality-weighted rollup `tg orient` uses; when that
+    # whole-repo signal is flat/tied (the common shape on the very repo that produced this tie), fall
+    # back to the tied candidates' own common parent directory -- never a guess (see
+    # `_suggested_scope_from_tied_targets`'s None cases, including "never suggest the root").
+    if ambiguity.get("requires_confirmation") and not payload.get("suggested_scope"):
+        from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
+
+        tie_suggested_scope = _suggested_scope_from_map(rm)
+        if tie_suggested_scope is None:
+            # `tied_alternatives` (not `ambiguity["tied_alternative_targets"]`) is the definitive
+            # source: `requires_confirmation` is only ever True from the `if tied_alternatives:`
+            # branch above, which stamped `ambiguity["tied_alternative_targets"] = tied_alternatives`
+            # verbatim -- reading the local keeps this well-typed (`ambiguity` is a dict literal
+            # union across its branches, so `.get(...)` widens to `object` for mypy).
+            tie_suggested_scope = _suggested_scope_from_tied_targets(
+                Path(resolved_path),
+                target,
+                tied_alternatives,
+            )
+        if tie_suggested_scope is not None:
+            payload["suggested_scope"] = tie_suggested_scope
     ask_reasons: list[str] = []
     ask_reasons.extend(trust["ask_reasons"])
     # Degrade-to-ask safety floor: if ranking buried the implementation so the swap helper found no
