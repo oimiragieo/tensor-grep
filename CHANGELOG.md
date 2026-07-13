@@ -1,6 +1,68 @@
 # CHANGELOG
 
 
+## v1.70.2 (2026-07-13)
+
+### Bug Fixes
+
+- **ast-grep**: Probe requires exit 0, not just the marker — doctor honesty (#90b)
+  ([#571](https://github.com/oimiragieo/tensor-grep/pull/571),
+  [`fb3291b`](https://github.com/oimiragieo/tensor-grep/commit/fb3291bb3c4ca63181bddc66a41da2d2376470ad))
+
+* fix(ast-grep): probe must require exit 0, not just the "ast-grep" marker (#90b)
+
+_is_ast_grep_sg_binary trusted any candidate whose --version output contained "ast-grep", even on a
+  nonzero exit. A broken shim (e.g. a Windows ast-grep.exe invoked under WSL/Linux that exits 127)
+  whose error output mentions "ast-grep" would be mis-trusted, making is_available() (and `tg
+  doctor`) report available:true for a binary that cannot run. Require returncode == 0 too -- a real
+  `ast-grep --version` exits 0 -- so the probe stays honest and fail-closed. Extends the #130b
+  probe-gate.
+
+Adds a regression test (shim exits 127 with the marker in stderr -> is_available False) and makes
+  two existing working-binary mocks faithful (returncode = 0).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(ast-grep): assert util-linux sg rejection on marker-absence (Opus-gate nit)
+
+Set returncode=0 on the util-linux `sg` probe mock so the rejection is asserted purely on the
+  missing "ast-grep" marker, not incidentally on a MagicMock's non-zero returncode. Non-behavioral
+  test-robustness nit from the #90b gate.
+
+* style(test): shorten #90b nit comment to fit the 100-char line limit
+
+The gate-nit comment pushed the line over ruff's line-length so `ruff format --preview` (the CI
+  Formatting gate) wanted to wrap it. Shorten the comment; no behavior change.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Skills accuracy-refresh + BACKLOG to v1.70.0 (CEO sys.path fix wave)
+  ([#572](https://github.com/oimiragieo/tensor-grep/pull/572),
+  [`d94670a`](https://github.com/oimiragieo/tensor-grep/commit/d94670ae64ca2961d720a84d5cda178b3f0fda67))
+
+* docs(skills): accuracy-refresh tensor-grep skills for v1.69.x commands
+
+Document the shipped tg evidence emit + tg codemap commands in REFERENCE.md; consolidate the
+  workspace-dogfood / enterprise-agent / run-and-operate skill sweeps to the current command set and
+  drop stale verbose copy-paste sequences. Docs-only (.claude/skills); no code change.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs(backlog): refresh CURRENT STATE to v1.70.0 (CEO 2 HIGH sys.path fix) + #570 drain
+
+v1.70.0 live (the #152 sys.path.insert fix, dogfood-verified on the published wheel); #569 de-flake
+  merged (test:, no release); #570 index-gitignore fix draining -> v1.70.1. Updates the lead CURRENT
+  STATE bullet, Last-refreshed line, and SHIPPING section. Docs-only.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.70.1 (2026-07-13)
 
 ### Bug Fixes
