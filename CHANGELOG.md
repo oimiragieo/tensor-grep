@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v1.70.0 (2026-07-13)
+
+### Documentation
+
+- **backlog**: Refresh ledger to v1.69.3 -- #566 importers outside-root honest signal
+  ([#567](https://github.com/oimiragieo/tensor-grep/pull/567),
+  [`4d6c292`](https://github.com/oimiragieo/tensor-grep/commit/4d6c292f1220b67f3f1f97494dcaa51e8663806c))
+
+Post-drain proactive dogfood on 3 real external repos (flask/fastapi/requests) surfaced one genuine
+  correctness gap: tg importers FILE [ROOT] returned an empty importer_count with no signal when
+  FILE is outside ROOT. Fix #566 (Opus-gate SHIP, additive-only) shipped -> v1.69.3,
+  dogfood-verified on the published wheel (outside-root -> file_outside_root:true +
+  scan_remediation; in-root -> false + correct importer_count). fastapi/requests batteries clean.
+
+Docs-only, no release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **imports**: Resolve sys.path.insert/append path-hacked modules
+  ([#568](https://github.com/oimiragieo/tensor-grep/pull/568),
+  [`abd58e2`](https://github.com/oimiragieo/tensor-grep/commit/abd58e21a9b54559d27cb6a1f37a2e88d3ab8e7c))
+
+tg imports/importers ignored sys.path manipulation, so a module made importable via
+  sys.path.insert(0, os.path.join(dirname(__file__),"lib")) was left external/resolved=null
+  (forward) and missed as a reverse edge (importers not_found) -- CEO v1.69.3 dogfood, #130b. Parses
+  statically-resolvable sys.path.insert/append dirs relative to the file and adds them as import
+  search roots for both the forward (_python_imports_with_lines) and reverse
+  (_python_imports_and_symbols) resolvers. Dynamic/non-literal path exprs and out-of-root escapes
+  stay external (honest). Payload shape unchanged.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.69.3 (2026-07-13)
 
 ### Bug Fixes
