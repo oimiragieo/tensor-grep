@@ -932,7 +932,7 @@ def test_max_count_zero_returns_no_matches_on_ltl_path(tmp_path):
 # must EITHER complete quickly via the linear-time Rust engine (the common case, Rust present)
 # OR raise `BackendExecutionError` (the fail-closed residual) -- and must NEVER hang. Each test
 # wall-clock-bounds the call; a hang manifests as a test timeout, not a silent pass.
-_HAZARD_PATTERN = r"(a+)+$"
+_HAZARD_PATTERN = r"(a+)+$"  # codeql[py/redos]: intentional ReDoS fixture, see comment above
 _HAZARD_BOUND_SECONDS = 2.0
 
 
