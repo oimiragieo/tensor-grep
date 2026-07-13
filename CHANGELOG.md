@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.71.0 (2026-07-13)
+
+### Features
+
+- **codemap**: Default --deadline 60s + --no-deadline opt-out (#153)
+  ([#573](https://github.com/oimiragieo/tensor-grep/pull/573),
+  [`c1a2863`](https://github.com/oimiragieo/tensor-grep/commit/c1a2863a9f797f7f5cf10f216d2d56631415dd68))
+
+`tg codemap` on a huge multi-root workspace could hang ~90s because its --deadline option defaulted
+  to None (unbounded), even though the deadline machinery itself (partial/partial_reason='deadline'
+  + exit 2 on incomplete) already worked. Give the CLI front door an agent-loop-safe default of 60s,
+  with --no-deadline as the explicit opt-out back to unbounded.
+
+- codemap.py: add DEFAULT_CLI_DEADLINE_SECONDS = 60.0 (CLI-only; does not touch build_codemap's own
+  deadline_seconds=None library default). - main.py: --deadline now defaults to a literal 60.0
+  (mirrors the max_repo_files/50_000 lazy-import literal pattern) instead of None; add
+  --no-deadline; compute effective_deadline before calling build_codemap. -
+  tests/unit/test_codemap.py: 4 new CliRunner-based tests (the first in this file) covering the
+  bounded default, --no-deadline, an explicit --deadline override, and a literal-parity guard
+  between the two hardcoded 60.0s.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.70.2 (2026-07-13)
 
 ### Bug Fixes
