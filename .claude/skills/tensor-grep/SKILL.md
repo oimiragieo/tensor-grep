@@ -40,7 +40,7 @@ prefer the canonical path-first form.
 4. Symbol navigation — prefer `src/` for complete callers (root often returns `partial`):
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
    - `tg defs` / `tg refs` / `tg blast-radius` similarly
-5. Agent capsule — **always prefer `src/` on v1.71.1** (whole-repo `tg agent` timed out at 75s again):
+5. Agent capsule — **prefer `src/` for latency on v1.71.1** (whole-repo `tg agent` is ~26s NATIVE, exit 0; the 75s figure is a WSL `/mnt/c` 9p artifact, not a regression):
    - `tg agent REPO_PATH/src "task" --json`  # ~24s PASS
    - Avoid `tg agent REPO_PATH "task"` on large trees until root latency is stable
 5b. Evidence receipt:
