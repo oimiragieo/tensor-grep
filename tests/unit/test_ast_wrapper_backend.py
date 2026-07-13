@@ -67,6 +67,7 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
 def test_ast_wrapper_backend_should_ignore_linux_group_sg_binary():
     backend = AstGrepWrapperBackend()
     mock_result = MagicMock()
+    mock_result.returncode = 0  # exit 0 -> the rejection must come from the missing marker, not the exit code
     mock_result.stdout = "sg from util-linux 2.39\n"
     mock_result.stderr = ""
 
