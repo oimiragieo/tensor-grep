@@ -28,20 +28,21 @@ prefer the canonical path-first form.
 
 1. Confirm the installed CLI is available:
    - `tg --version`
-0. (Unfamiliar repo) Orient — single repo preferred; workspace root works but is slower (~55s on v1.69.3):
+0. (Unfamiliar repo) Orient — single repo preferred; workspace root works but is slower (~53s on v1.71.1):
    - `tg orient REPO_PATH`
    - `tg inventory REPO_PATH --json`
 2. File deps (cheap):
    - `tg imports FILE` / `tg importers FILE [ROOT]` — absolute paths
 3. Content search then source:
    - `tg search PATTERN REPO_PATH --rank`
+   - Workspace-root search is refused in ~1s unless scoped (`--glob` / `--type` / `--max-depth`) or `--allow-broad-generated-scan`
    - `tg source REPO_PATH/src SYMBOL`
 4. Symbol navigation — prefer `src/` for complete callers (root often returns `partial`):
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
    - `tg defs` / `tg refs` / `tg blast-radius` similarly
-5. Agent capsule (whole-repo works again on v1.69.3, but `src/` is ~4× faster):
-   - `tg agent REPO_PATH/src "task" --json`  # ~13s
-   - `tg agent REPO_PATH "task" --json`      # ~60s, still OK
+5. Agent capsule — **always prefer `src/` on v1.71.1** (whole-repo `tg agent` timed out at 75s again):
+   - `tg agent REPO_PATH/src "task" --json`  # ~24s PASS
+   - Avoid `tg agent REPO_PATH "task"` on large trees until root latency is stable
 5b. Evidence receipt:
    - `tg evidence emit REPO_PATH --capsule capsule.json --query "task" --json --agent-id AGENT`
 5c. Optional browsable map (still slow — do not block agent loops):
@@ -81,19 +82,21 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Unscoped search still hits the 60s timeout (v1.69.3 dogfood).** `tg search TODO` from `/mnt/c/dev/projects` → exit 124. Always scope to a repo path.
+**Unscoped / multi-project workspace search refuses fast (v1.71.1).** `tg search TODO` from `/mnt/c/dev/projects` → exit 2 in ~1.1s with a clear safety-guard message (no more 60s hang). Scope with a project path, `--glob`, `--type`, `--max-depth`, or pass `--allow-broad-generated-scan` only when intentional.
 
-**Prefer `REPO/src` for complete callers (v1.69.3).** `tg callers tensor-grep/src … --deadline 15` → **complete** (3 callers, ~5s). Same symbol on the repo root → `partial: true` with 0 callers. Prefer narrowed PATH for exhaustive graph answers.
+**Prefer `REPO/src` for complete callers (still true on v1.71.1).** `tg callers tensor-grep/src … --deadline 15` → complete (3 callers, ~6s). Same symbol on the repo root → exit 2 / `partial: true` with 0 callers. Prefer narrowed PATH for exhaustive graph answers.
 
-**Whole-repo `tg agent` is fixed on v1.69.3** (was hanging on 1.63–1.68). Root completes in ~60s; `src/` in ~13s — same primary/confidence. Prefer `src/` for latency.
+**Whole-repo `tg agent` is WSL-slow, NOT natively regressed on v1.71.1.** Native whole-repo runs ~26s (tensor-grep, exit 0, valid capsule); the 75s WSL `/mnt/c` timeout is a 9p-latency artifact -- reproduce natively before calling it a regression. Prefer `src/` (~24s) for latency in agent loops.
 
-**Workspace `tg orient .` works again on v1.69.3** (~56s) — was timing out on 1.68.1. Per-repo orient is still faster (~23s).
+**Large JS/TS trees can still hang agent.** `tg agent` on `agent-studio` timed out at 60s in the v1.71.1 workspace sweep — narrow PATH further or raise budget only when needed.
+
+**Workspace `tg orient .` works** (~53s on v1.71.1). Per-repo orient is faster (~24s).
 
 **`tg codemap` still not agent-loop ready.** No JSON within 90s on tensor-grep under WSL; write to `/tmp` if you try it. Default `--out` is `/docs/code-map`.
 
-**`tg inventory --deadline` returns a floor** (workspace 546 files incomplete at 30s). Prefer per-repo inventory without a tight deadline when totals must be trusted.
+**`tg inventory --deadline` returns a floor** (workspace 525 files incomplete at 30s on v1.71.1). Prefer per-repo inventory without a tight deadline when totals must be trusted.
 
-**`tg imports` / `tg importers`:** absolute paths; importers may be `partial` under deadline.
+**`tg imports` / `tg importers`:** absolute paths; importers may be `partial` / empty under deadline even when reverse deps exist.
 
 **`tg evidence emit`:** subcommand required; aggregates prior capsules (no re-scan unless `--recompute`).
 
@@ -101,7 +104,7 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 **`tg checkpoint create`:** scope to `src/` on large trees.
 
-**AST scan on WSL:** Windows npm ast-grep shim → exit 127; doctor `available: true` ≠ runnable.
+**`tg scan` works again on WSL (v1.71.1)** for built-in rulesets (~1.4s PASS), but may warn about unreadable Windows-style paths under the Linux mount (`os error 3`). Treat findings as best-effort when those warnings appear; doctor `available: true` is still not a perfect runnable proof across shims.
 
 ## Provider Modes
 
