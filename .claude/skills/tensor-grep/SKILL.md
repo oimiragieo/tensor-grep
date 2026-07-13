@@ -28,39 +28,27 @@ prefer the canonical path-first form.
 
 1. Confirm the installed CLI is available:
    - `tg --version`
-0. (Unfamiliar repo) Orient before searching:
+0. (Unfamiliar repo) Orient — single repo preferred; workspace root works but is slower (~55s on v1.69.3):
    - `tg orient REPO_PATH`
-   Returns central files (by import in-degree), entry points, symbol map, and AST snippets in one call.
-   - `tg inventory REPO_PATH --json` for a fast first-contact manifest (file/byte counts by language and by
-     category, largest files, binary split) — walk-only, no AST parse, so it is cheap on a large repo.
-2. For a **single file's import edges** (cheap — no repo scan):
-   - `tg imports FILE` — what FILE imports, resolved to target files where possible
-   - `tg importers FILE [ROOT]` — who imports FILE (bounded reverse lookup; use `--deadline` on large roots)
-   Prefer these over `tg map`/`tg orient` for one-file dependency questions.
-3. Start with direct source lookup:
-   - `tg source REPO_PATH SYMBOL`
-3a. If the symbol name is unknown, find it by content first:
+   - `tg inventory REPO_PATH --json`
+2. File deps (cheap):
+   - `tg imports FILE` / `tg importers FILE [ROOT]` — absolute paths
+3. Content search then source:
    - `tg search PATTERN REPO_PATH --rank`
-   BM25 re-ranks results by per-chunk relevance — no API key, no GPU required.
-   Then feed the top hit into `tg source`.
-4. If you need symbol navigation:
-   - `tg defs REPO_PATH SYMBOL`
-   - `tg refs REPO_PATH SYMBOL`
-5. If you need edit planning:
-   - `tg blast-radius REPO_PATH SYMBOL`
-   - `tg blast-radius-plan REPO_PATH SYMBOL`
-6. Use the returned file/span candidates to make the smallest correct edit.
-7. Run only the most relevant validation commands after the edit.
-8. For repeated-edit loops or memory-backed work across sessions, open a cached session first:
-   - `tg session open --json REPO_PATH` returns a `session_id` — capture it.
-   Then pass that `session_id` as the required first argument to the session-scoped variants
-   (instead of the equivalent top-level commands):
-   `tg session context-render SESSION_ID`, `tg session edit-plan SESSION_ID`,
-   `tg session blast-radius-render SESSION_ID`, `tg session blast-radius-plan SESSION_ID`,
-   `tg session blast-radius SESSION_ID`.
-   Refresh the cache after file changes with `tg session refresh SESSION_ID`.
-   Inspect cached sessions with `tg session list` / `tg session show`.
-   Manage the warm localhost daemon with `tg session daemon`.
+   - `tg source REPO_PATH/src SYMBOL`
+4. Symbol navigation — prefer `src/` for complete callers (root often returns `partial`):
+   - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
+   - `tg defs` / `tg refs` / `tg blast-radius` similarly
+5. Agent capsule (whole-repo works again on v1.69.3, but `src/` is ~4× faster):
+   - `tg agent REPO_PATH/src "task" --json`  # ~13s
+   - `tg agent REPO_PATH "task" --json`      # ~60s, still OK
+5b. Evidence receipt:
+   - `tg evidence emit REPO_PATH --capsule capsule.json --query "task" --json --agent-id AGENT`
+5c. Optional browsable map (still slow — do not block agent loops):
+   - `tg codemap REPO_PATH --out /tmp/code-map --json`
+6. Make the smallest correct edit from primary targets.
+7. Run only the returned validation commands.
+8. Cached loops: `tg session open --json REPO_PATH` then session-scoped commands.
 
 ## Registration-Audit Workflow (blast-radius before claiming done)
 
@@ -93,25 +81,27 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Unscoped search on a multi-project workspace often hangs until the 60s ripgrep timeout (v1.58.9 dogfood).** Skills previously claimed vendored-root refusal in <1s; on `/mnt/c/dev/projects` (which has a top-level `node_modules`) `tg search TODO` still burned the full timeout with no early refuse message. Always scope to a path — `tg search PATTERN REPO` completes in under a second on typical repos.
+**Unscoped search still hits the 60s timeout (v1.69.3 dogfood).** `tg search TODO` from `/mnt/c/dev/projects` → exit 124. Always scope to a repo path.
 
-**Scoped file dependencies (`tg imports` / `tg importers`, shipped #74).** Use `tg imports FILE` for forward edges (O(1) — parses one file) and `tg importers FILE [ROOT]` for reverse edges (bounded repo scan). Do **not** pay for whole-repo `tg map`/`tg orient` when the question is "what does this file import?" or "who imports this file?".
+**Prefer `REPO/src` for complete callers (v1.69.3).** `tg callers tensor-grep/src … --deadline 15` → **complete** (3 callers, ~5s). Same symbol on the repo root → `partial: true` with 0 callers. Prefer narrowed PATH for exhaustive graph answers.
 
-**`--deadline` is best-effort, not a hard SLA (v1.58.x dogfood).** Graph scans may still exceed the requested budget. On v1.58.9, `callers`/`blast-radius`/`impact` with `--deadline 15–20` typically finish in ~17–24s and correctly exit `2` with `partial: true` when truncated. Treat `partial`/`result_incomplete` as the honesty signal. Narrow `PATH` or warm `tg session daemon start` before trusting caller graphs on large trees.
+**Whole-repo `tg agent` is fixed on v1.69.3** (was hanging on 1.63–1.68). Root completes in ~60s; `src/` in ~13s — same primary/confidence. Prefer `src/` for latency.
 
-**Workspace-root `tg inventory --deadline` can return zero files (v1.58.9 dogfood).** On a multi-project parent like `/mnt/c/dev/projects`, a short `--deadline` may expire before any files are counted (`totals.files=0`, `truncation_cause=deadline`). Prefer `tg inventory REPO` per project, or raise the deadline substantially for the workspace parent.
+**Workspace `tg orient .` works again on v1.69.3** (~56s) — was timing out on 1.68.1. Per-repo orient is still faster (~23s).
 
-**Unscoped search on this workspace still hits the 60s ripgrep timeout (v1.58.9).** Even with a top-level `node_modules`, `tg search TODO` from `/mnt/c/dev/projects` timed out at ~60s (exit 124) instead of refusing in <1s. Always scope to a repo path.
+**`tg codemap` still not agent-loop ready.** No JSON within 90s on tensor-grep under WSL; write to `/tmp` if you try it. Default `--out` is `/docs/code-map`.
 
-**WSL + `/mnt/c/` path quirks.** Some native-backend searches report `path_not_found` for absolute `/mnt/c/dev/...` paths even when the directory exists; relative paths from the repo cwd often work. If `tg search` returns `path_not_found`, `cd` into the parent and pass a relative path.
+**`tg inventory --deadline` returns a floor** (workspace 546 files incomplete at 30s). Prefer per-repo inventory without a tight deadline when totals must be trusted.
 
-**`tg importers` path resolution.** Prefer absolute paths for both `FILE` and `ROOT` (v1.58.9 dogfood: absolute paths succeed; relative `FILE`+`ROOT` from a parent cwd can still double-resolve). Or `cd` into `ROOT` and pass `FILE` relative to that cwd only.
+**`tg imports` / `tg importers`:** absolute paths; importers may be `partial` under deadline.
 
-**`tg classify` takes `FILE_PATH` only — no `--json` flag.** Default `--format` is already `json`. Do not pass `--json` (Typer usage error). There is no stdin/`--text` mode yet.
+**`tg evidence emit`:** subcommand required; aggregates prior capsules (no re-scan unless `--recompute`).
 
-**`tg checkpoint create` on a whole large repo can fail** when the tree contains awkward paths (v1.58.9: `Is a directory` under `benchmarks/external_repos/chalk`). Scope the checkpoint to `src/` or a narrower editable subtree.
+**`tg classify`:** `FILE_PATH` only; default format already JSON (no `--json` flag).
 
-**AST scan on WSL when ast-grep is a Windows npm shim.** `tg scan` may fail with exit 127 if `doctor` resolves `ast-grep` to a Windows path (`/mnt/c/Users/.../npm/ast-grep`) whose shebang cannot execute under WSL. Install a Linux-native `ast-grep` on PATH or run scan from Windows. Doctor may still report `ast_grep.available: true` — availability ≠ runnable under WSL.
+**`tg checkpoint create`:** scope to `src/` on large trees.
+
+**AST scan on WSL:** Windows npm ast-grep shim → exit 127; doctor `available: true` ≠ runnable.
 
 ## Provider Modes
 
