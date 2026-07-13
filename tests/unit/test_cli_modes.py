@@ -33,6 +33,7 @@ from tensor_grep.cli.main import (
     _write_path_list,
     app,
 )
+from tensor_grep.cli.scan_guardrails import find_broad_scan_refusal
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
@@ -784,6 +785,46 @@ def test_workspace_root_guard_allows_marked_root_with_seven_marked_children(tmp_
 
     assert refused is False
     assert project_dirs == []
+
+
+def test_scan_guard_refuses_marked_workspace_root_with_many_marked_children(tmp_path: Path):
+    """Item #158 (`tg scan` sibling of #154): the broad-SCAN guard in scan_guardrails.py must
+    apply the same marked-root threshold as the search guard. A marked workspace parent (its
+    own top-level `pyproject.toml`) with 8 independently-marked children clears the higher
+    marked-root threshold, so `find_broad_scan_refusal` must refuse it. Previously the root's
+    own marker skipped it outright, so a whole-workspace `tg scan` slipped past unbounded."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text("", encoding="utf-8")
+    for index in range(8):
+        project = workspace / f"project-{index}"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refusal = find_broad_scan_refusal([str(workspace)])
+
+    assert refusal is not None
+    assert refusal.kind == "workspace-root"
+    assert refusal.names == [f"project-{index}" for index in range(8)]
+
+
+def test_scan_guard_allows_marked_root_with_seven_marked_children(tmp_path: Path):
+    """Boundary pin for item #158's marked-root threshold (N=8) on the scan front door: a
+    marked root with exactly 7 marked children stays UNREFUSED -- one short of the higher bar
+    a marked root needs before it also counts as a workspace parent (an ordinary single
+    project can legitimately carry a handful of marked children without being a workspace
+    parent). Mirrors the search-side boundary pin above."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text("", encoding="utf-8")
+    for index in range(7):
+        project = workspace / f"project-{index}"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+
+    refusal = find_broad_scan_refusal([str(workspace)])
+
+    assert refusal is None
 
 
 def test_workspace_root_guard_refuses_glob_with_implicit_path(tmp_path: Path):
