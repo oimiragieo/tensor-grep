@@ -61,7 +61,13 @@ def _is_ast_grep_sg_binary(binary: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     version_text = f"{result.stdout}\n{result.stderr}".lower()
-    return "ast-grep" in version_text
+    # #90(b): require a clean exit too, not just the "ast-grep" marker. A broken
+    # shim (e.g. a Windows `ast-grep.exe` invoked under WSL/Linux that exits 127)
+    # can print an error whose text still contains "ast-grep" -- the marker-only
+    # check would then mis-trust it, making is_available() (and `tg doctor`) report
+    # available:true for a binary that cannot actually run. A real `ast-grep
+    # --version` exits 0, so gate on that to stay honest and fail-closed.
+    return result.returncode == 0 and "ast-grep" in version_text
 
 
 def _ast_grep_command_timeout_seconds() -> float:

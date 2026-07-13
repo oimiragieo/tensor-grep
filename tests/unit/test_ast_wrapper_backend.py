@@ -47,6 +47,7 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
     this literal path) instead of exercising the mocked contract."""
     backend = AstGrepWrapperBackend()
     mock_result = MagicMock()
+    mock_result.returncode = 0  # a working `ast-grep --version` exits 0 (#90b probe gate)
     mock_result.stdout = "ast-grep 0.39.5\n"
     mock_result.stderr = ""
 
@@ -66,6 +67,7 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
 def test_ast_wrapper_backend_should_ignore_linux_group_sg_binary():
     backend = AstGrepWrapperBackend()
     mock_result = MagicMock()
+    mock_result.returncode = 0  # rejection must come from the missing marker, not the exit code
     mock_result.stdout = "sg from util-linux 2.39\n"
     mock_result.stderr = ""
 
@@ -87,6 +89,7 @@ def test_ast_wrapper_backend_should_ignore_linux_group_sg_binary():
 def test_ast_wrapper_backend_should_accept_verified_sg_alias():
     backend = AstGrepWrapperBackend()
     mock_result = MagicMock()
+    mock_result.returncode = 0  # a working `sg --version` exits 0 (#90b probe gate)
     mock_result.stdout = "ast-grep 0.39.5\n"
     mock_result.stderr = ""
 
@@ -157,6 +160,33 @@ def test_ast_grep_backend_still_trusts_working_binary():
 
         assert backend.is_available() is True
         assert backend._get_binary_name() == "/real/path/ast-grep"
+
+
+def test_ast_grep_backend_rejects_shim_that_exits_nonzero_with_marker():
+    """#90(b): a broken shim that RUNS (no OSError) but exits NON-ZERO -- e.g. a
+    Windows `ast-grep.exe` invoked under WSL that exits 127 -- whose error output
+    still contains "ast-grep" must NOT be trusted. The probe requires exit 0, not
+    just the marker, so is_available() (and `tg doctor`) stays honest/fail-closed.
+    Without the returncode==0 gate this shim would falsely resolve as available."""
+    backend = AstGrepWrapperBackend()
+    mock_result = MagicMock()
+    mock_result.returncode = 127
+    mock_result.stdout = ""
+    mock_result.stderr = "ast-grep: command not found\n"
+
+    with (
+        patch("shutil.which") as which,
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        which.side_effect = lambda name: {
+            "ast-grep": "/broken/shim/ast-grep",
+            "ast-grep.exe": None,
+            "sg.exe": None,
+            "sg": None,
+        }.get(name)
+
+        assert backend.is_available() is False
+        assert backend._get_binary_name() == "ast-grep"
 
 
 def test_ast_grep_backend_memoizes_binary_probe():
