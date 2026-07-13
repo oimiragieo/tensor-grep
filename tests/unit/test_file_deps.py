@@ -756,6 +756,92 @@ def test_build_file_importers_outside_root_file_returns_no_importers_not_a_crash
     assert payload["file"] == str(outside_file.resolve())
     assert payload["importer_count"] == 0
     assert payload["importer_files"] == []
+    # Dogfood honesty fix (published v1.69.2 wheel): a valid FILE outside the scanned ROOT must
+    # be flagged so `importer_count: 0` here is never confused with a genuine unimported-in-ROOT
+    # answer -- an agent shelling out from the wrong CWD needs to see this, not a look-alike zero.
+    assert payload["file_outside_root"] is True
+    remediation = payload["scan_remediation"]
+    assert isinstance(remediation, str) and remediation
+    assert "ROOT" in remediation
+
+
+def test_build_file_importers_from_map_outside_root_stamps_honest_signal(
+    tmp_path: Path,
+) -> None:
+    """Direct `build_file_importers_from_map` unit coverage of the same honesty fix: a repo_map
+    scoped to dirA, queried for a FILE that genuinely exists in a separate dirB, must stamp
+    `file_outside_root: True` plus a non-empty `scan_remediation` naming the mismatch -- instead
+    of a bare `importer_count: 0` that is indistinguishable from a real no-importers answer."""
+    dir_a = tmp_path / "dirA"
+    dir_a.mkdir()
+    (dir_a / "util.py").write_text("VALUE = 1\n", encoding="utf-8")
+    dir_b = tmp_path / "dirB"
+    dir_b.mkdir()
+    outside_file = dir_b / "other.py"
+    outside_file.write_text("VALUE = 2\n", encoding="utf-8")
+
+    repo_map_payload = repo_map.build_repo_map(dir_a)
+    payload = repo_map.build_file_importers_from_map(repo_map_payload, str(outside_file))
+
+    assert payload["importer_count"] == 0
+    assert payload["file_outside_root"] is True
+    remediation = payload["scan_remediation"]
+    assert isinstance(remediation, str) and remediation
+    assert "ROOT" in remediation
+    assert str(dir_a.resolve()) in remediation
+
+
+def test_build_file_importers_from_map_inside_root_unimported_is_not_flagged_outside(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: a FILE genuinely inside ROOT but unimported is a LEGIT empty result --
+    must not be mistaken for (or ever stamped with) the outside-root signal."""
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    lonely = repo_dir / "lonely.py"
+    lonely.write_text("VALUE = 1\n", encoding="utf-8")
+
+    repo_map_payload = repo_map.build_repo_map(repo_dir)
+    payload = repo_map.build_file_importers_from_map(repo_map_payload, str(lonely))
+
+    assert payload["importer_count"] == 0
+    assert payload["file_outside_root"] is False
+    # `scan_remediation` is only ever populated (as a dict-copy sibling of `scan_limit`) when the
+    # repo-map scan itself was max-repo-files-capped; a plain `build_repo_map(repo_dir)` call
+    # (no cap) never sets the key at all -- `.get()` tolerates that, `is None` would KeyError.
+    assert not payload.get("scan_remediation")
+
+
+def test_build_file_importers_from_map_inside_root_with_importers_is_not_flagged_outside(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: a FILE inside ROOT WITH real importers must report them normally and
+    never carry the outside-root signal."""
+    repo_dir, target, importer = _make_js_importer_fixture(tmp_path)
+
+    repo_map_payload = repo_map.build_repo_map(repo_dir)
+    payload = repo_map.build_file_importers_from_map(repo_map_payload, str(target))
+
+    assert payload["file_outside_root"] is False
+    assert payload["importer_count"] == 1
+    assert str(importer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_from_map_relative_file_stays_in_root_daemon_convention(
+    tmp_path: Path,
+) -> None:
+    """Safety constraint: the daemon/session convention passes a FILE relative to the repo_map's
+    OWN root (session_file_importers / the raw daemon-socket `file_importers` command both do
+    this). That join (`repo_root / resolved_file`) always lands under repo_root, so the new
+    containment check must never fire a false positive for this calling convention."""
+    repo_dir, target, _importer = _make_js_importer_fixture(tmp_path)
+
+    repo_map_payload = repo_map.build_repo_map(repo_dir)
+    payload = repo_map.build_file_importers_from_map(repo_map_payload, "src/util.js")
+
+    assert payload["file_outside_root"] is False
+    assert payload["file"] == str(target.resolve())
+    assert payload["importer_count"] == 1
 
 
 def test_importers_cli_relative_file_and_root_from_parent_cwd_no_doubling(
@@ -799,6 +885,11 @@ def test_importers_cli_outside_root_file_exits_1_not_found(
     assert payload["not_found"] is True
     assert payload["importer_count"] == 0
     assert payload["file"] == str(outside_file.resolve())
+    # Dogfood honesty fix: the CLI-level payload must carry the same outside-root signal as the
+    # underlying builder -- an agent reading `not_found: true` + `importer_count: 0` alone cannot
+    # tell "wrong ROOT" from "really unimported"; this is additive only (exit code unchanged).
+    assert payload["file_outside_root"] is True
+    assert isinstance(payload["scan_remediation"], str) and payload["scan_remediation"]
 
 
 def test_imports_relative_file_from_parent_cwd_already_resolves_correctly(
