@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.69.3 (2026-07-13)
+
+### Bug Fixes
+
+- **importers**: Honest signal when FILE is outside the scanned ROOT
+  ([#566](https://github.com/oimiragieo/tensor-grep/pull/566),
+  [`00e4e99`](https://github.com/oimiragieo/tensor-grep/commit/00e4e991a063602f364d0dd786ef1072f34d9d23))
+
+tg importers FILE [ROOT] with ROOT defaulting to CWD returned an empty importer_count with no signal
+  distinguishing "FILE outside ROOT" (wrong root / usage error) from "genuinely unimported in ROOT".
+  Dogfood-found: tg importers <other-repo-file> from a different CWD silently returned 0 importers +
+  exit 1, identical to a real no-importers result.
+
+Adds a lexical containment check in build_file_importers_from_map: when the resolved FILE is not
+  under repo_root, stamp file_outside_root=true + a scan_remediation hint. Additive only -- no
+  change to exit code, importer values, or the importers-within-ROOT contract. Safe for the
+  daemon/session relative-file path (always joined onto root, never fires).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Refresh ledger to v1.69.2 -- the v1.68.1 CEO WSL-dogfood 3-PR drain
+  ([#565](https://github.com/oimiragieo/tensor-grep/pull/565),
+  [`361f493`](https://github.com/oimiragieo/tensor-grep/commit/361f49391e8bf91b3ce1a490e4024d96349717e1))
+
+Reconciles docs/BACKLOG.md (canonical ledger) after the CEO's v1.68.1 WSL dogfood drain shipped 3
+  fixes one-per-publish (#562/#563/#564 -> v1.69.0/.1/.2), all dogfood-verified on the PUBLISHED
+  v1.69.2 wheel (release-tag-smoke = success):
+
+- #562 codemap --ignore/--deadline (v1.69.0): both flags accepted + JSON emitted - #563 F2
+  nested-import recall (v1.69.1): function/class-scoped imports (json, collections) now resolve
+  alongside top-level os - #564 F3 suggested_scope-on-tie (v1.69.2): emits a narrowing scope for a
+  clustered tie, honest-null for a repo-spanning tie (both dogfood-confirmed); Opus-gated +
+  os.path.normpath ..-confinement hardened
+
+Docs-only, no release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.69.2 (2026-07-13)
 
 ### Bug Fixes
