@@ -1356,3 +1356,46 @@ def test_build_context_edit_plan_mirrors_scoped_python_readme_trap_fix(tmp_path:
     assert pytest_file_steps, f"expected a file-scoped pytest step, got {validation_plan!r}"
     assert not Path(pytest_file_steps[0]["target"]).is_absolute()
     assert payload["validation_commands"]
+
+
+# --- Dogfood v1.71.1: `tg edit-plan --json` top-level `validation_plan` parity ------------------
+# `tg edit-plan --json` already exposed a FLAT top-level `validation_commands` list but dropped
+# the STRUCTURED top-level `validation_plan` that `tg agent --json` already surfaces at its own
+# top level -- even though the data already exists at `edit_plan_seed.validation_plan`. Additive
+# fix: surface it as a top-level sibling of `validation_commands`, deep-copied so callers can
+# mutate the returned steps without corrupting `edit_plan_seed`.
+
+
+def test_build_context_edit_plan_surfaces_top_level_validation_plan(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_edit_plan("create invoice", project)
+
+    assert "validation_plan" in payload
+    top_level_plan = payload["validation_plan"]
+    assert isinstance(top_level_plan, list)
+    assert top_level_plan, "expected a non-empty top-level validation_plan"
+    assert all(isinstance(step, dict) and step.get("command") for step in top_level_plan)
+    # Corresponds to edit_plan_seed.validation_plan -- same steps, same order.
+    assert top_level_plan == payload["edit_plan_seed"]["validation_plan"]
+    # Back-compat: the pre-existing flat validation_commands list is untouched, and its strings
+    # are exactly the `command` field of each top-level validation_plan step.
+    assert payload["validation_commands"]
+    assert [step["command"] for step in top_level_plan] == payload["validation_commands"]
+    # Deep-copy safety: mutating the returned top-level plan must not mutate the seed.
+    top_level_plan[0]["command"] = "mutated"
+    assert payload["edit_plan_seed"]["validation_plan"][0]["command"] != "mutated"

@@ -12332,6 +12332,11 @@ def build_context_edit_plan_from_map(
     )
     payload["validation_commands"] = _top_level_validation_commands(payload)
     payload["suggested_validation_commands"] = _top_level_suggested_validation_commands(payload)
+    # Parity fix (v1.71.1 dogfood): `tg agent --json` already surfaces a top-level structured
+    # `validation_plan`; edit-plan only had the flat `validation_commands` above even though the
+    # structured steps already exist at `edit_plan_seed.validation_plan`. Purely additive -- does
+    # not change `validation_commands`/`suggested_validation_commands` above.
+    payload["validation_plan"] = _top_level_validation_plan(payload)
     return _attach_profiling(payload, collector)
 
 
@@ -12656,6 +12661,26 @@ def _top_level_suggested_validation_commands(payload: dict[str, Any]) -> list[di
         else []
     )
     source = navigation_suggested or seed_suggested
+    return [dict(current) for current in source if isinstance(current, dict)]
+
+
+def _top_level_validation_plan(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Additive parity counterpart to `_top_level_validation_commands` -- surfaces the existing
+    STRUCTURED `validation_plan` (list of step dicts with `command`/`confidence`/`detection`/
+    `runner`/`scope`/optional `target`) at the payload TOP LEVEL, matching how `tg agent --json`
+    already exposes a top-level `validation_plan` (audit: v1.71.1 dogfood gap). Same dual-source
+    precedence as `_top_level_validation_commands` (navigation_pack first, edit_plan_seed
+    fallback); each step dict is copied so a caller mutating the returned list never mutates
+    `edit_plan_seed`/`navigation_pack` in place. Never removes or mutates `validation_commands`."""
+    navigation_pack = payload.get("navigation_pack")
+    navigation_plan = (
+        navigation_pack.get("validation_plan", []) if isinstance(navigation_pack, dict) else []
+    )
+    edit_plan_seed = payload.get("edit_plan_seed")
+    seed_plan = (
+        edit_plan_seed.get("validation_plan", []) if isinstance(edit_plan_seed, dict) else []
+    )
+    source = navigation_plan or seed_plan
     return [dict(current) for current in source if isinstance(current, dict)]
 
 
