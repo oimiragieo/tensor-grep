@@ -266,3 +266,9 @@ def test_l10_calibrate_exits_one_when_unsupported(monkeypatch) -> None:
     # On a box without the native binary / CUDA, calibrate is a runtime/unsupported
     # error: tg's convention is exit 1, not the usage-error exit 2.
     assert result.exit_code == 1, result.stdout
+    # P0-4 (GPU Phase-0 honesty): the missing-binary message must carry an actionable
+    # remediation pointer -- not just "not found" with no next step -- naming the flavor
+    # override env var, the `tg upgrade` command, and the `tg doctor` diagnostic.
+    assert "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR" in result.output
+    assert "tg upgrade" in result.output
+    assert "tg doctor" in result.output
