@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli.inventory import DEFAULT_MAX_INVENTORY_FILES, _is_test_path
-from tensor_grep.cli.repo_map import _iter_repo_files, _looks_like_binary_file
+from tensor_grep.cli.repo_map import (
+    _deadline_monotonic_from_seconds,
+    _DeadlineBreakFlag,
+    _iter_repo_files,
+    _looks_like_binary_file,
+)
 
 # Path components that are NEVER product source a governing doc documents: tool state (.claude
 # worktrees/skills, tg indices), VCS, vendored/third-party trees, and build/cache output. Without
@@ -171,19 +176,35 @@ def build_docs_coverage(
     max_files: int = DEFAULT_MAX_INVENTORY_FILES,
     include_details: bool = False,
     ignore: tuple[str, ...] = (),
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Report which source files are not referenced by any governing doc under ``path``.
 
     Raises ``FileNotFoundError`` when ``path`` does not exist (fail closed -- a missing path must
     never read as a fully-covered empty repo).
+
+    CEO v1.72.1 dogfood M1: ``deadline_seconds`` is a thin additive thread-through into the walk
+    (mirrors the #581 pattern -- ``build_repo_map`` already accepts ``deadline_monotonic``, and
+    ``_iter_repo_files`` -- the SAME gitignore-aware walker ``map``/``orient``/``inventory`` trust --
+    already knows how to bound itself by wall-clock time via ``deadline_monotonic``/``deadline_hit``,
+    task #52 loop A). Kept SEPARATE from the existing ``max_files`` count-cap: a ``--deadline``
+    time-budget cutoff sets ``partial``/``deadline_limit``, while ``max_files`` continues to set only
+    ``scan_limit.possibly_truncated`` -- conflating the two would give the wrong remediation advice.
     """
     root = Path(path)
     if not root.exists():
         raise FileNotFoundError(f"docs-coverage path does not exist: {path}")
 
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    walk_deadline_hit = _DeadlineBreakFlag()
     # Thread the cap into the walk (bucketed early-stop); ask for +1 to distinguish exactly-max from
     # more-exist for the truncation notice, matching inventory.
-    walked = _iter_repo_files(root, max_files=max_files + 1)
+    walked = _iter_repo_files(
+        root,
+        max_files=max_files + 1,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=walk_deadline_hit,
+    )
     possibly_truncated = False
     truncation_cause: str | None = None
     if len(walked) > max_files:
@@ -268,6 +289,12 @@ def build_docs_coverage(
             "excluded": "tests, fixtures, tool-state (.claude/.git/.tensor-grep), vendor, build/cache",
         },
     }
+    # CEO v1.72.1 dogfood M1: mirrors build_repo_map's own partial/deadline_limit shape (repo_map.py
+    # ~6569-6575) -- kept as a top-level `partial` flag (the one field an agent's parser checks) plus
+    # a `deadline_limit` sibling, separate from scan_limit (the file-COUNT cap cause above).
+    if walk_deadline_hit.hit:
+        payload["partial"] = True
+        payload["deadline_limit"] = {"deadline_exceeded": True}
     if include_details:
         # --fix table source: path + size + first non-blank line per uncovered file.
         payload["uncovered_details"] = [
@@ -365,6 +392,7 @@ def build_docs_stale_references(
     *,
     max_files: int = DEFAULT_MAX_INVENTORY_FILES,
     ignore: tuple[str, ...] = (),
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Inverse of coverage: governing-doc references to files that no longer exist (doc drift the
     other way). A reference is stale only when it resolves to NEITHER the doc's own directory nor the
@@ -375,12 +403,22 @@ def build_docs_stale_references(
     ignore glob (against its posix-relative form or basename) is dropped entirely, never reported as
     stale and never counted in ``references_checked`` -- an intentional stub/example group stops being
     re-flagged, same contract the ``--check`` help text already promises for ``--stale``.
+
+    ``deadline_seconds`` mirrors ``build_docs_coverage``'s additive --deadline thread-through
+    (CEO v1.72.1 dogfood M1): same walk, same partial/deadline_limit signal shape.
     """
     root = Path(path)
     if not root.exists():
         raise FileNotFoundError(f"docs-coverage path does not exist: {path}")
 
-    walked = _iter_repo_files(root, max_files=max_files + 1)
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    walk_deadline_hit = _DeadlineBreakFlag()
+    walked = _iter_repo_files(
+        root,
+        max_files=max_files + 1,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=walk_deadline_hit,
+    )
     possibly_truncated = len(walked) > max_files
     if possibly_truncated:
         walked = walked[:max_files]
@@ -412,7 +450,7 @@ def build_docs_stale_references(
                 stale.append({"doc": doc_rel, "reference": reference})
     stale.sort(key=lambda item: (item["doc"], item["reference"]))
 
-    return {
+    result: dict[str, Any] = {
         "path": str(resolved_root),
         "totals": {
             "doc_files": len(doc_paths),
@@ -427,6 +465,10 @@ def build_docs_stale_references(
             "truncation_cause": "project-files" if possibly_truncated else None,
         },
     }
+    if walk_deadline_hit.hit:
+        result["partial"] = True
+        result["deadline_limit"] = {"deadline_exceeded": True}
+    return result
 
 
 def render_docs_stale_text(payload: dict[str, Any]) -> str:

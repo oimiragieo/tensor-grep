@@ -88,6 +88,8 @@ def test_step3_top_level_builders_thread_deadline_to_partial(tmp_path: Path, mon
         repo_map.build_symbol_callers,
         repo_map.build_symbol_impact,
         repo_map.build_symbol_blast_radius,
+        repo_map.build_symbol_source,  # CEO v1.72.1 dogfood M1
+        repo_map.build_symbol_blast_radius_plan,  # CEO v1.72.1 dogfood M1
     ):
         result = builder("f1", str(tmp_path), deadline_seconds=5.0)
         assert result.get("partial") is True, (
@@ -98,6 +100,43 @@ def test_step3_top_level_builders_thread_deadline_to_partial(tmp_path: Path, mon
 def test_step3_deadline_none_leaves_builders_unbounded(tmp_path: Path) -> None:
     _make_repo(tmp_path, 4)
     result = repo_map.build_symbol_callers("f1", str(tmp_path))  # no deadline
+    assert "partial" not in result
+    assert "deadline_limit" not in result
+
+
+# --- CEO v1.72.1 dogfood M1: build_symbol_source / build_symbol_blast_radius_plan join the #581
+# --deadline threading pattern (same builders as above, called out individually so a regression in
+# either one's OWN wiring -- not just the shared loop above -- fails with an unambiguous name). ---
+
+
+def test_m1_source_deadline_already_expired_returns_partial_immediately(tmp_path: Path) -> None:
+    _make_repo(tmp_path, 6)
+    result = repo_map.build_symbol_source("f1", str(tmp_path), deadline_seconds=-1.0)
+    assert isinstance(result, dict)
+    assert result.get("partial") is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_m1_source_deadline_none_is_unaffected(tmp_path: Path) -> None:
+    _make_repo(tmp_path, 4)
+    result = repo_map.build_symbol_source("f1", str(tmp_path))
+    assert "partial" not in result
+    assert "deadline_limit" not in result
+
+
+def test_m1_blast_radius_plan_deadline_already_expired_returns_partial_immediately(
+    tmp_path: Path,
+) -> None:
+    _make_repo(tmp_path, 6)
+    result = repo_map.build_symbol_blast_radius_plan("f1", str(tmp_path), deadline_seconds=-1.0)
+    assert isinstance(result, dict)
+    assert result.get("partial") is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_m1_blast_radius_plan_deadline_none_is_unaffected(tmp_path: Path) -> None:
+    _make_repo(tmp_path, 4)
+    result = repo_map.build_symbol_blast_radius_plan("f1", str(tmp_path))
     assert "partial" not in result
     assert "deadline_limit" not in result
 

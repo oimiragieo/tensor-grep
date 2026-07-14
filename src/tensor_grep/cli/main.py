@@ -7642,6 +7642,15 @@ def docs_coverage(
         help="Exit non-zero when any file is uncovered (or, with --stale, any reference is stale) "
         "-- turns docs-coverage into a CI doc-drift gate. Respects --ignore.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
 ) -> None:
     """List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)."""
     import json as _json
@@ -7668,18 +7677,30 @@ def docs_coverage(
     try:
         if stale:
             stale_payload = build_docs_stale_references(
-                path, max_files=max_repo_files, ignore=tuple(ignore)
+                path, max_files=max_repo_files, ignore=tuple(ignore), deadline_seconds=deadline
             )
             if json_output:
                 typer.echo(_json.dumps(stale_payload))
             else:
                 _safe_stdout_line(render_docs_stale_text(stale_payload))
+            # CEO v1.72.1 dogfood M1: a --deadline-truncated scan is INCOMPLETE -- exit 2, checked
+            # BEFORE --check's exit-1 below (truncation trumps found, mirrors the symbol-command
+            # _emit_symbol_command_result / blast-radius-plan's _scan_incomplete contract). This is
+            # scoped to the NEW `partial` (time-budget) signal only -- the pre-existing
+            # `scan_limit.possibly_truncated` (--max-repo-files count-cap) contract is UNCHANGED and
+            # still exits 0, so this is additive-only unless --deadline is explicitly passed.
+            if stale_payload.get("partial"):
+                raise typer.Exit(2)
             # --check exits AFTER emitting the report, so CI shows what failed AND fails the job.
             if check and stale_payload["totals"]["stale"] > 0:
                 raise typer.Exit(1)
             return
         payload = build_docs_coverage(
-            path, max_files=max_repo_files, include_details=fix, ignore=tuple(ignore)
+            path,
+            max_files=max_repo_files,
+            include_details=fix,
+            ignore=tuple(ignore),
+            deadline_seconds=deadline,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -7693,6 +7714,10 @@ def docs_coverage(
         _safe_stdout_line(render_docs_coverage_fix_markdown(payload))
     else:
         _safe_stdout_line(render_docs_coverage_text(payload))
+    # See the --stale branch above: truncation trumps --check, and this is scoped to the NEW
+    # --deadline `partial` signal only -- --max-repo-files' possibly_truncated stays exit 0.
+    if payload.get("partial"):
+        raise typer.Exit(2)
     if check and payload["totals"]["uncovered"] > 0:
         raise typer.Exit(1)
 
@@ -9734,6 +9759,15 @@ def source(
         min=1,
         help="Maximum repo files to scan before returning a bounded result.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact source blocks for a symbol definition."""
@@ -9746,11 +9780,16 @@ def source(
             symbol_option=symbol,
             command_name="source",
         )
+        # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
+        # option" exit-2) even though its true sibling `defs` already had it -- mirrors defs's exact
+        # shape (deadline defaults to None already, no --no-deadline companion). No daemon fast path
+        # exists for `source` today, so there is no daemon-skip gate to add here.
         payload = build_symbol_source(
             resolved_symbol,
             resolved_path,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            deadline_seconds=deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -10193,13 +10232,24 @@ def callers(
 @app.command()
 def imports(
     file: str = typer.Argument(..., help="File to inspect for its own imports."),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help="Accepted for interface parity; single-file dependency read, no repo scan to bound.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return what a single FILE imports, resolved to target files where possible.
 
     The scoped forward file-dependency primitive (#74): O(1) -- parses exactly one file, no
-    repo scan, no --deadline. Use `tg importers FILE` for the reverse question (who imports
-    this file). Both are far cheaper than `tg map` for a single file's dependency edges.
+    repo scan. Use `tg importers FILE` for the reverse question (who imports this file). Both
+    are far cheaper than `tg map` for a single file's dependency edges.
+
+    CEO v1.72.1 dogfood M1: `--deadline` is accepted as a documented NO-OP for command-surface
+    parity with the scanning symbol commands -- an agent that learned --deadline works elsewhere
+    must not get a Click "No such option" exit-2 here. There is no repo scan to bound (this reads
+    exactly one file), so the value is intentionally never threaded anywhere below.
     """
     from tensor_grep.cli.repo_map import build_file_imports
 
@@ -10676,6 +10726,15 @@ def blast_radius_plan(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable blast-radius planning bundle without rendered source text.
@@ -10691,6 +10750,10 @@ def blast_radius_plan(
             symbol_option=symbol,
             command_name="blast-radius-plan",
         )
+        # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg blast-radius-plan`
+        # (Click "No such option" exit-2) even though its true sibling `blast-radius` already had
+        # it -- mirrors that shape. No daemon fast path exists for `blast-radius-plan` today, so
+        # there is no daemon-skip gate to add here.
         payload = build_symbol_blast_radius_plan(
             resolved_symbol,
             resolved_path,
@@ -10699,6 +10762,7 @@ def blast_radius_plan(
             max_symbols=max_symbols,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            deadline_seconds=deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)

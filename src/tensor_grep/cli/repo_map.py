@@ -14470,19 +14470,27 @@ def build_symbol_source(
     *,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
+    # option" exit-2) even though its true sibling build_symbol_defs already had it -- same thin,
+    # additive thread-through build_repo_map already accepts (mirrors #581's build_symbol_defs).
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    return build_symbol_source_from_map(
+    result = build_symbol_source_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
+    _copy_partial_signal(result, repo_map)
+    return result
 
 
 def build_symbol_source_from_map(
@@ -16861,22 +16869,34 @@ def build_symbol_blast_radius_plan(
     max_symbols: int = 5,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg blast-radius-plan` (Click
+    # "No such option" exit-2) even though its true sibling build_symbol_blast_radius already had
+    # it -- same thin, additive thread-through (mirrors #581's build_symbol_defs / this file's own
+    # build_symbol_blast_radius above), threaded into BOTH the initial repo_map build and the
+    # _from_map call below so the caller-scan pass inside build_symbol_blast_radius_from_map also
+    # honors the same shared absolute budget, not just the file walk/parse.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    return build_symbol_blast_radius_plan_from_map(
+    result = build_symbol_blast_radius_plan_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
         max_files=max_files,
         max_symbols=max_symbols,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
+    _copy_partial_signal(result, repo_map)
+    return result
 
 
 def build_symbol_blast_radius_plan_from_map(
@@ -16887,6 +16907,7 @@ def build_symbol_blast_radius_plan_from_map(
     max_files: int = 3,
     max_symbols: int = 5,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = build_symbol_blast_radius_from_map(
@@ -16894,6 +16915,7 @@ def build_symbol_blast_radius_plan_from_map(
         symbol,
         max_depth=max_depth,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     normalized_max_files = max(1, max_files)

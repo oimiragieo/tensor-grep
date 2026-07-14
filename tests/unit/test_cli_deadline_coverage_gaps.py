@@ -131,6 +131,18 @@ _COLD_PATH_REAL_DEADLINE_CASES = {
     "agent": ["agent", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
     "edit-plan": ["edit-plan", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
     "defs": ["defs", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
+    # CEO v1.72.1 dogfood M1: source/blast-radius-plan both go through the same build_repo_map
+    # AST-parse loop as defs above (proven reliable at 0.1s against this ~80-file real tree), so
+    # they reuse the identical real-deadline-truncation pattern.
+    "source": ["source", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
+    "blast-radius-plan": [
+        "blast-radius-plan",
+        str(_REAL_REPO_DIR),
+        "q",
+        "--deadline",
+        "0.1",
+        "--json",
+    ],
 }
 
 
