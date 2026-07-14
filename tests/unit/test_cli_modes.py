@@ -2306,6 +2306,192 @@ def test_doctor_gpu_runtime_probe_timeout_env_override_honored(monkeypatch, tmp_
     assert captured_kwargs["timeout"] == pytest.approx(17.5)
 
 
+def test_doctor_gpu_runtime_probe_native_error_kind_is_none_on_success(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        payload = {
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": False,
+            "routing_gpu_device_ids": [0],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "supported"
+    assert probe["native_error_kind"] is None
+
+
+# GPU-P0-2 (#171 taxonomy): rc!=0 must no longer collapse every native probe failure to one
+# opaque "failed" status. The native binary (run with --json) prints a structured
+# {"error": "<kind>", "detail": ...} object to stdout before exiting non-zero; these pin the
+# doctor's mapping from each known kind to a distinct, honest status.
+def test_doctor_gpu_runtime_probe_maps_path_not_found_to_failed_path_bridging(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "path_not_found",
+            "detail": "search path does not exist: <doctor-gpu-probe-file>",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_path_bridging"
+    assert probe["native_error_kind"] == "path_not_found"
+    assert probe["exit_code"] == 2
+
+
+def test_doctor_gpu_runtime_probe_maps_empty_pattern_to_failed_input(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "empty_pattern",
+            "detail": "PATTERN must not be empty.",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_input"
+    assert probe["native_error_kind"] == "empty_pattern"
+
+
+def test_doctor_gpu_runtime_probe_maps_invalid_regex_to_failed_input(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "invalid_regex",
+            "detail": "invalid regex pattern: unterminated group",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_input"
+    assert probe["native_error_kind"] == "invalid_regex"
+
+
+def test_doctor_gpu_runtime_probe_maps_gpu_fatal_to_failed_gpu_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "gpu_fatal",
+            "detail": "invalid CUDA device id 0; available CUDA devices: (none)",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_gpu_unavailable"
+    assert probe["native_error_kind"] == "gpu_fatal"
+
+
+def test_doctor_gpu_runtime_probe_maps_unrecognized_error_kind_to_failed_other(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "some_future_error_kind",
+            "detail": "an error the doctor has never seen before",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_other"
+    assert probe["native_error_kind"] == "some_future_error_kind"
+
+
+def test_doctor_gpu_runtime_probe_maps_non_json_stdout_to_failed_other(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """rc!=0 with no structured JSON on stdout at all (e.g. a raw panic) must still fail
+    closed to a bucketed status instead of raising -- native_error_kind stays None so the
+    caller can tell 'could not classify' apart from 'the native binary named a kind'."""
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 101, "", "thread panicked at ...")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_other"
+    assert probe["native_error_kind"] is None
+    assert probe["error"] == "thread panicked at ..."
+
+
+def test_doctor_gpu_runtime_probe_native_error_kind_absent_for_path_domain_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The P0-1 WSL path_domain_mismatch short-circuit never execs the native binary at all,
+    so there is no native stdout to classify; native_error_kind must stay None, not invent a
+    kind, and the pre-existing status must survive untouched."""
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fail_run(*_args, **_kwargs):
+        raise AssertionError("must not shell out when translation is unavailable")
+
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: True)
+    monkeypatch.setattr("tensor_grep.cli.main.translate_path_for_windows_binary", lambda _p: None)
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fail_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "path_domain_mismatch"
+    assert probe["native_error_kind"] is None
+
+
 def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.1")
     monkeypatch.setattr(
@@ -3222,6 +3408,155 @@ def test_doctor_json_explains_rust_core_extension_when_standalone_binary_missing
     assert payload["native_tg_binary_exists"] is False
     assert payload["rust_core_extension_available"] is True
     assert payload["search_acceleration_backend"] == "rust-core-extension"
+
+
+def test_doctor_native_frontdoor_flavor_mismatch_note_helper() -> None:
+    assert (
+        cli_main._doctor_native_frontdoor_flavor_mismatch_note(
+            installed_flavor=None, requested_flavor=None
+        )
+        is None
+    )
+    assert (
+        cli_main._doctor_native_frontdoor_flavor_mismatch_note(
+            installed_flavor="cpu", requested_flavor="cpu"
+        )
+        is None
+    )
+    assert (
+        cli_main._doctor_native_frontdoor_flavor_mismatch_note(
+            installed_flavor="cpu", requested_flavor=None
+        )
+        is None
+    )
+    note = cli_main._doctor_native_frontdoor_flavor_mismatch_note(
+        installed_flavor="cpu", requested_flavor="nvidia"
+    )
+    assert note is not None
+    assert "cpu" in note
+    assert "nvidia" in note
+
+
+# GPU-P0-2 (#171): `tg doctor` never surfaced inspect_native_tg_binary's flavor metadata --
+# only benchmarks/run_benchmarks.py and benchmarks/run_gpu_native_benchmarks.py read it. These
+# pin the new top-level doctor JSON fields.
+def test_doctor_json_includes_native_frontdoor_flavor_fields_when_metadata_present(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    native_tg.parent.mkdir(parents=True, exist_ok=True)
+    native_tg.write_text("native", encoding="utf-8")
+    metadata_path = native_tg.with_name("tg-native-metadata.json")
+    metadata_path.write_text(
+        json.dumps({
+            "artifact": "tensor_grep_native_frontdoor_metadata",
+            "asset_flavor": "cpu",
+            "requested_asset_flavor": "nvidia",
+            "asset_name": "tg-windows-amd64-cpu.exe",
+            "version": "9.9.9",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_gpu_search_runtime_probe",
+        lambda binary: {"status": "not_run"},
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["native_frontdoor_flavor"] == "cpu"
+    assert payload["native_frontdoor_requested_flavor"] == "nvidia"
+    assert payload["native_frontdoor_asset_name"] == "tg-windows-amd64-cpu.exe"
+    assert payload["native_frontdoor_metadata_status"] == "present"
+    note = payload["native_frontdoor_flavor_mismatch_note"]
+    assert note is not None
+    assert "cpu" in note
+    assert "nvidia" in note
+
+
+def test_doctor_json_native_frontdoor_flavor_fields_absent_without_metadata_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_gpu_search_runtime_probe",
+        lambda binary: {"status": "not_run"},
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["native_frontdoor_flavor"] is None
+    assert payload["native_frontdoor_requested_flavor"] is None
+    assert payload["native_frontdoor_metadata_status"] is None
+    assert payload["native_frontdoor_flavor_mismatch_note"] is None
+
+
+def test_doctor_json_native_frontdoor_flavor_fields_none_when_binary_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["native_frontdoor_flavor"] is None
+    assert payload["native_frontdoor_flavor_mismatch_note"] is None
+
+
+def test_doctor_text_reports_native_frontdoor_flavor_mismatch(monkeypatch, tmp_path: Path) -> None:
+    native_tg = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    native_tg.parent.mkdir(parents=True, exist_ok=True)
+    native_tg.write_text("native", encoding="utf-8")
+    metadata_path = native_tg.with_name("tg-native-metadata.json")
+    metadata_path.write_text(
+        json.dumps({
+            "artifact": "tensor_grep_native_frontdoor_metadata",
+            "asset_flavor": "cpu",
+            "requested_asset_flavor": "nvidia",
+            "asset_name": "tg-windows-amd64-cpu.exe",
+            "version": "9.9.9",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_gpu_search_runtime_probe",
+        lambda binary: {"status": "not_run"},
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--no-lsp"])
+
+    assert result.exit_code == 0
+    assert "native_frontdoor_flavor: cpu requested=nvidia" in result.stdout
+    assert "native_frontdoor_flavor_mismatch_note:" in result.stdout
 
 
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):

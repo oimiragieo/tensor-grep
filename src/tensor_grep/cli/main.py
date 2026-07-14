@@ -32,6 +32,7 @@ from tensor_grep.cli.runtime_paths import (
     env_flag_disabled,
     env_flag_enabled,
     gpu_probe_timeout_s,
+    inspect_native_tg_binary,
     is_cross_domain_native_binary,
     iter_in_tree_native_tg_binaries,
     native_frontdoor_metadata_path,
@@ -2657,6 +2658,52 @@ def _doctor_gpu_status() -> dict[str, Any]:
     return status
 
 
+# P0-2 (#171 taxonomy): the native tg binary, run with --json by the probe below, prints a
+# single structured error object to stdout before exiting non-zero (see
+# exit_structured_search_error_if_needed in rust_core/src/main.rs) with an "error" field naming
+# the failure kind. Map each KNOWN kind to a distinct doctor status instead of collapsing every
+# rc!=0 outcome to one opaque "failed" -- an agent reading tg doctor --json can then tell "the
+# probe's own temp/translated path went missing" (failed_path_bridging) apart from "the sentinel
+# search input was rejected" (failed_input) apart from "the GPU route itself hit a real CUDA
+# fault" (failed_gpu_unavailable). Any kind this table has never seen -- or stdout that is not
+# the expected structured JSON at all (a raw panic, empty output, etc.) -- fails closed to
+# failed_other rather than guessing.
+_DOCTOR_GPU_PROBE_FAILURE_STATUS_BY_NATIVE_ERROR_KIND: dict[str, str] = {
+    "path_not_found": "failed_path_bridging",
+    "empty_pattern": "failed_input",
+    "invalid_regex": "failed_input",
+    "gpu_fatal": "failed_gpu_unavailable",
+}
+_DOCTOR_GPU_PROBE_DEFAULT_FAILURE_STATUS = "failed_other"
+
+
+def _doctor_gpu_probe_native_error_kind(stdout: str | None) -> str | None:
+    """Parse the native binary's structured --json error kind from a failed probe's stdout.
+
+    Returns None when stdout is empty, not JSON, not an object, or has no string "error" field
+    -- any of which means there is nothing trustworthy to classify, so the caller must fail
+    closed to the generic failed_other status rather than inventing a kind.
+    """
+    if not stdout:
+        return None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error_kind = payload.get("error")
+    return error_kind if isinstance(error_kind, str) and error_kind else None
+
+
+def _doctor_gpu_probe_failure_status(native_error_kind: str | None) -> str:
+    if native_error_kind is None:
+        return _DOCTOR_GPU_PROBE_DEFAULT_FAILURE_STATUS
+    return _DOCTOR_GPU_PROBE_FAILURE_STATUS_BY_NATIVE_ERROR_KIND.get(
+        native_error_kind, _DOCTOR_GPU_PROBE_DEFAULT_FAILURE_STATUS
+    )
+
+
 def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str, Any]:
     requested_gpu_device_ids = [0]
     base: dict[str, Any] = {
@@ -2668,6 +2715,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         "routing_reason": None,
         "sidecar_used": None,
         "routing_gpu_device_ids": [],
+        "native_error_kind": None,
         "error": None,
     }
     if native_tg_binary is None:
@@ -2733,7 +2781,9 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
 
     base["exit_code"] = result.returncode
     if result.returncode != 0:
-        base["status"] = "failed"
+        native_error_kind = _doctor_gpu_probe_native_error_kind(result.stdout)
+        base["native_error_kind"] = native_error_kind
+        base["status"] = _doctor_gpu_probe_failure_status(native_error_kind)
         base["error"] = (result.stderr or "").strip() or "GPU runtime probe failed"
         return base
 
@@ -2852,6 +2902,27 @@ def _doctor_shell_escaping_guidance() -> dict[str, Any]:
     }
 
 
+def _doctor_native_frontdoor_flavor_mismatch_note(
+    *, installed_flavor: str | None, requested_flavor: str | None
+) -> str | None:
+    """Honest note when the installed native-frontdoor asset flavor differs from what was
+    requested (TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR) at install/upgrade time -- for example the
+    caller asked for `nvidia` but the installer fell back to `cpu` because no NVIDIA asset was
+    published for this platform at that release. None when either side is unknown (no metadata
+    file -- an in-tree dev build never writes one) or the two already agree.
+    """
+    if installed_flavor is None or requested_flavor is None:
+        return None
+    if installed_flavor == requested_flavor:
+        return None
+    return (
+        f"installed native-frontdoor flavor '{installed_flavor}' does not match the requested "
+        f"flavor '{requested_flavor}' ({_NATIVE_FRONTDOOR_FLAVOR_ENV}) -- the requested flavor "
+        "may not have been published for this platform at install time; rerun `tg upgrade` or "
+        "unset the flavor override to accept the installed build."
+    )
+
+
 def _build_doctor_payload(
     path: str, config: str | None = None, *, with_lsp: bool
 ) -> dict[str, Any]:
@@ -2876,6 +2947,22 @@ def _build_doctor_payload(
         _DOCTOR_LSP_PROBE_TIMEOUT_ENV,
     ]
     installed_version = _doctor_installed_version()
+    # P0-2 (#171): surface the native-frontdoor flavor metadata that inspect_native_tg_binary
+    # already computes (merging installed-vs-requested asset flavor) -- until now this was only
+    # consumed by benchmarks/run_benchmarks.py and benchmarks/run_gpu_native_benchmarks.py, so
+    # `tg doctor` had no way to tell a caller "you asked for nvidia but got cpu" without them
+    # reaching for a benchmark script. Empty dict (no keys) for no binary / no metadata file (an
+    # in-tree dev build never writes tg-native-metadata.json), so every lookup below is a safe
+    # `.get(...)` returning None.
+    native_frontdoor_inspection = (
+        inspect_native_tg_binary(native_tg_binary, expected_version=installed_version)
+        if native_tg_binary is not None
+        else {}
+    )
+    native_frontdoor_flavor = native_frontdoor_inspection.get("native_frontdoor_flavor")
+    native_frontdoor_requested_flavor = native_frontdoor_inspection.get(
+        "native_frontdoor_requested_flavor"
+    )
     rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
     native_tg_binary_kind = _doctor_native_tg_binary_kind(native_tg_binary)
     rust_binary_version_matches = _doctor_rust_binary_version_matches(
@@ -3022,6 +3109,18 @@ def _build_doctor_payload(
         "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
         "native_tg_binary_exists": native_tg_binary is not None,
         "native_tg_binary_kind": native_tg_binary_kind,
+        "native_frontdoor_flavor": native_frontdoor_flavor,
+        "native_frontdoor_requested_flavor": native_frontdoor_requested_flavor,
+        "native_frontdoor_asset_name": native_frontdoor_inspection.get(
+            "native_frontdoor_asset_name"
+        ),
+        "native_frontdoor_metadata_status": native_frontdoor_inspection.get(
+            "native_frontdoor_metadata_status"
+        ),
+        "native_frontdoor_flavor_mismatch_note": _doctor_native_frontdoor_flavor_mismatch_note(
+            installed_flavor=native_frontdoor_flavor,
+            requested_flavor=native_frontdoor_requested_flavor,
+        ),
         "rust_core_extension_available": rust_core_extension_available,
         "search_acceleration_backend": (
             "standalone-native-tg"
@@ -3156,6 +3255,14 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
     lines.append(f"native_tg_binary_kind: {payload.get('native_tg_binary_kind', 'unknown')}")
+    if native_frontdoor_flavor := payload.get("native_frontdoor_flavor"):
+        lines.append(
+            "native_frontdoor_flavor: "
+            f"{native_frontdoor_flavor} "
+            f"requested={payload.get('native_frontdoor_requested_flavor') or 'unknown'}"
+        )
+    if flavor_mismatch_note := payload.get("native_frontdoor_flavor_mismatch_note"):
+        lines.append(f"native_frontdoor_flavor_mismatch_note: {flavor_mismatch_note}")
     lines.append(
         f"search_acceleration_backend: {payload.get('search_acceleration_backend', 'unknown')}"
     )
