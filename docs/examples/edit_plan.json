@@ -439,5 +439,13 @@
       "confidence": 0.55,
       "detection": "detected"
     }
-  ]
+  ],
+  "confidence": {
+    "overall": 0.9,
+    "downgrade_reasons": []
+  },
+  "ask_user_before_editing": {
+    "required": false,
+    "reasons": []
+  }
 }

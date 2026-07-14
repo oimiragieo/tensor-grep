@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import repo_map
+from tensor_grep.cli import agent_capsule, repo_map
 
 
 @pytest.fixture(autouse=True)
@@ -1399,3 +1399,135 @@ def test_build_context_edit_plan_surfaces_top_level_validation_plan(tmp_path: Pa
     # Deep-copy safety: mutating the returned top-level plan must not mutate the seed.
     top_level_plan[0]["command"] = "mutated"
     assert payload["edit_plan_seed"]["validation_plan"][0]["command"] != "mutated"
+
+
+# --- CEO v1.72.1 dogfood: `tg edit-plan --json` top-level `confidence` / `ask_user_before_editing`
+# parity ------------------------------------------------------------------------------------------
+# `tg agent --json` already surfaces a top-level `confidence` (an `{overall, downgrade_reasons}`
+# object) and an `ask_user_before_editing` gate (`{required, reasons}`); `tg edit-plan --json` had
+# neither (`confidence` read as `null` via `.get`/`jq`, `ask_user_before_editing` was absent
+# entirely). Computed via `agent_capsule`'s reused trust-check + `_confidence` ladder -- see
+# `agent_capsule._capsule_confidence_and_ask_without_render` and
+# `repo_map._edit_plan_confidence_and_ask`.
+
+
+def _write_invoice_project(project: Path) -> None:
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+
+def test_build_context_edit_plan_surfaces_top_level_confidence_and_ask(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    _write_invoice_project(project)
+
+    payload = repo_map.build_context_edit_plan("create invoice", project)
+
+    assert "confidence" in payload
+    confidence = payload["confidence"]
+    assert isinstance(confidence, dict)
+    assert isinstance(confidence["overall"], float)
+    assert confidence["overall"] is not None
+
+    assert "ask_user_before_editing" in payload
+    ask = payload["ask_user_before_editing"]
+    assert isinstance(ask, dict)
+    assert isinstance(ask["required"], bool)
+    assert isinstance(ask["reasons"], list)
+
+
+def test_build_context_edit_plan_confidence_and_ask_match_agent_for_clean_resolution(
+    tmp_path: Path,
+) -> None:
+    """Same repo, same query: a clean (non-truncated, fully-validated) resolution should reach
+    the identical baseline `tg agent --json` reaches, since both derive from the SAME reused
+    `_confidence`/`_capsule_trust_checks` ladder and neither has a downgrade signal to apply."""
+    project = tmp_path / "project"
+    _write_invoice_project(project)
+    query = "create invoice"
+
+    edit_plan_payload = repo_map.build_context_edit_plan(query, project)
+    agent_payload = agent_capsule.build_agent_capsule(query, project)
+
+    assert edit_plan_payload["confidence"]["overall"] == agent_payload["confidence"]["overall"]
+    assert edit_plan_payload["confidence"]["overall"] == 0.9
+    assert edit_plan_payload["ask_user_before_editing"]["required"] is False
+    assert agent_payload["ask_user_before_editing"]["required"] is False
+
+
+def test_build_context_edit_plan_ask_required_when_scan_truncated(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    _write_invoice_project(project)
+
+    payload = repo_map.build_context_edit_plan(
+        "create invoice",
+        project,
+        max_repo_files=1,
+    )
+
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert any(
+        "scan was truncated" in reason for reason in payload["ask_user_before_editing"]["reasons"]
+    )
+
+
+def test_build_context_edit_plan_ask_required_without_validation_evidence(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "unrelated.py").write_text(
+        "def zzz_totally_unrelated_symbol(): pass\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_edit_plan("nonexistent symbol reference", project)
+
+    assert payload["confidence"]["overall"] is not None
+    assert payload["ask_user_before_editing"]["required"] is True
+    assert "no validation command evidence" in payload["ask_user_before_editing"]["reasons"]
+
+
+def test_build_agent_capsule_confidence_and_ask_unchanged_by_edit_plan_parity_refactor(
+    tmp_path: Path,
+) -> None:
+    """Golden parity test (CEO v1.72.1 dogfood): `tg agent --json`'s top-level `confidence`/
+    `ask_user_before_editing` must be BYTE-IDENTICAL to their pre-refactor values, both in the
+    clean case and the scan-truncated case (the exact ask-reasons-ladder lines the edit-plan
+    parity fix mechanically extracted into `_capsule_validation_evidence_ask_reason` /
+    `_capsule_low_confidence_ask_reason`). These expected values were captured by running
+    `build_agent_capsule` against this exact fixture BEFORE the refactor landed."""
+    project = tmp_path / "project"
+    _write_invoice_project(project)
+    query = "create invoice"
+
+    clean_payload = agent_capsule.build_agent_capsule(query, project)
+    assert clean_payload["confidence"] == {"overall": 0.9, "downgrade_reasons": []}
+    assert clean_payload["ask_user_before_editing"] == {"required": False, "reasons": []}
+
+    truncated_payload = agent_capsule.build_agent_capsule(query, project, max_repo_files=1)
+    assert truncated_payload["confidence"] == {
+        "overall": 0.9,
+        "downgrade_reasons": [
+            "repository scan truncated before ranking completed",
+            "context consistency downgraded confidence",
+        ],
+    }
+    assert truncated_payload["ask_user_before_editing"] == {
+        "required": True,
+        "reasons": [
+            "repository scan was truncated; the ranked primary may not be the true target",
+            "no validation command evidence",
+            "context consistency requires confirmation",
+        ],
+    }

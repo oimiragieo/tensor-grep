@@ -1713,10 +1713,17 @@ def _capsule_context_consistency(
 
 def _confidence(
     payload: dict[str, Any],
-    snippets: list[dict[str, Any]],
+    snippets: list[dict[str, Any]] | None,
     downgrade_reasons: list[str],
     consistency: dict[str, Any],
 ) -> dict[str, Any]:
+    """``snippets=None`` (edit-plan parity fix, CEO v1.72.1 dogfood) is a distinct sentinel from
+    ``[]``: it means the caller's contract has NO rendered-snippet concept at all (edit-plan
+    emits no rendered source text -- see docs/harness_api.md), so the "no snippets" degrade below
+    must not fire. ``[]`` keeps its existing meaning for agent -- snippets ARE part of the
+    contract but none survived rendering, a genuine degrade signal. Every existing caller passes
+    a real list (never ``None``), so this widening is additive and does not change agent's
+    output -- see ``_capsule_confidence_and_ask_without_render``, the only ``None`` caller."""
     edit_confidence = _as_dict(_as_dict(payload.get("edit_plan_seed")).get("confidence"))
     raw_overall = edit_confidence.get("overall")
     if isinstance(raw_overall, (int, float)):
@@ -1733,7 +1740,7 @@ def _confidence(
     if payload.get("truncated") or payload.get("omitted_sections"):
         downgrade_reasons.append("context omitted by token or render budget")
         overall = min(overall, 0.94)
-    if not snippets:
+    if snippets is not None and not snippets:
         downgrade_reasons.append("no source snippets included")
         overall = min(overall, 0.55)
     if consistency.get("confidence_downgraded"):
@@ -1748,6 +1755,98 @@ def _confidence(
         overall = min(overall, 0.55)
     deduped_reasons = list(dict.fromkeys(downgrade_reasons))
     return {"overall": round(overall, 3), "downgrade_reasons": deduped_reasons}
+
+
+def _capsule_validation_evidence_ask_reason(
+    validation_commands: list[str],
+    suggested_validation_commands: list[dict[str, Any]],
+) -> str | None:
+    """Factored out of `build_agent_capsule_from_map`'s ask-reasons ladder (mechanical extraction,
+    text/behavior unchanged) so `_capsule_confidence_and_ask_without_render` -- edit-plan's
+    non-render counterpart -- can reuse the identical text instead of re-deriving it."""
+    if validation_commands:
+        return None
+    if suggested_validation_commands:
+        # Confidence/tie logic never sees this — the strict field stays empty and
+        # `required` stays True either way; this only softens the human-facing text.
+        return (
+            "no validation command evidence "
+            "(an unverified suggested_validation_commands entry is available)"
+        )
+    return "no validation command evidence"
+
+
+def _capsule_low_confidence_ask_reason(confidence_overall: float) -> str | None:
+    """Factored out of `build_agent_capsule_from_map`'s ask-reasons ladder alongside
+    `_capsule_validation_evidence_ask_reason` above -- same rationale."""
+    if confidence_overall < 0.75:
+        return "confidence below 0.75"
+    return None
+
+
+def _capsule_confidence_and_ask_without_render(
+    payload: dict[str, Any],
+    *,
+    query: str,
+    target: dict[str, Any],
+    validation_commands: list[str],
+    suggested_validation_commands: list[dict[str, Any]],
+    validation_alignment: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parity fix (CEO v1.72.1 dogfood): the non-render counterpart to the top-level
+    `confidence`/`ask_user_before_editing` derivation `build_agent_capsule_from_map` computes,
+    for a caller (`tg edit-plan`, via `repo_map.build_context_edit_plan_from_map`) that has no
+    rendered snippets, call-site evidence, alternative-target ties, or LSP tie-break proof --
+    edit-plan's contract never renders source text (docs/harness_api.md's Edit Plan JSON
+    `max_tokens` note), so those render/call-site-evidence-only enrichments (the graph-
+    corroborated + token-budget confidence uplifts, the LSP confidence boost, tie-break
+    resolution, the unrequested-marker-helper ask-reason) cannot honestly apply here and are
+    deliberately omitted rather than faked.
+
+    Reuses `_capsule_trust_checks` and `_confidence` UNMODIFIED (aside from `_confidence`'s
+    additive `None`-sentinel widening) so both surfaces share one source of truth for the
+    thresholds/text that DO generalize:
+      * `_capsule_trust_checks`'s query-language and validation-alignment checks read only
+        `query`/`target`/`validation_commands`/`validation_alignment` -- already edit-plan-safe.
+        Its cross-language-*snippet* check degrades to a safe no-op on `snippets=[]` (no snippet
+        evidence to contradict the primary target, not a fabricated pass).
+      * `_confidence` is called with `snippets=None` (the "no snippet contract" sentinel -- see
+        its docstring) and a MINIMAL, honest `consistency` dict: `primary_file_included` mirrors
+        exactly what `repo_map`'s own `included` boolean measures for agent (whether a primary
+        file was resolved at all); `rendered_context_includes_primary` is deliberately left unset
+        (defaults to `True`) since edit-plan has no rendered context to mismatch against.
+      * The validation-evidence and low-confidence ask-reasons reuse
+        `_capsule_validation_evidence_ask_reason` / `_capsule_low_confidence_ask_reason` --
+        the exact functions `build_agent_capsule_from_map` calls for the same two checks.
+      * Scan truncation reuses `_capsule_scan_incomplete` (already a payload-shape-agnostic twin
+        of `main._scan_incomplete`) and the same downgrade/ask reason text constants agent uses.
+    """
+    primary_file = str(target.get("file") or "")
+    consistency = {"primary_file_included": bool(primary_file)}
+    trust = _capsule_trust_checks(query, target, [], validation_commands, validation_alignment)
+    scan_truncated = _capsule_scan_incomplete(payload)
+    downgrade_reasons: list[str] = list(trust["downgrade_reasons"])
+    if scan_truncated:
+        downgrade_reasons.append(_CAPSULE_SCAN_TRUNCATED_DOWNGRADE_REASON)
+    confidence = _confidence(payload, None, downgrade_reasons, consistency)
+    confidence_cap = float(trust["confidence_cap"])
+    if confidence_cap < 1.0:
+        confidence["overall"] = round(min(float(confidence["overall"]), confidence_cap), 3)
+
+    ask_reasons: list[str] = list(trust["ask_reasons"])
+    if scan_truncated:
+        ask_reasons.append(_CAPSULE_SCAN_TRUNCATED_ASK_REASON)
+    validation_evidence_ask_reason = _capsule_validation_evidence_ask_reason(
+        validation_commands, suggested_validation_commands
+    )
+    if validation_evidence_ask_reason is not None:
+        ask_reasons.append(validation_evidence_ask_reason)
+    low_confidence_ask_reason = _capsule_low_confidence_ask_reason(float(confidence["overall"]))
+    if low_confidence_ask_reason is not None:
+        ask_reasons.append(low_confidence_ask_reason)
+
+    ask = {"required": bool(ask_reasons), "reasons": _dedupe(ask_reasons)}
+    return confidence, ask
 
 
 def _primary_target_matches_query(query: str, target: dict[str, Any]) -> bool:
@@ -2434,20 +2533,21 @@ def build_agent_capsule_from_map(
     # uplift somehow ran anyway, `ask_user_before_editing.required` still forces True here.
     if scan_truncated:
         ask_reasons.append(_CAPSULE_SCAN_TRUNCATED_ASK_REASON)
-    if not validation_commands:
-        if suggested_validation_commands:
-            # Confidence/tie logic never sees this — the strict field stays empty and
-            # `required` stays True either way; this only softens the human-facing text.
-            ask_reasons.append(
-                "no validation command evidence "
-                "(an unverified suggested_validation_commands entry is available)"
-            )
-        else:
-            ask_reasons.append("no validation command evidence")
+    # Mechanical extraction (CEO v1.72.1 dogfood, edit-plan confidence/ask parity): these two
+    # checks now live in `_capsule_validation_evidence_ask_reason` / `_capsule_low_confidence_ask_
+    # reason` so `_capsule_confidence_and_ask_without_render` (edit-plan's non-render counterpart)
+    # can reuse the identical text/thresholds instead of re-deriving them -- text, order, and
+    # behavior here are unchanged; see those functions' docstrings.
+    validation_evidence_ask_reason = _capsule_validation_evidence_ask_reason(
+        validation_commands, suggested_validation_commands
+    )
+    if validation_evidence_ask_reason is not None:
+        ask_reasons.append(validation_evidence_ask_reason)
     if not snippets:
         ask_reasons.append("no snippets included")
-    if confidence["overall"] < 0.75:
-        ask_reasons.append("confidence below 0.75")
+    low_confidence_ask_reason = _capsule_low_confidence_ask_reason(float(confidence["overall"]))
+    if low_confidence_ask_reason is not None:
+        ask_reasons.append(low_confidence_ask_reason)
     if consistency.get("capsule_primary_file_omitted"):
         ask_reasons.append("primary file omitted from capsule snippets")
     if (

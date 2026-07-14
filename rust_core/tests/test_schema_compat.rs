@@ -3474,6 +3474,55 @@ fn assert_context_edit_plan_example(path: &Path) {
         "{} top-level validation_commands missing or empty",
         path.display()
     );
+    // Parity fix (CEO v1.72.1 dogfood): top-level `confidence` / `ask_user_before_editing` mirror
+    // the `agent` capsule contract's own top-level shape (`{overall, downgrade_reasons}` /
+    // `{required, reasons}`) -- additive alongside the pre-existing top-level fields above.
+    let confidence_overall = object
+        .get("confidence")
+        .and_then(|value| value.as_object())
+        .and_then(|confidence| confidence.get("overall"))
+        .and_then(|value| value.as_f64())
+        .unwrap_or_else(|| panic!("{} top-level confidence.overall missing", path.display()));
+    assert!(
+        (0.0..=1.0).contains(&confidence_overall),
+        "{} top-level confidence.overall must be normalized",
+        path.display()
+    );
+    assert!(
+        object
+            .get("confidence")
+            .and_then(|value| value.as_object())
+            .and_then(|confidence| confidence.get("downgrade_reasons"))
+            .and_then(|value| value.as_array())
+            .is_some(),
+        "{} top-level confidence.downgrade_reasons missing",
+        path.display()
+    );
+    let ask_user_before_editing = object
+        .get("ask_user_before_editing")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| {
+            panic!(
+                "{} top-level ask_user_before_editing missing",
+                path.display()
+            )
+        });
+    assert!(
+        ask_user_before_editing
+            .get("required")
+            .and_then(|value| value.as_bool())
+            .is_some(),
+        "{} ask_user_before_editing.required must be a bool",
+        path.display()
+    );
+    assert!(
+        ask_user_before_editing
+            .get("reasons")
+            .and_then(|value| value.as_array())
+            .is_some(),
+        "{} ask_user_before_editing.reasons must be an array",
+        path.display()
+    );
 }
 
 fn assert_blast_radius_render_example(path: &Path) {
